@@ -22,6 +22,11 @@ qt_add_executable(mira-gui
   MainWindow.h
   MiradClient.cpp
   MiradClient.h
+  GameColors.h
+  GameDetailDialog.cpp
+  GameDetailDialog.h
+  SettingsDialog.cpp
+  SettingsDialog.h
 )
 
 # mira_third_party is header-only (httplib.h, json.hpp) and carries no

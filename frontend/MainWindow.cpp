@@ -1,9 +1,11 @@
 #include "MainWindow.h"
 
+#include "GameColors.h"
+#include "GameDetailDialog.h"
 #include "MiradClient.h"
+#include "SettingsDialog.h"
 
 #include <QAbstractItemView>
-#include <QColor>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
@@ -13,39 +15,6 @@
 #include <QTableWidgetItem>
 #include <QVBoxLayout>
 #include <QWidget>
-
-#include <algorithm>
-
-namespace {
-
-// A soft color per lifecycle state (docs/api.md: setting_up | ready | broken
-// | missing) so the table reads at a glance without a legend.
-QColor StatusColor(const std::string& status) {
-  if (status == "ready") return QColor("#2e7d32");
-  if (status == "setting_up") return QColor("#1565c0");
-  if (status == "broken") return QColor("#c62828");
-  if (status == "missing") return QColor("#757575");
-  return QColor("#424242");
-}
-
-// `reviewed` and `confidence` are independent (docs/api.md): a human hasn't
-// necessarily looked at a game just because the detector is sure of it. A
-// reviewed game is trustworthy regardless of what the detector originally
-// scored, so it always reads green; an unreviewed one is colored by how much
-// to trust the auto-detection, red (low) through yellow to green (high).
-QString ReviewText(const mira_gui::GameSummary& game) {
-  const QString percent = QString("%1%").arg(qRound(game.confidence * 100));
-  return game.reviewed ? QString("✓ %1").arg(percent) : percent;
-}
-
-QColor ReviewColor(const mira_gui::GameSummary& game) {
-  if (game.reviewed) return QColor("#2e7d32");
-  const double clamped = std::clamp(game.confidence, 0.0, 1.0);
-  const int hue = qRound(clamped * 120.0);  // 0 = red, 120 = green (HSV wheel)
-  return QColor::fromHsv(hue, 200, 170);
-}
-
-}  // namespace
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   setWindowTitle("Mira");
@@ -64,6 +33,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   health_badge_->setStyleSheet("font-size: 11px; color: #757575;");
   health_badge_->setText("● checking…");
 
+  settings_button_ = new QPushButton("Settings", central);
+  settings_button_->setMaximumWidth(72);
+  connect(settings_button_, &QPushButton::clicked, this, &MainWindow::OpenSettings);
+
   refresh_button_ = new QPushButton("Refresh", central);
   refresh_button_->setEnabled(false);
   refresh_button_->setMaximumWidth(72);
@@ -72,6 +45,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   header_row->addWidget(title_label);
   header_row->addStretch(1);
   header_row->addWidget(health_badge_);
+  header_row->addWidget(settings_button_);
   header_row->addWidget(refresh_button_);
   layout->addLayout(header_row);
 
@@ -88,11 +62,15 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   games_table_->horizontalHeader()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
   games_table_->horizontalHeader()->setSectionResizeMode(4, QHeaderView::ResizeToContents);
   games_table_->setShowGrid(false);
+  connect(games_table_, &QTableWidget::cellDoubleClicked, this, &MainWindow::OpenGameDetail);
   layout->addWidget(games_table_, /*stretch=*/1);
 
   setCentralWidget(central);
 
   RefreshHealth();
+
+  event_stream_.Start(this,
+                       [this](std::string type, std::string data) { HandleGameEvent(type, data); });
 }
 
 void MainWindow::SetHealthy(bool healthy, const QString& tooltip) {
@@ -138,27 +116,64 @@ void MainWindow::RefreshGames() {
 
     games_table_->setRowCount(static_cast<int>(result.games.size()));
     for (int row = 0; row < static_cast<int>(result.games.size()); ++row) {
-      const mira_gui::GameSummary& game = result.games[row];
-
-      auto* name_item = new QTableWidgetItem(QString::fromStdString(game.name));
-      auto* status_item = new QTableWidgetItem(QString::fromStdString(game.status));
-      status_item->setForeground(StatusColor(game.status));
-      auto* platform_item = new QTableWidgetItem(QString::fromStdString(game.platform));
-      auto* review_item = new QTableWidgetItem(ReviewText(game));
-      review_item->setForeground(ReviewColor(game));
-
-      games_table_->setItem(row, 0, name_item);
-      games_table_->setItem(row, 1, status_item);
-      games_table_->setItem(row, 2, platform_item);
-      games_table_->setItem(row, 3, review_item);
-
-      auto* delete_button = new QPushButton("Delete", games_table_);
-      const std::string id = game.id;
-      const QString name = QString::fromStdString(game.name);
-      connect(delete_button, &QPushButton::clicked, this, [this, id, name] { DeleteGame(id, name); });
-      games_table_->setCellWidget(row, 4, delete_button);
+      PopulateRow(row, result.games[row]);
     }
   });
+}
+
+int MainWindow::FindRow(const std::string& id) const {
+  const QString target = QString::fromStdString(id);
+  for (int row = 0; row < games_table_->rowCount(); ++row) {
+    if (games_table_->item(row, 0)->data(Qt::UserRole).toString() == target) return row;
+  }
+  return -1;
+}
+
+void MainWindow::PopulateRow(int row, const mira_gui::GameSummary& game) {
+  auto* name_item = new QTableWidgetItem(QString::fromStdString(game.name));
+  name_item->setData(Qt::UserRole, QString::fromStdString(game.id));
+  auto* status_item = new QTableWidgetItem(QString::fromStdString(game.status));
+  status_item->setForeground(mira_gui::StatusColor(game.status));
+  auto* platform_item = new QTableWidgetItem(QString::fromStdString(game.platform));
+  auto* review_item =
+      new QTableWidgetItem(mira_gui::ConfidenceText(game.reviewed, game.confidence));
+  review_item->setForeground(mira_gui::ConfidenceColor(game.reviewed, game.confidence));
+
+  games_table_->setItem(row, 0, name_item);
+  games_table_->setItem(row, 1, status_item);
+  games_table_->setItem(row, 2, platform_item);
+  games_table_->setItem(row, 3, review_item);
+
+  auto* delete_button = new QPushButton("Delete", games_table_);
+  const std::string id = game.id;
+  const QString name = QString::fromStdString(game.name);
+  connect(delete_button, &QPushButton::clicked, this, [this, id, name] { DeleteGame(id, name); });
+  games_table_->setCellWidget(row, 4, delete_button);
+}
+
+void MainWindow::UpsertRow(const mira_gui::GameSummary& game) {
+  int row = FindRow(game.id);
+  if (row < 0) {
+    row = games_table_->rowCount();
+    games_table_->insertRow(row);
+  }
+  PopulateRow(row, game);
+}
+
+void MainWindow::RemoveRow(const std::string& id) {
+  const int row = FindRow(id);
+  if (row >= 0) games_table_->removeRow(row);
+}
+
+void MainWindow::HandleGameEvent(const std::string& type, const std::string& data) {
+  if (type == "game.removed") {
+    const std::string id = mira_gui::MiradClient::ParseRemovedId(data);
+    if (!id.empty()) RemoveRow(id);
+    return;
+  }
+
+  mira_gui::GameSummary game;
+  if (mira_gui::MiradClient::ParseGameSummary(data, &game)) UpsertRow(game);
 }
 
 void MainWindow::DeleteGame(const std::string& id, const QString& name) {
@@ -177,4 +192,17 @@ void MainWindow::DeleteGame(const std::string& id, const QString& name) {
     }
     RefreshGames();
   });
+}
+
+void MainWindow::OpenGameDetail(int row, int /*column*/) {
+  auto* item = games_table_->item(row, 0);
+  if (!item) return;
+  const std::string id = item->data(Qt::UserRole).toString().toStdString();
+  GameDetailDialog dialog(id, this);
+  dialog.exec();
+}
+
+void MainWindow::OpenSettings() {
+  SettingsDialog dialog(this);
+  dialog.exec();
 }
