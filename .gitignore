@@ -1,7 +1,48 @@
+# Build directories
 build/
+Build/
+build-*/
+
+# CMake generated files (in case of an in-tree build)
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
 compile_commands.json
+install_manifest.txt
+Testing/
+
+# Compiled object/library files
 *.o
 *.d
+*.obj
+*.so
+*.so.*
+*.dylib
+*.dll
+*.a
+*.la
+*.lai
+*.lo
+*.slo
+*.gch
+*.pch
+*.ilk
+*.pdb
+*.dwo
+*.mod
+*.smod
+
+# Executables
+*.exe
+*.out
+*.app
+
+# Temporary files
+*.tmp
+*.log
+*.bak
+*.swp
+.cache/
 
 # AI coding assistants — never committed
 CLAUDE.md

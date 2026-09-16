@@ -111,4 +111,4 @@ build/tsan/mira_tests
 
 ## License
 
-Not yet decided.
+[GPLv3](LICENSE).
