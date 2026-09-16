@@ -76,6 +76,24 @@ int CmdScan() {
   return 0;
 }
 
+int CmdRunners() {
+  auto client = Connect();
+  auto res = client.Get("/v1/runners");
+  if (!Ok(res)) {
+    PrintError(res);
+    return 1;
+  }
+  json builds = json::parse(res->body);
+  if (builds.empty()) {
+    std::puts("(no runner builds found — check runner_search_paths / wine_search_paths)");
+    return 0;
+  }
+  for (const json& build : builds) {
+    std::printf("%-40s %s\n", build.value("reference", "").c_str(), build.value("path", "").c_str());
+  }
+  return 0;
+}
+
 int CmdList(int argc, char** argv) {
   std::string status_filter;
   for (int i = 0; i < argc; ++i) {
@@ -332,6 +350,7 @@ void PrintUsage() {
       "  status                 check whether mirad is reachable\n"
       "  daemon [args...]       exec mirad in the foreground\n"
       "  scan                   scan all library roots now\n"
+      "  runners                list installed Proton/Wine builds\n"
       "  list [--status S]      list games\n"
       "  show <id> [--effective] show one game, or its resolved settings\n"
       "  set <id> [flags...]    correct a game's auto-detected configuration\n"
@@ -356,6 +375,7 @@ int main(int argc, char** argv) {
   }
   if (command == "status") return CmdStatus();
   if (command == "scan") return CmdScan();
+  if (command == "runners") return CmdRunners();
   if (command == "daemon") return CmdDaemon(rest_argc, rest, argv[0]);
   if (command == "list") return CmdList(rest_argc, rest);
   if (command == "show") return CmdShow(rest_argc, rest);

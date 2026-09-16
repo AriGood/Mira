@@ -4,6 +4,7 @@
 #include "core/Strings.h"
 #include "library/AutoSetup.h"
 #include "library/Detector.h"
+#include "runner/RunnerRegistry.h"
 
 namespace mira::library {
 namespace {
@@ -63,6 +64,7 @@ ScanSummary Scanner::ScanRoot(const fs::path& root) {
   const DetectorSettings detector_settings = SettingsFromConfig(config_);
   const Detector detector(detector_settings);
   AutoSetup auto_setup(config_, games_, events_);
+  const runner::RunnerRegistry runners(config_);
 
   std::vector<std::string> seen_install_paths;
 
@@ -96,9 +98,22 @@ ScanSummary Scanner::ScanRoot(const fs::path& root) {
     }
 
     const Detector::Result detected = detector.Detect(dir);
-    auto_setup.CreateGame(dir, detected);
+    const model::Game game = auto_setup.CreateGame(dir, detected);
     ++summary.added;
     log::Info("detected new game: {}", install_path);
+
+    if (game.status == model::GameStatus::SettingUp) {
+      // Only Windows games reach here (AutoSetup marks native ready
+      // immediately, broken if nothing was found). Provisioning blocks —
+      // umu/Proton's first-run init is a real few-second cost — but there's
+      // no job queue yet to move it off this thread; see docs/architecture.md.
+      const model::Game provisioned = runners.ProvisionGame(game);
+      if (auto result = games_.Upsert(provisioned); !result) {
+        log::Error("failed to save provisioning result for {}: {}", provisioned.id,
+                  result.error().message);
+      }
+      events_.Publish("game.updated", model::ToJson(provisioned));
+    }
   }
 
   // Anything previously known under this root but not seen this pass has

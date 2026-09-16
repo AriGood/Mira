@@ -11,6 +11,7 @@
 #include "config/Schema.h"
 #include "core/Log.h"
 #include "library/Scanner.h"
+#include "runner/RunnerRegistry.h"
 
 namespace mira::api {
 namespace {
@@ -256,6 +257,15 @@ void Server::RegisterRoutes() {
     const library::ScanSummary summary = scanner.ScanAll();
     SendJson(res, {{"added", summary.added}, {"missing", summary.missing},
                    {"restored", summary.restored}});
+  });
+
+  // --- runners --------------------------------------------------------------
+
+  http_->Get("/v1/runners", [this](const Request&, Response& res) {
+    const runner::RunnerRegistry registry(config_);
+    json out = json::array();
+    for (const model::RunnerBuild& build : registry.DiscoverAll()) out.push_back(model::ToJson(build));
+    SendJson(res, std::move(out));
   });
 
   // --- events (SSE) -----------------------------------------------------

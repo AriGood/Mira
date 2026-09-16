@@ -97,6 +97,12 @@ Schema::Schema() {
                     "~/.local/share/mira/runners"}),
        Tier::Advanced, "Directories scanned for installed Proton builds."},
 
+      {"wine_search_paths", Type::StringArray,
+       json::array({"~/.local/share/lutris/runners/wine"}),
+       Tier::Advanced,
+       "Directories scanned for extra Wine builds (each a directory containing bin/wine), "
+       "alongside the system wine on PATH."},
+
       {"prefix_provider", Type::String, "plain", Tier::Advanced,
        "How a new prefix directory is created. \"plain\" lets the runner initialise it; "
        "\"template\" clones prefix_template, which is far faster on btrfs/xfs.",

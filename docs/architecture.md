@@ -52,6 +52,9 @@ src/
             library roots, reconciles against GameStore), AutoSetup (turns
             a detection into a stored game), Watcher (inotify, drives
             Scanner automatically).
+  runner/   IRunner + NativeRunner/UmuRunner/WineRunner, RunnerRegistry
+            (resolves "kind:name" -> a concrete runner + build), Exec (the
+            blocking run-and-wait helper provisioning uses).
   api/      EventBus (in-memory pub/sub) and Server (the REST routes) —
             see api.md for the surface this registers.
   cli/      main.cpp for `mira` — see cli.md for what it does.
@@ -214,12 +217,15 @@ Two seams are treated as real interfaces because they are known to need a
 second implementation later; everything else stays concrete until it
 doesn't:
 
-- **Runners** (`IRunner`, not yet written) — `umu-run` is a means to a
-  working Proton launch today, not a permanent dependency. The plan is to
-  validate the interface the same way `NativeRunner` already proves the
-  general shape: ship a second real implementation (`WineRunner`, plain
-  system wine) before trusting the abstraction, and keep every umu-specific
-  string inside one file.
+- **Runners** (`runner/IRunner.h`) — `umu-run` is a means to a working
+  Proton launch, not a permanent dependency. Validated, not just asserted:
+  `NativeRunner`, `UmuRunner`, and `WineRunner` (plain system Wine, no
+  Proton) are three real implementations of the same four-method interface,
+  and CI runs `grep -rniE 'umu|protonpath|gameid|steam_compat' src/
+  --exclude-dir=runner` — every umu/Proton-specific token is still contained
+  to `runner/UmuRunner.{h,cpp}` (a couple of explanatory comments elsewhere
+  just name the tool; none encode its env vars or behavior). A future custom
+  Proton runner replacing umu is a fourth file, not a redesign.
 - **Detection rules** — per-user heuristics that are certain to need
   retuning; `config/Schema.cpp`'s `detect.*` keys already externalize the
   weights this will use.
@@ -264,16 +270,53 @@ newly-created directory's total size until it stops changing for
 manual endpoint uses. A deletion needs no debounce and rescans its root
 immediately, so a removed game is marked `missing` promptly.
 
+## Built: runners
+
+`runner/IRunner.h` is four methods: `kind()`, `Discover(config)` (installed
+builds — empty for a runner with no such concept), `Provision(game, build)`,
+`BuildCommand(game, build)`. No `capabilities()`/`settings_schema()` yet —
+nothing consumes them until `GET /v1/runners/{kind}/schema` exists, and
+speculative interface surface with no caller is exactly the kind of
+abstraction this project avoids building ahead of need.
+
+`NativeRunner` execs the game directly, no build, no provisioning.
+`UmuRunner` and `WineRunner` both provision a prefix and both had a real,
+non-obvious bug caught by actually running them rather than trusting the
+docs: **neither's exit code is a reliable success signal** — `umu-run`
+returns 1 even after successfully initialising a prefix (it's reporting
+"no game to launch", which is expected since provisioning deliberately
+passes none), and `wine wineboot -u` returns 0 even when it did nothing
+(e.g. the prefix directory didn't exist yet). Both runners instead check
+whether `drive_c` actually appeared on disk — the only signal that means
+what it says. `UmuRunner::Discover` also checks `umu-run` itself is on
+`PATH` before reporting any Proton build as usable, not just that the
+build directory exists.
+
+`RunnerRegistry` owns one instance of each runner and turns a `"kind:name"`
+reference into a concrete runner + build — `"latest"`/`"auto"` resolve by
+comparing each build's `version` (the Proton/Wine build's own version
+string; a plain integer timestamp for Proton builds, sorted numerically).
+`"auto"` specifically (`default_runner.windows`'s default) means "umu if a
+Proton build is installed, else Wine, else broken with a clear reason" —
+implemented in `RunnerRegistry::ProvisionGame`, the one place resolution
+actually happens. Provisioning always pins the concrete resolved build onto
+`runner_ref` (never `"latest"`) so a Proton/Wine update afterwards can't
+silently change a working game's runtime. `library::Scanner` calls it
+synchronously right after `AutoSetup` stores a new Windows game — like
+scanning itself, this blocks the calling thread for real wall-clock time
+(several seconds; it's genuinely initialising Proton/Wine) because there is
+no job queue yet to move it off-thread.
+
 ## Planned, not yet built
 
 Recorded here so intent isn't lost between sessions:
 
-- **`runner/{IRunner,NativeRunner,WineRunner,UmuRunner}`** and
-  **`prefix/IPrefixProvider`** — provisioning, including winetricks
-  integration: a `winetricks_verbs` list in a game's `runner_config` (already
-  a free-form JSON blob in the schema) run against a fresh prefix before it's
-  marked `ready`, with a `winetricks_defaults` setting seeding sane baseline
-  verbs (corefonts, vcrun, DXVK) for every new prefix.
+- **Winetricks integration** — a `winetricks_verbs` list in a game's
+  `runner_config` (already a free-form JSON blob in the schema) run against
+  a fresh prefix before it's marked `ready`, with a `winetricks_defaults`
+  setting seeding sane baseline verbs (corefonts, vcrun, DXVK) for every new
+  prefix. `prefix/IPrefixProvider` (template-clone vs. plain init) is the
+  other still-open piece of provisioning.
 - **Exe-location enrichment** (optional, network-based, off the offline
   critical path): for a game that is a Steam title, read the local
   `appmanifest_<id>.acf` and Steam's own cached `appinfo.vdf` for the
@@ -284,6 +327,21 @@ Recorded here so intent isn't lost between sessions:
   strictly best-effort enrichment on top of the offline heuristic detector,
   never a requirement — the zero-config test must keep passing with the
   network disabled.
+- **Runner installation and version management.** Today `RunnerRegistry`
+  only discovers builds already sitting on disk (`runner_search_paths`,
+  `wine_search_paths`) — nothing fetches or installs one. The frontend is
+  expected to drive "install GE-Proton 11-7" / "update to the latest",
+  but the backend has to do the actual work, since it owns the filesystem
+  state. Planned surface: `GET /v1/runners/available` (query GE-Proton's
+  and Wine-GE's GitHub releases for what *could* be installed, distinct
+  from `GET /v1/runners`'s "what *is*"), `POST /v1/runners/install`
+  (download, verify, extract into a `runner_search_paths` directory,
+  publishing progress events the same way provisioning will once a job
+  queue exists), `DELETE /v1/runners/{reference}` to remove one. Strictly
+  optional/best-effort like the exe-location enrichment above — no network
+  access required for anything already covered by this doc, and a stale or
+  unreachable releases feed must degrade to "can't check for updates right
+  now", never to a broken daemon.
 - **`mirad --scan-once`** for the run-once-and-never-again persona described
   above.
 - **`DaemonSupervisor` in `mira-gui`** for path 2 above.

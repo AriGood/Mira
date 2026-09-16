@@ -63,8 +63,12 @@ TEST_CASE("Watcher picks up a new game folder in each of two watched roots") {
   std::thread watcher_thread([&] { watcher.Run(); });
   std::this_thread::sleep_for(std::chrono::milliseconds(200));  // let the watches register
 
+  // Both native: a .exe here would trigger a real, multi-second umu-run
+  // provisioning attempt as a side effect (see tests/runner_test.cpp for
+  // that, deliberately isolated) — this test's job is proving two
+  // independently-watched roots both get picked up, not provisioning.
   fs::create_directories(games_root / "Celeste");
-  Touch(games_root / "Celeste" / "Celeste.exe");
+  Touch(games_root / "Celeste" / "Celeste", /*executable=*/true);
   fs::create_directories(apps_root / "Hollow Knight");
   Touch(apps_root / "Hollow Knight" / "hollow_knight", /*executable=*/true);
 
@@ -78,11 +82,8 @@ TEST_CASE("Watcher picks up a new game folder in each of two watched roots") {
 
   auto celeste = games.Find("celeste");
   REQUIRE(celeste.has_value());
-  // Celeste.exe is a Windows executable, so it waits at setting_up for the
-  // (not yet built) runner layer to provision it — only native games reach
-  // ready with no further work needed.
-  CHECK(celeste->status == model::GameStatus::SettingUp);
-  CHECK(celeste->platform == model::Platform::Windows);
+  CHECK(celeste->status == model::GameStatus::Ready);
+  CHECK(celeste->platform == model::Platform::Native);
   CHECK(celeste->install_path == (games_root / "Celeste").string());
 
   auto hollow_knight = games.Find("hollow-knight");
