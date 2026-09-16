@@ -1,0 +1,107 @@
+// mirad — the Mira backend daemon.
+//
+// Owns settings.toml and games.toml, serves the REST API described in
+// docs/api.md over a Unix domain socket, and (once library/ and runner/ land)
+// watches the library and provisions games. This binary does not
+// daemonize itself (no double-fork): run it under `systemctl --user`, or let
+// the frontend spawn and supervise it — both are first-class per the plan in
+// docs/architecture.md, and neither needs mirad to background itself.
+
+#include <csignal>
+#include <cstdio>
+#include <format>
+#include <thread>
+
+#include "api/EventBus.h"
+#include "api/Server.h"
+#include "config/Config.h"
+#include "core/Log.h"
+#include "core/Paths.h"
+#include "store/GameStore.h"
+
+namespace {
+
+void PrintUsage() {
+  std::puts(
+      "usage: mirad [--socket PATH] [--version] [--help]\n"
+      "\n"
+      "Runs in the foreground. Stop with SIGINT/SIGTERM (Ctrl-C, or the\n"
+      "service manager's normal stop).");
+}
+
+// Blocks the calling thread until SIGINT or SIGTERM arrives — no polling,
+// just a single blocking syscall, which is what lets the main thread cost
+// nothing while the server thread does the real work.
+void WaitForShutdownSignal() {
+  sigset_t set;
+  sigemptyset(&set);
+  sigaddset(&set, SIGINT);
+  sigaddset(&set, SIGTERM);
+  pthread_sigmask(SIG_BLOCK, &set, nullptr);
+  int signal = 0;
+  sigwait(&set, &signal);
+}
+
+}  // namespace
+
+int main(int argc, char** argv) {
+  std::filesystem::path socket_override;
+  for (int i = 1; i < argc; ++i) {
+    const std::string_view arg = argv[i];
+    if (arg == "--help" || arg == "-h") {
+      PrintUsage();
+      return 0;
+    }
+    if (arg == "--version") {
+      std::puts("mirad 0.1.0");
+      return 0;
+    }
+    if (arg == "--socket" && i + 1 < argc) {
+      socket_override = argv[++i];
+      continue;
+    }
+    std::fprintf(stderr, "mirad: unrecognised argument \"%.*s\"\n", static_cast<int>(arg.size()),
+                arg.data());
+    PrintUsage();
+    return 2;
+  }
+
+  mira::config::Config config(mira::paths::SettingsFile());
+  config.Load();
+  if (const std::string level = config.GetString("log.level"); level == "debug") {
+    mira::log::SetLevel(mira::log::Level::Debug);
+  } else if (level == "warn") {
+    mira::log::SetLevel(mira::log::Level::Warn);
+  } else if (level == "error") {
+    mira::log::SetLevel(mira::log::Level::Error);
+  }
+
+  mira::store::GameStore games(mira::paths::GamesFile());
+  games.Load();
+
+  mira::api::EventBus events;
+  mira::api::Server server(config, games, events);
+
+  const std::filesystem::path socket_path =
+      socket_override.empty() ? mira::paths::Expand(config.GetString("socket_path")) : socket_override;
+
+  // Block SIGINT/SIGTERM on every thread before any is created, so only the
+  // dedicated WaitForShutdownSignal() call below ever receives them.
+  sigset_t block_set;
+  sigemptyset(&block_set);
+  sigaddset(&block_set, SIGINT);
+  sigaddset(&block_set, SIGTERM);
+  pthread_sigmask(SIG_BLOCK, &block_set, nullptr);
+
+  std::thread server_thread([&] {
+    if (auto result = server.Serve(socket_path); !result) {
+      mira::log::Error("server exited: {}", result.error().message);
+    }
+  });
+
+  WaitForShutdownSignal();
+  mira::log::Info("shutting down");
+  server.Stop();
+  server_thread.join();
+  return 0;
+}

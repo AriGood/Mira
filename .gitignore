@@ -1,0 +1,14 @@
+build/
+compile_commands.json
+*.o
+*.d
+
+# AI coding assistants — never committed
+CLAUDE.md
+.claude/
+.cursor/
+.cursorrules
+.aider*
+.windsurfrules
+.github/copilot-instructions.md
+AGENTS.md

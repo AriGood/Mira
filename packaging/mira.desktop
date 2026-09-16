@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Mira
+Comment=Launch and manage native and Windows games
+Exec=mira-gui
+Icon=applications-games
+Categories=Game;
+Terminal=false

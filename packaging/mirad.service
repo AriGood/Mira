@@ -1,0 +1,16 @@
+[Unit]
+Description=Mira game launcher backend
+Documentation=https://github.com/
+# Not required by default: the frontend can spawn and supervise mirad itself
+# (see docs/architecture.md) for anyone who would rather not run a persistent
+# background process. Enabling this unit is the other supported path.
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/mirad
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target
