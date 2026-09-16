@@ -4,25 +4,12 @@
 #include "core/Strings.h"
 #include "library/AutoSetup.h"
 #include "library/Detector.h"
+#include "library/WinePrefix.h"
 #include "runner/RunnerRegistry.h"
 
 namespace mira::library {
 namespace {
 namespace fs = std::filesystem;
-
-// True for a directory that is itself a Wine/Proton prefix (system.reg +
-// drive_c, or a pfx/ subdirectory — umu's layout) rather than a game. Needed
-// because the default prefix_root sits *inside* the library root: without
-// this, a scan would rediscover its own prefixes as new games and provision
-// prefixes for them in turn. Also protects a library root that already has
-// prefixes from some other launcher sitting alongside real games.
-bool LooksLikeWinePrefix(const fs::path& dir) {
-  std::error_code ec;
-  const bool has_registry = fs::exists(dir / "system.reg", ec);
-  const bool has_drive_c = fs::exists(dir / "drive_c", ec);
-  const bool has_pfx = fs::exists(dir / "pfx", ec);
-  return (has_registry && has_drive_c) || has_pfx;
-}
 
 DetectorSettings SettingsFromConfig(const config::Config& config) {
   DetectorSettings settings;
@@ -102,7 +89,9 @@ ScanSummary Scanner::ScanRoot(const fs::path& root) {
     ++summary.added;
     log::Info("detected new game: {}", install_path);
 
-    if (game.status == model::GameStatus::SettingUp) {
+    // With auto_setup off, a game is still detected and stored (so it shows
+    // up for the frontend to configure) but never auto-provisioned.
+    if (game.status == model::GameStatus::SettingUp && config_.GetBool("auto_setup")) {
       // Only Windows games reach here (AutoSetup marks native ready
       // immediately, broken if nothing was found). Provisioning blocks —
       // umu/Proton's first-run init is a real few-second cost — but there's

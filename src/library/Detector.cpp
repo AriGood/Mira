@@ -6,6 +6,7 @@
 #include <fstream>
 
 #include "core/Strings.h"
+#include "library/WinePrefix.h"
 
 namespace mira::library {
 namespace {
@@ -57,6 +58,10 @@ std::vector<RawCandidate> WalkForExecutables(const fs::path& folder, const Detec
       if (MatchesAny(settings.ignore_globs, rel.generic_string())) continue;
 
       if (entry.is_directory(ec)) {
+        // A wrapper folder can hold its actual prefix one level below itself
+        // (umu's own layout: <root>/umu/umu-default/) — never descend into
+        // one, or its own drive_c full of .exe files gets read as candidates.
+        if (LooksLikeWinePrefix(entry.path())) continue;
         walk(entry.path(), depth + 1);
         continue;
       }

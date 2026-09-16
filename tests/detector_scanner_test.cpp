@@ -156,3 +156,48 @@ TEST_CASE("Scanner adds new games, skips known ones, and marks missing folders")
   CHECK(fourth.restored == 1);
   CHECK(games.Find("celeste")->status == model::GameStatus::Ready);
 }
+
+TEST_CASE("Detector never descends into a nested wine prefix during its own walk") {
+  // Regression: a wrapper folder whose actual prefix sits one level below
+  // itself (umu's own layout, e.g. <root>/umu/umu-default/) must not have
+  // its prefix's internal .exe files picked up as game candidates. Found by
+  // testing against a real library, not by review.
+  const fs::path dir = TempDir("nested-prefix-detect");
+  fs::create_directories(dir / "umu-default" / "drive_c" / "windows" / "system32");
+  Touch(dir / "umu-default" / "system.reg");
+  Touch(dir / "umu-default" / "drive_c" / "windows" / "system32" / "notepad.exe");
+
+  const library::Detector detector(DefaultSettings());
+  auto result = detector.Detect(dir);
+  CHECK(result.candidates.empty());
+}
+
+TEST_CASE("Scanner does not auto-provision when auto_setup is off") {
+  const fs::path lib = TempDir("scan-no-autosetup-library");
+  fs::create_directories(lib / "Celeste");
+  Touch(lib / "Celeste" / "Celeste.exe");
+
+  const fs::path state = TempDir("scan-no-autosetup-state");
+  config::Config config(state / "settings.toml");
+  config.Load();
+  REQUIRE(config.Set("library_roots", nlohmann::json::array({lib.string()})).has_value());
+  REQUIRE(config.Set("prefix_root", (lib / "prefix").string()).has_value());
+  REQUIRE(config.Set("auto_setup", false).has_value());
+
+  store::GameStore games(state / "games.toml");
+  games.Load();
+  api::EventBus events;
+  library::Scanner scanner(config, games, events);
+
+  library::ScanSummary summary = scanner.ScanAll();
+  CHECK(summary.added == 1);
+
+  auto celeste = games.Find("celeste");
+  REQUIRE(celeste.has_value());
+  // Detected and stored (the frontend can still see and configure it), but
+  // never auto-provisioned: still setting_up, no runner_ref pinned, no
+  // prefix created.
+  CHECK(celeste->status == model::GameStatus::SettingUp);
+  CHECK(celeste->runner_ref.empty());
+  CHECK_FALSE(fs::exists(celeste->data_dir));
+}
