@@ -14,10 +14,11 @@ namespace mira::model {
 enum class Platform { Unknown, Windows, Native };
 
 enum class GameStatus {
-  SettingUp,  // detected and configured; its data directory is being provisioned
+  SettingUp,   // detected and configured; its data directory is being provisioned
   Ready,
-  Broken,     // provisioning or launching failed; last_error says what to do
-  Missing,    // the folder disappeared, but the configuration is kept
+  Broken,      // provisioning or launching failed; last_error says what to do
+  Missing,     // the folder disappeared, but the configuration is kept
+  NeedsInstall, // the only thing found was an installer, not the game itself
 };
 
 std::string_view ToString(Platform platform);
@@ -33,6 +34,7 @@ struct Candidate {
   Platform kind = Platform::Unknown;
   double score = 0.0;
   bool chosen = false;
+  bool is_installer = false;  // name + size say this is a setup.exe, not the game
 };
 
 // A game's id is a filesystem-safe slug derived from its name (e.g.

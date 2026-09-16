@@ -70,7 +70,7 @@ Backed by `games.toml`. A game's `id` is a human-readable slug
 
 ### `GET /v1/games[?status=<status>]` — implemented
 Lists games, optionally filtered to one `status`
-(`setting_up | ready | broken | missing`).
+(`setting_up | ready | broken | missing | needs_install`).
 
 ### `GET /v1/games/{id}` — implemented
 The full stored record for one game:

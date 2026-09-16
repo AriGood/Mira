@@ -43,7 +43,9 @@ src/
             resolution), Strings, Log, and the TOML<->JSON bridge.
   config/   Schema (every setting declared once), Config (loads/saves
             settings.toml), Resolver (layered default -> file -> per-game
-            lookup with provenance).
+            lookup with provenance), KnownExePatterns (just data: the
+            default installer/helper-executable name lists — edit this
+            one directly, no schema knowledge needed).
   model/    Game, RunnerBuild, Event, Candidate — plain structs plus
             ToJson/FromJson. No behaviour lives here.
   store/    GameStore — the games.toml-backed source of truth for the
@@ -242,6 +244,23 @@ the list. That gives the documented promise — "removing a rule disables
 it" — without an interface that has no second implementation to justify it
 (see Replaceability above on why that restraint matters).
 
+Two things beyond straight scoring, both found by testing against real
+game folders rather than by review: a candidate can be flagged
+`is_installer` (`detect.installer_name_patterns` name match, plus a size
+signal — either the file itself is large, or it sits beside one that is,
+since a common real packaging shape is a small stub `.exe` next to a
+much larger separate payload); a game whose only/best candidate is one is
+stored `needs_install` rather than silently treated as launchable. The
+default `deny`/`installer` name patterns live in one small, dedicated file,
+`src/config/KnownExePatterns.h` — not buried in `Schema.cpp`'s
+registration code — specifically so extending the list (a contributor's
+common task, since it's inherently an ever-growing list of known engine
+and launcher helper executables) needs no schema knowledge, just editing
+an obvious array. Grounded in real prior art where checked: `*crashhandler*`
+exists because Unity's `UnityCrashHandler*.exe` getting auto-picked over
+the real game exe is a documented, still-open Lutris bug
+(github.com/lutris/lutris/issues/6881).
+
 `library/Scanner.{h,cpp}` walks each enabled library root one level deep —
 every immediate subdirectory is one game, matching "drop a folder in and
 it's picked up". A directory already known by `install_path` is never
@@ -311,6 +330,14 @@ no job queue yet to move it off-thread.
 
 Recorded here so intent isn't lost between sessions:
 
+- **Running an installer.** `Detector` already flags a candidate as an
+  installer (`detect.installer_name_patterns` + `detect.installer_min_size_mb`
+  — name alone isn't enough, since a small helper can be named like one) and
+  `AutoSetup` stores the game as `needs_install` rather than silently
+  treating the installer as the launchable game. What's still missing: an
+  actual "run this installer inside a prefix, then let the user point Mira
+  at the result" flow — a different operation from launching a game, needing
+  its own endpoint once the runner layer's `BuildCommand` is reused for it.
 - **Winetricks integration** — a `winetricks_verbs` list in a game's
   `runner_config` (already a free-form JSON blob in the schema) run against
   a fresh prefix before it's marked `ready`, with a `winetricks_defaults`

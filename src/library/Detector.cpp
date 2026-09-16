@@ -17,6 +17,7 @@ struct RawCandidate {
   fs::path rel_path;  // relative to the game folder
   model::Platform kind;
   int depth = 0;
+  bool is_installer = false;
 };
 
 bool MatchesAny(const std::vector<std::string>& globs, std::string_view text) {
@@ -42,6 +43,36 @@ bool HasExecuteBit(const fs::path& path) {
   return ::stat(path.c_str(), &st) == 0 && (st.st_mode & S_IXUSR) != 0;
 }
 
+std::uintmax_t MinInstallerBytes(const DetectorSettings& settings) {
+  return static_cast<std::uintmax_t>(settings.installer_min_size_mb) * 1024 * 1024;
+}
+
+// True if any file directly in `dir` meets the size floor. Installers are
+// frequently a small stub .exe plus a much larger separate payload (a
+// classic InstallShield/Inno Setup split: a few-MB launcher next to a
+// multi-hundred-MB .bin/.cab) — checking only the exe's own size misses
+// this real, common packaging shape entirely.
+bool DirectoryHasLargeFile(const fs::path& dir, std::uintmax_t min_bytes) {
+  std::error_code ec;
+  for (const auto& entry : fs::directory_iterator(dir, fs::directory_options::skip_permission_denied, ec)) {
+    std::error_code size_ec;
+    if (entry.is_regular_file(size_ec) && fs::file_size(entry.path(), size_ec) >= min_bytes) return true;
+  }
+  return false;
+}
+
+// Name-pattern match plus a size signal — either the exe itself is large
+// (a monolithic installer), or it shares a directory with a large payload
+// file (a split installer). Name alone would flag legitimate small helpers
+// too readily; size alone would miss both real packaging shapes above.
+bool LooksLikeInstaller(const fs::path& path, const DetectorSettings& settings, bool dir_has_large_file) {
+  if (!MatchesAny(settings.installer_name_patterns, path.filename().string())) return false;
+  if (dir_has_large_file) return true;
+  std::error_code ec;
+  const std::uintmax_t size = fs::file_size(path, ec);
+  return !ec && size >= MinInstallerBytes(settings);
+}
+
 // Walks `folder` up to max_depth, skipping anything matching ignore_globs
 // (relative to `folder`, so "*/prefix/*" excludes a prefix directory the
 // caller nested inside the game folder, and a bare glob like ".*" excludes
@@ -49,8 +80,13 @@ bool HasExecuteBit(const fs::path& path) {
 std::vector<RawCandidate> WalkForExecutables(const fs::path& folder, const DetectorSettings& settings) {
   std::vector<RawCandidate> found;
 
+  const std::uintmax_t min_installer_bytes = MinInstallerBytes(settings);
+
   const std::function<void(const fs::path&, int)> walk = [&](const fs::path& dir, int depth) {
     if (depth > settings.max_depth) return;
+    // Computed once per directory rather than per candidate: every
+    // name-matching file in the same folder shares this signal.
+    const bool dir_has_large_file = DirectoryHasLargeFile(dir, min_installer_bytes);
     std::error_code ec;
     for (const auto& entry : fs::directory_iterator(dir, fs::directory_options::skip_permission_denied, ec)) {
       const fs::path rel = fs::relative(entry.path(), folder, ec);
@@ -69,12 +105,16 @@ std::vector<RawCandidate> WalkForExecutables(const fs::path& folder, const Detec
 
       const std::string ext = strings::ToLower(entry.path().extension().string());
       if (ext == ".exe") {
-        found.push_back({rel, model::Platform::Windows, depth});
+        found.push_back({rel, model::Platform::Windows, depth,
+                         LooksLikeInstaller(entry.path(), settings, dir_has_large_file)});
       } else if (ext == ".sh" || HasExecuteBit(entry.path()) || LooksLikeElf(entry.path())) {
         // A .sh is a candidate regardless of its executable bit (archives
         // routinely lose it); anything else needs the bit or ELF magic so a
         // stray data file doesn't get treated as a launcher.
-        if (ext != ".exe") found.push_back({rel, model::Platform::Native, depth});
+        if (ext != ".exe") {
+          found.push_back({rel, model::Platform::Native, depth,
+                           LooksLikeInstaller(entry.path(), settings, dir_has_large_file)});
+        }
       }
     }
   };
@@ -133,6 +173,7 @@ Detector::Result Detector::Detect(const fs::path& folder) const {
         .kind = raw[i].kind,
         .score = scores[i],
         .chosen = rank == 0,
+        .is_installer = raw[i].is_installer,
     });
   }
 

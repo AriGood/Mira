@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <format>
 
+#include "config/KnownExePatterns.h"
 #include "core/Strings.h"
 
 namespace mira::config {
@@ -72,7 +73,7 @@ Schema::Schema() {
        "Folders watched for new games. Dropping a game folder into one of these is all "
        "that is required to add it."},
 
-      {"prefix_root", Type::String, "~/Games/prefix", Tier::Basic,
+      {"prefix_root", Type::String, "~/Games/prefixes", Tier::Basic,
        "Where per-game data directories (Wine/Proton prefixes) are created. Always "
        "excluded from scanning, wherever it points."},
 
@@ -152,12 +153,25 @@ Schema::Schema() {
        "still launchable; the frontend just highlights it.",
        Range(0.0, 1.0)},
 
-      {"detect.deny_name_patterns", Type::StringArray,
-       json::array({"unins*", "setup*", "vcredist*", "dxsetup*", "*crashreport*", "dotnet*",
-                    "directx*", "*redist*", "touchup*", "*launcher_installer*"}),
+      {"detect.deny_name_patterns", Type::StringArray, json(known_exe_patterns::kDeny),
        Tier::Advanced,
        "Executables matching these globs are heavily penalised: they are installers and "
-       "helpers rather than games."},
+       "helpers rather than games. Defaults are curated in "
+       "src/config/KnownExePatterns.h — edit that file to add one, no need to touch this "
+       "schema or recompile just to override it for yourself here."},
+
+      {"detect.installer_name_patterns", Type::StringArray, json(known_exe_patterns::kInstaller),
+       Tier::Advanced,
+       "A candidate matching one of these globs, and meeting detect.installer_min_size_mb "
+       "(itself, or sharing a folder with a file that does — installers are often a small "
+       "stub exe next to a much larger separate payload), is flagged as an installer "
+       "rather than the game itself: stored with status needs_install instead of being "
+       "auto-provisioned as launchable."},
+
+      {"detect.installer_min_size_mb", Type::Int, 50, Tier::Advanced,
+       "Minimum size — of the candidate itself, or of any file alongside it — for a "
+       "name-matched candidate to actually count as an installer, so a small stub or "
+       "helper named like one doesn't get misflagged.", Range(0, 1'000'000)},
 
       {"events.sse_keepalive_s", Type::Int, 0, Tier::Expert,
        "Seconds between keepalive comments on the event stream. 0 disables them; a Unix "

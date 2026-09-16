@@ -19,6 +19,8 @@ DetectorSettings SettingsFromConfig(const config::Config& config) {
   settings.depth_penalty = config.GetDouble("detect.depth_penalty");
   settings.low_confidence_threshold = config.GetDouble("detect.low_confidence_threshold");
   settings.deny_name_patterns = config.GetStringArray("detect.deny_name_patterns");
+  settings.installer_name_patterns = config.GetStringArray("detect.installer_name_patterns");
+  settings.installer_min_size_mb = config.GetInt("detect.installer_min_size_mb");
   settings.ignore_globs = config.GetStringArray("scan.ignore_globs");
   return settings;
 }

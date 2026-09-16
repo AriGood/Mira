@@ -30,10 +30,18 @@ model::Game AutoSetup::CreateGame(const fs::path& install_path, const Detector::
     const model::Candidate& top = detected.candidates.front();
     game.platform = top.kind;
     game.exe_path = top.rel_path;
-    // Native games need no provisioning; Windows games wait at setting_up
-    // until the runner layer (not yet built) creates their prefix.
-    game.status = top.kind == model::Platform::Native ? model::GameStatus::Ready
-                                                       : model::GameStatus::SettingUp;
+    if (top.is_installer) {
+      // Running an installer isn't running the game — flag it rather than
+      // silently provisioning/launching a setup wizard as if it were.
+      game.status = model::GameStatus::NeedsInstall;
+      game.last_error = "This looks like an installer (" + top.rel_path +
+                        "), not the game itself — run it first, then point Mira at the "
+                        "installed game.";
+    } else if (top.kind == model::Platform::Native) {
+      game.status = model::GameStatus::Ready;  // native needs no provisioning
+    } else {
+      game.status = model::GameStatus::SettingUp;  // waits for the runner layer to provision it
+    }
   }
 
   if (auto result = games_.Upsert(game); !result) {

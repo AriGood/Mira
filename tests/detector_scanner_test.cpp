@@ -4,6 +4,7 @@
 #include <fstream>
 
 #include "config/Config.h"
+#include "config/Schema.h"
 #include "library/AutoSetup.h"
 #include "library/Detector.h"
 #include "library/Scanner.h"
@@ -200,4 +201,104 @@ TEST_CASE("Scanner does not auto-provision when auto_setup is off") {
   CHECK(celeste->status == model::GameStatus::SettingUp);
   CHECK(celeste->runner_ref.empty());
   CHECK_FALSE(fs::exists(celeste->data_dir));
+}
+
+TEST_CASE("Detector flags a large setup.exe as an installer, not the game") {
+  const fs::path dir = TempDir("hollow-installer-detect");
+  const fs::path installer = dir / "setup_hollow_knight_1.5.12620_(64bit)_(89718).exe";
+  {
+    // Needs to clear the size floor for real; a truncated stub must not count.
+    std::ofstream out(installer, std::ios::binary);
+    out.seekp(60 * 1024 * 1024 - 1);
+    out.put('\0');
+  }
+
+  library::DetectorSettings settings = DefaultSettings();
+  settings.installer_name_patterns = {"setup*", "*setup*", "install*", "*installer*"};
+  settings.installer_min_size_mb = 50;
+  const library::Detector detector(settings);
+  auto result = detector.Detect(dir);
+
+  REQUIRE(result.candidates.size() == 1);
+  CHECK(result.candidates[0].is_installer);
+}
+
+TEST_CASE("A name match under the size floor is not flagged as an installer") {
+  const fs::path dir = TempDir("small-setup-detect");
+  Touch(dir / "setup_language_pack.exe");  // name matches, but it's tiny
+
+  library::DetectorSettings settings = DefaultSettings();
+  settings.installer_name_patterns = {"setup*"};
+  settings.installer_min_size_mb = 50;
+  const library::Detector detector(settings);
+  auto result = detector.Detect(dir);
+
+  REQUIRE(result.candidates.size() == 1);
+  CHECK_FALSE(result.candidates[0].is_installer);
+}
+
+TEST_CASE("AutoSetup stores an installer candidate as needs_install, not launchable") {
+  const fs::path dir = TempDir("autosetup-installer-config");
+  config::Config config(dir / "settings.toml");
+  config.Load();
+  store::GameStore games(dir / "games.toml");
+  games.Load();
+  api::EventBus events;
+  library::AutoSetup auto_setup(config, games, events);
+
+  library::Detector::Result detected;
+  detected.candidates.push_back({"setup_hollow_knight.exe", model::Platform::Windows, 4.0, true, true});
+  detected.confidence = 1.0;
+
+  model::Game game = auto_setup.CreateGame("/games/game-hollow", detected);
+  CHECK(game.status == model::GameStatus::NeedsInstall);
+  CHECK_FALSE(game.last_error.empty());
+  CHECK(game.exe_path == "setup_hollow_knight.exe");  // kept for reference, just not launchable yet
+}
+
+TEST_CASE("A small installer stub is still flagged if a large sibling payload sits beside it") {
+  // Regression: InstallShield/Inno Setup split installers are commonly a
+  // few-MB launcher .exe next to a much larger separate .bin/.cab payload —
+  // found against a real Wingspan install where every setup_*.exe was under
+  // 7MB but sat beside a 1.8GB .bin file. Checking only the exe's own size
+  // missed this entirely.
+  const fs::path dir = TempDir("split-installer-detect");
+  Touch(dir / "setup_wingspan_313.exe");  // a few KB; the real files are ~1-6MB
+  {
+    std::ofstream out(dir / "setup_wingspan_313-1.bin", std::ios::binary);
+    out.seekp(60 * 1024 * 1024 - 1);
+    out.put('\0');
+  }
+
+  library::DetectorSettings settings = DefaultSettings();
+  settings.installer_name_patterns = {"setup*"};
+  settings.installer_min_size_mb = 50;
+  const library::Detector detector(settings);
+  auto result = detector.Detect(dir);
+
+  REQUIRE(result.candidates.size() == 1);
+  CHECK(result.candidates[0].is_installer);
+}
+
+TEST_CASE("the real default deny list excludes known engine/launcher helper executables") {
+  // Regression for a documented, still-open Lutris bug (lutris/lutris#6881):
+  // UnityCrashHandler64.exe getting auto-picked over the real game exe.
+  // Uses the actual shipped schema default, not the test's minimal one
+  // above, so this fails if that default ever regresses.
+  library::DetectorSettings settings;
+  settings.deny_name_patterns = config::Schema::Instance().Find("detect.deny_name_patterns")
+                                    ->default_value.get<std::vector<std::string>>();
+
+  const fs::path dir = TempDir("engine-helpers-detect");
+  Touch(dir / "SomeGame.exe");
+  Touch(dir / "UnityCrashHandler64.exe");
+  Touch(dir / "UnrealCEFSubProcess.exe");
+  Touch(dir / "EpicWebHelper.exe");
+  Touch(dir / "UplayCrashReporter.exe");
+
+  const library::Detector detector(settings);
+  auto result = detector.Detect(dir);
+
+  REQUIRE_FALSE(result.candidates.empty());
+  CHECK(result.candidates[0].rel_path == "SomeGame.exe");
 }
