@@ -10,6 +10,7 @@
 #include "config/Resolver.h"
 #include "config/Schema.h"
 #include "core/Log.h"
+#include "library/Scanner.h"
 
 namespace mira::api {
 namespace {
@@ -50,6 +51,9 @@ model::Game ParseGamePatch(const model::Game& base, const json& patch) {
   if (patch.contains("runner_ref") && patch["runner_ref"].is_string()) {
     game.runner_ref = patch["runner_ref"];
   }
+  if (patch.contains("data_dir") && patch["data_dir"].is_string()) {
+    game.data_dir = patch["data_dir"];
+  }
   if (patch.contains("runner_config") && patch["runner_config"].is_object()) {
     game.runner_config.merge_patch(patch["runner_config"]);
   }
@@ -60,6 +64,37 @@ model::Game ParseGamePatch(const model::Game& base, const json& patch) {
   }
   game.reviewed = true;  // any correction counts as the human having looked
   return game;
+}
+
+// Applies a per-game config-override patch: flat {"dotted.key": value, ...},
+// a null value removing that override. This is the only place overrides are
+// read or written — /v1/games/{id} PATCH deals with the game's own fields
+// (name, exe_path, ...) exclusively, never global-setting overrides, so the
+// two are never mixed in one request body.
+void ApplyOverridesPatch(model::Game& game, const json& patch) {
+  for (const auto& [key, value] : patch.items()) {
+    if (value.is_null()) {
+      game.overrides.erase(key);
+    } else {
+      game.overrides[key] = value;
+    }
+  }
+}
+
+// Validated before ApplyOverridesPatch so a bad key or value rejects the
+// whole patch before anything is written, matching config::Config::Patch's
+// all-or-nothing behaviour.
+std::optional<std::string> ValidateOverridesPatch(const json& patch) {
+  for (const auto& [key, value] : patch.items()) {
+    if (value.is_null()) continue;  // removal; nothing to validate
+    if (!config::Resolver::IsOverridable(key)) {
+      return std::format("\"{}\" cannot be overridden per game", key);
+    }
+    if (auto problem = config::Schema::Instance().Validate(key, value)) {
+      return std::format("{}: {}", key, *problem);
+    }
+  }
+  return std::nullopt;
 }
 
 }  // namespace
@@ -160,13 +195,6 @@ void Server::RegisterRoutes() {
     SendJson(res, model::ToJson(*game));
   });
 
-  http_->Get(R"(/v1/games/([^/]+)/effective-config)", [this](const Request& req, Response& res) {
-    auto game = games_.Find(req.matches[1]);
-    if (!game) return SendError(res, 404, "game_not_found", "no such game");
-    config::Resolver resolver(config_, game->overrides);
-    SendJson(res, resolver.EffectiveDocument());
-  });
-
   http_->Patch(R"(/v1/games/([^/]+))", [this](const Request& req, Response& res) {
     const std::string id = req.matches[1];
     json patch = json::parse(req.body, nullptr, false);
@@ -178,28 +206,32 @@ void Server::RegisterRoutes() {
     SendJson(res, model::ToJson(*result));
   });
 
-  http_->Put(R"(/v1/games/([^/]+)/overrides/([^/]+))", [this](const Request& req, Response& res) {
-    const std::string id = req.matches[1];
-    const std::string key = req.matches[2];
-    if (!config::Resolver::IsOverridable(key)) {
-      return SendError(res, 400, "not_overridable", std::format("\"{}\" cannot be overridden per game", key));
-    }
-    json body = json::parse(req.body, nullptr, false);
-    if (body.is_discarded() || !body.contains("value")) {
-      return SendError(res, 400, "invalid_json", "expected {\"value\": ...}");
-    }
-    if (auto problem = config::Schema::Instance().Validate(key, body["value"])) {
-      return SendError(res, 400, "invalid_setting", *problem);
-    }
-    auto result = games_.Update(id, [&](model::Game& game) { game.overrides[key] = body["value"]; });
-    if (!result) return SendError(res, 404, result.error().code, result.error().message);
-    SendJson(res, model::ToJson(*result));
+  // Everything about how this game's *global settings* are overridden lives
+  // under /config, mirroring GET/PATCH /v1/config itself: GET resolves every
+  // key through default -> settings.toml -> this game's overrides, tagged
+  // with which layer supplied it; PATCH sets or (with a null value) removes
+  // overrides, flat {"dotted.key": value}. Deliberately not part of the
+  // plain PATCH /v1/games/{id} above — a game's own fields (name, exe_path,
+  // ...) and its overrides of unrelated global settings are different
+  // concerns and don't belong in the same request body.
+  http_->Get(R"(/v1/games/([^/]+)/config)", [this](const Request& req, Response& res) {
+    auto game = games_.Find(req.matches[1]);
+    if (!game) return SendError(res, 404, "game_not_found", "no such game");
+    config::Resolver resolver(config_, game->overrides);
+    SendJson(res, resolver.EffectiveDocument());
   });
 
-  http_->Delete(R"(/v1/games/([^/]+)/overrides/([^/]+))", [this](const Request& req, Response& res) {
+  http_->Patch(R"(/v1/games/([^/]+)/config)", [this](const Request& req, Response& res) {
     const std::string id = req.matches[1];
-    const std::string key = req.matches[2];
-    auto result = games_.Update(id, [&](model::Game& game) { game.overrides.erase(key); });
+    json patch = json::parse(req.body, nullptr, false);
+    if (patch.is_discarded() || !patch.is_object()) {
+      return SendError(res, 400, "invalid_json", "expected a flat {\"dotted.key\": value} object");
+    }
+    if (auto problem = ValidateOverridesPatch(patch)) {
+      return SendError(res, 400, "invalid_setting", *problem);
+    }
+    auto result =
+        games_.Update(id, [&](model::Game& game) { ApplyOverridesPatch(game, patch); });
     if (!result) return SendError(res, 404, result.error().code, result.error().message);
     SendJson(res, model::ToJson(*result));
   });
@@ -209,6 +241,21 @@ void Server::RegisterRoutes() {
     if (!result) return SendError(res, 404, result.error().code, result.error().message);
     events_.Publish("game.removed", {{"id", req.matches[1].str()}});
     SendJson(res, json::object());
+  });
+
+  // --- library ------------------------------------------------------------
+
+  // Manages library_roots (already a plain config array — see GET/PATCH
+  // /v1/config) is deliberately not duplicated here; this is the one library
+  // endpoint that does real work beyond reading/writing settings. It runs
+  // synchronously rather than returning a job id: there is no worker/job
+  // queue yet (see docs/architecture.md), and a scan of a normal-sized
+  // library completes well within an HTTP request.
+  http_->Post("/v1/library/scan", [this](const Request&, Response& res) {
+    library::Scanner scanner(config_, games_, events_);
+    const library::ScanSummary summary = scanner.ScanAll();
+    SendJson(res, {{"added", summary.added}, {"missing", summary.missing},
+                   {"restored", summary.restored}});
   });
 
   // --- events (SSE) -----------------------------------------------------

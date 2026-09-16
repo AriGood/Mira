@@ -11,9 +11,10 @@ short version: `mira` and `mira-gui` are both plain REST clients over a Unix
 socket, and neither can do anything `mirad` doesn't expose through
 [`docs/api.md`](docs/api.md).
 
-**Status:** early. Settings, the game library, and the REST API are built
-and tested; library scanning/detection, provisioning, and launching are not
-— see the "Planned, not yet built" section of `docs/architecture.md`.
+**Status:** early. Settings, the game library, the REST API, and automatic
+detection/scanning/watching are built and tested; provisioning a Wine/Proton
+prefix and launching a game are not — see the "Planned, not yet built"
+section of `docs/architecture.md`.
 
 ## Building
 
@@ -68,9 +69,16 @@ build/dev/mira status                        # is it reachable?
 build/dev/mira config list                    # every setting, with docs
 build/dev/mira config get scan.debounce_ms
 build/dev/mira config set scan.debounce_ms 5000
+build/dev/mira scan                           # scan every library root now
 build/dev/mira list                           # games in the library
 build/dev/mira watch                          # tail the live event stream
 ```
+
+Every command is documented in [`docs/cli.md`](docs/cli.md). Drop a game
+folder into any of your configured `library_roots` (`~/Games` by default)
+while `mirad` is running and it shows up in `mira list` on its own, no
+`scan` needed — that's `library::Watcher`, not a poll (see
+`docs/architecture.md`).
 
 `docs/architecture.md` documents the three supported ways to actually run
 `mirad` day-to-day (a systemd user service, spawned and supervised by the
@@ -108,6 +116,8 @@ build/tsan/mira_tests
   run the daemon, idle-cost rules, and what's planned but not built.
 - [`docs/api.md`](docs/api.md) — the full REST surface, endpoint by
   endpoint, with what's implemented versus planned.
+- [`docs/cli.md`](docs/cli.md) — every `mira` command, what it does, and
+  which API call it makes.
 
 ## License
 

@@ -40,8 +40,7 @@ struct Candidate {
 // hand-editable, and a slug reads naturally as a TOML table key's value.
 struct Game {
   std::string id;
-  std::string library_root;   // the configured root this game was found under
-  std::string install_path;
+  std::string install_path;   // parent_path() is which library root this came from
   std::string name;
   GameStatus status = GameStatus::SettingUp;
   double confidence = 0.0;

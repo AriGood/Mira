@@ -4,11 +4,10 @@ REST over HTTP/1.1, served on a Unix domain socket — never TCP, never a
 network-reachable port. Default socket: `$XDG_RUNTIME_DIR/mira/mirad.sock`
 (overridable via the `socket_path` setting or `mirad --socket <path>`).
 
-This document describes the surface `mirad` actually serves. It is a mirror
-of `Server::RegisterRoutes()` in `src/api/Server.cpp` — if the two disagree,
-the code is correct and this file is stale. See `docs/architecture.md` for
-*why* this API is the only contract between the backend and every client
-(the frontend included).
+This document mirrors `Server::RegisterRoutes()` in `src/api/Server.cpp` — if
+the two disagree, the code is correct and this file is stale. See
+`docs/architecture.md` for *why* this API is the only contract between the
+backend and every client, the frontend included.
 
 All request/response bodies are JSON. All errors use one envelope:
 
@@ -17,26 +16,12 @@ All request/response bodies are JSON. All errors use one envelope:
 ```
 
 `code` is stable and machine-readable; `message` is what a UI should show a
-human.
-
-Every endpoint below marked **(implemented)** exists today and is exercised
-by an end-to-end test. Endpoints marked **(planned)** are part of the
-design (see `docs/architecture.md`'s "Planned, not yet built") but return
-404 today — they are listed here so the shape is settled before the
-frontend is built against it.
-
-## Trying it from a shell
+human. Endpoints marked **(planned)** don't exist yet and return 404 — see
+`docs/architecture.md`'s "Planned, not yet built".
 
 ```sh
 mirad --foreground &
-curl --unix-socket "$XDG_RUNTIME_DIR/mira/mirad.sock" http://localhost/v1/health
-```
-
-Or just use the CLI, which is a client for exactly this API:
-
-```sh
-mira status
-mira config list
+mira status                 # or: curl --unix-socket "$XDG_RUNTIME_DIR/mira/mirad.sock" http://localhost/v1/health
 ```
 
 ---
@@ -44,156 +29,105 @@ mira config list
 ## Health
 
 ### `GET /v1/health` — implemented
-
-```json
-{ "status": "ok" }
-```
+Liveness check; returns `{"status": "ok"}` if the daemon can respond at all.
 
 ---
 
 ## Settings
 
-Backed by `settings.toml`; see `docs/architecture.md` for the on-disk format
-and the `[frontend]` passthrough table. Every key is declared once in
-`src/config/Schema.cpp`, which is what `/v1/config/schema` reflects.
+Backed by `settings.toml`. Every key is declared once in
+`src/config/Schema.cpp`; `/v1/config/schema` reflects that registry directly,
+which is what lets a frontend build a complete settings screen with zero
+hardcoded knowledge of what settings exist.
 
 ### `GET /v1/config` — implemented
-
-Returns the full settings document (every backend key, at whatever layer —
-default or file — it currently resolves to) plus the opaque `frontend` table.
+Every backend setting at its current value, plus the opaque `frontend` table
+the backend stores but never interprets (see `docs/architecture.md`).
 
 ### `GET /v1/config/schema` — implemented
-
+Every setting's type, default, tier (`basic | advanced | expert` — a
+frontend should show `basic` and fold the rest behind a disclosure, never
+omit them), and one-line doc string:
 ```json
-[
-  {
-    "key": "scan.debounce_ms",
-    "type": "an integer",
-    "default": 3000,
-    "tier": "advanced",
-    "doc": "How long a new folder must stop changing before it is scanned. Raise it if games arrive over a slow network share."
-  }
-]
+[{ "key": "scan.debounce_ms", "type": "an integer", "default": 3000,
+   "tier": "advanced", "doc": "How long a new folder must stop changing before it is scanned." }]
 ```
 
-`tier` is `basic | advanced | expert` — a frontend generating a settings UI
-from this should show `basic` by default and fold the rest behind a
-disclosure, never omit them. This is the endpoint that lets the GUI have a
-complete settings screen with zero hardcoded knowledge of what settings
-exist.
-
 ### `PATCH /v1/config` — implemented
-
-Body: any subset of settings, nested to match `GET /v1/config`'s shape
-(e.g. `{"scan": {"debounce_ms": 5000}}`), plus optionally a `frontend` key
-with whatever the frontend wants stored. Validated against the schema
-before anything is written — a bad value in the patch means *nothing* in
-the patch is applied, and the response is a 400 with the error envelope
-above.
+Sets any subset of settings (nested, matching `GET /v1/config`'s shape) plus
+optionally a `frontend` key. Validated against the schema before anything is
+written — a bad value anywhere in the patch means nothing in it is applied.
 
 ### `POST /v1/config/reset[?key=<dotted.key>]` — implemented
-
-Resets one key to its schema default, or (with no `key`) resets everything.
+Resets one key to its schema default, or everything if `key` is omitted.
 
 ---
 
 ## Games
 
-Backed by `games.toml`; one entry per game, id is a human-readable slug
+Backed by `games.toml`. A game's `id` is a human-readable slug
 (`"celeste"`, `"celeste-2"` on collision), not an opaque integer.
 
 ### `GET /v1/games[?status=<status>]` — implemented
-
-Array of games. `status` filters to one of `setting_up | ready | broken |
-missing`.
+Lists games, optionally filtered to one `status`
+(`setting_up | ready | broken | missing`).
 
 ### `GET /v1/games/{id}` — implemented
-
+The full stored record for one game:
 ```json
 {
-  "id": "celeste",
-  "library_root": "",
-  "install_path": "/home/x/Games/Celeste",
-  "name": "Celeste",
-  "status": "ready",
-  "confidence": 0.9,
-  "reviewed": false,
-  "platform": "native",
-  "exe_path": "Celeste",
-  "args": "",
-  "working_dir": "",
-  "runner_ref": "",
-  "data_dir": "",
-  "runner_config": {},
-  "overrides": {},
-  "last_error": "",
-  "created_at": 0,
-  "updated_at": 0,
-  "last_played_at": null,
-  "play_seconds": 0,
-  "env": {},
-  "candidates": []
+  "id": "celeste", "install_path": "/home/x/Games/Celeste", "name": "Celeste",
+  "status": "ready", "confidence": 0.9, "reviewed": false, "platform": "native",
+  "exe_path": "Celeste", "args": "", "working_dir": "", "runner_ref": "",
+  "data_dir": "", "runner_config": {}, "overrides": {}, "last_error": "",
+  "created_at": 0, "updated_at": 0, "last_played_at": null, "play_seconds": 0,
+  "env": {}, "candidates": []
 }
 ```
-
-`confidence` and `reviewed` are how auto-setup stays safe without blocking
-on a human: the backend always commits to its best guess (once auto-setup
-is built — see below), and the frontend can sort "things nobody has
-double-checked" to the top rather than gating on them. `candidates` lists
-every executable the detector considered, so the frontend can offer "no,
-use this one instead" without a re-scan.
-
-`runner_config` is intentionally opaque here: it is owned entirely by
-whichever runner `runner_ref` names, validated against that runner's own
-`GET /v1/runners/{kind}/schema` (planned), never by core.
+`confidence`/`reviewed` are how auto-setup stays safe without blocking on a
+human: the backend always commits to its best guess, and the frontend can
+sort "nobody has double-checked this" to the top rather than gating on it.
+`candidates` lists every executable the detector considered, so the frontend
+can offer "use this one instead" without a re-scan. `runner_config` is
+opaque here — owned by whichever runner `runner_ref` names, never by core.
 
 ### `PATCH /v1/games/{id}` — implemented
-
-Body: any of `name`, `exe_path`, `args`, `working_dir`, `runner_ref`,
-`runner_config` (merged, not replaced), `env` (merged). Setting any of
-these marks the game `reviewed: true` — a correction *is* the review.
-Publishes a `game.updated` event. 404 if the id doesn't exist.
+Corrects the game's own fields: any of `name`, `exe_path`, `args`,
+`working_dir`, `runner_ref`, `data_dir` (where its prefix/data lives — see
+`docs/architecture.md` on why it isn't called `prefix_path`),
+`runner_config` (merged, not replaced), `env` (merged). Setting any of these
+marks the game `reviewed: true` — a correction *is* the review. Never
+touches `overrides` (see `.../config` below — a game's own fields and its
+overrides of unrelated global settings are different concerns and don't
+share a request body). Publishes `game.updated`. 404 if the id is unknown.
 
 ### `DELETE /v1/games/{id}[?delete_data=true]` — implemented
+Forgets the game. Never touches its files on disk. Publishes `game.removed`.
+`delete_data` is accepted but not yet wired to anything — deleting a
+runner's data directory is runner-specific and the runner layer doesn't
+exist yet, so today the parameter is a no-op.
 
-Removes the game from `games.toml`. Never touches the game's actual files
-on disk. Publishes `game.removed`.
-
-`delete_data` is accepted but not yet wired to anything (deleting the
-runner's data directory is a runner-specific operation that doesn't exist
-yet — see Runners below); today the query parameter is ignored.
-
-### `GET /v1/games/{id}/effective-config` — implemented
-
+### `GET /v1/games/{id}/config` — implemented
 Every schema key resolved through `default -> settings.toml -> this game's
-overrides`, each tagged with which layer supplied it:
-
+overrides`, tagged with which layer supplied it — mirrors `GET /v1/config`
+but scoped to one game:
 ```json
-{
-  "scan.max_depth": { "value": 8, "layer": "game", "overridable": true },
-  "scan.debounce_ms": { "value": 3000, "layer": "default", "overridable": true },
-  "library_roots": { "value": ["~/Games"], "layer": "default", "overridable": false }
-}
+{ "scan.max_depth": { "value": 8, "layer": "game", "overridable": true },
+  "library_roots": { "value": ["~/Games"], "layer": "default", "overridable": false } }
 ```
-
 This is what lets a frontend show "Runner: GE-Proton11-7 *(default)*" next
 to a reset button, without separately tracking where each value came from.
 
-### `PUT /v1/games/{id}/overrides/{key}` — implemented
-
-Body: `{"value": <anything matching the key's schema type>}`. Sets a
-per-game override; 400 if `key` isn't overridable (some settings, like
-`library_roots`, describe the daemon rather than a game — see
-`config::Resolver::IsOverridable`) or the value fails schema validation.
-
-### `DELETE /v1/games/{id}/overrides/{key}` — implemented
-
-Removes a per-game override, reverting to the inherited value.
+### `PATCH /v1/games/{id}/config` — implemented
+Sets or removes this game's overrides of global settings: a flat
+`{"dotted.key": value}` body, where a `null` value removes that override.
+Rejects (with nothing applied) if a key isn't overridable — some settings,
+like `library_roots`, describe the daemon rather than a game, see
+`config::Resolver::IsOverridable` — or if a value fails schema validation.
 
 ### `POST /v1/games/{id}/launch` — planned
 ### `POST /v1/games/{id}/stop` — planned
 ### `POST /v1/games/{id}/resetup` — planned
-
 Re-runs detection and provisioning from scratch — the escape hatch for when
 auto-setup guessed badly wrong.
 
@@ -201,14 +135,27 @@ auto-setup guessed badly wrong.
 
 ## Library
 
-### `GET /v1/library/roots` — planned
-### `POST /v1/library/roots` — planned
-### `DELETE /v1/library/roots/{id}` — planned
-### `POST /v1/library/scan` — planned
+`library_roots` (the folders being watched) is a plain setting, managed
+through `GET`/`PATCH /v1/config` like any other — there is no separate
+roots resource, because a plain string array is all the current design
+needs; see `docs/architecture.md` if that stops being true.
 
-`library_roots` already exists as a setting (`GET/PATCH /v1/config`); these
-dedicated endpoints are for the richer per-root state (enabled/disabled,
-last-scanned) that doesn't fit a plain string array.
+### `POST /v1/library/scan` — implemented
+Walks every enabled library root immediately: detects new game folders,
+auto-configures and stores them (publishing `game.added` for each), and
+marks previously-known games whose folder disappeared as `missing`. Runs
+synchronously and returns a summary rather than a job id — there is no
+worker/job queue yet, and a scan of a normal-sized library finishes well
+within one HTTP request:
+```json
+{ "added": 1, "missing": 0, "restored": 0 }
+```
+This is the on-demand counterpart to automatic detection — `mirad` also
+watches every root continuously via inotify (see
+`library::Watcher`/`docs/architecture.md`) and calls this same scan logic
+itself once a new folder's contents stop changing, with no request needed.
+A change to `library_roots` needs a daemon restart to be picked up by the
+watcher; this endpoint works immediately either way.
 
 ---
 
@@ -223,38 +170,35 @@ last-scanned) that doesn't fit a plain string array.
 ## Events
 
 ### `GET /v1/events` — implemented
-
 Server-Sent Events. Each event:
-
 ```
 id: 42
 event: game.updated
 data: {"id":"celeste","name":"Celeste (Steam)", ...}
 
 ```
-
 Reconnect with a `Last-Event-ID` header to replay everything published
-since that id — the buffer holds the last 500 events (`EventBus`'s default
-capacity), enough to survive a frontend restart, but **not** a daemon
-restart (events are in-memory only; see `docs/architecture.md` for why that
-trade-off was made deliberately rather than persisting them).
+since that id — the buffer holds the last 500 events, enough to survive a
+frontend restart, but **not** a daemon restart (events are in-memory only;
+`docs/architecture.md` explains why that trade-off is deliberate).
 
-Event types published today: `game.updated`, `game.removed`. Planned as the
-rest of the backend lands: `scan.started`, `scan.finished`, `game.added`
-(carrying the full auto-detected configuration plus `open_config: true`, so
-the frontend knows to raise its config menu immediately), `setup.progress`,
-`setup.finished`, `setup.failed`, `game.state` (`launching | running |
-exited`), `runners.updated`, `config.changed`.
+Published today: `game.updated`, `game.removed`, `game.added` (fires the
+moment a new folder is auto-configured, carrying the full detected
+configuration plus `open_config: <bool>` from the `open_config_on_add`
+setting, so the frontend knows whether to raise its config menu
+immediately). Planned as the rest of the backend lands: `scan.started`,
+`scan.finished`, `setup.progress`, `setup.finished`, `setup.failed`,
+`game.state` (`launching | running | exited`), `runners.updated`,
+`config.changed`.
 
-`mira watch` (in `src/cli/main.cpp`) is the reference client for this
-endpoint — its entire implementation is a `Get` with a streaming content
-receiver splitting on blank lines, worth reading before implementing the
-frontend's equivalent.
+`mira watch` (`src/cli/main.cpp`) is the reference client — its whole
+implementation is a streaming `Get` split on blank lines, worth reading
+before building the frontend's equivalent.
 
 ---
 
 ## Jobs
 
-Long-running work (a scan, provisioning a prefix) is meant to return `202`
-with a job id rather than blocking the request. `GET /v1/jobs/{id}` —
-**planned**, alongside the work it would track.
+For work long enough that it shouldn't block a request — not scanning
+(synchronous today, see above), but provisioning a prefix once the runner
+layer exists. `GET /v1/jobs/{id}` — **planned**, alongside that work.

@@ -57,7 +57,6 @@ json ToJson(const Candidate& candidate) {
 json ToJson(const Game& game) {
   json out = {
       {"id", game.id},
-      {"library_root", game.library_root},
       {"install_path", game.install_path},
       {"name", game.name},
       {"status", ToString(game.status)},
@@ -102,7 +101,6 @@ json ToJson(const Event& event) {
 Game GameFromJson(const json& document) {
   Game game;
   game.id = document.value("id", std::string());
-  game.library_root = document.value("library_root", std::string());
   game.install_path = document.value("install_path", std::string());
   game.name = document.value("name", std::string());
   game.status = GameStatusFromString(document.value("status", "broken"));
