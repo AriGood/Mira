@@ -2,6 +2,7 @@
 
 #include <map>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 
@@ -37,8 +38,14 @@ public:
   model::Game ProvisionGame(model::Game game) const;
 
 private:
+  // Discovered builds for one kind, computed once per registry instance.
+  const std::vector<model::RunnerBuild>& BuildsFor(const std::string& kind) const;
+
   config::Config& config_;
   std::map<std::string, std::unique_ptr<IRunner>> runners_;
+
+  mutable std::mutex cache_mutex_;
+  mutable std::map<std::string, std::vector<model::RunnerBuild>> cache_;
 };
 
 }  // namespace mira::runner

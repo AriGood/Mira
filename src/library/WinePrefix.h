@@ -12,7 +12,8 @@ namespace mira::library {
 // level deeper (e.g. umu's own <root>/umu/umu-default/) would otherwise
 // have its prefix's internal .exe files (drive_c is full of them) picked up
 // as "candidates" for a game that doesn't exist. Found by testing against a
-// real library, not by review — see tests/library_wineprefix_test.cpp.
+// real library, not by review — see the nested-prefix regression test in
+// tests/detector_scanner_test.cpp.
 bool LooksLikeWinePrefix(const std::filesystem::path& dir);
 
 }  // namespace mira::library

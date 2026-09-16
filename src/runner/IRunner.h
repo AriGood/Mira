@@ -28,6 +28,12 @@ public:
   // runner with no such concept (native).
   virtual std::vector<model::RunnerBuild> Discover(const config::Config& config) const = 0;
 
+  // False for a runner with no concept of separate installed builds. Without
+  // this, "discovery returned nothing" and "this kind has no builds" are
+  // indistinguishable, and a reference naming an uninstalled build resolves
+  // as success-with-no-build instead of a clear error.
+  virtual bool UsesBuilds() const { return true; }
+
   // Sets up whatever the game needs before it can launch (a Wine prefix).
   // No-op for runners that need nothing.
   virtual Result<void> Provision(const model::Game& game,

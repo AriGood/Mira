@@ -12,10 +12,27 @@
 namespace mira::runner {
 namespace {
 
+// Orders builds of one runner kind for "latest". Proton's version field is a
+// bare unix timestamp; Wine's is a string like "wine-10.0 (Staging)", where
+// parsing from the front yields nothing at all and made every build compare
+// equal — so scan to the first digit and read up to two dotted components.
+// Only ever compares builds of the same kind, so the differing scales between
+// kinds don't matter.
 std::int64_t ParseVersion(const std::string& version) {
-  std::int64_t value = 0;
-  const auto result = std::from_chars(version.data(), version.data() + version.size(), value);
-  return result.ec == std::errc{} ? value : 0;
+  size_t i = version.find_first_of("0123456789");
+  if (i == std::string::npos) return 0;
+
+  std::int64_t major = 0;
+  const auto* begin = version.data() + i;
+  const auto* end = version.data() + version.size();
+  const auto first = std::from_chars(begin, end, major);
+  if (first.ec != std::errc{}) return 0;
+
+  std::int64_t minor = 0;
+  if (first.ptr != end && *first.ptr == '.') {
+    std::from_chars(first.ptr + 1, end, minor);
+  }
+  return major * 1000 + minor;
 }
 
 }  // namespace
@@ -29,11 +46,23 @@ RunnerRegistry::RunnerRegistry(config::Config& config) : config_(config) {
   runners_[wine->kind()] = std::move(wine);
 }
 
+const std::vector<model::RunnerBuild>& RunnerRegistry::BuildsFor(const std::string& kind) const {
+  // Discovery is not free — WineRunner spawns `wine --version` per build —
+  // and one scan resolves a runner for every new game it finds. A registry
+  // is constructed per scan/request, so caching for its lifetime removes the
+  // repeated cost without ever going stale in practice.
+  std::lock_guard lock(cache_mutex_);
+  if (auto it = cache_.find(kind); it != cache_.end()) return it->second;
+  const auto runner = runners_.find(kind);
+  if (runner == runners_.end()) return cache_[kind];  // empty
+  return cache_[kind] = runner->second->Discover(config_);
+}
+
 std::vector<model::RunnerBuild> RunnerRegistry::DiscoverAll() const {
   std::vector<model::RunnerBuild> all;
   for (const auto& [kind, runner] : runners_) {
-    std::vector<model::RunnerBuild> found = runner->Discover(config_);
-    all.insert(all.end(), std::make_move_iterator(found.begin()), std::make_move_iterator(found.end()));
+    const std::vector<model::RunnerBuild>& found = BuildsFor(kind);
+    all.insert(all.end(), found.begin(), found.end());
   }
   return all;
 }
@@ -51,9 +80,12 @@ Result<RunnerRegistry::Resolved> RunnerRegistry::Resolve(const std::string& runn
     return Err("unknown_runner_kind", std::format("no runner of kind \"{}\"", kind));
   }
   const IRunner* runner = runner_it->second.get();
+  if (!runner->UsesBuilds()) return Resolved{runner, std::nullopt};  // native
 
-  std::vector<model::RunnerBuild> builds = runner->Discover(config_);
-  if (builds.empty()) return Resolved{runner, std::nullopt};  // e.g. native: no builds to pick
+  const std::vector<model::RunnerBuild>& builds = BuildsFor(kind);
+  if (builds.empty()) {
+    return Err("runner_build_not_found", std::format("no {} builds are installed", kind));
+  }
 
   if (name == "auto" || name == "latest") {
     auto newest = std::ranges::max_element(builds, {}, [](const model::RunnerBuild& build) {

@@ -302,3 +302,70 @@ TEST_CASE("the real default deny list excludes known engine/launcher helper exec
   REQUIRE_FALSE(result.candidates.empty());
   CHECK(result.candidates[0].rel_path == "SomeGame.exe");
 }
+
+TEST_CASE("a restored game keeps needs_install instead of becoming launchable") {
+  // Regression: the Missing->restore path keyed on "has an exe_path", but an
+  // installer has one too (kept for reference), so unplugging and replugging
+  // a drive silently promoted needs_install to ready — pointed straight at
+  // setup.exe, undoing the installer guard entirely.
+  const fs::path lib = TempDir("restore-installer-library");
+  const fs::path state = TempDir("restore-installer-state");
+  fs::create_directories(lib / "game-hollow");
+  const fs::path installer = lib / "game-hollow" / "setup_hollow_knight.exe";
+  {
+    std::ofstream out(installer, std::ios::binary);
+    out.seekp(60 * 1024 * 1024 - 1);
+    out.put('\0');
+  }
+
+  config::Config config(state / "settings.toml");
+  config.Load();
+  REQUIRE(config.Set("library_roots", nlohmann::json::array({lib.string()})).has_value());
+  REQUIRE(config.Set("prefix_root", (lib / "prefixes").string()).has_value());
+
+  store::GameStore games(state / "games.toml");
+  games.Load();
+  api::EventBus events;
+  library::Scanner scanner(config, games, events);
+
+  REQUIRE(scanner.ScanAll().added == 1);
+  REQUIRE(games.Find("game-hollow")->status == model::GameStatus::NeedsInstall);
+
+  fs::rename(lib / "game-hollow", lib / "game-hollow-away");  // "drive unplugged"
+  REQUIRE(scanner.ScanAll().missing == 1);
+  REQUIRE(games.Find("game-hollow")->status == model::GameStatus::Missing);
+
+  fs::rename(lib / "game-hollow-away", lib / "game-hollow");  // and back
+  scanner.ScanAll();
+  CHECK(games.Find("game-hollow")->status == model::GameStatus::NeedsInstall);
+  CHECK_FALSE(games.Find("game-hollow")->last_error.empty());
+}
+
+TEST_CASE("a restored windows game with no prefix is not claimed ready") {
+  const fs::path lib = TempDir("restore-unprovisioned-library");
+  const fs::path state = TempDir("restore-unprovisioned-state");
+  fs::create_directories(lib / "Celeste");
+  Touch(lib / "Celeste" / "Celeste.exe");
+
+  config::Config config(state / "settings.toml");
+  config.Load();
+  REQUIRE(config.Set("library_roots", nlohmann::json::array({lib.string()})).has_value());
+  REQUIRE(config.Set("prefix_root", (lib / "prefixes").string()).has_value());
+  REQUIRE(config.Set("auto_setup", false).has_value());  // never provisioned
+
+  store::GameStore games(state / "games.toml");
+  games.Load();
+  api::EventBus events;
+  library::Scanner scanner(config, games, events);
+
+  REQUIRE(scanner.ScanAll().added == 1);
+  REQUIRE(games.Find("celeste")->status == model::GameStatus::SettingUp);
+
+  fs::rename(lib / "Celeste", lib / "Celeste-away");
+  REQUIRE(scanner.ScanAll().missing == 1);
+  fs::rename(lib / "Celeste-away", lib / "Celeste");
+  scanner.ScanAll();
+
+  // No runner_ref, no prefix on disk — "ready" would be a lie.
+  CHECK(games.Find("celeste")->status == model::GameStatus::SettingUp);
+}

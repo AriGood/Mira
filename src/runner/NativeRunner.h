@@ -8,6 +8,7 @@ namespace mira::runner {
 class NativeRunner final : public IRunner {
 public:
   std::string kind() const override { return "native"; }
+  bool UsesBuilds() const override { return false; }
   std::vector<model::RunnerBuild> Discover(const config::Config&) const override { return {}; }
   Result<void> Provision(const model::Game&, const std::optional<model::RunnerBuild>&) const override {
     return {};

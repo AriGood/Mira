@@ -1,5 +1,7 @@
 #include "library/Scanner.h"
 
+#include <algorithm>
+
 #include "core/Log.h"
 #include "core/Strings.h"
 #include "library/AutoSetup.h"
@@ -10,6 +12,26 @@
 namespace mira::library {
 namespace {
 namespace fs = std::filesystem;
+
+// What a game's status should be when its folder reappears after being
+// marked Missing. Derived from the game's own data rather than assumed:
+// "has an exe_path" is not the same as "launchable" — an installer has one
+// too, and a Windows game that was never provisioned has no prefix behind
+// it. Getting this wrong silently un-did the installer guard.
+model::GameStatus RestoredStatus(const model::Game& game) {
+  const auto chosen = std::ranges::find(game.candidates, true, &model::Candidate::chosen);
+  if (chosen != game.candidates.end() && chosen->is_installer) {
+    return model::GameStatus::NeedsInstall;
+  }
+  if (game.exe_path.empty()) return model::GameStatus::SettingUp;
+  if (game.platform == model::Platform::Native) return model::GameStatus::Ready;
+
+  // Windows: only ready if something actually provisioned it.
+  std::error_code ec;
+  const bool provisioned =
+      !game.runner_ref.empty() && !game.data_dir.empty() && fs::exists(game.data_dir, ec);
+  return provisioned ? model::GameStatus::Ready : model::GameStatus::SettingUp;
+}
 
 DetectorSettings SettingsFromConfig(const config::Config& config) {
   DetectorSettings settings;
@@ -77,8 +99,8 @@ ScanSummary Scanner::ScanRoot(const fs::path& root) {
     if (auto existing = games_.FindByInstallPath(install_path)) {
       if (existing->status == model::GameStatus::Missing) {
         auto result = games_.Update(existing->id, [](model::Game& game) {
-          game.status = game.exe_path.empty() ? model::GameStatus::SettingUp : model::GameStatus::Ready;
-          game.last_error.clear();
+          game.status = RestoredStatus(game);
+          if (game.status != model::GameStatus::NeedsInstall) game.last_error.clear();
         });
         if (!result) log::Error("failed to restore {}: {}", existing->id, result.error().message);
         ++summary.restored;
@@ -99,11 +121,21 @@ ScanSummary Scanner::ScanRoot(const fs::path& root) {
       // umu/Proton's first-run init is a real few-second cost — but there's
       // no job queue yet to move it off this thread; see docs/architecture.md.
       const model::Game provisioned = runners.ProvisionGame(game);
-      if (auto result = games_.Upsert(provisioned); !result) {
-        log::Error("failed to save provisioning result for {}: {}", provisioned.id,
+      // Write back only the fields provisioning owns. game.added already went
+      // out with open_config, so the user may well have PATCHed exe_path or
+      // runner_ref while the (deliberately slow) prefix creation ran — saving
+      // the whole stale snapshot would silently throw that away.
+      auto result = games_.Update(game.id, [&](model::Game& stored) {
+        stored.runner_ref = provisioned.runner_ref;
+        stored.status = provisioned.status;
+        stored.last_error = provisioned.last_error;
+      });
+      if (!result) {
+        log::Error("failed to save provisioning result for {}: {}", game.id,
                   result.error().message);
+      } else {
+        events_.Publish("game.updated", model::ToJson(*result));
       }
-      events_.Publish("game.updated", model::ToJson(provisioned));
     }
   }
 

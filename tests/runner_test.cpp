@@ -197,3 +197,23 @@ TEST_CASE("\"auto\" prefers proton_umu when a Proton build exists, else falls ba
 
   fs::remove_all(game.data_dir);
 }
+
+TEST_CASE("Resolve reports an uninstalled build instead of succeeding with none") {
+  config::Config config(TempFile("resolve-missing-build.toml"));
+  config.Load();
+  // Point discovery at nothing, so no wine/proton builds exist at all.
+  REQUIRE(config.Set("runner_search_paths", nlohmann::json::array()).has_value());
+  REQUIRE(config.Set("wine_search_paths", nlohmann::json::array()).has_value());
+  runner::RunnerRegistry registry(config);
+
+  // Regression: this used to return success-with-no-build, which made a
+  // Windows game resolve to "no build" and report a vague error — and made
+  // native:anything-at-all silently "succeed" for a Windows game.
+  auto proton = registry.Resolve("proton_umu:GE-Proton-Nonexistent");
+  CHECK_FALSE(proton.has_value());
+
+  // native has no build concept at all, so it still resolves.
+  auto native = registry.Resolve("native:native");
+  REQUIRE(native.has_value());
+  CHECK_FALSE(native->build.has_value());
+}
