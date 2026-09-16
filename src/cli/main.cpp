@@ -44,7 +44,7 @@ void PrintError(const httplib::Result& res) {
   } else {
     std::fprintf(stderr,
                  "mira: cannot reach mirad at %s (%s) — is it running? "
-                 "Try `systemctl --user status mirad` or `mirad --foreground`.\n",
+                 "Try `systemctl --user status mirad` or just running `mirad`.\n",
                  ResolveSocketPath().string().c_str(), httplib::to_string(res.error()).c_str());
   }
 }

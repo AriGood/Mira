@@ -161,7 +161,7 @@ frontend that:
 ### 3. One-shot, no persistent anything
 
 For someone who wants to use Mira purely to set a library up once and never
-run it again: run `mirad --foreground` from a terminal, do the setup work
+run it again: run `mirad` from a terminal, do the setup work
 through `mira-gui` or `mira`, then stop it (Ctrl-C, or `mira` has no stop
 command for a foreground-launched daemon by design — that's the terminal's
 job). No systemd unit is required to exist or be enabled for this to work;

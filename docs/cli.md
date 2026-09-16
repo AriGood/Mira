@@ -13,7 +13,7 @@ Every command below talks to `mirad` over `$XDG_RUNTIME_DIR/mira/mirad.sock`
 daemon except `mira daemon` itself, which starts one.
 
 ```sh
-mirad --foreground &
+mirad &
 mira status
 ```
 
@@ -22,13 +22,13 @@ mira status
 ## `mira status`
 Checks whether `mirad` is reachable — `GET /v1/health`. Prints "mirad is
 running" or an error naming the socket path it tried and suggesting how to
-start the daemon (`systemctl --user status mirad` or `mirad --foreground`).
+start the daemon (`systemctl --user status mirad` or just running `mirad`).
 
 ## `mira daemon [args...]`
 Execs `mirad` (found next to this binary, or on `PATH`) with any given
 arguments, replacing the `mira` process. Not an API call — nothing is
 listening yet. Equivalent to just running `mirad` directly; exists mainly
-so `mira daemon --foreground` is discoverable from the one tool a new user
+so `mira daemon` is discoverable from the one tool a new user
 already knows to reach for.
 
 ## `mira scan`

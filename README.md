@@ -56,7 +56,7 @@ cmake --preset tsan && cmake --build build/tsan
 ## Running it
 
 ```sh
-build/dev/mirad --foreground
+build/dev/mirad
 ```
 
 runs the daemon in the foreground, logging to stderr, listening on
@@ -82,7 +82,7 @@ while `mirad` is running and it shows up in `mira list` on its own, no
 
 `docs/architecture.md` documents the three supported ways to actually run
 `mirad` day-to-day (a systemd user service, spawned and supervised by the
-frontend, or one-shot with nothing persistent) — `--foreground` above is the
+frontend, or one-shot with nothing persistent) — running it directly is the
 right way to run it while developing, not the recommended end-user path.
 
 ## Where things live

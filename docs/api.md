@@ -20,7 +20,7 @@ human. Endpoints marked **(planned)** don't exist yet and return 404 — see
 `docs/architecture.md`'s "Planned, not yet built".
 
 ```sh
-mirad --foreground &
+mirad &
 mira status                 # or: curl --unix-socket "$XDG_RUNTIME_DIR/mira/mirad.sock" http://localhost/v1/health
 ```
 
