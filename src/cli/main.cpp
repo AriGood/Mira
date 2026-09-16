@@ -62,6 +62,20 @@ int CmdStatus() {
   return 0;
 }
 
+int CmdScan() {
+  auto client = Connect();
+  auto res = client.Post("/v1/library/scan");
+  if (!Ok(res)) {
+    PrintError(res);
+    return 1;
+  }
+  json summary = json::parse(res->body);
+  std::printf("added: %lld  missing: %lld  restored: %lld\n",
+             summary.value("added", 0LL), summary.value("missing", 0LL),
+             summary.value("restored", 0LL));
+  return 0;
+}
+
 int CmdList(int argc, char** argv) {
   std::string status_filter;
   for (int i = 0; i < argc; ++i) {
@@ -100,7 +114,7 @@ int CmdShow(int argc, char** argv) {
   const bool effective = argc > 1 && std::string_view(argv[1]) == "--effective";
 
   auto client = Connect();
-  auto res = client.Get(effective ? std::format("/v1/games/{}/effective-config", id)
+  auto res = client.Get(effective ? std::format("/v1/games/{}/config", id)
                                   : std::format("/v1/games/{}", id));
   if (!Ok(res)) {
     PrintError(res);
@@ -114,11 +128,14 @@ int CmdSet(int argc, char** argv) {
   if (argc < 1) {
     std::fprintf(stderr,
                  "usage: mira set <id> [--name N] [--exe PATH] [--args ARGS]\n"
-                 "                     [--runner kind:name] [--env KEY=VALUE]...\n");
+                 "                     [--runner kind:name] [--data-dir PATH]\n"
+                 "                     [--env KEY=VALUE]...\n"
+                 "                     [--override dotted.key=VALUE]... [--unset dotted.key]...\n");
     return 2;
   }
   const std::string id = argv[0];
-  json patch = json::object();
+  json patch = json::object();     // -> PATCH /v1/games/{id}: this game's own fields
+  json overrides = json::object(); // -> PATCH /v1/games/{id}/config: overrides of global settings
   json env = json::object();
 
   for (int i = 1; i < argc; ++i) {
@@ -132,22 +149,47 @@ int CmdSet(int argc, char** argv) {
       patch["args"] = next();
     } else if (arg == "--runner") {
       patch["runner_ref"] = next();
+    } else if (arg == "--data-dir") {
+      patch["data_dir"] = next();
     } else if (arg == "--env") {
       const std::string kv = next();
       if (const auto eq = kv.find('='); eq != std::string::npos) {
         env[kv.substr(0, eq)] = kv.substr(eq + 1);
       }
+    } else if (arg == "--override") {
+      const std::string kv = next();
+      if (const auto eq = kv.find('='); eq != std::string::npos) {
+        json value = json::parse(kv.substr(eq + 1), nullptr, false);
+        overrides[kv.substr(0, eq)] = value.is_discarded() ? json(kv.substr(eq + 1)) : value;
+      }
+    } else if (arg == "--unset") {
+      overrides[next()] = nullptr;
     }
   }
   if (!env.empty()) patch["env"] = env;
 
   auto client = Connect();
-  auto res = client.Patch(std::format("/v1/games/{}", id), patch.dump(), "application/json");
-  if (!Ok(res)) {
-    PrintError(res);
-    return 1;
+  bool changed = false;
+
+  if (!patch.empty()) {
+    auto res = client.Patch(std::format("/v1/games/{}", id), patch.dump(), "application/json");
+    if (!Ok(res)) {
+      PrintError(res);
+      return 1;
+    }
+    changed = true;
   }
-  std::puts("updated");
+  if (!overrides.empty()) {
+    auto res =
+        client.Patch(std::format("/v1/games/{}/config", id), overrides.dump(), "application/json");
+    if (!Ok(res)) {
+      PrintError(res);
+      return 1;
+    }
+    changed = true;
+  }
+
+  std::puts(changed ? "updated" : "nothing to do");
   return 0;
 }
 
@@ -289,6 +331,7 @@ void PrintUsage() {
       "commands:\n"
       "  status                 check whether mirad is reachable\n"
       "  daemon [args...]       exec mirad in the foreground\n"
+      "  scan                   scan all library roots now\n"
       "  list [--status S]      list games\n"
       "  show <id> [--effective] show one game, or its resolved settings\n"
       "  set <id> [flags...]    correct a game's auto-detected configuration\n"
@@ -312,6 +355,7 @@ int main(int argc, char** argv) {
     return 0;
   }
   if (command == "status") return CmdStatus();
+  if (command == "scan") return CmdScan();
   if (command == "daemon") return CmdDaemon(rest_argc, rest, argv[0]);
   if (command == "list") return CmdList(rest_argc, rest);
   if (command == "show") return CmdShow(rest_argc, rest);

@@ -139,7 +139,7 @@ double Similarity(std::string_view a, std::string_view b) {
   if (lhs.contains(rhs) || rhs.contains(lhs)) {
     const double shorter = static_cast<double>(std::min(lhs.size(), rhs.size()));
     const double longer = static_cast<double>(std::max(lhs.size(), rhs.size()));
-    return 0.5 + 0.5 * (shorter / longer);
+    return 0.5 + (0.5 * (shorter / longer));
   }
 
   // Otherwise fall back to a cheap common-prefix ratio.

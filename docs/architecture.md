@@ -48,9 +48,13 @@ src/
             ToJson/FromJson. No behaviour lives here.
   store/    GameStore — the games.toml-backed source of truth for the
             library.
+  library/  Detector (scores executables in one folder), Scanner (walks
+            library roots, reconciles against GameStore), AutoSetup (turns
+            a detection into a stored game), Watcher (inotify, drives
+            Scanner automatically).
   api/      EventBus (in-memory pub/sub) and Server (the REST routes) —
             see api.md for the surface this registers.
-  cli/      main.cpp for `mira`.
+  cli/      main.cpp for `mira` — see cli.md for what it does.
   mirad_main.cpp   entry point for the daemon.
 
 frontend/   the Qt skeleton (mira-gui). A separate CMake project scope;
@@ -193,8 +197,16 @@ if idle really means idle:
   not a daemon-idle wakeup, and it only runs while something is connected.
 - `mirad_main.cpp`'s shutdown handling is `sigwait`, not a signal-handler
   flag polled in a loop.
-- Nothing is fetched, scanned, or recomputed on a timer. (The watcher/scan
-  loop that will make this concrete is not built yet — see Open items.)
+- `library::Watcher` (`src/library/Watcher.cpp`) blocks in `epoll_wait` with
+  no timeout over inotify + an eventfd (for `Stop()`) + a timerfd used only
+  for debounce. That timerfd is the one deliberate exception, and it proves
+  the rule rather than breaking it: it is armed *only* while a newly-created
+  directory is being watched for size stability (polling its total size
+  every 500ms to tell "still copying" from "done"), and disarmed the moment
+  nothing is pending. At rest, with no directory mid-copy, it costs nothing.
+  One inotify watch per library root, non-recursive, so watch count is
+  O(roots) rather than O(library size) — recursive watching of a large
+  library is the usual way this kind of daemon gets expensive.
 
 ## Replaceability
 
@@ -212,17 +224,50 @@ doesn't:
   retuning; `config/Schema.cpp`'s `detect.*` keys already externalize the
   weights this will use.
 
+## Built: library detection, scanning, and watching
+
+`library/Detector.{h,cpp}` scores the executables inside one already-found
+folder using the `detect.*` schema keys (`DetectorSettings` mirrors those
+keys as plain values, so it's testable with no config file involved).
+Deliberately not a polymorphic rule-chain: each named pass in `detect.rules`
+(`deny_patterns`, `name_similarity`, `depth`, `shallowest`) is a plain
+function applied in the configured order, skipped if its name is absent from
+the list. That gives the documented promise — "removing a rule disables
+it" — without an interface that has no second implementation to justify it
+(see Replaceability above on why that restraint matters).
+
+`library/Scanner.{h,cpp}` walks each enabled library root one level deep —
+every immediate subdirectory is one game, matching "drop a folder in and
+it's picked up". A directory already known by `install_path` is never
+re-detected, so a scan can never clobber a correction made through `PATCH`.
+It excludes `prefix_root` and anything that looks like a Wine prefix
+(`system.reg` + `drive_c`, or `pfx/`) before ever calling the detector — this
+is the regression the whole design has to guard against, since the default
+prefix location sits *inside* the library root by default, and it's covered
+by an end-to-end test (`tests/detector_scanner_test.cpp`,
+`tests/watcher_test.cpp`) rather than left to code review.
+
+`library/AutoSetup.{h,cpp}` turns one `Detector::Result` into a stored
+`model::Game` and publishes `game.added` — before any provisioning happens,
+so the frontend can raise its config menu immediately rather than waiting on
+work that hasn't started. A native game needs no provisioning and is stored
+`ready` right away; a Windows game is stored `setting_up` and simply waits
+there — there is no runner layer yet to provision its prefix.
+
+`library/Watcher.{h,cpp}` is what makes detection automatic rather than
+requiring `mira scan`/`POST /v1/library/scan` by hand: one inotify watch per
+enabled root (read from `library_roots` once at startup — adding or removing
+a root needs a restart to be watched, though `POST /v1/library/scan` always
+picks up the current list immediately), debounced by polling a
+newly-created directory's total size until it stops changing for
+`scan.debounce_ms`, then running the same `Scanner::ScanRoot` logic the
+manual endpoint uses. A deletion needs no debounce and rescans its root
+immediately, so a removed game is marked `missing` promptly.
+
 ## Planned, not yet built
 
 Recorded here so intent isn't lost between sessions:
 
-- **`library/Detector.{h,cpp}`** — walks a game folder, scores candidate
-  executables using the `detect.*` schema keys, assigns a confidence.
-- **`library/Watcher.{h,cpp}`** — inotify-based, non-recursive per root,
-  debounced via a timer so a folder mid-copy isn't scanned prematurely.
-- **`library/AutoSetup.{h,cpp}`** — wires detection through to a provisioned
-  game and fires `game.added` before provisioning finishes, so the frontend
-  can open its config menu immediately.
 - **`runner/{IRunner,NativeRunner,WineRunner,UmuRunner}`** and
   **`prefix/IPrefixProvider`** — provisioning, including winetricks
   integration: a `winetricks_verbs` list in a game's `runner_config` (already

@@ -1,0 +1,85 @@
+# clang-tidy config for mira. Scoped to what this codebase actually needs
+# rather than every check LLVM ships — see docs/architecture.md on the
+# guardrails a resident, multi-threaded C++ daemon needs (TSan/ASan in CI
+# matter more here than most of these; this catches what sanitizers can't:
+# things visible from the source alone).
+Checks: >
+  -*,
+  bugprone-*,
+  -bugprone-easily-swappable-parameters,
+  clang-analyzer-*,
+  concurrency-*,
+  cppcoreguidelines-owning-memory,
+  cppcoreguidelines-pro-type-const-cast,
+  cppcoreguidelines-pro-type-static-cast-downcast,
+  cppcoreguidelines-slicing,
+  cppcoreguidelines-special-member-functions,
+  misc-*,
+  -misc-non-private-member-variables-in-classes,
+  modernize-*,
+  -modernize-use-trailing-return-type,
+  -modernize-loop-convert,
+  performance-*,
+  portability-*,
+  readability-avoid-return-with-void-value,
+  readability-container-size-empty,
+  readability-delete-null-pointer,
+  readability-duplicate-include,
+  readability-inconsistent-declaration-parameter-name,
+  readability-make-member-function-const,
+  readability-math-missing-parentheses,
+  readability-misleading-indentation,
+  readability-misplaced-array-index,
+  readability-redundant-*,
+  readability-simplify-boolean-expr,
+  readability-static-accessed-through-instance,
+  readability-string-compare
+
+# Every -Werror in this project's CMake presets is about compiler warnings;
+# clang-tidy findings are advisory (run by hand / in review), never a build
+# gate, so this deliberately does not set WarningsAsErrors.
+WarningsAsErrors: ''
+
+# The readability-* list above is deliberately an allowlist, not the whole
+# category with exclusions: this codebase consistently uses braceless
+# single-line ifs and multi-variable declarations (see any file in src/), and
+# a linter that fights an established, deliberate style just gets ignored.
+# Everything above catches an actual bug class; nothing above is a style
+# opinion this codebase already made a different, consistent choice about.
+
+# third_party/ is vendored, unowned code — never lint it. tests/ trades some
+# strictness for directness (see the CMakeLists.txt comment on mira_tests'
+# relaxed compiler warnings) so its own bar is lower too.
+HeaderFilterRegex: '^(?!.*third_party).*$'
+ExcludeHeaderFilterRegex: 'third_party/.*'
+
+CheckOptions:
+  - key: readability-identifier-naming.NamespaceCase
+    value: lower_case
+  - key: readability-identifier-naming.ClassCase
+    value: CamelCase
+  - key: readability-identifier-naming.StructCase
+    value: CamelCase
+  - key: readability-identifier-naming.FunctionCase
+    value: CamelCase
+  - key: readability-identifier-naming.VariableCase
+    value: lower_case
+  - key: readability-identifier-naming.PrivateMemberSuffix
+    value: _
+  - key: readability-identifier-naming.ProtectedMemberSuffix
+    value: _
+  - key: readability-identifier-naming.ConstexprVariableCase
+    value: CamelCase
+  - key: readability-identifier-naming.ConstexprVariablePrefix
+    value: k
+  - key: readability-identifier-naming.EnumCase
+    value: CamelCase
+  - key: readability-identifier-naming.EnumConstantCase
+    value: CamelCase
+  - key: modernize-use-nullptr.NullMacros
+    value: 'NULL'
+  # This codebase's whole error-handling convention is Result<T> (see
+  # core/Result.h) precisely to keep exceptions out of cross-module
+  # interfaces — flag any that show up.
+  - key: bugprone-exception-escape.IgnoredExceptions
+    value: ''

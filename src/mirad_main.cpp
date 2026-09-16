@@ -1,10 +1,11 @@
 // mirad — the Mira backend daemon.
 //
 // Owns settings.toml and games.toml, serves the REST API described in
-// docs/api.md over a Unix domain socket, and (once library/ and runner/ land)
-// watches the library and provisions games. This binary does not
-// daemonize itself (no double-fork): run it under `systemctl --user`, or let
-// the frontend spawn and supervise it — both are first-class per the plan in
+// docs/api.md over a Unix domain socket, and watches every enabled library
+// root so a dropped-in game folder is picked up automatically (see
+// library/Watcher.h). This binary does not daemonize itself (no
+// double-fork): run it under `systemctl --user`, or let the frontend spawn
+// and supervise it — both are first-class per the plan in
 // docs/architecture.md, and neither needs mirad to background itself.
 
 #include <csignal>
@@ -17,6 +18,8 @@
 #include "config/Config.h"
 #include "core/Log.h"
 #include "core/Paths.h"
+#include "library/Scanner.h"
+#include "library/Watcher.h"
 #include "store/GameStore.h"
 
 namespace {
@@ -93,6 +96,20 @@ int main(int argc, char** argv) {
   sigaddset(&block_set, SIGTERM);
   pthread_sigmask(SIG_BLOCK, &block_set, nullptr);
 
+  // A game folder that already existed before mirad started produces no
+  // inotify event — inotify only reports changes from here on, not existing
+  // state — so a full reconcile has to run once before the watcher takes
+  // over. Also catches a folder that appeared while the daemon was down.
+  {
+    mira::library::Scanner startup_scan(config, games, events);
+    const mira::library::ScanSummary summary = startup_scan.ScanAll();
+    mira::log::Info("startup scan: added {}, missing {}, restored {}", summary.added,
+                    summary.missing, summary.restored);
+  }
+
+  mira::library::Watcher watcher(config, games, events);
+  std::thread watcher_thread([&] { watcher.Run(); });
+
   std::thread server_thread([&] {
     if (auto result = server.Serve(socket_path); !result) {
       mira::log::Error("server exited: {}", result.error().message);
@@ -102,6 +119,8 @@ int main(int argc, char** argv) {
   WaitForShutdownSignal();
   mira::log::Info("shutting down");
   server.Stop();
+  watcher.Stop();
   server_thread.join();
+  watcher_thread.join();
   return 0;
 }
