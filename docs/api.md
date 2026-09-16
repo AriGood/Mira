@@ -20,7 +20,7 @@ human. Endpoints marked **(planned)** don't exist yet and return 404 — see
 `docs/architecture.md`'s "Planned, not yet built".
 
 ```sh
-mirad --foreground &
+mirad &
 mira status                 # or: curl --unix-socket "$XDG_RUNTIME_DIR/mira/mirad.sock" http://localhost/v1/health
 ```
 
@@ -70,7 +70,7 @@ Backed by `games.toml`. A game's `id` is a human-readable slug
 
 ### `GET /v1/games[?status=<status>]` — implemented
 Lists games, optionally filtered to one `status`
-(`setting_up | ready | broken | missing`).
+(`setting_up | ready | broken | missing | needs_install`).
 
 ### `GET /v1/games/{id}` — implemented
 The full stored record for one game:
@@ -161,9 +161,18 @@ watcher; this endpoint works immediately either way.
 
 ## Runners
 
-### `GET /v1/runners` — planned
+### `GET /v1/runners` — implemented
+Every installed build of every runner kind, freshly discovered on each
+call (no caching, no refresh endpoint needed as a result):
+```json
+[{ "kind": "proton_umu", "name": "GE-Proton11-7", "path": "/home/x/.steam/steam/compatibilitytools.d/GE-Proton11-7-x86_64",
+   "version": "1789520217", "reference": "proton_umu:GE-Proton11-7" }]
+```
+`reference` is what a game's `runner_ref` field and `default_runner.*`
+settings use. `native` never appears here — it has no concept of "builds".
+
 ### `GET /v1/runners/{kind}/schema` — planned
-### `POST /v1/runners/refresh` — planned
+### `POST /v1/runners/refresh` — planned (not needed today; see above)
 
 ---
 

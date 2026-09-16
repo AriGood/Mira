@@ -4,24 +4,12 @@
 #include "core/Strings.h"
 #include "library/AutoSetup.h"
 #include "library/Detector.h"
+#include "library/WinePrefix.h"
+#include "runner/RunnerRegistry.h"
 
 namespace mira::library {
 namespace {
 namespace fs = std::filesystem;
-
-// True for a directory that is itself a Wine/Proton prefix (system.reg +
-// drive_c, or a pfx/ subdirectory — umu's layout) rather than a game. Needed
-// because the default prefix_root sits *inside* the library root: without
-// this, a scan would rediscover its own prefixes as new games and provision
-// prefixes for them in turn. Also protects a library root that already has
-// prefixes from some other launcher sitting alongside real games.
-bool LooksLikeWinePrefix(const fs::path& dir) {
-  std::error_code ec;
-  const bool has_registry = fs::exists(dir / "system.reg", ec);
-  const bool has_drive_c = fs::exists(dir / "drive_c", ec);
-  const bool has_pfx = fs::exists(dir / "pfx", ec);
-  return (has_registry && has_drive_c) || has_pfx;
-}
 
 DetectorSettings SettingsFromConfig(const config::Config& config) {
   DetectorSettings settings;
@@ -31,6 +19,8 @@ DetectorSettings SettingsFromConfig(const config::Config& config) {
   settings.depth_penalty = config.GetDouble("detect.depth_penalty");
   settings.low_confidence_threshold = config.GetDouble("detect.low_confidence_threshold");
   settings.deny_name_patterns = config.GetStringArray("detect.deny_name_patterns");
+  settings.installer_name_patterns = config.GetStringArray("detect.installer_name_patterns");
+  settings.installer_min_size_mb = config.GetInt("detect.installer_min_size_mb");
   settings.ignore_globs = config.GetStringArray("scan.ignore_globs");
   return settings;
 }
@@ -63,6 +53,7 @@ ScanSummary Scanner::ScanRoot(const fs::path& root) {
   const DetectorSettings detector_settings = SettingsFromConfig(config_);
   const Detector detector(detector_settings);
   AutoSetup auto_setup(config_, games_, events_);
+  const runner::RunnerRegistry runners(config_);
 
   std::vector<std::string> seen_install_paths;
 
@@ -96,9 +87,24 @@ ScanSummary Scanner::ScanRoot(const fs::path& root) {
     }
 
     const Detector::Result detected = detector.Detect(dir);
-    auto_setup.CreateGame(dir, detected);
+    const model::Game game = auto_setup.CreateGame(dir, detected);
     ++summary.added;
     log::Info("detected new game: {}", install_path);
+
+    // With auto_setup off, a game is still detected and stored (so it shows
+    // up for the frontend to configure) but never auto-provisioned.
+    if (game.status == model::GameStatus::SettingUp && config_.GetBool("auto_setup")) {
+      // Only Windows games reach here (AutoSetup marks native ready
+      // immediately, broken if nothing was found). Provisioning blocks —
+      // umu/Proton's first-run init is a real few-second cost — but there's
+      // no job queue yet to move it off this thread; see docs/architecture.md.
+      const model::Game provisioned = runners.ProvisionGame(game);
+      if (auto result = games_.Upsert(provisioned); !result) {
+        log::Error("failed to save provisioning result for {}: {}", provisioned.id,
+                  result.error().message);
+      }
+      events_.Publish("game.updated", model::ToJson(provisioned));
+    }
   }
 
   // Anything previously known under this root but not seen this pass has

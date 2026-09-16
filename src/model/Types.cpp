@@ -18,10 +18,11 @@ std::string_view ToString(Platform platform) {
 
 std::string_view ToString(GameStatus status) {
   switch (status) {
-    case GameStatus::SettingUp: return "setting_up";
-    case GameStatus::Ready:     return "ready";
-    case GameStatus::Broken:    return "broken";
-    case GameStatus::Missing:   return "missing";
+    case GameStatus::SettingUp:    return "setting_up";
+    case GameStatus::Ready:        return "ready";
+    case GameStatus::Broken:       return "broken";
+    case GameStatus::Missing:      return "missing";
+    case GameStatus::NeedsInstall: return "needs_install";
   }
   return "broken";
 }
@@ -36,6 +37,7 @@ GameStatus GameStatusFromString(std::string_view text) {
   if (text == "setting_up") return GameStatus::SettingUp;
   if (text == "ready") return GameStatus::Ready;
   if (text == "missing") return GameStatus::Missing;
+  if (text == "needs_install") return GameStatus::NeedsInstall;
   return GameStatus::Broken;
 }
 
@@ -51,6 +53,7 @@ json ToJson(const Candidate& candidate) {
       {"kind", ToString(candidate.kind)},
       {"score", candidate.score},
       {"chosen", candidate.chosen},
+      {"is_installer", candidate.is_installer},
   };
 }
 
@@ -139,6 +142,7 @@ Game GameFromJson(const json& document) {
       candidate.kind = PlatformFromString(entry.value("kind", "unknown"));
       candidate.score = entry.value("score", 0.0);
       candidate.chosen = entry.value("chosen", false);
+      candidate.is_installer = entry.value("is_installer", false);
       game.candidates.push_back(std::move(candidate));
     }
   }

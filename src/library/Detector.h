@@ -19,6 +19,8 @@ struct DetectorSettings {
   double depth_penalty = 0.5;
   double low_confidence_threshold = 0.5;
   std::vector<std::string> deny_name_patterns;
+  std::vector<std::string> installer_name_patterns;
+  std::int64_t installer_min_size_mb = 50;
   // Applied during the walk itself (skips whole subtrees), distinct from
   // deny_name_patterns which only penalises a candidate's score. Should
   // include scan.ignore_globs plus the caller's prefix_root exclusion.
