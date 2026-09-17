@@ -178,7 +178,11 @@ void MainWindow::RefreshGames() {
 int MainWindow::FindRow(const std::string& id) const {
   const QString target = QString::fromStdString(id);
   for (int row = 0; row < games_table_->rowCount(); ++row) {
-    if (games_table_->item(row, 0)->data(Qt::UserRole).toString() == target) return row;
+    // A freshly inserted row has no items until PopulateRow fills it, so
+    // this can legitimately be null — dereferencing it unconditionally
+    // turns any such moment into a crash.
+    const QTableWidgetItem* item = games_table_->item(row, 0);
+    if (item != nullptr && item->data(Qt::UserRole).toString() == target) return row;
   }
   return -1;
 }
@@ -265,7 +269,18 @@ void MainWindow::UpsertRow(const mira_gui::GameSummary& game) {
     row = games_table_->rowCount();
     games_table_->insertRow(row);
   }
+
+  // Sorting off for the same reason RefreshGames turns it off: Qt re-sorts
+  // on any change to the sort column, so PopulateRow's very first setItem()
+  // can move this row, and every column after it — plus the actions cell —
+  // would then be written into whatever row slid into this index. That hands
+  // one game another's status and playtime, and puts its Delete button on
+  // the wrong row, which is a good deal worse than a cosmetic glitch.
+  // Re-enabling sorts again, so a rename still lands in its new position.
+  const bool sorting = games_table_->isSortingEnabled();
+  games_table_->setSortingEnabled(false);
   PopulateRow(row, game);
+  games_table_->setSortingEnabled(sorting);
 }
 
 void MainWindow::RemoveRow(const std::string& id) {

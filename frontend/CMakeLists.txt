@@ -100,5 +100,26 @@ set_target_properties(mira-gui PROPERTIES
   MACOSX_BUNDLE OFF
 )
 
+# Frontend unit tests. Deliberately its own executable rather than more
+# files in the root's tests/: that target links mira_core, and a frontend
+# test that could reach backend code would be able to "pass" against an
+# implementation the real mira-gui never talks to. This one links only the
+# header-only third-party deps the client itself uses.
+#
+# Only the layers with no Qt event loop and no socket in them are covered
+# here — client/JsonMapping (JSON <-> Types.h) and the parts of the client
+# that are pure functions. Anything needing a live mirad is exercised
+# against the real daemon instead; see docs/architecture.md.
+file(GLOB MIRA_GUI_TEST_SOURCES CONFIGURE_DEPENDS tests/*.cpp)
+add_executable(mira_gui_tests
+  ${MIRA_GUI_TEST_SOURCES}
+  client/JsonMapping.cpp
+)
+target_include_directories(mira_gui_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(mira_gui_tests PRIVATE mira_third_party)
+target_compile_features(mira_gui_tests PRIVATE cxx_std_20)
+target_compile_options(mira_gui_tests PRIVATE -Wall -Wextra)
+add_test(NAME frontend_unit COMMAND mira_gui_tests)
+
 include(GNUInstallDirs)
 install(TARGETS mira-gui RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})

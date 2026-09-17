@@ -15,6 +15,8 @@
 #include <QSplitter>
 #include <QVBoxLayout>
 
+#include <iterator>
+
 #include "../client/MiradClient.h"
 #include "../dialogs/GameDetailDialog.h"
 #include "../dialogs/SettingsDialog.h"
@@ -342,9 +344,13 @@ const mira_gui::GameSummary* LibraryWindow::FindGame(const std::string& id) cons
 }
 
 void LibraryWindow::UpsertGame(const mira_gui::GameSummary& game) {
-  // A rename changes the cover's initials, so the cached tile for this id is
-  // no longer correct whatever else changed.
-  cover_cache_.remove(QString("%1@%2").arg(QString::fromStdString(game.id)).arg(tile_width_));
+  // A rename changes the cover's initials, so every cached tile for this id
+  // is stale — not just the one at the current tile size, or moving the zoom
+  // slider afterwards would bring the old initials back.
+  const QString prefix = QString::fromStdString(game.id) + "@";
+  for (auto it = cover_cache_.begin(); it != cover_cache_.end();) {
+    it = it.key().startsWith(prefix) ? cover_cache_.erase(it) : std::next(it);
+  }
 
   for (mira_gui::GameSummary& existing : games_) {
     if (existing.id == game.id) {
