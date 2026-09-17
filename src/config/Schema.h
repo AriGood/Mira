@@ -41,19 +41,9 @@ enum class Type { Bool, Int, Double, String, StringArray, Object };
 // rejected with a reason rather than silently clamped.
 using Validator = std::function<std::optional<std::string>(const nlohmann::json&)>;
 
-// A validator plus whatever about it a UI can act on.
-//
-// A bare Validator is a closure: it can reject "maybe" for
-// steam.launch_mode with a good message, but GET /v1/config/schema can only
-// publish the message *after* the fact, so a settings screen has no way to
-// know the key is a two-value enum and renders it as a free-text box. The
-// user then types the wrong thing and gets told off for it. Recording the
-// allowed values (or the bounds) alongside the check lets the schema
-// endpoint describe the shape up front, so the UI can offer a combo box or
-// a spin box generically, with no per-key knowledge.
-//
-// Constructible from a plain Validator, so a check with no describable
-// shape (RunnerRef, a path test) is still written as an ordinary lambda.
+// A Validator plus the shape it enforces, so /v1/config/schema can publish
+// that shape instead of a UI only learning it from a rejected PATCH.
+// Constructible from a plain Validator when there's no shape to describe.
 struct Constraint {
   Validator validate = {};
   std::vector<std::string> one_of;      // empty unless this is an enum

@@ -231,9 +231,7 @@ void Server::RegisterRoutes() {
           {"tier", config::ToString(entry.tier)},
           {"doc", entry.doc},
       });
-      // Only present when there is a shape to describe, so a client can
-      // treat "has one_of" as "render a combo box" without checking for an
-      // empty array first.
+      // Present only when there's a shape to describe.
       if (!entry.constraint.one_of.empty()) entries.back()["one_of"] = entry.constraint.one_of;
       if (entry.constraint.minimum) entries.back()["minimum"] = *entry.constraint.minimum;
       if (entry.constraint.maximum) entries.back()["maximum"] = *entry.constraint.maximum;
@@ -436,11 +434,8 @@ void Server::RegisterRoutes() {
         }
         [[maybe_unused]] auto _ =
             games_.Update(game->id, [](model::Game& g) { g.last_played_at = model::NowSeconds(); });
-        // `tracked` tells the caller whether game.state events are coming for
-        // this launch, so a frontend doesn't have to infer it from the status
-        // string plus a guess at steam.track_process. It's published on the
-        // event too, since a client that launched from elsewhere (the CLI,
-        // another window) only ever sees the event.
+        // Whether game.state events are coming for this launch — on the
+        // event too, for a client that launched from elsewhere (the CLI).
         const bool track = resolver.GetBool("steam.track_process");
         events_.Publish("game.launched",
                         {{"id", game->id}, {"via", "steam"}, {"tracked", track}});
@@ -465,10 +460,7 @@ void Server::RegisterRoutes() {
     if (auto launched = supervisor_.Launch(*game, *command, post_script); !launched) {
       return SendError(res, 409, launched.error().code, launched.error().message);
     }
-    // Always true here: this is the path Mira spawned itself, so game.state
-    // is guaranteed. Sent anyway so a client reads one field instead of
-    // branching on which status string came back.
-    SendJson(res, {{"status", "running"}, {"tracked", true}});
+    SendJson(res, {{"status", "running"}, {"tracked", true}});  // always true: Mira spawned it
   });
 
   http_->Post(R"(/v1/games/([^/]+)/stop)", [this](const Request& req, Response& res) {

@@ -74,9 +74,7 @@ std::set<pid_t> FindSteamProcesses(const std::string& appid) {
   return found;
 }
 
-// SIGTERM, then (after the caller's grace period) SIGKILL, to a game's whole
-// tree: its process group, for a native game and for whatever stayed in it,
-// plus every process sharing its prefix, for the Wine processes that left.
+// Signals a game's process group plus every process sharing its prefix.
 void SignalGame(pid_t pid, const std::string& data_dir, int signal_number) {
   if (pid > 0) {
     ::kill(-pid, signal_number);
@@ -94,30 +92,18 @@ bool AnyAlive(const std::set<pid_t>& pids) {
 
 }  // namespace
 
-// Every pid under this UID running inside one game's Wine prefix.
+// Every pid whose WINEPREFIX/STEAM_COMPAT_DATA_PATH points at data_dir.
 //
-// Signalling a game's process *group* is not enough on the Proton/Wine path:
-// umu-run, wineserver, each winedevice and the game .exe itself all call
-// setsid()/setpgid() during startup, so by the time a game is on screen the
-// only member left in the group mirad created is umu-run. Stopping it killed
-// that one launcher process and left the game running, orphaned and
-// untrackable (observed: 1 of 16 processes signalled).
-//
-// So the prefix is the handle instead — every process in the tree inherits
-// WINEPREFIX/STEAM_COMPAT_DATA_PATH pointing at this game's data_dir, and no
-// other game's tree can carry it, since data_dir is per game. Same technique
-// as FindSteamProcesses above, and for the same reason: a process Mira
-// cannot reach through the parent/group relationship can still be identified
-// by what it inherited.
+// The process group alone isn't enough: on Proton/Wine, setsid()/setpgid()
+// during startup leaves the group with just umu-run by the time a game is
+// on screen. Measured against a real launch: signalling the group reached
+// 1 of 16 processes.
 std::set<pid_t> FindPrefixProcesses(const std::string& data_dir) {
   std::set<pid_t> found;
   if (data_dir.empty()) return found;
 
-  // Compared entry by entry rather than by substring, so a game whose
-  // data_dir is a string prefix of another's ("…/prefix/animal" vs
-  // "…/prefix/animal-well") can't stop its neighbour. umu rewrites
-  // WINEPREFIX to "<data_dir>/pfx/", hence the separator case as well as
-  // the exact one.
+  // Entry-by-entry, not substring: "…/prefix/animal" must not match
+  // "…/prefix/animal-well". umu rewrites WINEPREFIX to "<data_dir>/pfx/".
   const auto matches = [&data_dir](std::string_view value) {
     if (value == data_dir) return true;
     return value.size() > data_dir.size() && value.starts_with(data_dir) &&
@@ -190,9 +176,7 @@ Result<void> ProcessSupervisor::Launch(const model::Game& game, const Command& c
   {
     std::lock_guard lock(mutex_);
     running_[game.id] = *pid;
-    // Kept for Stop(), which needs it after the process group has already
-    // dissolved — see FindPrefixProcesses.
-    prefixes_[game.id] = game.data_dir;
+    prefixes_[game.id] = game.data_dir;  // for Stop(), see FindPrefixProcesses
     // A previous watcher for this id has already finished by now (it erases
     // itself from running_ before exiting), but its thread object can still
     // be sitting here unjoined.
@@ -240,9 +224,8 @@ Result<void> ProcessSupervisor::Stop(const std::string& game_id) {
               std::format("\"{}\" was launched but its process isn't confirmed yet — try again shortly",
                           game_id));
   }
-  // The group (see the setpgid note in runner::SpawnDetached) plus everything
-  // still living in this game's prefix, because on the Proton/Wine path the
-  // group is nearly empty by now — FindPrefixProcesses explains why.
+  // Group (see runner::SpawnDetached's setpgid note) plus the prefix — see
+  // FindPrefixProcesses for why the group alone usually isn't enough.
   const std::set<pid_t> in_prefix = FindPrefixProcesses(data_dir);
   const bool group_signalled = ::kill(-pid, SIGTERM) == 0 || ::kill(pid, SIGTERM) == 0;
   for (pid_t found : in_prefix) ::kill(found, SIGTERM);

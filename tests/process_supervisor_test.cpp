@@ -163,21 +163,15 @@ TEST_CASE("ProcessSupervisor::Stop refuses a not-yet-confirmed TrackSteamLaunch 
   CHECK(stopped.error().code == "not_yet_confirmed");
 }
 
-// The Proton/Wine path is why Stop() can't rely on the process group alone:
-// umu-run, wineserver, each winedevice and the game .exe all call
-// setsid()/setpgid() during startup, so the group mirad created ends up with
-// one member while the game itself runs outside it. Measured against a real
-// launch before this was fixed: 1 of 16 processes signalled, the game left
-// running and orphaned while mirad reported it exited. FindPrefixProcesses
-// is the replacement handle — the prefix every process in the tree
-// inherits — so these cover what it must and must not match.
+// FindPrefixProcesses exists because Stop()'s process-group signal reached
+// 1 of 16 processes on a real Proton launch (umu-run, wineserver, etc. all
+// setsid()). These cover what the prefix match must and must not catch.
 
 TEST_CASE("FindPrefixProcesses finds a process that left its process group") {
   const fs::path prefix = TempDir("proc-prefix-escaped");
 
-  // setsid() is exactly what wineserver does, and the reason the group is
-  // empty by the time anyone asks. The env var is the only thing left
-  // tying this process to the game.
+  // setsid(), like wineserver does — the env var is all that's left tying
+  // this process to the game.
   Command command;
   command.argv = {"sh", "-c", "setsid sleep 30 & sleep 30"};
   command.env["WINEPREFIX"] = prefix.string();

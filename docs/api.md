@@ -49,13 +49,8 @@ Every setting's type, default, tier (`basic | advanced | expert` — a
 frontend should show `basic` and fold the rest behind a disclosure, never
 omit them), and one-line doc string.
 
-A setting whose accepted values have a shape also carries it: `one_of` (an
-array, for an enum) or `minimum`/`maximum` (for a bounded number). Both are
-**absent** rather than empty when they don't apply, so `"one_of" in entry`
-is the whole test for "render a combo box". Without these the validator's
-answer only ever arrived as a rejection *after* a `PATCH`, so a two-value
-enum like `steam.launch_mode` rendered as a free-text box and the user found
-out by being told off for typing the wrong thing.
+A setting with a describable shape also carries it: `one_of` (an enum's
+array) or `minimum`/`maximum`. Absent, not empty, when it doesn't apply.
 
 The tier is a judgement about the user, not about the value's complexity:
 `basic` means someone who just wants their games to work may have to change
@@ -172,10 +167,8 @@ exits (clean, crashed, or stopped, always) — in the background, so it
 never blocks anything, and its own exit code is only logged, never
 reflected in the recorded playtime/crash state.
 
-The reply is `{"status": "running", "tracked": true}`, where `tracked` says
-whether `game.state` events are coming for this launch — see the Steam case
-below for the one time it isn't true. A client reads that field rather than
-inferring tracking from the status string.
+The reply's `tracked` says whether `game.state` events are coming for this
+launch — see the Steam case below for the one time it isn't true.
 
 A Steam-sourced game (`runner_ref` starting `steam:`) is a special case:
 if the effective `steam.launch_mode` is `"steam"` — the default — this
@@ -195,20 +188,15 @@ has to be set manually first (see `POST /v1/steam/scan` below for why
 Mira can't determine it on its own).
 
 ### `POST /v1/games/{id}/stop` — implemented
-Sends SIGTERM to the game's process group **and** to every process running
-inside its prefix, escalating to SIGKILL after `launch.stop_timeout_s` if
-anything is still alive. 409 if not running.
+Sends SIGTERM to the game's process group **and** every process running in
+its prefix, escalating to SIGKILL after `launch.stop_timeout_s`. 409 if not
+running.
 
-The prefix half is not belt-and-braces: on the Proton/Wine path the process
-group is nearly empty by the time a game is on screen. umu-run, wineserver,
-each winedevice and the game `.exe` itself call `setsid()`/`setpgid()`
-during startup, so signalling the group mirad created reaches the launcher
-and nothing else — measured against a real launch, 1 of 16 processes. What
-every one of them does still share is the `WINEPREFIX` /
-`STEAM_COMPAT_DATA_PATH` pointing at that game's `data_dir`, so that's the
-handle `proc::ProcessSupervisor` uses instead (the same
-identify-by-inherited-environment trick `steam.track_process` uses for an
-appid). A game with no prefix — a native one — is signalled by group alone.
+The prefix half matters on Proton/Wine: `setsid()`/`setpgid()` during startup
+leaves the process group nearly empty (measured: 1 of 16 processes reached).
+Every process still shares `WINEPREFIX`/`STEAM_COMPAT_DATA_PATH`, so that's
+the fallback handle. A native game has no prefix and is signalled by group
+alone.
 
 ### `POST /v1/games/{id}/run` — implemented
 Body: `{"exe_path": "...", "args": "..."}`. Runs that exe inside this
