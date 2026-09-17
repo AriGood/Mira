@@ -12,8 +12,11 @@ namespace {
 
 using nlohmann::json;
 
-Validator Range(double min, double max) {
-  return [min, max](const json& value) -> std::optional<std::string> {
+Constraint Range(double min, double max) {
+  Constraint constraint;
+  constraint.minimum = min;
+  constraint.maximum = max;
+  constraint.validate = [min, max](const json& value) -> std::optional<std::string> {
     if (!value.is_number()) return "expected a number";
     const double number = value.get<double>();
     if (number < min || number > max) {
@@ -21,10 +24,13 @@ Validator Range(double min, double max) {
     }
     return std::nullopt;
   };
+  return constraint;
 }
 
-Validator OneOf(std::vector<std::string> allowed) {
-  return [allowed = std::move(allowed)](const json& value) -> std::optional<std::string> {
+Constraint OneOf(std::vector<std::string> allowed) {
+  Constraint constraint;
+  constraint.one_of = allowed;
+  constraint.validate = [allowed = std::move(allowed)](const json& value) -> std::optional<std::string> {
     if (!value.is_string()) return "expected a string";
     const std::string text = value.get<std::string>();
     if (std::ranges::find(allowed, text) == allowed.end()) {
@@ -37,6 +43,7 @@ Validator OneOf(std::vector<std::string> allowed) {
     }
     return std::nullopt;
   };
+  return constraint;
 }
 
 // A runner reference is "kind:name", where name may be "latest".
@@ -342,7 +349,7 @@ std::optional<std::string> Schema::Validate(std::string_view key, const json& va
   }();
   if (!type_ok) return std::format("expected {}", ToString(entry->type));
 
-  if (entry->validator) return entry->validator(value);
+  if (entry->constraint) return entry->constraint.validate(value);
   return std::nullopt;
 }
 

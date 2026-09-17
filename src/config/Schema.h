@@ -41,13 +41,37 @@ enum class Type { Bool, Int, Double, String, StringArray, Object };
 // rejected with a reason rather than silently clamped.
 using Validator = std::function<std::optional<std::string>(const nlohmann::json&)>;
 
+// A validator plus whatever about it a UI can act on.
+//
+// A bare Validator is a closure: it can reject "maybe" for
+// steam.launch_mode with a good message, but GET /v1/config/schema can only
+// publish the message *after* the fact, so a settings screen has no way to
+// know the key is a two-value enum and renders it as a free-text box. The
+// user then types the wrong thing and gets told off for it. Recording the
+// allowed values (or the bounds) alongside the check lets the schema
+// endpoint describe the shape up front, so the UI can offer a combo box or
+// a spin box generically, with no per-key knowledge.
+//
+// Constructible from a plain Validator, so a check with no describable
+// shape (RunnerRef, a path test) is still written as an ordinary lambda.
+struct Constraint {
+  Validator validate = {};
+  std::vector<std::string> one_of;      // empty unless this is an enum
+  std::optional<double> minimum;        // unset unless this is ranged
+  std::optional<double> maximum;
+
+  Constraint() = default;
+  Constraint(Validator validator) : validate(std::move(validator)) {}  // NOLINT: implicit
+  explicit operator bool() const { return static_cast<bool>(validate); }
+};
+
 struct Entry {
   std::string key;  // dotted, e.g. "scan.debounce_ms"
   Type type;
   nlohmann::json default_value;
   Tier tier;
   std::string doc;
-  Validator validator = {};  // optional
+  Constraint constraint = {};  // optional
 };
 
 // Every configurable value in the daemon is declared here exactly once. The

@@ -231,6 +231,12 @@ void Server::RegisterRoutes() {
           {"tier", config::ToString(entry.tier)},
           {"doc", entry.doc},
       });
+      // Only present when there is a shape to describe, so a client can
+      // treat "has one_of" as "render a combo box" without checking for an
+      // empty array first.
+      if (!entry.constraint.one_of.empty()) entries.back()["one_of"] = entry.constraint.one_of;
+      if (entry.constraint.minimum) entries.back()["minimum"] = *entry.constraint.minimum;
+      if (entry.constraint.maximum) entries.back()["maximum"] = *entry.constraint.maximum;
     }
     SendJson(res, std::move(entries));
   });
@@ -430,13 +436,20 @@ void Server::RegisterRoutes() {
         }
         [[maybe_unused]] auto _ =
             games_.Update(game->id, [](model::Game& g) { g.last_played_at = model::NowSeconds(); });
-        events_.Publish("game.launched", {{"id", game->id}, {"via", "steam"}});
-        if (resolver.GetBool("steam.track_process")) {
-          if (auto tracked = supervisor_.TrackSteamLaunch(*game, appid, post_script); !tracked) {
-            log::Warn("couldn't start tracking {}: {}", game->id, tracked.error().message);
+        // `tracked` tells the caller whether game.state events are coming for
+        // this launch, so a frontend doesn't have to infer it from the status
+        // string plus a guess at steam.track_process. It's published on the
+        // event too, since a client that launched from elsewhere (the CLI,
+        // another window) only ever sees the event.
+        const bool track = resolver.GetBool("steam.track_process");
+        events_.Publish("game.launched",
+                        {{"id", game->id}, {"via", "steam"}, {"tracked", track}});
+        if (track) {
+          if (auto started = supervisor_.TrackSteamLaunch(*game, appid, post_script); !started) {
+            log::Warn("couldn't start tracking {}: {}", game->id, started.error().message);
           }
         }
-        return SendJson(res, {{"status", "launched_via_steam"}});
+        return SendJson(res, {{"status", "launched_via_steam"}, {"tracked", track}});
       }
     }
 
@@ -452,7 +465,10 @@ void Server::RegisterRoutes() {
     if (auto launched = supervisor_.Launch(*game, *command, post_script); !launched) {
       return SendError(res, 409, launched.error().code, launched.error().message);
     }
-    SendJson(res, {{"status", "running"}});
+    // Always true here: this is the path Mira spawned itself, so game.state
+    // is guaranteed. Sent anyway so a client reads one field instead of
+    // branching on which status string came back.
+    SendJson(res, {{"status", "running"}, {"tracked", true}});
   });
 
   http_->Post(R"(/v1/games/([^/]+)/stop)", [this](const Request& req, Response& res) {

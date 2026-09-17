@@ -49,6 +49,14 @@ Every setting's type, default, tier (`basic | advanced | expert` — a
 frontend should show `basic` and fold the rest behind a disclosure, never
 omit them), and one-line doc string.
 
+A setting whose accepted values have a shape also carries it: `one_of` (an
+array, for an enum) or `minimum`/`maximum` (for a bounded number). Both are
+**absent** rather than empty when they don't apply, so `"one_of" in entry`
+is the whole test for "render a combo box". Without these the validator's
+answer only ever arrived as a rejection *after* a `PATCH`, so a two-value
+enum like `steam.launch_mode` rendered as a free-text box and the user found
+out by being told off for typing the wrong thing.
+
 The tier is a judgement about the user, not about the value's complexity:
 `basic` means someone who just wants their games to work may have to change
 it, however fiddly it looks; `advanced` is tuning something that already
@@ -163,6 +171,11 @@ before the game starts. `launch.post_script` runs once the game process
 exits (clean, crashed, or stopped, always) — in the background, so it
 never blocks anything, and its own exit code is only logged, never
 reflected in the recorded playtime/crash state.
+
+The reply is `{"status": "running", "tracked": true}`, where `tracked` says
+whether `game.state` events are coming for this launch — see the Steam case
+below for the one time it isn't true. A client reads that field rather than
+inferring tracking from the status string.
 
 A Steam-sourced game (`runner_ref` starting `steam:`) is a special case:
 if the effective `steam.launch_mode` is `"steam"` — the default — this
