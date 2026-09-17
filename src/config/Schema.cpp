@@ -251,6 +251,16 @@ Schema::Schema() {
        std::string(runner_sources::kWineGEAssetPattern), Tier::Expert,
        "Glob a release's assets are filtered to before offering one to download."},
 
+      {"metadata.enabled", Type::Bool, true, Tier::Basic,
+       "Fetch cover art and store metadata (description, genre, ProtonDB compatibility "
+       "tier) automatically when a game is detected. Steam-owned games use Steam's own "
+       "public APIs and ProtonDB, no key needed; everything else needs "
+       "steamgriddb.api_key set to fetch cover art, and has no metadata source at all."},
+
+      {"steamgriddb.api_key", Type::String, "", Tier::Expert,
+       "Free API key from steamgriddb.com, used to fetch cover art for non-Steam games by "
+       "name search. Empty skips that source silently — Steam-owned games don't need it."},
+
       {"events.sse_keepalive_s", Type::Int, 0, Tier::Expert,
        "Seconds between keepalive comments on the event stream. 0 disables them; a Unix "
        "socket does not need them and a timer would cost idle wakeups.",

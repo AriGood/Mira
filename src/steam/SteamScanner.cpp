@@ -44,6 +44,7 @@ Result<SteamScanSummary> SteamScanner::Scan() {
       events_.Publish("game.updated", model::ToJson(game));
     } else {
       ++summary.added;
+      summary.added_games.push_back(game);
       events_.Publish("game.added", model::ToJson(game));
     }
   }

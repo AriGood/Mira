@@ -6,6 +6,8 @@
 #include <atomic>
 #include <filesystem>
 #include <format>
+#include <fstream>
+#include <sstream>
 #include <thread>
 
 #include <httplib.h>
@@ -15,9 +17,11 @@
 #include "core/Log.h"
 #include "desktop/DesktopEntries.h"
 #include "library/Scanner.h"
+#include "metadata/MetadataFetcher.h"
 #include "runner/Downloader.h"
 #include "runner/Exec.h"
 #include "runner/RunnerRegistry.h"
+#include "runner/Winetricks.h"
 #include "steam/SteamScanner.h"
 
 namespace mira::api {
@@ -343,6 +347,7 @@ void Server::RegisterRoutes() {
   http_->Post("/v1/library/scan", [this](const Request&, Response& res) {
     library::Scanner scanner(config_, games_, events_);
     const library::ScanSummary summary = scanner.ScanAll();
+    for (const model::Game& game : summary.added_games) metadata_fetches_.Enqueue(config_, events_, game);
     SendJson(res, {{"added", summary.added}, {"missing", summary.missing},
                    {"restored", summary.restored}});
   });
@@ -357,6 +362,7 @@ void Server::RegisterRoutes() {
     auto summary = scanner.Scan();
     if (!summary) return SendError(res, 404, summary.error().code, summary.error().message);
     SyncDesktopEntries(config_, games_);
+    for (const model::Game& game : summary->added_games) metadata_fetches_.Enqueue(config_, events_, game);
     SendJson(res, {{"added", summary->added}, {"updated", summary->updated}});
   });
 
@@ -497,6 +503,86 @@ void Server::RegisterRoutes() {
     SyncDesktopEntries(config_, games_);
     events_.Publish("game.updated", model::ToJson(*result));
     SendJson(res, model::ToJson(*result));
+  });
+
+  // Runs one winetricks verb against this game's own prefix — see
+  // runner/Winetricks.h for why this shells out to the real tool rather than
+  // reimplementing it. Runs in the background (a verb can mean downloading
+  // and installing a redistributable, real minutes, not a request-scale
+  // wait) and returns 202 immediately; tricks.finished/.failed on the event
+  // stream say when it's done.
+  http_->Post(R"(/v1/games/([^/]+)/tricks)", [this](const Request& req, Response& res) {
+    auto game = games_.Find(req.matches[1]);
+    if (!game) return SendError(res, 404, "game_not_found", "no such game");
+
+    json body = json::parse(req.body, nullptr, false);
+    if (body.is_discarded() || !body.contains("verb") || !body["verb"].is_string()) {
+      return SendError(res, 400, "invalid_body", R"(expected {"verb": "..."})");
+    }
+    const std::string verb = body["verb"];
+    const std::string id = game->id;
+
+    events_.Publish("tricks.started", {{"id", id}, {"verb", verb}});
+    tricks_queue_.Run([this, id, verb] {
+      const runner::RunnerRegistry registry(config_);
+      const auto game = games_.Find(id);
+      if (!game) return;  // removed while queued
+      if (auto ran = runner::RunTricksVerb(registry, *game, verb); !ran) {
+        log::Error("winetricks {} failed for {}: {}", verb, id, ran.error().message);
+        events_.Publish("tricks.failed", {{"id", id}, {"verb", verb}, {"error", ran.error().message}});
+      } else {
+        events_.Publish("tricks.finished", {{"id", id}, {"verb", verb}});
+      }
+    });
+    SendJson(res, {{"status", "running"}, {"verb", verb}}, 202);
+  });
+
+  // --- metadata ---------------------------------------------------------
+
+  // Cached cover art + store info (see metadata/MetadataFetcher.h) — fetched
+  // automatically off a scan, never blocking one; these two endpoints only
+  // ever read what's already on disk. 404 either means "never fetched" or
+  // "fetched, but this source had nothing" — the caller can always retry via
+  // the refresh endpoint below to find out which.
+  http_->Get(R"(/v1/games/([^/]+)/metadata)", [this](const Request& req, Response& res) {
+    if (!games_.Find(req.matches[1])) return SendError(res, 404, "game_not_found", "no such game");
+    const std::filesystem::path file = metadata::MetadataFile(config_, req.matches[1]);
+    std::ifstream in(file);
+    if (!in) return SendError(res, 404, "metadata_not_found", "no metadata cached for this game yet");
+    std::ostringstream buffer;
+    buffer << in.rdbuf();
+    res.set_content(buffer.str(), "application/json");
+  });
+
+  http_->Get(R"(/v1/games/([^/]+)/artwork)", [this](const Request& req, Response& res) {
+    if (!games_.Find(req.matches[1])) return SendError(res, 404, "game_not_found", "no such game");
+    const std::filesystem::path metadata_file = metadata::MetadataFile(config_, req.matches[1]);
+    std::ifstream meta_in(metadata_file);
+    if (!meta_in) return SendError(res, 404, "artwork_not_found", "no artwork cached for this game yet");
+    const json info = json::parse(meta_in, nullptr, false);
+    if (info.is_discarded() || !info.contains("artwork")) {
+      return SendError(res, 404, "artwork_not_found", "no artwork cached for this game yet");
+    }
+    const std::filesystem::path file =
+        metadata::ArtworkDir(config_, req.matches[1]) / info["artwork"].value("file", std::string());
+    std::ifstream in(file, std::ios::binary);
+    if (!in) return SendError(res, 404, "artwork_not_found", "cached artwork file is missing");
+    std::ostringstream buffer;
+    buffer << in.rdbuf();
+    res.set_content(buffer.str(), info["artwork"].value("content_type", "image/jpeg"));
+  });
+
+  // Re-runs the fetch for one game on demand — a new SteamGridDB key was
+  // just set, or the first automatic attempt failed transiently. Runs in the
+  // background via metadata_fetches_ (force=true bypasses metadata.enabled:
+  // an explicit refresh request should work even with automatic fetching
+  // turned off), same as runner downloads: a slow or unreachable source must
+  // never block the request.
+  http_->Post(R"(/v1/games/([^/]+)/metadata/refresh)", [this](const Request& req, Response& res) {
+    auto game = games_.Find(req.matches[1]);
+    if (!game) return SendError(res, 404, "game_not_found", "no such game");
+    metadata_fetches_.Enqueue(config_, events_, *game, /*force=*/true);
+    SendJson(res, {{"status", "fetching"}}, 202);
   });
 
   // --- runners --------------------------------------------------------------

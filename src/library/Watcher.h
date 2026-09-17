@@ -5,6 +5,7 @@
 
 #include "api/EventBus.h"
 #include "config/Config.h"
+#include "metadata/FetchQueue.h"
 #include "store/GameStore.h"
 
 namespace mira::library {
@@ -55,6 +56,7 @@ private:
   config::Config& config_;
   store::GameStore& games_;
   api::EventBus& events_;
+  metadata::FetchQueue metadata_fetches_;
 
   int inotify_fd_ = -1;
   int epoll_fd_ = -1;

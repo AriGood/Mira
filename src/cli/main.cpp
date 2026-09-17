@@ -277,6 +277,61 @@ int CmdSteam(int argc, char** argv) {
   return 2;
 }
 
+int CmdTricks(int argc, char** argv) {
+  if (argc < 2) {
+    std::fprintf(stderr,
+                 "usage: mira tricks <id> <verb>\n"
+                 "  runs a winetricks verb (e.g. corefonts, vcrun2019, win10) against this\n"
+                 "  game's own prefix. Runs in the background; watch `mira watch` for\n"
+                 "  tricks.finished/.failed.\n");
+    return 2;
+  }
+  const std::string id = argv[0];
+  const std::string verb = argv[1];
+
+  auto client = Connect();
+  const json body = {{"verb", verb}};
+  auto res = client.Post(std::format("/v1/games/{}/tricks", id), body.dump(), "application/json");
+  if (!Ok(res)) {
+    PrintError(res);
+    return 1;
+  }
+  std::puts("running — watch `mira watch` for tricks.finished/.failed");
+  return 0;
+}
+
+int CmdMetadata(int argc, char** argv) {
+  if (argc < 1) {
+    std::fprintf(stderr,
+                 "usage: mira metadata <id> [--refresh]\n"
+                 "  prints cached cover-art/store-info JSON; --refresh re-fetches first\n"
+                 "  (cover art itself is only reachable via GET /v1/games/{id}/artwork,\n"
+                 "  not printable here).\n");
+    return 2;
+  }
+  const std::string id = argv[0];
+  const bool refresh = argc > 1 && std::string_view(argv[1]) == "--refresh";
+
+  auto client = Connect();
+  if (refresh) {
+    auto posted = client.Post(std::format("/v1/games/{}/metadata/refresh", id));
+    if (!Ok(posted)) {
+      PrintError(posted);
+      return 1;
+    }
+    std::puts("fetching — watch `mira watch` for game.metadata_ready/.metadata_failed");
+    return 0;
+  }
+
+  auto res = client.Get(std::format("/v1/games/{}/metadata", id));
+  if (!Ok(res)) {
+    PrintError(res);
+    return 1;
+  }
+  std::cout << json::parse(res->body).dump(2) << '\n';
+  return 0;
+}
+
 int CmdList(int argc, char** argv) {
   std::string status_filter;
   for (int i = 0; i < argc; ++i) {
@@ -548,6 +603,8 @@ void PrintUsage() {
       "  set <id> [flags...]    correct a game's auto-detected configuration\n"
       "  remove <id> [--delete-files] [--delete-prefix]\n"
       "  steam scan             detect installed Steam games\n"
+      "  metadata <id> [--refresh]                cached cover-art/store info\n"
+      "  tricks <id> <verb>     run a winetricks verb against this game's prefix\n"
       "  config get|set|list|reset [args...]\n"
       "  watch                  tail the event stream\n");
 }
@@ -576,6 +633,8 @@ int main(int argc, char** argv) {
   if (command == "finish-install") return CmdFinishInstall(rest_argc, rest);
   if (command == "remove") return CmdRemove(rest_argc, rest);
   if (command == "steam") return CmdSteam(rest_argc, rest);
+  if (command == "metadata") return CmdMetadata(rest_argc, rest);
+  if (command == "tricks") return CmdTricks(rest_argc, rest);
   if (command == "daemon") return CmdDaemon(rest_argc, rest, argv[0]);
   if (command == "list") return CmdList(rest_argc, rest);
   if (command == "show") return CmdShow(rest_argc, rest);
