@@ -455,7 +455,7 @@ void Server::RegisterRoutes() {
     auto command = resolved->runner->BuildCommand(*game, resolved->build);
     if (!command) return SendError(res, 400, command.error().code, command.error().message);
 
-    ApplyCommandWrappers(*command, config_.GetStringArray("command_wrappers"));
+    ApplyCommandWrappers(*command, resolver.GetStringArray("command_wrappers"));
 
     if (auto launched = supervisor_.Launch(*game, *command, post_script); !launched) {
       return SendError(res, 409, launched.error().code, launched.error().message);
@@ -523,7 +523,8 @@ void Server::RegisterRoutes() {
 
     auto command = resolved->runner->BuildCommand(run_as, resolved->build);
     if (!command) return SendError(res, 400, command.error().code, command.error().message);
-    ApplyCommandWrappers(*command, config_.GetStringArray("command_wrappers"));
+    const config::Resolver resolver(config_, game->overrides);
+    ApplyCommandWrappers(*command, resolver.GetStringArray("command_wrappers"));
 
     if (auto launched = supervisor_.Launch(*game, *command); !launched) {
       return SendError(res, 409, launched.error().code, launched.error().message);

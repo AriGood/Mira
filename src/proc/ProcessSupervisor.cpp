@@ -205,6 +205,7 @@ Result<void> ProcessSupervisor::Launch(const model::Game& game, const Command& c
 Result<void> ProcessSupervisor::Stop(const std::string& game_id) {
   pid_t pid = 0;
   std::string data_dir;
+  std::string appid;
   {
     std::lock_guard lock(mutex_);
     const auto it = running_.find(game_id);
@@ -215,6 +216,9 @@ Result<void> ProcessSupervisor::Stop(const std::string& game_id) {
     if (const auto prefix = prefixes_.find(game_id); prefix != prefixes_.end()) {
       data_dir = prefix->second;
     }
+    if (const auto steam = steam_appids_.find(game_id); steam != steam_appids_.end()) {
+      appid = steam->second;
+    }
   }
   // 0 is TrackSteamLaunch's "reserved, not confirmed yet" sentinel — kill(0,
   // ...)/kill(-0, ...) both mean "signal every process in the caller's own
@@ -224,12 +228,17 @@ Result<void> ProcessSupervisor::Stop(const std::string& game_id) {
               std::format("\"{}\" was launched but its process isn't confirmed yet — try again shortly",
                           game_id));
   }
-  // Group (see runner::SpawnDetached's setpgid note) plus the prefix — see
-  // FindPrefixProcesses for why the group alone usually isn't enough.
+  // Group (see runner::SpawnDetached's setpgid note) plus the prefix, plus —
+  // for a Steam-launched game — every pid FindSteamProcesses finds under its
+  // appid: that tree is Steam's own (reaper/pressure-vessel/proton/the game),
+  // not a child of mirad and not one shared process group, so the group
+  // signal above only ever reaches whichever single pid WatchSteam recorded.
   const std::set<pid_t> in_prefix = FindPrefixProcesses(data_dir);
-  const bool group_signalled = ::kill(-pid, SIGTERM) == 0 || ::kill(pid, SIGTERM) == 0;
-  for (pid_t found : in_prefix) ::kill(found, SIGTERM);
-  if (!group_signalled && in_prefix.empty()) {
+  const std::set<pid_t> in_steam_tree = appid.empty() ? std::set<pid_t>() : FindSteamProcesses(appid);
+  bool signalled = ::kill(-pid, SIGTERM) == 0 || ::kill(pid, SIGTERM) == 0;
+  for (pid_t found : in_prefix) { ::kill(found, SIGTERM); signalled = true; }
+  for (pid_t found : in_steam_tree) { ::kill(found, SIGTERM); signalled = true; }
+  if (!signalled) {
     return Err("stop_failed", std::format("could not signal pid {}", pid));
   }
   {
@@ -351,6 +360,7 @@ Result<void> ProcessSupervisor::TrackSteamLaunch(const model::Game& game, const 
     // eventually find the same real process. 0 is never a real pid (see
     // Stop()'s guard below) so it's unambiguous as "not confirmed yet".
     running_[game.id] = 0;
+    steam_appids_[game.id] = appid;  // for Stop()/WatchSteam()'s kill escalation
     if (auto stale = watchers_.find(game.id); stale != watchers_.end()) {
       if (stale->second.joinable()) stale->second.detach();
       watchers_.erase(stale);
@@ -376,6 +386,7 @@ void ProcessSupervisor::WatchSteam(std::string game_id, std::string appid, std::
       std::lock_guard lock(mutex_);
       running_.erase(game_id);
       prefixes_.erase(game_id);
+      steam_appids_.erase(game_id);
       return;
     }
     std::this_thread::sleep_for(kPollInterval);
@@ -402,6 +413,20 @@ void ProcessSupervisor::WatchSteam(std::string game_id, std::string appid, std::
     if (current.empty() && !AnyAlive(matched)) break;
     if (!current.empty()) matched = current;
 
+    // Same SIGKILL escalation Watch() does for a directly-launched game —
+    // missing here before meant Stop() on a Steam-launched game only ever
+    // sent one SIGTERM and never followed up, so a game that ignored it kept
+    // running forever with mirad unable to tell.
+    {
+      std::lock_guard lock(mutex_);
+      const auto deadline = kill_deadlines_.find(game_id);
+      if (deadline != kill_deadlines_.end() && model::NowSeconds() >= deadline->second) {
+        log::Warn("{} (Steam-launched) ignored SIGTERM; sending SIGKILL", game_id);
+        for (pid_t found : matched) ::kill(found, SIGKILL);
+        kill_deadlines_.erase(deadline);
+      }
+    }
+
     const std::int64_t elapsed = model::NowSeconds() - started_at;
     if (elapsed - credited >= kCheckpointSeconds) {
       const std::int64_t delta = elapsed - credited;
@@ -419,6 +444,7 @@ void ProcessSupervisor::WatchSteam(std::string game_id, std::string appid, std::
     std::lock_guard lock(mutex_);
     running_.erase(game_id);
     prefixes_.erase(game_id);
+    steam_appids_.erase(game_id);
     kill_deadlines_.erase(game_id);
     stop_requested_.erase(game_id);
   }

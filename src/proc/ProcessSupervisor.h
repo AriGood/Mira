@@ -81,6 +81,7 @@ private:
   mutable std::mutex mutex_;
   std::map<std::string, pid_t> running_;
   std::map<std::string, std::string> prefixes_;  // game id -> data_dir, for Stop()
+  std::map<std::string, std::string> steam_appids_;  // game id -> appid, for Stop()/WatchSteam()
   std::map<std::string, std::int64_t> kill_deadlines_;  // game id -> when to SIGKILL
   std::set<std::string> stop_requested_;  // Stop() was called; the exit isn't a crash
   std::map<std::string, std::thread> watchers_;
