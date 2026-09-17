@@ -44,11 +44,12 @@ private:
     std::filesystem::path root;
     std::uintmax_t last_size = 0;
     std::int64_t stable_since_ms = 0;
+    bool is_archive = false;  // extract-and-remove on settle, instead of scanning it as a folder
   };
 
   void HandleInotify();
   void HandleDebounceTick();
-  void ScheduleCheck(const std::filesystem::path& root, const std::filesystem::path& dir);
+  void ScheduleCheck(const std::filesystem::path& root, const std::filesystem::path& path, bool is_archive);
   void RearmTimer();
 
   config::Config& config_;

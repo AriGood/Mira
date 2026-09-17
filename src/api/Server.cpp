@@ -2,8 +2,11 @@
 
 #include <sys/socket.h>
 
+#include <algorithm>
 #include <atomic>
+#include <filesystem>
 #include <format>
+#include <thread>
 
 #include <httplib.h>
 
@@ -12,7 +15,10 @@
 #include "core/Log.h"
 #include "desktop/DesktopEntries.h"
 #include "library/Scanner.h"
+#include "runner/Downloader.h"
+#include "runner/Exec.h"
 #include "runner/RunnerRegistry.h"
+#include "steam/SteamScanner.h"
 
 namespace mira::api {
 namespace {
@@ -59,9 +65,19 @@ model::Game ParseGamePatch(const model::Game& base, const json& patch) {
   if (patch.contains("runner_config") && patch["runner_config"].is_object()) {
     game.runner_config.merge_patch(patch["runner_config"]);
   }
-  if (patch.contains("env") && patch["env"].is_object()) {
+  // "env": null clears every entry; "env": {"K": null} removes just K
+  // (same null-removes convention as ApplyOverridesPatch below) — merge-only
+  // with no way to shrink the map left no way to actually unset a variable
+  // once set, or reset it to empty without deleting and recreating the game.
+  if (patch.contains("env") && patch["env"].is_null()) {
+    game.env.clear();
+  } else if (patch.contains("env") && patch["env"].is_object()) {
     for (const auto& [key, value] : patch["env"].items()) {
-      if (value.is_string()) game.env[key] = value.get<std::string>();
+      if (value.is_null()) {
+        game.env.erase(key);
+      } else if (value.is_string()) {
+        game.env[key] = value.get<std::string>();
+      }
     }
   }
   game.reviewed = true;  // any correction counts as the human having looked
@@ -113,6 +129,32 @@ void SyncDesktopEntries(config::Config& config, store::GameStore& games) {
   if (auto synced = desktop::DesktopEntries(config).Sync(games.All()); !synced) {
     log::Warn("could not update application menu entries: {}", synced.error().message);
   }
+}
+
+// Deletes `target` only if it's non-empty and really resolves inside one of
+// `roots` — never wherever a game's install_path/data_dir field happens to
+// say, in case a hand-edited games.toml points somewhere it shouldn't. A
+// symlinked target is resolved with weakly_canonical before the containment
+// check, so a symlink can't be used to delete outside a root either.
+Result<void> DeleteUnderRoot(const std::string& target, const std::vector<std::filesystem::path>& roots) {
+  if (target.empty()) return Err("nothing_to_delete", "this game has no such path recorded");
+  std::error_code ec;
+  const std::filesystem::path resolved = std::filesystem::weakly_canonical(target, ec);
+  if (ec) return Err("path_error", ec.message());
+
+  const bool contained = std::ranges::any_of(roots, [&](const std::filesystem::path& root) {
+    const std::filesystem::path canon_root = std::filesystem::weakly_canonical(root, ec);
+    if (ec) return false;
+    const auto [root_end, nothing] = std::mismatch(canon_root.begin(), canon_root.end(), resolved.begin());
+    return root_end == canon_root.end();
+  });
+  if (!contained) {
+    return Err("path_outside_root", std::format("\"{}\" is not inside a configured root — refusing to delete", target));
+  }
+
+  std::filesystem::remove_all(resolved, ec);
+  if (ec) return Err("delete_failed", ec.message());
+  return {};
 }
 
 }  // namespace
@@ -183,16 +225,21 @@ void Server::RegisterRoutes() {
   http_->Patch("/v1/config", [this](const Request& req, Response& res) {
     json patch = json::parse(req.body, nullptr, false);
     if (patch.is_discarded()) return SendError(res, 400, "invalid_json", "body is not valid JSON");
-    SendResult(res, config_.Patch(patch));
+    Result<void> result = config_.Patch(patch);
+    if (result) SyncDesktopEntries(config_, games_);
+    SendResult(res, result);
   });
 
   http_->Post("/v1/config/reset", [this](const Request& req, Response& res) {
+    Result<void> result;
     if (auto it = req.params.find("key"); it != req.params.end()) {
-      SendResult(res, config_.Reset(it->second));
+      result = config_.Reset(it->second);
     } else {
       config_.ResetAll();
-      SendResult(res, config_.Save());
+      result = config_.Save();
     }
+    if (result) SyncDesktopEntries(config_, games_);
+    SendResult(res, result);
   });
 
   // --- games ----------------------------------------------------------------
@@ -260,6 +307,24 @@ void Server::RegisterRoutes() {
   });
 
   http_->Delete(R"(/v1/games/([^/]+))", [this](const Request& req, Response& res) {
+    auto game = games_.Find(req.matches[1]);
+    if (!game) return SendError(res, 404, "game_not_found", "no such game");
+
+    // Opt-in, and deliberately narrow: only ever deletes a path this game's
+    // own record points at, and only if that path is really inside a
+    // configured root — never wherever install_path/data_dir happen to say,
+    // in case a hand-edited games.toml points somewhere it shouldn't.
+    if (req.has_param("delete_files") && req.get_param_value("delete_files") == "true") {
+      if (auto deleted = DeleteUnderRoot(game->install_path, config_.GetPathArray("library_roots")); !deleted) {
+        return SendError(res, 400, deleted.error().code, deleted.error().message);
+      }
+    }
+    if (req.has_param("delete_prefix") && req.get_param_value("delete_prefix") == "true") {
+      if (auto deleted = DeleteUnderRoot(game->data_dir, {config_.GetPath("prefix_root")}); !deleted) {
+        return SendError(res, 400, deleted.error().code, deleted.error().message);
+      }
+    }
+
     auto result = games_.Remove(req.matches[1]);
     if (!result) return SendError(res, 404, result.error().code, result.error().message);
     SyncDesktopEntries(config_, games_);
@@ -282,6 +347,19 @@ void Server::RegisterRoutes() {
                    {"restored", summary.restored}});
   });
 
+  // --- steam ------------------------------------------------------------
+
+  // Detected apps land in the same GameStore as everything else (see
+  // SteamScanner's class comment) — no separate GET endpoint needed, they
+  // just show up in GET /v1/games with runner_ref "steam:<appid>".
+  http_->Post("/v1/steam/scan", [this](const Request&, Response& res) {
+    steam::SteamScanner scanner(config_, games_, events_);
+    auto summary = scanner.Scan();
+    if (!summary) return SendError(res, 404, summary.error().code, summary.error().message);
+    SyncDesktopEntries(config_, games_);
+    SendJson(res, {{"added", summary->added}, {"updated", summary->updated}});
+  });
+
   // --- launching ------------------------------------------------------------
 
   http_->Post(R"(/v1/games/([^/]+)/launch)", [this](const Request& req, Response& res) {
@@ -294,6 +372,28 @@ void Server::RegisterRoutes() {
       return SendError(res, 409, "not_ready",
                        std::format("\"{}\" is {}, not ready to launch", game->id,
                                   model::ToString(game->status)));
+    }
+
+    // A Steam-sourced game defaults to asking the Steam client to launch it
+    // (steam://rungameid/<appid>) rather than Mira execing it directly: full
+    // achievements/overlay support, and Steam's own accounting is what
+    // GET /v1/games/{id} reads back for it (see steam.launch_mode's doc).
+    // Mira can't track a process it didn't spawn, so this path never
+    // touches ProcessSupervisor — deliberately, not a gap to fill in later.
+    if (game->runner_ref.starts_with("steam:")) {
+      const config::Resolver resolver(config_, game->overrides);
+      if (resolver.GetString("steam.launch_mode") == "steam") {
+        const std::string appid = game->runner_ref.substr(std::string_view("steam:").size());
+        Command command;
+        command.argv = {"steam", std::format("steam://rungameid/{}", appid)};
+        if (auto spawned = runner::SpawnDetached(command); !spawned) {
+          return SendError(res, 500, spawned.error().code, spawned.error().message);
+        }
+        [[maybe_unused]] auto _ =
+            games_.Update(game->id, [](model::Game& g) { g.last_played_at = model::NowSeconds(); });
+        events_.Publish("game.launched", {{"id", game->id}, {"via", "steam"}});
+        return SendJson(res, {{"status", "launched_via_steam"}});
+      }
     }
 
     const runner::RunnerRegistry registry(config_);
@@ -318,6 +418,87 @@ void Server::RegisterRoutes() {
     SendJson(res, {{"status", "stopping"}});
   });
 
+  // Runs an arbitrary exe inside this game's own prefix — normal
+  // ProcessSupervisor tracking, same as /launch, but the exe/args come from
+  // the request instead of the stored game. This is what actually runs a
+  // needs_install game's installer (provisioning on demand, since Scanner
+  // never provisions one), and it's the general "run something in this
+  // prefix" escape hatch (winetricks-equivalent work, one-off tools) short
+  // of a full custom-tricks implementation, which stays out of scope.
+  http_->Post(R"(/v1/games/([^/]+)/run)", [this](const Request& req, Response& res) {
+    auto game = games_.Find(req.matches[1]);
+    if (!game) return SendError(res, 404, "game_not_found", "no such game");
+
+    json body = json::parse(req.body, nullptr, false);
+    if (body.is_discarded() || !body.contains("exe_path") || !body["exe_path"].is_string()) {
+      return SendError(res, 400, "invalid_body", R"(expected {"exe_path": "...", "args": "..."})");
+    }
+    const std::string exe_path = body["exe_path"];
+    const std::string args = body.value("args", std::string());
+
+    // A needs_install/setting_up game (or one whose prefix vanished) has no
+    // usable prefix yet — provision one now rather than requiring a
+    // separate call first.
+    std::error_code ec;
+    const bool needs_provisioning = game->platform == model::Platform::Windows &&
+        (game->runner_ref.empty() || !std::filesystem::exists(std::filesystem::path(game->data_dir) / "drive_c", ec));
+    if (needs_provisioning) {
+      const runner::RunnerRegistry provisioner(config_);
+      const model::Game provisioned = provisioner.ProvisionGame(*game);
+      auto saved = games_.Update(game->id, [&](model::Game& g) {
+        g.runner_ref = provisioned.runner_ref;
+        if (provisioned.status == model::GameStatus::Broken) {
+          g.status = model::GameStatus::Broken;
+          g.last_error = provisioned.last_error;
+        } else {
+          g.last_error.clear();
+        }
+      });
+      if (!saved) return SendError(res, 404, saved.error().code, saved.error().message);
+      game = *saved;
+      if (game->status == model::GameStatus::Broken) {
+        return SendError(res, 409, "provision_failed", game->last_error);
+      }
+    }
+
+    const runner::RunnerRegistry registry(config_);
+    auto resolved = registry.Resolve(game->runner_ref.empty() ? "native:native" : game->runner_ref);
+    if (!resolved) return SendError(res, 400, resolved.error().code, resolved.error().message);
+
+    model::Game run_as = *game;
+    run_as.exe_path = exe_path;
+    run_as.args = args;
+
+    auto command = resolved->runner->BuildCommand(run_as, resolved->build);
+    if (!command) return SendError(res, 400, command.error().code, command.error().message);
+    ApplyCommandWrappers(*command, config_.GetStringArray("command_wrappers"));
+
+    if (auto launched = supervisor_.Launch(*game, *command); !launched) {
+      return SendError(res, 409, launched.error().code, launched.error().message);
+    }
+    SendJson(res, {{"status", "running"}});
+  });
+
+  // The escape hatch out of needs_install: run the installer via /run
+  // above, PATCH exe_path to whatever it actually installed, then call
+  // this to make the game launchable through the normal /launch path.
+  http_->Post(R"(/v1/games/([^/]+)/finish-install)", [this](const Request& req, Response& res) {
+    auto game = games_.Find(req.matches[1]);
+    if (!game) return SendError(res, 404, "game_not_found", "no such game");
+    if (game->exe_path.empty()) {
+      return SendError(res, 409, "no_executable",
+                       "PATCH exe_path to the installed game's real executable first");
+    }
+    auto result = games_.Update(game->id, [](model::Game& g) {
+      g.status = model::GameStatus::Ready;
+      g.last_error.clear();
+    });
+    if (!result) return SendError(res, 404, result.error().code, result.error().message);
+    SyncDesktopEntries(config_, games_);
+    events_.Publish("game.updated", model::ToJson(*result));
+    SendJson(res, model::ToJson(*result));
+  });
+
   // --- runners --------------------------------------------------------------
 
   http_->Get("/v1/runners", [this](const Request&, Response& res) {
@@ -325,6 +506,58 @@ void Server::RegisterRoutes() {
     json out = json::array();
     for (const model::RunnerBuild& build : registry.DiscoverAll()) out.push_back(model::ToJson(build));
     SendJson(res, std::move(out));
+  });
+
+  // What's available to install, not what's installed (that's GET
+  // /v1/runners above) — hits GitHub's API live, so it's the one endpoint
+  // in this file with real network latency baked in.
+  http_->Get("/v1/runners/catalog", [this](const Request& req, Response& res) {
+    const std::string kind = req.has_param("kind") ? req.get_param_value("kind") : "proton";
+    auto releases = runner::ListReleases(config_, kind);
+    if (!releases) return SendError(res, 502, releases.error().code, releases.error().message);
+    json out = json::array();
+    for (const auto& r : *releases) {
+      out.push_back({{"tag", r.tag}, {"asset_name", r.asset_name}, {"size_bytes", r.size_bytes},
+                     {"published_at", r.published_at}, {"has_checksum", !r.checksum_url.empty()}});
+    }
+    SendJson(res, std::move(out));
+  });
+
+  // Downloads and installs a build from the catalog above. Runs detached —
+  // a Proton-GE tarball is 500+ MB, minutes over a slow connection, and
+  // there's no job queue yet (see docs/architecture.md) to track it
+  // properly; runners.download.finished/failed on the event stream is how
+  // a caller finds out it's done, the same pattern game launches already
+  // use for "don't block the request thread on something slow."
+  http_->Post("/v1/runners/download", [this](const Request& req, Response& res) {
+    json body = json::parse(req.body, nullptr, false);
+    if (body.is_discarded() || !body.contains("kind") || !body.contains("tag")) {
+      return SendError(res, 400, "invalid_body", R"(expected {"kind": "proton"|"wine", "tag": "..."})");
+    }
+    const std::string kind = body["kind"];
+    const std::string tag = body["tag"];
+
+    auto releases = runner::ListReleases(config_, kind);
+    if (!releases) return SendError(res, 502, releases.error().code, releases.error().message);
+    const auto match = std::ranges::find(*releases, tag, &runner::ReleaseAsset::tag);
+    if (match == releases->end()) {
+      return SendError(res, 404, "release_not_found", std::format("no {} release tagged \"{}\"", kind, tag));
+    }
+
+    const runner::ReleaseAsset asset = *match;
+    events_.Publish("runners.download.started", {{"kind", kind}, {"tag", tag}});
+    std::thread([this, kind, tag, asset] {
+      if (auto installed = runner::DownloadAndInstall(config_, kind, asset); !installed) {
+        log::Error("runner download failed ({} {}): {}", kind, tag, installed.error().message);
+        events_.Publish("runners.download.failed",
+                       {{"kind", kind}, {"tag", tag}, {"error", installed.error().message}});
+      } else {
+        log::Info("installed {} {}", kind, tag);
+        events_.Publish("runners.download.finished", {{"kind", kind}, {"tag", tag}});
+      }
+    }).detach();
+
+    SendJson(res, {{"status", "downloading"}, {"tag", tag}}, 202);
   });
 
   // --- events (SSE) -----------------------------------------------------

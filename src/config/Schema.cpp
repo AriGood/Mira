@@ -4,6 +4,7 @@
 #include <format>
 
 #include "config/KnownExePatterns.h"
+#include "config/RunnerSources.h"
 #include "core/Strings.h"
 
 namespace mira::config {
@@ -162,6 +163,13 @@ Schema::Schema() {
       {"scan.max_depth", Type::Int, 4, Tier::Advanced,
        "How deep to search inside a game folder for executables.", Range(1, 16)},
 
+      {"scan.auto_extract_archives", Type::Bool, false, Tier::Basic,
+       "Extract a .zip/.rar/.tar(.gz/.xz/.bz2)/.7z dropped directly into a library root, "
+       "into a same-named folder, then delete the archive — so an archived game drop "
+       "behaves like an already-extracted one. Off by default: silently deleting an "
+       "archive is a real action to opt into, not assume. Extracting a .rar or .7z needs "
+       "unrar/p7zip installed; a missing tool is reported, not silently skipped."},
+
       {"scan.periodic_interval_s", Type::Int, 0, Tier::Expert,
        "Seconds between full rescans. 0 disables them, which is the default: inotify is "
        "authoritative and a timer would cost idle wakeups for nothing.",
@@ -209,6 +217,39 @@ Schema::Schema() {
        "Minimum size — of the candidate itself, or of any file alongside it — for a "
        "name-matched candidate to actually count as an installer, so a small stub or "
        "helper named like one doesn't get misflagged.", Range(0, 1'000'000)},
+
+      {"steam.enabled", Type::Bool, true, Tier::Basic,
+       "Detect installed Steam games and let Mira launch them alongside its own library."},
+
+      {"steam.root", Type::String, "", Tier::Expert,
+       "Override for Steam's install directory. Empty auto-detects "
+       "~/.steam/steam, then ~/.local/share/Steam."},
+
+      {"steam.launch_mode", Type::String, "steam", Tier::Advanced,
+       "How launching a Steam game works. \"steam\" fires "
+       "steam://rungameid/<appid> and lets the Steam client launch it — full "
+       "achievements/overlay support, but Mira can't track its process "
+       "(Steam already accounts for playtime, read from its own files "
+       "instead). \"direct\" has Mira exec the game itself, through the same "
+       "Proton build and prefix Steam already set up, with normal Mira "
+       "process tracking (stop/crash/playtime) — override per game via "
+       "games.toml overrides if one game needs the other mode.",
+       OneOf({"steam", "direct"})},
+
+      {"runner_sources.proton_ge.repo", Type::String, std::string(runner_sources::kProtonGERepo),
+       Tier::Advanced, "GitHub \"owner/repo\" Proton-GE builds are downloaded from."},
+
+      {"runner_sources.proton_ge.asset_pattern", Type::String,
+       std::string(runner_sources::kProtonGEAssetPattern), Tier::Expert,
+       "Glob a release's assets are filtered to before offering one to download — "
+       "excludes non-x86_64 builds and checksum files."},
+
+      {"runner_sources.wine_ge.repo", Type::String, std::string(runner_sources::kWineGERepo),
+       Tier::Advanced, "GitHub \"owner/repo\" Wine-GE builds are downloaded from."},
+
+      {"runner_sources.wine_ge.asset_pattern", Type::String,
+       std::string(runner_sources::kWineGEAssetPattern), Tier::Expert,
+       "Glob a release's assets are filtered to before offering one to download."},
 
       {"events.sse_keepalive_s", Type::Int, 0, Tier::Expert,
        "Seconds between keepalive comments on the event stream. 0 disables them; a Unix "

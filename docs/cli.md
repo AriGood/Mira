@@ -40,7 +40,7 @@ roots; this doesn't).
 
 ## `mira list [--status S]`
 `GET /v1/games`, optionally filtered to one status
-(`setting_up | ready | broken | missing`). One line per game:
+(`setting_up | ready | broken | missing | needs_install`). One line per game:
 ```
 celeste                  ready      [unreviewed] Celeste
 hollow-knight             setting_up             Hollow Knight  (windows)
@@ -77,6 +77,59 @@ both do the right thing without quoting. Setting any game-field flag marks
 the game reviewed; overrides don't (they're a separate concern — see
 `docs/api.md`'s note on why the two endpoints are split).
 
+## `mira launch <id>` / `mira stop <id>`
+`POST /v1/games/{id}/launch` / `/stop`. For most games this is a normal
+tracked launch (crash detection, playtime). For a Steam-sourced game under
+the default `steam.launch_mode`, `launch` instead fires
+`steam://rungameid/<appid>` and returns immediately — see `docs/api.md`'s
+`/launch` entry for the full explanation of why that one case isn't
+tracked.
+
+## `mira run <id> --exe PATH [--args ARGS]`
+`POST /v1/games/{id}/run` — runs an arbitrary exe inside this game's own
+prefix, tracked like a normal launch. Provisions a prefix first if it
+doesn't have one yet. This is how a `needs_install` game's installer
+actually gets run:
+```sh
+mira run my-game --exe UplayInstaller.exe   # run the installer
+mira set my-game --exe MyGame.exe            # point at what it produced
+mira finish-install my-game                  # mark it ready
+```
+
+## `mira finish-install <id>`
+`POST /v1/games/{id}/finish-install` — the last step of the sequence
+above: flips a `needs_install`/`broken` game to `ready` once `exe_path` has
+been corrected. Fails with a clear error if `exe_path` is still empty.
+
+## `mira remove <id> [--delete-files] [--delete-prefix]`
+`DELETE /v1/games/{id}`, with the matching query params if either flag is
+given. Without flags, only the `games.toml` entry is forgotten — files are
+only ever deleted if you ask for that explicitly, and only if they're
+really inside a configured `library_roots`/`prefix_root`.
+
+## `mira steam scan`
+`POST /v1/steam/scan` — detects installed Steam apps and adds/updates them
+as ordinary games (`GET /v1/games`, `mira list`, `mira show` all work on
+one with no special-casing). Prints `added: N  updated: N`. Idempotent:
+rerunning it never duplicates an already-detected app.
+
+## `mira runners`
+`GET /v1/runners` — every installed Proton/Wine build, one per line:
+```
+proton:GE-Proton11-7                    /home/x/.steam/steam/compatibilitytools.d/GE-Proton11-7-x86_64
+```
+
+## `mira runners catalog [--kind proton|wine]`
+`GET /v1/runners/catalog` — what's *available to download*, not what's
+installed. Hits the GitHub API live, so this is the one command here with
+real network latency. Defaults to `--kind proton`.
+
+## `mira runners download --kind proton|wine --tag TAG`
+`POST /v1/runners/download` — downloads and installs a build named in the
+catalog above (checksum-verified against the release's own `.sha512sum`
+first). Runs detached; the command returns immediately and says to watch
+`mira watch` for `runners.download.finished`/`.failed`.
+
 ## `mira config get|set|list|reset`
 - `get <key>` — one value from `GET /v1/config` (dotted key, e.g.
   `scan.debounce_ms`).
@@ -101,7 +154,12 @@ oversight).
 
 ## Not yet implemented
 
-`mira` has no `launch`/`stop`/`resetup`/`runners` commands yet because the
-API endpoints they'd call don't exist yet either (`docs/api.md` marks them
-**planned**) — the runner layer they depend on isn't built. They'll land
-together.
+`mira` has no `runners refresh` or per-runner schema command, because
+`GET /v1/runners/{kind}/schema` and `POST /v1/runners/refresh` don't exist
+yet either (`docs/api.md` marks them **planned** — the latter isn't needed
+today since `GET /v1/runners` already rediscovers on every call). There's
+also no equivalent of the old-plan `resetup` — a game stuck at
+`setting_up` is retried automatically on the next scan, and a
+`needs_install` game uses `mira run` + `mira finish-install` instead (see
+above), which cover the same need more precisely than a single
+"re-run everything from scratch" command would.

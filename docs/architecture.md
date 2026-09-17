@@ -42,21 +42,44 @@ src/
             Command (the argv+env+cwd every runner produces), Paths (XDG
             resolution), Strings, Log, and the TOML<->JSON bridge.
   config/   Schema (every setting declared once), Config (loads/saves
-            settings.toml), Resolver (layered default -> file -> per-game
-            lookup with provenance), KnownExePatterns (just data: the
-            default installer/helper-executable name lists — edit this
-            one directly, no schema knowledge needed).
+            settings.toml, plus the sibling frontend.toml the frontend's
+            own opaque settings live in), Resolver (layered
+            default -> file -> per-game lookup with provenance),
+            KnownExePatterns / RunnerSources (just data: the default
+            installer/helper-executable name lists and the Proton-GE/
+            Wine-GE download sources — edit either directly, no schema
+            knowledge needed; both feed schema defaults that stay
+            user-overridable).
   model/    Game, RunnerBuild, Event, Candidate — plain structs plus
             ToJson/FromJson. No behaviour lives here.
   store/    GameStore — the games.toml-backed source of truth for the
             library.
   library/  Detector (scores executables in one folder), Scanner (walks
-            library roots, reconciles against GameStore), AutoSetup (turns
+            library roots, reconciles against GameStore, retries
+            provisioning for anything still setting_up), AutoSetup (turns
             a detection into a stored game), Watcher (inotify, drives
-            Scanner automatically).
-  runner/   IRunner + NativeRunner/ProtonRunner/WineRunner, RunnerRegistry
-            (resolves "kind:name" -> a concrete runner + build), Exec (the
-            blocking run-and-wait helper provisioning uses).
+            Scanner automatically; also debounces and auto-extracts a
+            dropped archive when scan.auto_extract_archives is on),
+            ArchiveExtractor (the zip/rar/tar*/7z extraction itself),
+            WinePrefix (shared prefix-directory detection, used by both
+            Detector and Scanner so neither re-discovers the other's
+            prefixes as games).
+  runner/   IRunner + NativeRunner/ProtonRunner/WineRunner/SteamRunner,
+            RunnerRegistry (resolves "kind:name" -> a concrete runner +
+            build), Exec (RunAndWait for provisioning/downloads,
+            SpawnDetached for an actual game launch), Downloader (lists/
+            installs Proton-GE/Wine-GE builds from GitHub releases).
+  proc/     ProcessSupervisor — supervises a launched game: crash vs.
+            clean-exit classification, playtime checkpointing,
+            SIGTERM->SIGKILL stop escalation.
+  desktop/  DesktopEntries — generates/syncs .desktop menu entries for
+            ready games, always launching back through Mira so playtime
+            is never bypassed by a menu launch.
+  steam/    Vdf (a from-scratch parser for Valve's KeyValues/VDF text
+            format), SteamDetector (reads Steam's own files directly:
+            library folders, installed apps, which Proton build/prefix an
+            app uses), SteamScanner (detect -> upsert into GameStore, the
+            Steam equivalent of library::Scanner).
   api/      EventBus (in-memory pub/sub) and Server (the REST routes) —
             see api.md for the surface this registers.
   cli/      main.cpp for `mira` — see cli.md for what it does.
@@ -195,6 +218,17 @@ frontend; the frontend is what decides (per path 1/2/3 above) whether it
 needs to also start the daemon. There is no separate desktop entry for
 `mirad` — a background daemon is not a thing a user "launches" from a menu.
 
+Separately, `desktop::DesktopEntries` (`src/desktop/DesktopEntries.cpp`)
+gives *each ready game* its own menu entry (`mira-<id>.desktop`), synced
+after every scan and every change to a game or to `desktop_entries.*`
+settings. Its `Exec=` line is always `mira launch <id>` (or the frontend,
+if `desktop_entries.exec_mode` is `"frontend"`) — never the game's own
+executable directly, no matter how tempting that shortcut looks, because
+that's exactly what would make a menu launch invisible to
+`proc::ProcessSupervisor`'s playtime/crash tracking. Only ever creates or
+removes files it created itself (`mira-<id>.desktop`) in the configured
+directory.
+
 ## Idle cost
 
 The daemon is meant to be safe to leave running via path 1. That only holds
@@ -329,7 +363,23 @@ silently change a working game's runtime. `library::Scanner` calls it
 synchronously right after `AutoSetup` stores a new Windows game — like
 scanning itself, this blocks the calling thread for real wall-clock time
 (several seconds; it's genuinely initialising Proton/Wine) because there is
-no job queue yet to move it off-thread.
+no job queue yet to move it off-thread. It's also called on demand from
+`POST /v1/games/{id}/run` for a `needs_install`/`setting_up` game that has
+no usable prefix yet, and retried by `Scanner` for any already-known game
+still stuck at `setting_up` on a later scan — neither a Windows game auto-
+provisioned at detection time nor "provisioned exactly once" holds
+universally any more (see `docs/api.md` and the `TryProvision` comment in
+`Scanner.cpp` for why: auto_setup can be off then turned on, a first
+attempt can fail transiently, or the daemon can restart mid-provision).
+
+A fourth runner, `SteamRunner` (`src/runner/SteamRunner.cpp`), doesn't fit
+the "installed build you choose" model the other three share at all:
+`UsesBuilds()` is `false`, and which Proton build to use isn't a choice —
+it's resolved fresh from `compat_data_dir/config_info` at `BuildCommand`
+time, exactly matching whatever Steam itself already set that prefix up
+with. See `docs/api.md`'s Steam section for the full picture, including
+why the *default* way to launch a Steam game (`steam.launch_mode:
+"steam"`) never calls `BuildCommand` at all.
 
 ## Built: the frontend
 
@@ -406,45 +456,30 @@ impossible instead of just unlikely.
 
 Recorded here so intent isn't lost between sessions:
 
-- **Running an installer.** `Detector` already flags a candidate as an
-  installer (`detect.installer_name_patterns` + `detect.installer_min_size_mb`
-  — name alone isn't enough, since a small helper can be named like one) and
-  `AutoSetup` stores the game as `needs_install` rather than silently
-  treating the installer as the launchable game. What's still missing: an
-  actual "run this installer inside a prefix, then let the user point Mira
-  at the result" flow — a different operation from launching a game, needing
-  its own endpoint once the runner layer's `BuildCommand` is reused for it.
 - **Winetricks integration** — a `winetricks_verbs` list in a game's
   `runner_config` (already a free-form JSON blob in the schema) run against
   a fresh prefix before it's marked `ready`, with a `winetricks_defaults`
   setting seeding sane baseline verbs (corefonts, vcrun, DXVK) for every new
   prefix. `prefix/IPrefixProvider` (template-clone vs. plain init) is the
   other still-open piece of provisioning.
-- **Exe-location enrichment** (optional, network-based, off the offline
-  critical path): for a game that is a Steam title, read the local
-  `appmanifest_<id>.acf` and Steam's own cached `appinfo.vdf` for the
-  official per-OS launch executable — no network call, fully legitimate,
-  high-value. For non-Steam titles, PCGamingWiki's public query API is a
-  candidate second source. SteamDB is deliberately not a candidate source:
-  it has no public API and explicitly discourages scraping. Either source is
-  strictly best-effort enrichment on top of the offline heuristic detector,
-  never a requirement — the zero-config test must keep passing with the
-  network disabled.
-- **Runner installation and version management.** Today `RunnerRegistry`
-  only discovers builds already sitting on disk (`runner_search_paths`,
-  `wine_search_paths`) — nothing fetches or installs one. The frontend is
-  expected to drive "install GE-Proton 11-7" / "update to the latest",
-  but the backend has to do the actual work, since it owns the filesystem
-  state. Planned surface: `GET /v1/runners/available` (query GE-Proton's
-  and Wine-GE's GitHub releases for what *could* be installed, distinct
-  from `GET /v1/runners`'s "what *is*"), `POST /v1/runners/install`
-  (download, verify, extract into a `runner_search_paths` directory,
-  publishing progress events the same way provisioning will once a job
-  queue exists), `DELETE /v1/runners/{reference}` to remove one. Strictly
-  optional/best-effort like the exe-location enrichment above — no network
-  access required for anything already covered by this doc, and a stale or
-  unreachable releases feed must degrade to "can't check for updates right
-  now", never to a broken daemon.
+- **Exe-location enrichment for a Steam title's real launch command.**
+  Steam Integration (`src/steam/`) reads `appmanifest_<id>.acf` and
+  `compatdata/<id>/config_info` directly — enough to detect the app, find
+  its install dir, and resolve exactly which Proton build/prefix Steam set
+  up. What it deliberately does *not* do is read Steam's own cached
+  `appinfo.vdf` for the official per-OS launch executable, so a detected
+  Steam game's `exe_path` stays empty until set manually (see
+  `SteamRunner::BuildCommand`'s error message, and `docs/api.md`'s
+  `POST /v1/steam/scan`) — `steam.launch_mode: "steam"` (the default) never
+  needs it at all, only `"direct"` does. Parsing `appinfo.vdf` to fill this
+  in automatically is still open. For non-Steam titles, PCGamingWiki's
+  public query API is a candidate second source; strictly best-effort on
+  top of the offline heuristic detector either way, never a requirement —
+  the zero-config test must keep passing with the network disabled.
+- **`DELETE /v1/runners/{reference}`**, to remove an installed build.
+  Downloading and listing (`GET /v1/runners/catalog`,
+  `POST /v1/runners/download` — see `docs/api.md`) are built; nothing
+  removes one yet, short of deleting its directory by hand.
 - **`mirad --scan-once`** for the run-once-and-never-again persona described
   above.
 - **`DaemonSupervisor` in `mira-gui`** for path 2 above.

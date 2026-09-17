@@ -14,7 +14,8 @@ namespace {
 using nlohmann::json;
 }
 
-Config::Config(std::filesystem::path file) : file_(std::move(file)) {
+Config::Config(std::filesystem::path file)
+    : file_(file), frontend_file_(file.parent_path() / "frontend.toml") {
   document_ = Schema::Instance().Defaults();
 }
 
@@ -34,39 +35,48 @@ void Config::Load() {
   if (!std::filesystem::exists(file_, ec)) {
     log::Info("no settings at {}, writing defaults", file_.string());
     write_defaults();
-    return;
+  } else {
+    toml::parse_result parsed = toml::parse_file(file_.string());
+    if (!parsed) {
+      const auto broken = file_.string() + ".bad";
+      std::filesystem::rename(file_, broken, ec);
+      log::Error("settings at {} could not be parsed ({}); kept it as {} and continuing with "
+                "defaults",
+                file_.string(), parsed.error().description(), broken);
+      write_defaults();
+    } else {
+      json whole = tomljson::ToJson(parsed.table());
+
+      // An individual bad value falls back to its default rather than
+      // rejecting the whole file, so one typo cannot leave the user with a
+      // daemon that refuses to start.
+      for (const std::string& problem : schema.ValidateDocument(whole)) {
+        log::Warn("settings: {} (using the default)", problem);
+      }
+      for (const Entry& entry : schema.Entries()) {
+        const auto pointer = Schema::Pointer(entry.key);
+        if (!whole.contains(pointer)) continue;
+        if (schema.Validate(entry.key, whole[pointer])) whole[pointer] = entry.default_value;
+      }
+
+      document_.merge_patch(whole);
+    }
   }
 
-  toml::parse_result parsed = toml::parse_file(file_.string());
-  if (!parsed) {
-    const auto broken = file_.string() + ".bad";
-    std::filesystem::rename(file_, broken, ec);
-    log::Error("settings at {} could not be parsed ({}); kept it as {} and continuing with "
-              "defaults",
-              file_.string(), parsed.error().description(), broken);
-    write_defaults();
-    return;
+  // frontend.toml is opaque (no schema, nothing to validate) and entirely
+  // optional — nothing has necessarily ever written to it yet.
+  if (std::filesystem::exists(frontend_file_, ec)) {
+    toml::parse_result parsed = toml::parse_file(frontend_file_.string());
+    if (!parsed) {
+      const auto broken = frontend_file_.string() + ".bad";
+      std::filesystem::rename(frontend_file_, broken, ec);
+      log::Error("frontend settings at {} could not be parsed ({}); kept it as {} and "
+                "continuing with none",
+                frontend_file_.string(), parsed.error().description(), broken);
+    } else {
+      frontend_ = tomljson::ToJson(parsed.table());
+    }
   }
-
-  json whole = tomljson::ToJson(parsed.table());
-  if (whole.contains("frontend") && whole["frontend"].is_object()) {
-    frontend_ = whole["frontend"];
-  }
-  whole.erase("frontend");
-
-  // An individual bad value falls back to its default rather than rejecting
-  // the whole file, so one typo cannot leave the user with a daemon that
-  // refuses to start.
-  for (const std::string& problem : schema.ValidateDocument(whole)) {
-    log::Warn("settings: {} (using the default)", problem);
-  }
-  for (const Entry& entry : schema.Entries()) {
-    const auto pointer = Schema::Pointer(entry.key);
-    if (!whole.contains(pointer)) continue;
-    if (schema.Validate(entry.key, whole[pointer])) whole[pointer] = entry.default_value;
-  }
-
-  document_.merge_patch(whole);
 }
 
 Result<void> Config::Save() {
@@ -74,17 +84,29 @@ Result<void> Config::Save() {
   std::error_code ec;
   std::filesystem::create_directories(file_.parent_path(), ec);
 
-  json whole = document_;
-  whole["frontend"] = frontend_;
-
   // Write-and-rename so an interrupted save cannot truncate a working file.
   const auto temp = file_.string() + ".tmp";
   {
     std::ofstream out(temp);
     if (!out) return Err("config_write_failed", std::format("cannot write {}", temp));
-    out << tomljson::ToToml(whole);
+    out << tomljson::ToToml(document_);
   }
   std::filesystem::rename(temp, file_, ec);
+  if (ec) return Err("config_write_failed", ec.message());
+  return {};
+}
+
+Result<void> Config::SaveFrontendFile() {
+  std::error_code ec;
+  std::filesystem::create_directories(frontend_file_.parent_path(), ec);
+
+  const auto temp = frontend_file_.string() + ".tmp";
+  {
+    std::ofstream out(temp);
+    if (!out) return Err("config_write_failed", std::format("cannot write {}", temp));
+    out << tomljson::ToToml(frontend_);
+  }
+  std::filesystem::rename(temp, frontend_file_, ec);
   if (ec) return Err("config_write_failed", ec.message());
   return {};
 }
@@ -139,12 +161,21 @@ Result<void> Config::Patch(const json& patch) {
     return Err("invalid_setting", joined);
   }
 
+  bool frontend_changed = false;
   {
     std::lock_guard lock(mutex_);
-    document_.merge_patch(patch);
-    if (patch.contains("frontend") && patch["frontend"].is_object()) {
-      frontend_.merge_patch(patch["frontend"]);
+    json backend_patch = patch;
+    if (backend_patch.contains("frontend")) {
+      if (backend_patch["frontend"].is_object()) {
+        frontend_.merge_patch(backend_patch["frontend"]);
+        frontend_changed = true;
+      }
+      backend_patch.erase("frontend");
     }
+    document_.merge_patch(backend_patch);
+  }
+  if (frontend_changed) {
+    if (auto result = SaveFrontendFile(); !result) return result;
   }
   return Save();
 }
@@ -174,7 +205,7 @@ void Config::SetFrontendSettings(json settings) {
     std::lock_guard lock(mutex_);
     frontend_ = std::move(settings);
   }
-  if (auto result = Save(); !result) {
+  if (auto result = SaveFrontendFile(); !result) {
     log::Error("failed to save frontend settings: {}", result.error().message);
   }
 }

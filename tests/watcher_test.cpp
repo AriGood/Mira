@@ -120,3 +120,80 @@ TEST_CASE("Watcher never rediscovers its own prefix directory as a game") {
   CHECK(games.All().empty());
   CHECK(events.Since(0).empty());
 }
+
+TEST_CASE("Watcher auto-extracts a dropped archive and picks up the resulting folder as a game") {
+  const fs::path root = TempDir("watch-archive-root");
+  const fs::path state = TempDir("watch-archive-state");
+
+  config::Config config(state / "settings.toml");
+  config.Load();
+  REQUIRE(config.Set("library_roots", nlohmann::json::array({root.string()})).has_value());
+  REQUIRE(config.Set("prefix_root", (root / "prefix").string()).has_value());
+  REQUIRE(config.Set("scan.debounce_ms", 100).has_value());
+  REQUIRE(config.Set("scan.auto_extract_archives", true).has_value());
+
+  store::GameStore games(state / "games.toml");
+  games.Load();
+  api::EventBus events;
+  library::Watcher watcher(config, games, events);
+
+  std::thread watcher_thread([&] { watcher.Run(); });
+  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+  // Build a real tar.gz containing a native game folder's shape, and drop
+  // it directly into the watched root, exactly like a user extracting a
+  // download by hand — except here Mira does it.
+  const fs::path staging = TempDir("watch-archive-staging");
+  fs::create_directories(staging / "Celeste");
+  Touch(staging / "Celeste" / "Celeste", /*executable=*/true);
+  const fs::path archive = root / "Celeste.tar.gz";
+  REQUIRE(std::system(("tar -C " + staging.string() + " -czf " + archive.string() + " Celeste").c_str()) == 0);
+
+  CHECK(WaitForGameAdded(events, std::chrono::seconds(5)));
+  std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
+  watcher.Stop();
+  watcher_thread.join();
+
+  CHECK_FALSE(fs::exists(archive));  // the archive itself is gone
+  CHECK(fs::exists(root / "Celeste" / "Celeste"));
+
+  auto celeste = games.Find("celeste");
+  REQUIRE(celeste.has_value());
+  CHECK(celeste->platform == model::Platform::Native);
+  CHECK(celeste->install_path == (root / "Celeste").string());
+}
+
+TEST_CASE("Watcher leaves a dropped archive alone when auto_extract_archives is off") {
+  const fs::path root = TempDir("watch-archive-off-root");
+  const fs::path state = TempDir("watch-archive-off-state");
+
+  config::Config config(state / "settings.toml");
+  config.Load();
+  REQUIRE(config.Set("library_roots", nlohmann::json::array({root.string()})).has_value());
+  REQUIRE(config.Set("prefix_root", (root / "prefix").string()).has_value());
+  REQUIRE(config.Set("scan.debounce_ms", 100).has_value());
+  // scan.auto_extract_archives left at its default: false.
+
+  store::GameStore games(state / "games.toml");
+  games.Load();
+  api::EventBus events;
+  library::Watcher watcher(config, games, events);
+
+  std::thread watcher_thread([&] { watcher.Run(); });
+  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+  const fs::path staging = TempDir("watch-archive-off-staging");
+  fs::create_directories(staging / "Celeste");
+  Touch(staging / "Celeste" / "Celeste", /*executable=*/true);
+  const fs::path archive = root / "Celeste.tar.gz";
+  REQUIRE(std::system(("tar -C " + staging.string() + " -czf " + archive.string() + " Celeste").c_str()) == 0);
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(800));  // past debounce, nothing should fire
+
+  watcher.Stop();
+  watcher_thread.join();
+
+  CHECK(fs::exists(archive));  // untouched
+  CHECK(games.All().empty());
+}

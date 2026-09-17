@@ -4,6 +4,15 @@
 # managing it). It is a separate binary and a separate CMake project scope
 # from mira_core: the frontend talks to the daemon exclusively over the REST
 # API in docs/api.md, never by linking backend code directly.
+#
+# cmake_minimum_required + project() here are what let this directory also
+# be configured standalone (cmake -S frontend -B frontend/build), for
+# frontend-only iteration without touching the backend build at all — not
+# required when pulled in via the root's add_subdirectory(frontend), but
+# harmless there too (a nested project() just declares a sub-project).
+cmake_minimum_required(VERSION 3.20)
+project(mira-gui LANGUAGES CXX)
+
 find_package(Qt6 6.5 QUIET COMPONENTS Widgets)
 
 if(NOT Qt6_FOUND)

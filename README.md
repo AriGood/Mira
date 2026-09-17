@@ -11,10 +11,12 @@ short version: `mira` and `mira-gui` are both plain REST clients over a Unix
 socket, and neither can do anything `mirad` doesn't expose through
 [`docs/api.md`](docs/api.md).
 
-**Status:** early. Settings, the game library, the REST API, and automatic
-detection/scanning/watching are built and tested; provisioning a Wine/Proton
-prefix and launching a game are not — see the "Planned, not yet built"
-section of `docs/architecture.md`.
+**Status:** early, but the core loop works end to end: detection, Wine/Proton
+prefix provisioning, launching, crash/playtime tracking, Steam game
+detection and launching, and desktop-menu integration are all built and
+tested. See `docs/architecture.md` for what's still planned (runner-version
+downloading is in progress; winetricks-equivalent tooling is deliberately
+deferred).
 
 ## Building
 
@@ -51,6 +53,16 @@ Binaries land in `build/dev/`: `mirad`, `mira`, `mira_tests`, and
 
 ```sh
 cmake --preset tsan && cmake --build build/tsan
+```
+
+### Building just the frontend
+
+`frontend/` also configures standalone, for frontend-only iteration without
+touching the backend build at all:
+
+```sh
+cmake -S frontend -B frontend/build
+cmake --build frontend/build
 ```
 
 ## Running it
@@ -91,12 +103,28 @@ to launch the frontend
 frontend, or one-shot with nothing persistent) — running it directly is the
 right way to run it while developing, not the recommended end-user path.
 
+### Running the frontend
+
+The Qt frontend (`mira-gui`) is currently a blank skeleton — see
+`docs/architecture.md` for what it grows into. To build and launch it in one
+step during development:
+
+```sh
+cmake --build build/dev --target run-gui
+```
+
+This is a plain convenience target (build `mira-gui`, then exec it) and
+isn't part of the install story. It only exists if Qt6 was found at
+configure time — see the "Building" section above.
+
 ## Where things live
 
 All user data — settings and the game library — lives in one directory,
-`~/.config/mira/` (`$XDG_CONFIG_HOME/mira`), as two TOML files:
-`settings.toml` and `games.toml`. Back that directory up and you have the
-whole app's state; delete it and Mira starts fresh. See
+`~/.config/mira/` (`$XDG_CONFIG_HOME/mira`), as three TOML files:
+`settings.toml` (backend config, schema-validated), `games.toml` (the
+library), and `frontend.toml` (the frontend's own settings — opaque to the
+backend, never validated against the schema). Back that directory up and
+you have the whole app's state; delete it and Mira starts fresh. See
 `docs/architecture.md` for why TOML rather than a database.
 
 ## Tests

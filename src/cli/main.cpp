@@ -76,7 +76,7 @@ int CmdScan() {
   return 0;
 }
 
-int CmdRunners() {
+int CmdRunnersList() {
   auto client = Connect();
   auto res = client.Get("/v1/runners");
   if (!Ok(res)) {
@@ -92,6 +92,62 @@ int CmdRunners() {
     std::printf("%-40s %s\n", build.value("reference", "").c_str(), build.value("path", "").c_str());
   }
   return 0;
+}
+
+int CmdRunnersCatalog(int argc, char** argv) {
+  std::string kind = "proton";
+  for (int i = 0; i < argc; ++i) {
+    if (std::string_view(argv[i]) == "--kind" && i + 1 < argc) kind = argv[++i];
+  }
+  auto client = Connect();
+  auto res = client.Get(std::format("/v1/runners/catalog?kind={}", kind));
+  if (!Ok(res)) {
+    PrintError(res);
+    return 1;
+  }
+  json releases = json::parse(res->body);
+  if (releases.empty()) {
+    std::puts("(no releases found — check runner_sources.*.repo / .asset_pattern)");
+    return 0;
+  }
+  for (const json& r : releases) {
+    std::printf("%-24s %-40s %8.1f MB%s\n", r.value("tag", "").c_str(), r.value("asset_name", "").c_str(),
+               r.value("size_bytes", 0LL) / 1024.0 / 1024.0,
+               r.value("has_checksum", false) ? "" : "  (no checksum)");
+  }
+  return 0;
+}
+
+int CmdRunnersDownload(int argc, char** argv) {
+  std::string kind, tag;
+  for (int i = 0; i < argc; ++i) {
+    const std::string_view arg = argv[i];
+    if (arg == "--kind" && i + 1 < argc) kind = argv[++i];
+    else if (arg == "--tag" && i + 1 < argc) tag = argv[++i];
+  }
+  if (kind.empty() || tag.empty()) {
+    std::fprintf(stderr, "usage: mira runners download --kind proton|wine --tag TAG\n");
+    return 2;
+  }
+  auto client = Connect();
+  const json body = {{"kind", kind}, {"tag", tag}};
+  auto res = client.Post("/v1/runners/download", body.dump(), "application/json");
+  if (!Ok(res)) {
+    PrintError(res);
+    return 1;
+  }
+  std::printf("downloading %s %s — watch `mira watch` for runners.download.finished/failed\n",
+             kind.c_str(), tag.c_str());
+  return 0;
+}
+
+int CmdRunners(int argc, char** argv) {
+  if (argc == 0) return CmdRunnersList();
+  const std::string_view sub = argv[0];
+  if (sub == "catalog") return CmdRunnersCatalog(argc - 1, argv + 1);
+  if (sub == "download") return CmdRunnersDownload(argc - 1, argv + 1);
+  std::fprintf(stderr, "usage: mira runners [catalog [--kind K] | download --kind K --tag TAG]\n");
+  return 2;
 }
 
 int CmdLaunch(int argc, char** argv) {
@@ -122,6 +178,103 @@ int CmdStop(int argc, char** argv) {
   }
   std::puts("stopping");
   return 0;
+}
+
+int CmdRun(int argc, char** argv) {
+  std::string id, exe_path, args;
+  for (int i = 0; i < argc; ++i) {
+    const std::string_view arg = argv[i];
+    if (arg == "--exe" && i + 1 < argc) exe_path = argv[++i];
+    else if (arg == "--args" && i + 1 < argc) args = argv[++i];
+    else if (id.empty()) id = arg;
+  }
+  if (id.empty() || exe_path.empty()) {
+    std::fprintf(stderr,
+                 "usage: mira run <id> --exe PATH [--args ARGS]\n"
+                 "  runs an arbitrary exe inside this game's own prefix (tracked like a normal\n"
+                 "  launch) — provisions one first if it doesn't have one yet, which is how a\n"
+                 "  needs_install game's installer actually gets run.\n");
+    return 2;
+  }
+  auto client = Connect();
+  json body = {{"exe_path", exe_path}};
+  if (!args.empty()) body["args"] = args;
+  auto res = client.Post(std::format("/v1/games/{}/run", id), body.dump(), "application/json");
+  if (!Ok(res)) {
+    PrintError(res);
+    return 1;
+  }
+  std::puts("running");
+  return 0;
+}
+
+int CmdFinishInstall(int argc, char** argv) {
+  if (argc < 1) {
+    std::fprintf(stderr,
+                 "usage: mira finish-install <id>\n"
+                 "  after running an installer with `mira run` and pointing --exe at whatever\n"
+                 "  it actually installed via `mira set <id> --exe ...`, this marks the game\n"
+                 "  ready to launch normally.\n");
+    return 2;
+  }
+  auto client = Connect();
+  auto res = client.Post(std::format("/v1/games/{}/finish-install", argv[0]));
+  if (!Ok(res)) {
+    PrintError(res);
+    return 1;
+  }
+  std::puts("ready");
+  return 0;
+}
+
+int CmdRemove(int argc, char** argv) {
+  if (argc < 1) {
+    std::fprintf(stderr,
+                 "usage: mira remove <id> [--delete-files] [--delete-prefix]\n"
+                 "  forgets the game; its files are only deleted if you ask for that\n"
+                 "  explicitly, and only if they're really inside a configured root.\n");
+    return 2;
+  }
+  const std::string id = argv[0];
+  bool delete_files = false, delete_prefix = false;
+  for (int i = 1; i < argc; ++i) {
+    const std::string_view arg = argv[i];
+    if (arg == "--delete-files") delete_files = true;
+    else if (arg == "--delete-prefix") delete_prefix = true;
+  }
+  auto client = Connect();
+  std::string path = std::format("/v1/games/{}", id);
+  if (delete_files || delete_prefix) {
+    path += "?";
+    if (delete_files) path += "delete_files=true&";
+    if (delete_prefix) path += "delete_prefix=true&";
+    path.pop_back();  // trailing '&' or '?'
+  }
+  auto res = client.Delete(path);
+  if (!Ok(res)) {
+    PrintError(res);
+    return 1;
+  }
+  std::puts("removed");
+  return 0;
+}
+
+int CmdSteamScan() {
+  auto client = Connect();
+  auto res = client.Post("/v1/steam/scan");
+  if (!Ok(res)) {
+    PrintError(res);
+    return 1;
+  }
+  json summary = json::parse(res->body);
+  std::printf("added: %lld  updated: %lld\n", summary.value("added", 0LL), summary.value("updated", 0LL));
+  return 0;
+}
+
+int CmdSteam(int argc, char** argv) {
+  if (argc > 0 && std::string_view(argv[0]) == "scan") return CmdSteamScan();
+  std::fprintf(stderr, "usage: mira steam scan\n");
+  return 2;
 }
 
 int CmdList(int argc, char** argv) {
@@ -381,11 +534,20 @@ void PrintUsage() {
       "  daemon [args...]       exec mirad in the foreground\n"
       "  scan                   scan all library roots now\n"
       "  runners                list installed Proton/Wine builds\n"
-      "  launch <id>            launch a game\n"
+      "  runners catalog [--kind proton|wine]     list downloadable versions\n"
+      "  runners download --kind K --tag TAG      download and install one\n"
+      "  launch <id>            launch a game (or fire steam://rungameid for a\n"
+      "                         Steam game, depending on steam.launch_mode)\n"
       "  stop <id>              stop a running game\n"
+      "  run <id> --exe PATH [--args ARGS]        run an arbitrary exe in this\n"
+      "                         game's prefix — how you run a needs_install game's\n"
+      "                         installer\n"
+      "  finish-install <id>    mark a needs_install game ready after installing\n"
       "  list [--status S]      list games\n"
       "  show <id> [--effective] show one game, or its resolved settings\n"
       "  set <id> [flags...]    correct a game's auto-detected configuration\n"
+      "  remove <id> [--delete-files] [--delete-prefix]\n"
+      "  steam scan             detect installed Steam games\n"
       "  config get|set|list|reset [args...]\n"
       "  watch                  tail the event stream\n");
 }
@@ -407,9 +569,13 @@ int main(int argc, char** argv) {
   }
   if (command == "status") return CmdStatus();
   if (command == "scan") return CmdScan();
-  if (command == "runners") return CmdRunners();
+  if (command == "runners") return CmdRunners(rest_argc, rest);
   if (command == "launch") return CmdLaunch(rest_argc, rest);
   if (command == "stop") return CmdStop(rest_argc, rest);
+  if (command == "run") return CmdRun(rest_argc, rest);
+  if (command == "finish-install") return CmdFinishInstall(rest_argc, rest);
+  if (command == "remove") return CmdRemove(rest_argc, rest);
+  if (command == "steam") return CmdSteam(rest_argc, rest);
   if (command == "daemon") return CmdDaemon(rest_argc, rest, argv[0]);
   if (command == "list") return CmdList(rest_argc, rest);
   if (command == "show") return CmdShow(rest_argc, rest);
