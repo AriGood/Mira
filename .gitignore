@@ -37,6 +37,12 @@ Testing/
 *.out
 *.app
 
+# makepkg build output
+packaging/pkg/
+packaging/src/
+packaging/*.tar.gz
+packaging/*.pkg.tar.zst
+
 # Temporary files
 *.tmp
 *.log
