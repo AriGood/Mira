@@ -10,6 +10,7 @@
 #include "config/Resolver.h"
 #include "config/Schema.h"
 #include "core/Log.h"
+#include "desktop/DesktopEntries.h"
 #include "library/Scanner.h"
 #include "runner/RunnerRegistry.h"
 
@@ -98,10 +99,30 @@ std::optional<std::string> ValidateOverridesPatch(const json& patch) {
   return std::nullopt;
 }
 
+// Wraps the launch command in each configured wrapper, in order: the first
+// entry ends up outermost, so ["gamescope", "mangohud"] runs
+// `gamescope mangohud <game>`.
+void ApplyCommandWrappers(Command& command, const std::vector<std::string>& wrappers) {
+  for (auto it = wrappers.rbegin(); it != wrappers.rend(); ++it) {
+    if (it->empty()) continue;
+    command.argv.insert(command.argv.begin(), *it);
+  }
+}
+
+void SyncDesktopEntries(config::Config& config, store::GameStore& games) {
+  if (auto synced = desktop::DesktopEntries(config).Sync(games.All()); !synced) {
+    log::Warn("could not update application menu entries: {}", synced.error().message);
+  }
+}
+
 }  // namespace
 
 Server::Server(config::Config& config, store::GameStore& games, EventBus& events)
-    : config_(config), games_(games), events_(events), http_(std::make_unique<httplib::Server>()) {}
+    : config_(config),
+      games_(games),
+      events_(events),
+      http_(std::make_unique<httplib::Server>()),
+      supervisor_(games, events, config.GetInt("launch.stop_timeout_s")) {}
 
 Server::~Server() = default;
 
@@ -203,6 +224,7 @@ void Server::RegisterRoutes() {
 
     auto result = games_.Update(id, [&](model::Game& game) { game = ParseGamePatch(game, patch); });
     if (!result) return SendError(res, 404, result.error().code, result.error().message);
+    SyncDesktopEntries(config_, games_);
     events_.Publish("game.updated", model::ToJson(*result));
     SendJson(res, model::ToJson(*result));
   });
@@ -240,6 +262,7 @@ void Server::RegisterRoutes() {
   http_->Delete(R"(/v1/games/([^/]+))", [this](const Request& req, Response& res) {
     auto result = games_.Remove(req.matches[1]);
     if (!result) return SendError(res, 404, result.error().code, result.error().message);
+    SyncDesktopEntries(config_, games_);
     events_.Publish("game.removed", {{"id", req.matches[1].str()}});
     SendJson(res, json::object());
   });
@@ -257,6 +280,42 @@ void Server::RegisterRoutes() {
     const library::ScanSummary summary = scanner.ScanAll();
     SendJson(res, {{"added", summary.added}, {"missing", summary.missing},
                    {"restored", summary.restored}});
+  });
+
+  // --- launching ------------------------------------------------------------
+
+  http_->Post(R"(/v1/games/([^/]+)/launch)", [this](const Request& req, Response& res) {
+    auto game = games_.Find(req.matches[1]);
+    if (!game) return SendError(res, 404, "game_not_found", "no such game");
+    if (game->status == model::GameStatus::NeedsInstall) {
+      return SendError(res, 409, "needs_install", game->last_error);
+    }
+    if (game->status != model::GameStatus::Ready) {
+      return SendError(res, 409, "not_ready",
+                       std::format("\"{}\" is {}, not ready to launch", game->id,
+                                  model::ToString(game->status)));
+    }
+
+    const runner::RunnerRegistry registry(config_);
+    auto resolved = registry.Resolve(game->runner_ref.empty() ? "native:native" : game->runner_ref);
+    if (!resolved) return SendError(res, 400, resolved.error().code, resolved.error().message);
+
+    auto command = resolved->runner->BuildCommand(*game, resolved->build);
+    if (!command) return SendError(res, 400, command.error().code, command.error().message);
+
+    ApplyCommandWrappers(*command, config_.GetStringArray("command_wrappers"));
+
+    if (auto launched = supervisor_.Launch(*game, *command); !launched) {
+      return SendError(res, 409, launched.error().code, launched.error().message);
+    }
+    SendJson(res, {{"status", "running"}});
+  });
+
+  http_->Post(R"(/v1/games/([^/]+)/stop)", [this](const Request& req, Response& res) {
+    if (auto stopped = supervisor_.Stop(req.matches[1]); !stopped) {
+      return SendError(res, 409, stopped.error().code, stopped.error().message);
+    }
+    SendJson(res, {{"status", "stopping"}});
   });
 
   // --- runners --------------------------------------------------------------

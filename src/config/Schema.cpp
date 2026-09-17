@@ -86,8 +86,10 @@ Schema::Schema() {
        "auto-detected settings can be reviewed."},
 
       {"default_runner.windows", Type::String, "auto", Tier::Basic,
-       "Runner for Windows games as \"kind:name\", or \"auto\" to pick the best installed "
-       "runner (Proton via umu if present, otherwise Wine)."},
+       "Runner for Windows games as \"kind:name\" (e.g. \"proton:GE-Proton11-7\", "
+       "\"wine:system\"; \"latest\" as the name picks the newest installed build), or "
+       "\"auto\" to pick the best installed runner — Proton if any build is present, "
+       "otherwise Wine."},
 
       {"default_runner.native", Type::String, "native:native", Tier::Expert,
        "Runner for native Linux games.", RunnerRef()},
@@ -114,8 +116,36 @@ Schema::Schema() {
        "Cloned with reflinks where the filesystem supports them."},
 
       {"command_wrappers", Type::StringArray, json::array(), Tier::Advanced,
-       "Wrappers applied to the launch command in order, e.g. [\"mangohud\"]. Each entry "
-       "is a command that receives the game's command line as its arguments."},
+       "Wrappers applied to the launch command in order, e.g. [\"gamescope\", \"mangohud\"]. "
+       "The first entry ends up outermost. Each receives the game's command line as its "
+       "arguments."},
+
+      {"launch.stop_timeout_s", Type::Int, 10, Tier::Advanced,
+       "How long to give a game to quit after \"stop\" before it's killed outright. The "
+       "whole process group is signalled, since a real launch is umu -> proton -> wine -> "
+       "the game.",
+       Range(0, 600)},
+
+      {"desktop_entries.enabled", Type::Bool, true, Tier::Basic,
+       "Add each ready game to your application menu as a .desktop entry, so it can be "
+       "launched from the desktop like any other app. Turn this off to keep Mira's games "
+       "out of your menu entirely."},
+
+      {"desktop_entries.directory", Type::String, "~/.local/share/applications", Tier::Expert,
+       "Where .desktop entries are written. Only files Mira created (mira-<id>.desktop) are "
+       "ever touched."},
+
+      {"desktop_entries.categories", Type::String, "Game;", Tier::Advanced,
+       "Freedesktop Categories= value for generated entries, deciding where they appear in "
+       "the menu."},
+
+      {"desktop_entries.exec_mode", Type::String, "cli", Tier::Advanced,
+       "What a menu entry runs. \"cli\" (`mira launch <id>`) requires mirad to already be "
+       "running and fails clearly if it isn't; \"frontend\" starts the frontend, which "
+       "brings the daemon up itself. Either way the launch goes through Mira, which is "
+       "what makes playtime get recorded — a menu entry that ran the game directly would "
+       "launch fine and log nothing.",
+       OneOf({"cli", "frontend"})},
 
       {"scan.debounce_ms", Type::Int, 3000, Tier::Advanced,
        "How long a new folder must stop changing before it is scanned. Raise it if games "
