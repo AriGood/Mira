@@ -86,6 +86,12 @@ Schema::Schema() {
        "Ask the frontend to open its configuration menu when a game is added, so the "
        "auto-detected settings can be reviewed."},
 
+      {"scan.tag_by_root", Type::Bool, true, Tier::Basic,
+       "Automatically tag each newly-detected game with the name of the library root folder "
+       "it was found in (e.g. a game under ~/Games Mira gets tagged \"Games Mira\") -- useful "
+       "for filtering multiple game folders (GET /v1/games?tag=...) with several "
+       "library_roots configured. Only applied at detection time, not retroactively."},
+
       {"library.remove_missing", Type::Bool, false, Tier::Basic,
        "When a previously-detected game's folder disappears, forget it entirely instead of "
        "just marking it missing. Off by default: missing keeps the game's configuration, "

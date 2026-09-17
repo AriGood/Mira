@@ -197,3 +197,51 @@ TEST_CASE("Watcher leaves a dropped archive alone when auto_extract_archives is 
   CHECK(fs::exists(archive));  // untouched
   CHECK(games.All().empty());
 }
+
+TEST_CASE("Watcher never extracts or scans anything under a configured runner_search_paths root, "
+         "even if it overlaps a library root") {
+  // A runner build being downloaded (runner/Downloader.cpp, its own
+  // separate tar) into runner_search_paths must never also be treated as a
+  // droppable archive or a new game folder here -- see Watcher.cpp's
+  // IsUnderAnyRoot for why. This is a real, if unusual, config: nothing
+  // stops library_roots from overlapping runner_search_paths.
+  const fs::path root = TempDir("watch-runner-overlap-root");
+  const fs::path state = TempDir("watch-runner-overlap-state");
+
+  config::Config config(state / "settings.toml");
+  config.Load();
+  REQUIRE(config.Set("library_roots", nlohmann::json::array({root.string()})).has_value());
+  REQUIRE(config.Set("runner_search_paths", nlohmann::json::array({root.string()})).has_value());
+  REQUIRE(config.Set("prefix_root", (root / "prefix").string()).has_value());
+  REQUIRE(config.Set("scan.debounce_ms", 100).has_value());
+  REQUIRE(config.Set("scan.auto_extract_archives", true).has_value());
+
+  store::GameStore games(state / "games.toml");
+  games.Load();
+  api::EventBus events;
+  library::Watcher watcher(config, games, events);
+
+  std::thread watcher_thread([&] { watcher.Run(); });
+  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+  // A folder shaped like a Proton build, dropped exactly as
+  // runner/Downloader.cpp would leave one after extracting it.
+  fs::create_directories(root / "Fake-Proton-1" / "files" / "bin");
+  Touch(root / "Fake-Proton-1" / "proton", /*executable=*/true);
+
+  // An archive too, in case a tarball briefly exists there mid-download.
+  const fs::path staging = TempDir("watch-runner-overlap-staging");
+  fs::create_directories(staging / "Celeste");
+  Touch(staging / "Celeste" / "Celeste", /*executable=*/true);
+  const fs::path archive = root / "Celeste.tar.gz";
+  REQUIRE(std::system(("tar -C " + staging.string() + " -czf " + archive.string() + " Celeste").c_str()) == 0);
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(800));  // past debounce, nothing should fire
+
+  watcher.Stop();
+  watcher_thread.join();
+
+  CHECK(fs::exists(archive));  // untouched, not extracted
+  CHECK(fs::exists(root / "Fake-Proton-1" / "proton"));  // untouched, not treated as a game
+  CHECK(games.All().empty());
+}

@@ -70,6 +70,11 @@ struct Game {
 
   std::map<std::string, std::string> env;
   std::vector<Candidate> candidates;
+
+  // Free-form, user-assigned. No tag is special-cased in storage — "hidden"
+  // is a convention the API/CLI treat specially (excluded from the default
+  // GET /v1/games list; see docs/api.md), not a separate field.
+  std::vector<std::string> tags;
 };
 
 // An installed runner build, e.g. GE-Proton11-7. Rediscovered at startup and

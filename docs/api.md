@@ -68,9 +68,18 @@ Resets one key to its schema default, or everything if `key` is omitted.
 Backed by `games.toml`. A game's `id` is a human-readable slug
 (`"celeste"`, `"celeste-2"` on collision), not an opaque integer.
 
-### `GET /v1/games[?status=<status>]` — implemented
+### `GET /v1/games[?status=<status>][?tag=<tag>]` — implemented
 Lists games, optionally filtered to one `status`
-(`setting_up | ready | broken | missing | needs_install`).
+(`setting_up | ready | broken | missing | needs_install`) and/or one tag
+(a game must have that exact tag in its `tags` array). `"hidden"` is the
+one tag this endpoint treats specially, and the only "hidden games"
+concept there is — no separate field: a game tagged `hidden` is left out
+of the list whenever `?tag=` isn't given, so `?tag=hidden` is how you list
+exactly the hidden ones (and `?tag=hidden&status=ready` etc. compose
+normally). `scan.tag_by_root` (default on) auto-tags every newly-detected
+game with the name of the library root folder it was found in, so
+multiple `library_roots` stay filterable without tagging anything by
+hand — see `PATCH` below for setting tags by hand too.
 
 ### `GET /v1/games/{id}` — implemented
 The full stored record for one game:
@@ -81,7 +90,7 @@ The full stored record for one game:
   "exe_path": "Celeste", "args": "", "working_dir": "", "runner_ref": "",
   "data_dir": "", "runner_config": {}, "overrides": {}, "last_error": "",
   "created_at": 0, "updated_at": 0, "last_played_at": null, "play_seconds": 0,
-  "env": {}, "candidates": []
+  "env": {}, "candidates": [], "tags": []
 }
 ```
 `confidence`/`reviewed` are how auto-setup stays safe without blocking on a
@@ -95,11 +104,14 @@ opaque here — owned by whichever runner `runner_ref` names, never by core.
 Corrects the game's own fields: any of `name`, `exe_path`, `args`,
 `working_dir`, `runner_ref`, `data_dir` (where its prefix/data lives — see
 `docs/architecture.md` on why it isn't called `prefix_path`),
-`runner_config` (merged, not replaced), `env` (merged). Setting any of these
-marks the game `reviewed: true` — a correction *is* the review. Never
-touches `overrides` (see `.../config` below — a game's own fields and its
-overrides of unrelated global settings are different concerns and don't
-share a request body). Publishes `game.updated`. 404 if the id is unknown.
+`runner_config` (merged, not replaced), `env` (merged), `tags` (replaced
+wholesale — a plain list has no natural per-entry merge the way `env`'s
+null-removes-a-key convention does, so send the full set you want; `[]`
+clears it). Setting any of these marks the game `reviewed: true` — a
+correction *is* the review. Never touches `overrides` (see `.../config`
+below — a game's own fields and its overrides of unrelated global settings
+are different concerns and don't share a request body). Publishes
+`game.updated`. 404 if the id is unknown.
 
 ### `DELETE /v1/games/{id}[?delete_files=true][?delete_prefix=true]` — implemented
 Forgets the game. By default never touches disk. `delete_files=true` also

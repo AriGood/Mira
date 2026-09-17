@@ -38,15 +38,18 @@ Prints the summary: `added: N  missing: N  restored: N`. Useful right
 after changing `library_roots` (the watcher needs a restart to pick up new
 roots; this doesn't).
 
-## `mira list [--status S]`
+## `mira list [--status S] [--tag T]`
 `GET /v1/games`, optionally filtered to one status
-(`setting_up | ready | broken | missing | needs_install`). One line per game:
+(`setting_up | ready | broken | missing | needs_install`) and/or one tag.
+One line per game:
 ```
 celeste                  ready      [unreviewed] Celeste
 hollow-knight             setting_up             Hollow Knight  (windows)
 ```
 `[unreviewed]` marks a game nobody has corrected since auto-setup — see
-`docs/api.md` on `confidence`/`reviewed`.
+`docs/api.md` on `confidence`/`reviewed`. Games tagged `hidden` are left
+out unless you pass `--tag hidden` explicitly — see `docs/api.md`'s Games
+section for the whole tags/hidden story.
 
 ## `mira show <id> [--effective]`
 Without `--effective`: the full stored record for one game
@@ -62,14 +65,19 @@ separate requests (only the ones you use fire):
 
 | Flag | Goes to |
 |---|---|
-| `--name`, `--exe`, `--args`, `--runner kind:name`, `--data-dir`, `--env KEY=VALUE` (repeatable) | `PATCH /v1/games/{id}` — the game's own fields |
+| `--name`, `--exe`, `--args`, `--runner kind:name`, `--data-dir`, `--env KEY=VALUE` (repeatable), `--tag NAME`/`--untag NAME` (repeatable) | `PATCH /v1/games/{id}` — the game's own fields |
 | `--override dotted.key=value` (repeatable), `--unset dotted.key` (repeatable) | `PATCH /v1/games/{id}/config` — this game's overrides of a global setting |
 
 ```sh
 mira set celeste --exe Celeste.exe --runner wine:system
 mira set celeste --override scan.max_depth=8
 mira set celeste --unset scan.max_depth        # back to inherited
+mira set celeste --tag hidden                  # leaves it out of `mira list` by default
+mira set celeste --untag hidden
 ```
+`--tag`/`--untag` edit the *current* tag set (fetching it first, since the
+API itself replaces the array wholesale — see `docs/api.md`) rather than
+requiring you to retype every tag the game already has.
 `--override`'s value is parsed as JSON first (so `8`, `true`, `"a string"`
 all work as typed), falling back to a bare string if it doesn't parse —
 `--override detect.name_match_bonus=4.5` and `--override runner_ref=foo`

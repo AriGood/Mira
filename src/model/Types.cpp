@@ -84,6 +84,7 @@ json ToJson(const Game& game) {
   json candidates = json::array();
   for (const Candidate& candidate : game.candidates) candidates.push_back(ToJson(candidate));
   out["candidates"] = std::move(candidates);
+  out["tags"] = game.tags;
   return out;
 }
 
@@ -132,6 +133,12 @@ Game GameFromJson(const json& document) {
   if (document.contains("env") && document["env"].is_object()) {
     for (const auto& [key, value] : document["env"].items()) {
       if (value.is_string()) game.env[key] = value.get<std::string>();
+    }
+  }
+
+  if (document.contains("tags") && document["tags"].is_array()) {
+    for (const json& tag : document["tags"]) {
+      if (tag.is_string()) game.tags.push_back(tag.get<std::string>());
     }
   }
 

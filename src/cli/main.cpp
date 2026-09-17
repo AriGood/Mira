@@ -9,11 +9,13 @@
 #include <httplib.h>
 #include <json.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <format>
 #include <iostream>
 #include <string>
+#include <vector>
 #include <unistd.h>
 
 #include "config/Config.h"
@@ -371,14 +373,21 @@ int CmdMetadata(int argc, char** argv) {
 }
 
 int CmdList(int argc, char** argv) {
-  std::string status_filter;
+  std::string status_filter, tag_filter;
   for (int i = 0; i < argc; ++i) {
     const std::string_view arg = argv[i];
     if (arg == "--status" && i + 1 < argc) status_filter = argv[++i];
+    else if (arg == "--tag" && i + 1 < argc) tag_filter = argv[++i];
   }
   auto client = Connect();
   std::string path = "/v1/games";
-  if (!status_filter.empty()) path += "?status=" + status_filter;
+  std::string query;
+  if (!status_filter.empty()) query += "status=" + status_filter + "&";
+  if (!tag_filter.empty()) query += "tag=" + tag_filter + "&";
+  if (!query.empty()) {
+    query.pop_back();  // trailing '&'
+    path += "?" + query;
+  }
   auto res = client.Get(path);
   if (!Ok(res)) {
     PrintError(res);
@@ -424,13 +433,17 @@ int CmdSet(int argc, char** argv) {
                  "usage: mira set <id> [--name N] [--exe PATH] [--args ARGS]\n"
                  "                     [--runner kind:name] [--data-dir PATH]\n"
                  "                     [--env KEY=VALUE]...\n"
-                 "                     [--override dotted.key=VALUE]... [--unset dotted.key]...\n");
+                 "                     [--tag NAME]... [--untag NAME]...\n"
+                 "                     [--override dotted.key=VALUE]... [--unset dotted.key]...\n"
+                 "  --tag hidden leaves this game out of `mira list`/GET /v1/games by\n"
+                 "  default (still reachable via --tag hidden or `mira show`).\n");
     return 2;
   }
   const std::string id = argv[0];
   json patch = json::object();     // -> PATCH /v1/games/{id}: this game's own fields
   json overrides = json::object(); // -> PATCH /v1/games/{id}/config: overrides of global settings
   json env = json::object();
+  std::vector<std::string> add_tags, remove_tags;
 
   for (int i = 1; i < argc; ++i) {
     const std::string_view arg = argv[i];
@@ -450,6 +463,10 @@ int CmdSet(int argc, char** argv) {
       if (const auto eq = kv.find('='); eq != std::string::npos) {
         env[kv.substr(0, eq)] = kv.substr(eq + 1);
       }
+    } else if (arg == "--tag") {
+      add_tags.push_back(next());
+    } else if (arg == "--untag") {
+      remove_tags.push_back(next());
     } else if (arg == "--override") {
       const std::string kv = next();
       if (const auto eq = kv.find('='); eq != std::string::npos) {
@@ -464,6 +481,26 @@ int CmdSet(int argc, char** argv) {
 
   auto client = Connect();
   bool changed = false;
+
+  // --tag/--untag add or remove from whatever this game's tags already are
+  // -- PATCH itself replaces the array wholesale (see ParseGamePatch), so
+  // the current set has to be fetched first to edit it rather than blow it
+  // away.
+  if (!add_tags.empty() || !remove_tags.empty()) {
+    auto current = client.Get(std::format("/v1/games/{}", id));
+    if (!Ok(current)) {
+      PrintError(current);
+      return 1;
+    }
+    json tags = json::parse(current->body).value("tags", json::array());
+    std::vector<std::string> merged;
+    for (const auto& t : tags) merged.push_back(t.get<std::string>());
+    for (const std::string& t : remove_tags) std::erase(merged, t);
+    for (const std::string& t : add_tags) {
+      if (std::ranges::find(merged, t) == merged.end()) merged.push_back(t);
+    }
+    patch["tags"] = merged;
+  }
 
   if (!patch.empty()) {
     auto res = client.Patch(std::format("/v1/games/{}", id), patch.dump(), "application/json");
@@ -636,7 +673,8 @@ void PrintUsage() {
       "                         game's prefix — how you run a needs_install game's\n"
       "                         installer\n"
       "  finish-install <id>    mark a needs_install game ready after installing\n"
-      "  list [--status S]      list games\n"
+      "  list [--status S] [--tag T]        list games (hidden-tagged ones excluded\n"
+      "                         by default; --tag hidden lists exactly those)\n"
       "  show <id> [--effective] show one game, or its resolved settings\n"
       "  set <id> [flags...]    correct a game's auto-detected configuration\n"
       "  remove <id> [--delete-files] [--delete-prefix]\n"

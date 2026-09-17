@@ -110,6 +110,63 @@ TEST_CASE("PATCH /v1/games/{id} env: a top-level null clears every entry") {
   CHECK(stored->env.empty());
 }
 
+TEST_CASE("GET /v1/games excludes hidden-tagged games by default; ?tag= filters, including for hidden") {
+  LiveServer server(TempDir("server-tags"));
+
+  model::Game visible;
+  visible.id = "celeste";
+  visible.name = "Celeste";
+  visible.tags = {"platformer"};
+  REQUIRE(server.games().Upsert(visible).has_value());
+
+  model::Game hidden;
+  hidden.id = "umu-launcher";
+  hidden.name = "umu-launcher";
+  hidden.tags = {"hidden", "tool"};
+  REQUIRE(server.games().Upsert(hidden).has_value());
+
+  httplib::Client client = server.Client();
+
+  auto default_list = client.Get("/v1/games");
+  REQUIRE(default_list != nullptr);
+  CHECK(default_list->body.find("\"celeste\"") != std::string::npos);
+  CHECK(default_list->body.find("\"umu-launcher\"") == std::string::npos);
+
+  auto hidden_list = client.Get("/v1/games?tag=hidden");
+  REQUIRE(hidden_list != nullptr);
+  CHECK(hidden_list->body.find("\"umu-launcher\"") != std::string::npos);
+  CHECK(hidden_list->body.find("\"celeste\"") == std::string::npos);
+
+  auto tool_list = client.Get("/v1/games?tag=tool");
+  REQUIRE(tool_list != nullptr);
+  CHECK(tool_list->body.find("\"umu-launcher\"") != std::string::npos);
+}
+
+TEST_CASE("PATCH /v1/games/{id} tags replaces the array wholesale") {
+  LiveServer server(TempDir("server-tags-patch"));
+
+  model::Game game;
+  game.id = "celeste";
+  game.name = "Celeste";
+  game.tags = {"platformer", "indie"};
+  REQUIRE(server.games().Upsert(game).has_value());
+
+  httplib::Client client = server.Client();
+  auto res = client.Patch("/v1/games/celeste", R"({"tags": ["hidden"]})", "application/json");
+  REQUIRE(res != nullptr);
+  CHECK(res->status == 200);
+
+  auto stored = server.games().Find("celeste");
+  REQUIRE(stored.has_value());
+  REQUIRE(stored->tags.size() == 1);
+  CHECK(stored->tags[0] == "hidden");
+
+  auto cleared = client.Patch("/v1/games/celeste", R"({"tags": []})", "application/json");
+  REQUIRE(cleared != nullptr);
+  CHECK(cleared->status == 200);
+  CHECK(server.games().Find("celeste")->tags.empty());
+}
+
 TEST_CASE("GET /v1/runners/{kind}/schema reflects what each runner actually reads out of runner_config") {
   LiveServer server(TempDir("server-runner-schema"));
   httplib::Client client = server.Client();

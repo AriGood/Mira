@@ -69,6 +69,15 @@ model::Game ParseGamePatch(const model::Game& base, const json& patch) {
   if (patch.contains("runner_config") && patch["runner_config"].is_object()) {
     game.runner_config.merge_patch(patch["runner_config"]);
   }
+  // Replaced wholesale, not merged -- a plain list has no natural per-entry
+  // merge semantics the way the env map's null-removes-a-key convention
+  // does, so the client sends the full set it wants ({"tags": []} clears).
+  if (patch.contains("tags") && patch["tags"].is_array()) {
+    game.tags.clear();
+    for (const auto& tag : patch["tags"]) {
+      if (tag.is_string()) game.tags.push_back(tag.get<std::string>());
+    }
+  }
   // "env": null clears every entry; "env": {"K": null} removes just K
   // (same null-removes convention as ApplyOverridesPatch below) — merge-only
   // with no way to shrink the map left no way to actually unset a variable
@@ -248,13 +257,24 @@ void Server::RegisterRoutes() {
 
   // --- games ----------------------------------------------------------------
 
+  // "hidden" isn't a separate field — it's a tag (see model::Game::tags),
+  // and the one tag this endpoint treats specially: a hidden game is left
+  // out of the default/untagged list, same as it'd be hidden in a launcher
+  // UI, without a whole extra field+schema entry for one boolean. Pass
+  // ?tag=hidden explicitly to list exactly the hidden ones.
   http_->Get("/v1/games", [this](const Request& req, Response& res) {
     std::vector<model::Game> all = games_.All();
     json out = json::array();
     const auto status_filter = req.params.find("status");
+    const auto tag_filter = req.params.find("tag");
     for (const model::Game& game : all) {
       if (status_filter != req.params.end() &&
           status_filter->second != model::ToString(game.status)) {
+        continue;
+      }
+      if (tag_filter != req.params.end()) {
+        if (!std::ranges::contains(game.tags, tag_filter->second)) continue;
+      } else if (std::ranges::contains(game.tags, std::string("hidden"))) {
         continue;
       }
       out.push_back(model::ToJson(game));
