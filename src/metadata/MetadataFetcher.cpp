@@ -89,9 +89,14 @@ std::string ContentTypeFor(const fs::path& file) {
 // into `info` under "artwork" if it succeeds. Extension is taken from the
 // url itself, since that's the only place either source says what format it
 // sent.
+//
+// Deliberately sends no credentials. Both sources put their images on a
+// plain public CDN, and SteamGridDB's rejects an Authorization header for
+// its own API with a 401 — so passing the key along, which is the obvious
+// thing to do when the search that produced the url needed it, is what
+// stopped every non-Steam game from ever getting a cover.
 void FetchArtworkInto(const config::Config& config, const std::string& url, const std::string& game_id,
-                      std::string_view source, json& info,
-                      const std::vector<std::string>& extra_curl_args = {}) {
+                      std::string_view source, json& info) {
   std::string ext = fs::path(std::string(url)).extension().string();
   if (ext.empty() || ext.size() > 5) ext = ".jpg";
 
@@ -104,15 +109,16 @@ void FetchArtworkInto(const config::Config& config, const std::string& url, cons
   }
   const fs::path dest = dir / ("cover" + ext);
 
-  std::vector<std::string> argv = {"curl", "-sSL", "-f", "--max-time", std::string(kMaxTime)};
-  argv.insert(argv.end(), extra_curl_args.begin(), extra_curl_args.end());
-  argv.insert(argv.end(), {"-o", dest.string(), url});
-
   Command command;
-  command.argv = std::move(argv);
+  command.argv = {"curl", "-sSL",         "-f", "--max-time", std::string(kMaxTime),
+                  "-o",   dest.string(), url};
   const Result<runner::ExecResult> result = runner::RunAndWait(command);
   if (!result || result->exit_code != 0) {
+    log::Warn("couldn't download artwork for {} from {}", game_id, url);
     fs::remove(dest, ec);
+    // The directory was created for a file that never arrived; leaving it
+    // behind makes an empty artwork/<id>/ look like a cache entry.
+    fs::remove(dir, ec);
     return;
   }
   info["artwork"] = {{"file", dest.filename().string()}, {"content_type", ContentTypeFor(dest)},
@@ -215,7 +221,7 @@ void FetchNonSteam(const config::Config& config, const std::string& name, const 
   }
   const std::string url = Value(grids["data"][0], "url", std::string());
   if (url.empty()) return;
-  FetchArtworkInto(config, url, game_id, "steamgriddb", info, {"-H", auth_header});
+  FetchArtworkInto(config, url, game_id, "steamgriddb", info);
 }
 
 }  // namespace

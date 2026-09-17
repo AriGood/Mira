@@ -97,7 +97,10 @@ private:
   void OpenRunners();
   void ImportSteamLibrary();
   void OpenClassicView();
-  void RefreshMetadata(const std::string& id);
+  // `announce` is false for the bulk path, where one toast covers the batch
+  // and per-game messages would be one notification per game.
+  void RefreshMetadata(const std::string& id, bool announce = true);
+  void FetchMissingArtwork();
   void UpdateTileCover(const QString& id);
 
   void HandleGameEvent(const std::string& type, const std::string& data);

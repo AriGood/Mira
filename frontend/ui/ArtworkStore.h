@@ -45,6 +45,11 @@ public:
   // what to show instead. The first call for an id also queues the fetch.
   QPixmap Cover(const GameSummary& game, QSize tile, qreal device_pixel_ratio);
 
+  // True only if real artwork is held for this id. False covers both "asked
+  // and there was none" and "not asked yet", which is what a bulk re-fetch
+  // wants: neither one has a cover to show.
+  bool HasArtwork(const std::string& id) const;
+
   // Forget everything known about one game's artwork and fetch it again.
   // For `game.metadata_ready`, and for an explicit refresh.
   void Invalidate(const std::string& id);

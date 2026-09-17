@@ -1,8 +1,10 @@
 #include "SystemNotifier.h"
 
 #include <QDBusConnection>
+#include <QFileInfo>
 #include <QDBusInterface>
 #include <QDBusReply>
+#include <QStandardPaths>
 #include <QStringList>
 #include <QVariantMap>
 
@@ -48,6 +50,19 @@ QDBusInterface& Interface() {
 
 }  // namespace
 
+bool DesktopEntryInstalled() {
+  static const bool installed = [] {
+    const QString file = QString(kDesktopEntry) + ".desktop";
+    QStringList roots = {QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation)};
+    roots += QStandardPaths::standardLocations(QStandardPaths::GenericDataLocation);
+    for (const QString& root : roots) {
+      if (QFileInfo::exists(root + "/applications/" + file)) return true;
+    }
+    return false;
+  }();
+  return installed;
+}
+
 bool Available() {
   static const bool available = Interface().isValid();
   return available;
@@ -58,7 +73,10 @@ bool Send(Level level, const QString& text) {
 
   QVariantMap hints;
   hints["urgency"] = QVariant::fromValue(UrgencyFor(level));
-  hints["desktop-entry"] = QString(kDesktopEntry);
+  // Only when the entry is actually installed. Pointing the shell at a
+  // desktop file that isn't there buys nothing and, on a portal-managed
+  // desktop, is the same claim that produces the app-id warning above.
+  if (DesktopEntryInstalled()) hints["desktop-entry"] = QString(kDesktopEntry);
 
   // The summary is the app, the body is the message. Splitting them the
   // other way around would put a sentence in bold and leave the body empty,

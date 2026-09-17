@@ -21,6 +21,16 @@ namespace mira_gui::notify {
 // keeps a record of.
 namespace system_notifier {
 
+// True if Mira's own mira.desktop is installed where the desktop can find
+// it — $XDG_DATA_HOME/applications, then each of $XDG_DATA_DIRS.
+//
+// It is worth checking rather than asserting. Running straight out of a
+// build tree, nothing is installed, and claiming the app id anyway makes
+// xdg-desktop-portal log `Could not register app ID: App info not found for
+// 'mira'` on every start — a warning about a real condition, but one that
+// is normal during development and says nothing the developer can act on.
+bool DesktopEntryInstalled();
+
 // True if a notification service answered. Queried once and remembered —
 // the service is owned by the session's shell and does not come and go.
 bool Available();

@@ -165,7 +165,7 @@ Everything `api.md` marks implemented has a path through the UI:
 | `GET`/`PATCH /v1/games/{id}/config` | `OverridesEditor` |
 | `POST /v1/games/{id}/launch`, `/stop` | Play/Stop, tile double-click, context menu |
 | `GET /v1/games/{id}/artwork` | `ui/ArtworkStore` — grid tiles and the details panel |
-| `POST /v1/games/{id}/metadata/refresh` | *Refresh metadata & cover art* in the tile context menu |
+| `POST /v1/games/{id}/metadata/refresh` | the details panel's button, the tile context menu, and *Library → Fetch missing cover art* |
 | `POST /v1/games/{id}/run` | *Run in prefix…* (`RunInPrefixDialog`) |
 | `POST /v1/games/{id}/finish-install` | *Mark as installed* |
 | `POST /v1/library/scan` | on startup, and *View → Refresh library* |
@@ -290,6 +290,15 @@ story and hands out a pixmap that is never empty:
 
 The grid and the details panel share one store, so a cover is fetched,
 decoded and cached once for both.
+
+**Re-fetching.** mirad fetches metadata only when a game is *first*
+detected, so a game whose fetch failed — or any non-Steam game from before
+`steamgriddb.api_key` was set — keeps its placeholder until something asks
+again. Three ways to ask: the details panel's *Refresh cover art &
+metadata* button, the same entry on a tile's right-click menu, and
+*Library → Fetch missing cover art*, which does it for every game the store
+has no image for. The bulk path raises one toast for the batch rather than
+one per game.
 
 There is no `has_artwork` on a game summary, so "does this game have
 artwork" can only be answered by asking for it. That is the reason for the

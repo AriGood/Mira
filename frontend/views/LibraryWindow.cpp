@@ -71,6 +71,8 @@ LibraryWindow::LibraryWindow(QWidget* parent) : QMainWindow(parent) {
           [this](const QString& id) { mira_gui::actions::Stop(this, id.toStdString()); });
   connect(details_, &mira_gui::GameDetailsPanel::EditRequested, this,
           [this](const QString& id) { OpenGameDialog(id.toStdString()); });
+  connect(details_, &mira_gui::GameDetailsPanel::MetadataRefreshRequested, this,
+          [this](const QString& id) { RefreshMetadata(id.toStdString()); });
 
   splitter_ = new QSplitter(Qt::Horizontal, this);
   splitter_->addWidget(BuildSidebar());
@@ -127,6 +129,11 @@ void LibraryWindow::BuildMenus() {
 
   auto* library_menu = menuBar()->addMenu("&Library");
   library_menu->addAction("Import &Steam library", this, &LibraryWindow::ImportSteamLibrary);
+  library_menu->addAction("Fetch missing &cover art", this, &LibraryWindow::FetchMissingArtwork)
+      ->setToolTip(
+          "Re-fetch metadata for every game with no cover. mirad only fetches automatically for a "
+          "newly detected game, so a game that failed once — or a non-Steam game from before a "
+          "SteamGridDB key was set — stays without one until asked again.");
 
   auto* tools_menu = menuBar()->addMenu("&Tools");
   tools_menu->addAction("&Runners…", this, &LibraryWindow::OpenRunners);
@@ -496,20 +503,47 @@ void LibraryWindow::UpdateTileCover(const QString& id) {
   }
 }
 
-void LibraryWindow::RefreshMetadata(const std::string& id) {
+void LibraryWindow::FetchMissingArtwork() {
+  // Over the whole library, not the current filter: "fetch what's missing"
+  // means the library, and a sidebar filter is about what you are looking
+  // at right now.
+  std::vector<std::string> missing;
+  for (const mira_gui::GameSummary& game : games_) {
+    if (!artwork_->HasArtwork(game.id)) missing.push_back(game.id);
+  }
+
+  if (missing.empty()) {
+    mira_gui::notify::Toast(this, mira_gui::notify::Level::Success,
+                            "Every game already has cover art.");
+    return;
+  }
+
+  for (const std::string& id : missing) RefreshMetadata(id, /*announce=*/false);
+  // One toast for the batch. Per-game would be one notification per game,
+  // which on a fresh library is the whole library.
+  mira_gui::notify::Toast(
+      this, mira_gui::notify::Level::Info,
+      QString("Fetching cover art for %1 game(s)… they appear as they arrive.").arg(missing.size()));
+}
+
+void LibraryWindow::RefreshMetadata(const std::string& id, bool announce) {
   mira_gui::MiradClient::RefreshMetadataAsync(
-      this, id, [this, id](mira_gui::MetadataRefreshResult result) {
+      this, id, [this, id, announce](mira_gui::MetadataRefreshResult result) {
         if (!result.ok) {
-          mira_gui::notify::Failed(this, "Could not refresh metadata.",
-                                   QString::fromStdString(result.error));
+          if (announce) {
+            mira_gui::notify::Failed(this, "Could not refresh metadata.",
+                                     QString::fromStdString(result.error));
+          }
           return;
         }
         // 202: the fetch runs on the daemon and reports back as an event.
         // Remembered so that its failure is worth a toast — see
         // HandleGameEvent, where an unasked-for failure is not.
         awaiting_metadata_.insert(id);
-        mira_gui::notify::Toast(this, mira_gui::notify::Level::Info,
-                                "Fetching metadata and cover art…");
+        if (announce) {
+          mira_gui::notify::Toast(this, mira_gui::notify::Level::Info,
+                                  "Fetching metadata and cover art…");
+        }
       });
 }
 

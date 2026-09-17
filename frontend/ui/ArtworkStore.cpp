@@ -65,6 +65,10 @@ QPixmap ArtworkStore::Cover(const GameSummary& game, QSize tile, qreal device_pi
   return cover;
 }
 
+bool ArtworkStore::HasArtwork(const std::string& id) const {
+  return original_.contains(QString::fromStdString(id));
+}
+
 void ArtworkStore::Invalidate(const std::string& id) {
   const QString key = QString::fromStdString(id);
   original_.remove(key);

@@ -76,6 +76,17 @@ GameDetailsPanel::GameDetailsPanel(QWidget* parent) : QWidget(parent) {
   });
   layout->addWidget(edit);
 
+  // Also on the tile's right-click menu, but a right-click menu is not
+  // where anyone looks for "this game has the wrong picture".
+  auto* refresh_metadata = new QPushButton("Refresh cover art && metadata", panel);
+  refresh_metadata->setToolTip(
+      "Re-fetch this game's cover and store info. Worth doing after setting a SteamGridDB key, "
+      "which is what a non-Steam game needs before it can have artwork at all.");
+  connect(refresh_metadata, &QPushButton::clicked, this, [this] {
+    if (!game_id_.empty()) emit MetadataRefreshRequested(QString::fromStdString(game_id_));
+  });
+  layout->addWidget(refresh_metadata);
+
   auto* form = new QFormLayout();
   form->setLabelAlignment(Qt::AlignLeft);
   form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);

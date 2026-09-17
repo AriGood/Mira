@@ -45,6 +45,7 @@ signals:
   void PlayRequested(const QString& id);
   void StopRequested(const QString& id);
   void EditRequested(const QString& id);
+  void MetadataRefreshRequested(const QString& id);
 
 private:
   QStackedWidget* stack_ = nullptr;
