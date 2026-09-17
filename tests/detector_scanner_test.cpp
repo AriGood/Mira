@@ -203,6 +203,40 @@ TEST_CASE("Scanner does not auto-provision when auto_setup is off") {
   CHECK_FALSE(fs::exists(celeste->data_dir));
 }
 
+TEST_CASE("Scanner retries provisioning on a later scan instead of leaving a known game stuck setting_up") {
+  const fs::path lib = TempDir("scan-retry-library");
+  fs::create_directories(lib / "Celeste");
+  Touch(lib / "Celeste" / "Celeste.exe");
+
+  const fs::path state = TempDir("scan-retry-state");
+  config::Config config(state / "settings.toml");
+  config.Load();
+  REQUIRE(config.Set("library_roots", nlohmann::json::array({lib.string()})).has_value());
+  REQUIRE(config.Set("prefix_root", (lib / "prefix").string()).has_value());
+  REQUIRE(config.Set("auto_setup", false).has_value());
+
+  store::GameStore games(state / "games.toml");
+  games.Load();
+  api::EventBus events;
+  library::Scanner scanner(config, games, events);
+
+  // First scan: auto_setup off, so the game is detected but left setting_up
+  // (regression fixture for the "gets stuck in setting up" bug report).
+  scanner.ScanAll();
+  auto celeste = games.Find("celeste");
+  REQUIRE(celeste.has_value());
+  CHECK(celeste->status == model::GameStatus::SettingUp);
+
+  // auto_setup turns on later (or a prior provisioning attempt failed
+  // transiently, or the daemon restarted mid-provision) — a later scan of
+  // the same, already-known folder must retry rather than skip it forever.
+  REQUIRE(config.Set("auto_setup", true).has_value());
+  scanner.ScanAll();
+  celeste = games.Find("celeste");
+  REQUIRE(celeste.has_value());
+  CHECK(celeste->status != model::GameStatus::SettingUp);
+}
+
 TEST_CASE("Detector flags a large setup.exe as an installer, not the game") {
   const fs::path dir = TempDir("hollow-installer-detect");
   const fs::path installer = dir / "setup_hollow_knight_1.5.12620_(64bit)_(89718).exe";
