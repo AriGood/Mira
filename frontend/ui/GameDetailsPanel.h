@@ -13,6 +13,8 @@ class QStackedWidget;
 
 namespace mira_gui {
 
+class ArtworkStore;
+
 // The side panel a selected game fills in: cover, name, status, the
 // play/stop button, and its metadata.
 //
@@ -27,13 +29,23 @@ class GameDetailsPanel : public QWidget {
 public:
   explicit GameDetailsPanel(QWidget* parent = nullptr);
 
+  // The store the panel's cover comes from. Shared with the grid so the
+  // same image is fetched, decoded and cached once for both. Without one
+  // the panel still works and shows placeholders.
+  void SetArtworkStore(ArtworkStore* store);
+
   void ShowGame(const GameSummary& game, bool running);
   void Clear();
+
+  // Re-draw the cover for the game currently on screen. For when artwork
+  // arrives after the panel was filled in.
+  void RefreshCover(const GameSummary& game);
 
 signals:
   void PlayRequested(const QString& id);
   void StopRequested(const QString& id);
   void EditRequested(const QString& id);
+  void MetadataRefreshRequested(const QString& id);
 
 private:
   QStackedWidget* stack_ = nullptr;
@@ -49,6 +61,7 @@ private:
   QLabel* error_ = nullptr;
   QPushButton* play_ = nullptr;
 
+  ArtworkStore* artwork_ = nullptr;
   std::string game_id_;
   bool running_ = false;
   // Which game path_ was last fetched for — see ShowGame.

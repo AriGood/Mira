@@ -13,6 +13,26 @@ namespace mira::config {
 // Which settings the GUI shows before the user asks for more. Nothing is ever
 // removed by a tier, only folded away: total control and a simple first run
 // coexist by hiding depth, not withholding it.
+//
+// The test for each, applied when adding a key rather than argued about
+// afterwards:
+//
+//   Basic     — someone who just wants their games to work may have to
+//               change this. It answers "where are my games", "how do they
+//               launch", "why does this one have no picture". If not
+//               setting it leaves Mira visibly not doing its job, it is
+//               Basic, however fiddly the value looks.
+//   Advanced  — tuning something that already works: detection weights,
+//               timeouts, search paths, where generated files go. Nobody
+//               needs it on day one; plenty of people need it eventually.
+//   Expert    — you are changing how Mira works, not what it does for you.
+//               Wrong values here break things in ways the UI cannot
+//               explain.
+//
+// The bar for Basic is deliberately low. A setting nobody can find is worse
+// than a settings screen with one row too many — steamgriddb.api_key sat
+// under Expert, and the result was a library of placeholder covers with no
+// visible reason.
 enum class Tier { Basic, Advanced, Expert };
 
 enum class Type { Bool, Int, Double, String, StringArray, Object };

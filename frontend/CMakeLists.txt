@@ -14,7 +14,7 @@
 cmake_minimum_required(VERSION 3.20)
 project(mira-gui LANGUAGES CXX)
 
-find_package(Qt6 6.5 QUIET COMPONENTS Widgets)
+find_package(Qt6 6.5 QUIET COMPONENTS Widgets DBus)
 
 if(NOT Qt6_FOUND)
   message(STATUS "Qt6 (>= 6.5, Widgets) not found — skipping mira-gui. "
@@ -42,6 +42,8 @@ qt_add_executable(mira-gui
   client/Types.h
 
   # ui/ — presentation shared by more than one view or dialog.
+  ui/ArtworkStore.cpp
+  ui/ArtworkStore.h
   ui/CoverArt.cpp
   ui/CoverArt.h
   ui/GameActions.cpp
@@ -53,6 +55,12 @@ qt_add_executable(mira-gui
   ui/LibrarySort.h
   ui/GameTileDelegate.cpp
   ui/GameTileDelegate.h
+  ui/Notify.cpp
+  ui/Notify.h
+  ui/SystemNotifier.cpp
+  ui/SystemNotifier.h
+  ui/Shortcuts.cpp
+  ui/Shortcuts.h
 
   # views/ — the two top-level library windows.
   views/LibraryWindow.cpp
@@ -98,7 +106,7 @@ qt_add_resources(mira-gui "icons"
 # backend code, so linking it does not violate the "never link mira_core"
 # rule in docs/architecture.md — it's the same REST-client toolkit `mira`
 # uses, not a shortcut past the API.
-target_link_libraries(mira-gui PRIVATE Qt6::Widgets mira_third_party Threads::Threads)
+target_link_libraries(mira-gui PRIVATE Qt6::Widgets Qt6::DBus mira_third_party Threads::Threads)
 target_compile_features(mira-gui PRIVATE cxx_std_20)
 
 set_target_properties(mira-gui PROPERTIES

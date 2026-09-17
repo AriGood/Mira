@@ -52,12 +52,50 @@ struct DeleteResult {
   std::string error;
 };
 
-// POST /v1/games/{id}/launch and /stop both return just ok/error — the
-// actual outcome (running, exited, crashed) arrives later as a `game.state`
-// SSE event (docs/api.md), since launch returns as soon as the process
-// exists, not when it finishes.
+// POST /v1/games/{id}/launch. The actual outcome (running, exited,
+// crashed) arrives later as a `game.state` SSE event (docs/api.md), since
+// launch returns as soon as the process exists, not when it finishes.
+//
+// `tracked` is false for the one case where no such event is ever coming:
+// a Steam-sourced game under `steam.launch_mode: "steam"`, which mirad
+// hands to `steam://rungameid/<appid>` and never spawns itself. It answers
+// `{"status": "launched_via_steam"}` and publishes `game.launched` instead.
+// A caller that assumes tracking here marks the game as playing forever,
+// because nothing will ever say it stopped.
 struct LaunchResult {
   bool ok = false;
+  std::string error;
+  bool tracked = true;
+};
+
+// GET /v1/games/{id}/artwork — the cached cover image itself, as bytes.
+//
+// `missing` is the 404 case and is not an error: most games have no cached
+// artwork, and the placeholder cover is the intended answer for them. Only
+// a reachability or server failure sets `error`.
+struct ArtworkResult {
+  bool ok = false;
+  bool missing = false;
+  std::string error;
+  std::string bytes;
+  std::string content_type;
+};
+
+// POST /v1/games/{id}/metadata/refresh — 202, so this says only that the
+// fetch was accepted. The outcome arrives as game.metadata_ready or
+// game.metadata_failed on the event stream (docs/api.md).
+struct MetadataRefreshResult {
+  bool ok = false;
+  std::string error;
+};
+
+// A game.metadata_ready / game.metadata_failed payload, trimmed to what the
+// UI acts on.
+struct MetadataEvent {
+  std::string id;
+  // Both only on .metadata_failed. Branch on `code`, never on `error`:
+  // `error` is a sentence written for a human to read.
+  std::string code;
   std::string error;
 };
 
@@ -314,6 +352,12 @@ struct FrontendPrefs {
   // is the slowest thing about startup and the daemon's own watcher
   // (library::Watcher) already keeps the library current while it runs.
   std::optional<bool> scan_on_startup;
+  // "auto" | "system" | "in_app" — where a toast goes. See notify::Delivery
+  // for what each one means and why "auto" is not just a hedge.
+  std::optional<std::string> notifications;
+  // Seconds a notification stays up; 0 means until dismissed, which is the
+  // default. See notify::SetTimeoutSeconds.
+  std::optional<int> notification_timeout_s;
 };
 
 struct FrontendPrefsResult {

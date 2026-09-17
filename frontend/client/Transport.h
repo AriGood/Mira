@@ -42,6 +42,23 @@ struct Options {
 std::string SocketPath();
 
 Reply Get(const std::string& path, const Options& options = {});
+
+// A response that isn't JSON — today only GET /v1/games/{id}/artwork, which
+// answers with the image bytes themselves.
+//
+// `status` is carried out separately because 404 is a normal answer here,
+// not a failure: it means this game has no cached artwork, which is the
+// state most games are in. A caller that treats it as an error would
+// produce one message per game on a fresh library.
+struct Blob {
+  bool ok = false;
+  int status = 0;
+  std::string error;
+  std::string bytes;
+  std::string content_type;
+};
+
+Blob GetBinary(const std::string& path, const Options& options = {});
 Reply Post(const std::string& path, const Options& options = {});
 Reply PostJson(const std::string& path, const nlohmann::json& body, const Options& options = {});
 Reply Patch(const std::string& path, const nlohmann::json& body, const Options& options = {});

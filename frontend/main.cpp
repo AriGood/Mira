@@ -1,7 +1,9 @@
 #include <QApplication>
+#include <QGuiApplication>
 #include <QIcon>
 #include <QStringList>
 
+#include "ui/SystemNotifier.h"
 #include "views/LibraryWindow.h"
 #include "views/MainWindow.h"
 
@@ -9,6 +11,18 @@ int main(int argc, char** argv) {
   QApplication app(argc, argv);
   QApplication::setApplicationName("Mira");
   QApplication::setOrganizationName("mira");
+  // Matches packaging/mira.desktop, which is how a Wayland compositor and
+  // the notification service both work out which application this is — it
+  // is what puts Mira's own name and icon on a desktop notification rather
+  // than a generic one.
+  //
+  // Only when that file is actually installed: claiming an app id nothing
+  // can resolve makes xdg-desktop-portal log "Could not register app ID:
+  // App info not found for 'mira'" on every start, which is exactly what
+  // running from a build tree does.
+  if (mira_gui::notify::system_notifier::DesktopEntryInstalled()) {
+    QGuiApplication::setDesktopFileName("mira");
+  }
 
   QIcon icon;
   for (int size : {16, 32, 48, 64, 128, 256}) {

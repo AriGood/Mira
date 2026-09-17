@@ -1,9 +1,11 @@
 #include "MainWindow.h"
 
 #include <QAbstractItemView>
+#include <QAction>
 #include <QComboBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QKeySequence>
 #include <QLabel>
 #include <QPushButton>
 #include <QTableWidget>
@@ -16,6 +18,7 @@
 #include "../dialogs/SettingsDialog.h"
 #include "../ui/GameActions.h"
 #include "../ui/GamePresentation.h"
+#include "../ui/Shortcuts.h"
 
 namespace {
 
@@ -109,10 +112,59 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 
   setCentralWidget(central);
 
+  BuildShortcuts();
+
   RefreshHealth();
 
   event_stream_.Start(this,
                        [this](std::string type, std::string data) { HandleGameEvent(type, data); });
+}
+
+void MainWindow::BuildShortcuts() {
+  // The classic view has no menu bar, so these keys are only reachable
+  // through the reference dialog F1 opens — which is why it lists them.
+  mira_gui::shortcuts::Install(this, {
+                                        {"F5, Ctrl+R", "Refresh the library"},
+                                        {"Enter", "Details & settings for the selected row"},
+                                        {"Delete", "Remove the selected game"},
+                                        {"Ctrl+,", "Settings"},
+                                    });
+
+  auto window_action = [this](std::initializer_list<QKeySequence> keys, auto slot) {
+    auto* action = new QAction(this);
+    action->setShortcuts(QList<QKeySequence>(keys));
+    connect(action, &QAction::triggered, this, slot);
+    addAction(action);
+  };
+
+  window_action({QKeySequence(QKeySequence::Refresh), QKeySequence(Qt::CTRL | Qt::Key_R)}, [this] {
+    // Through the button so its disabled-while-checking state still holds:
+    // a key that could fire a second health check mid-flight would be the
+    // one way to get two of them running at once.
+    if (refresh_button_->isEnabled()) RefreshHealth();
+  });
+  window_action({QKeySequence(Qt::CTRL | Qt::Key_Comma)}, [this] { OpenSettings(); });
+
+  // Scoped to the table, so Enter and Delete keep their normal meaning in
+  // the status filter's popup and anywhere else focus can land.
+  auto table_action = [this](std::initializer_list<QKeySequence> keys, auto slot) {
+    auto* action = new QAction(games_table_);
+    action->setShortcuts(QList<QKeySequence>(keys));
+    action->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+    connect(action, &QAction::triggered, this, slot);
+    games_table_->addAction(action);
+  };
+
+  table_action({QKeySequence(Qt::Key_Return), QKeySequence(Qt::Key_Enter)}, [this] {
+    const int row = games_table_->currentRow();
+    if (row >= 0) OpenGameDetail(row, 0);
+  });
+
+  table_action({QKeySequence(Qt::Key_Delete)}, [this] {
+    const QTableWidgetItem* item = games_table_->item(games_table_->currentRow(), 0);
+    if (item == nullptr) return;
+    DeleteGame(item->data(Qt::UserRole).toString().toStdString(), item->text());
+  });
 }
 
 void MainWindow::SetHealthy(bool healthy, const QString& tooltip) {
@@ -311,6 +363,25 @@ void MainWindow::HandleGameEvent(const std::string& type, const std::string& dat
     return;
   }
 
+  if (type == "game.launched") {
+    // The untracked counterpart to game.state: mirad handed this one to
+    // Steam. Clearing rather than ignoring, because the launch may have come
+    // from somewhere else (the CLI, another window) that did mark it.
+    const std::string id = mira_gui::MiradClient::ParseRemovedId(data);
+    if (!id.empty()) {
+      running_ids_.erase(id);
+      RefreshGames();
+    }
+    return;
+  }
+
+  // Explicitly the two event types that carry a game record, rather than
+  // "anything left over". mirad publishes runners.download.* and tricks.*
+  // on the same stream, and treating an unrecognised payload as a game was
+  // how a runner download added a blank tile to the library — and how a
+  // tricks event would have blanked a real one, since it carries an id.
+  if (type != "game.added" && type != "game.updated") return;
+
   mira_gui::GameSummary game;
   if (mira_gui::MiradClient::ParseGameSummary(data, &game)) UpsertRow(game);
 }
@@ -320,11 +391,15 @@ void MainWindow::DeleteGame(const std::string& id, const QString& name) {
 }
 
 void MainWindow::LaunchGame(const std::string& id) {
-  mira_gui::actions::Launch(this, id, [this, id] {
+  mira_gui::actions::Launch(this, id, [this, id](bool tracked) {
     // Not waiting for the game.state "running" event to confirm this: it's
     // on its way regardless, so marking it now avoids a window where a
     // second click could fire another launch before the event arrives.
-    running_ids_.insert(id);
+    //
+    // Unless it isn't on its way. A Steam-launched game is never tracked, so
+    // marking it running here would leave it running forever — there is no
+    // exit event to clear it.
+    if (tracked) running_ids_.insert(id);
     RefreshGames();
   });
 }

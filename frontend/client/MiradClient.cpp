@@ -61,7 +61,12 @@ DeleteResult DeleteGameSync(const std::string& id, bool delete_files, bool delet
 
 LaunchResult LaunchGameSync(const std::string& id) {
   const transport::Reply reply = transport::Post("/v1/games/" + id + "/launch");
-  return {reply.ok, reply.error};
+  // "launched_via_steam" is mirad saying it handed the game to the Steam
+  // client and is not watching the process (docs/api.md). Any other success
+  // body means ProcessSupervisor has it and game.state events will follow.
+  const bool tracked =
+      !reply.body.is_object() || reply.body.value("status", std::string()) != "launched_via_steam";
+  return {reply.ok, reply.error, tracked};
 }
 
 StopResult StopGameSync(const std::string& id) {
@@ -216,7 +221,6 @@ RunnersResult GetRunnersSync() {
     runner.reference = entry.value("reference", std::string());
     result.runners.push_back(std::move(runner));
   }
-  result.runners = mapping::DedupeRunnersByReference(std::move(result.runners));
   return result;
 }
 
@@ -280,6 +284,8 @@ FrontendPrefsResult GetFrontendPrefsSync() {
   read_string("sort_by", result.prefs.sort_by);
   read_bool("sort_descending", result.prefs.sort_descending);
   read_bool("scan_on_startup", result.prefs.scan_on_startup);
+  read_string("notifications", result.prefs.notifications);
+  read_int("notification_timeout_s", result.prefs.notification_timeout_s);
   return result;
 }
 
@@ -294,8 +300,37 @@ PatchConfigResult SaveFrontendPrefsSync(const FrontendPrefs& prefs) {
   if (prefs.sort_by) table["sort_by"] = *prefs.sort_by;
   if (prefs.sort_descending) table["sort_descending"] = *prefs.sort_descending;
   if (prefs.scan_on_startup) table["scan_on_startup"] = *prefs.scan_on_startup;
+  if (prefs.notifications) table["notifications"] = *prefs.notifications;
+  if (prefs.notification_timeout_s) {
+    table["notification_timeout_s"] = *prefs.notification_timeout_s;
+  }
 
-  const transport::Reply reply = transport::Patch("/v1/config", json{{"frontend", table}});
+  // Short, because SaveFrontendPrefsBlocking runs this on the UI thread
+  // while a window is closing.
+  const transport::Reply reply = transport::Patch("/v1/config", json{{"frontend", table}},
+                                                  {.read_timeout = std::chrono::seconds(2)});
+  return {reply.ok, reply.error};
+}
+
+ArtworkResult GetArtworkSync(const std::string& id) {
+  ArtworkResult result;
+  const transport::Blob blob = transport::GetBinary("/v1/games/" + id + "/artwork");
+  if (blob.status == 404) {
+    result.missing = true;
+    return result;
+  }
+  if (!blob.ok) {
+    result.error = blob.error;
+    return result;
+  }
+  result.ok = true;
+  result.bytes = blob.bytes;
+  result.content_type = blob.content_type;
+  return result;
+}
+
+MetadataRefreshResult RefreshMetadataSync(const std::string& id) {
+  const transport::Reply reply = transport::Post("/v1/games/" + id + "/metadata/refresh");
   return {reply.ok, reply.error};
 }
 
@@ -454,6 +489,20 @@ void MiradClient::SaveFrontendPrefsAsync(QObject* context, const FrontendPrefs& 
   async::Run(context, [prefs] { return SaveFrontendPrefsSync(prefs); }, std::move(callback));
 }
 
+PatchConfigResult MiradClient::SaveFrontendPrefsBlocking(const FrontendPrefs& prefs) {
+  return SaveFrontendPrefsSync(prefs);
+}
+
+void MiradClient::GetArtworkAsync(QObject* context, const std::string& id,
+                                  std::function<void(ArtworkResult)> callback) {
+  async::Run(context, [id] { return GetArtworkSync(id); }, std::move(callback));
+}
+
+void MiradClient::RefreshMetadataAsync(QObject* context, const std::string& id,
+                                       std::function<void(MetadataRefreshResult)> callback) {
+  async::Run(context, [id] { return RefreshMetadataSync(id); }, std::move(callback));
+}
+
 void MiradClient::GetRunnerCatalogAsync(QObject* context, const std::string& kind,
                                         std::function<void(RunnerCatalogResult)> callback) {
   async::Run(context, [kind] { return GetRunnerCatalogSync(kind); }, std::move(callback));
@@ -495,6 +544,13 @@ void MiradClient::PatchGameConfigAsync(QObject* context, const std::string& id,
 bool MiradClient::ParseGameSummary(const std::string& data, GameSummary* out) {
   const json entry = json::parse(data, nullptr, false);
   if (entry.is_discarded() || !entry.is_object()) return false;
+  // An id is what makes this a game record. Without this check any JSON
+  // object at all parsed as a game with every field empty — a
+  // runners.download.started payload did exactly that, and the library grew
+  // a blank tile every time a runner was downloaded.
+  if (!entry.contains("id") || !entry["id"].is_string() || entry["id"].get<std::string>().empty()) {
+    return false;
+  }
   *out = mapping::ToGameSummary(entry);
   return true;
 }
@@ -511,6 +567,17 @@ std::string MiradClient::ParseRemovedId(const std::string& data) {
   const json entry = json::parse(data, nullptr, false);
   if (entry.is_discarded() || !entry.is_object()) return {};
   return entry.value("id", std::string());
+}
+
+bool MiradClient::ParseMetadataEvent(const std::string& data, MetadataEvent* out) {
+  const json payload = json::parse(data, nullptr, false);
+  if (!payload.is_object()) return false;
+  const std::string id = payload.value("id", std::string());
+  if (id.empty()) return false;
+  out->id = id;
+  out->code = payload.value("code", std::string());
+  out->error = payload.value("error", std::string());
+  return true;
 }
 
 bool MiradClient::ParseRunnerDownload(const std::string& event_type, const std::string& data,

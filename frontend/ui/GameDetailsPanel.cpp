@@ -8,6 +8,7 @@
 #include <QVBoxLayout>
 
 #include "../client/MiradClient.h"
+#include "ArtworkStore.h"
 #include "CoverArt.h"
 #include "GamePresentation.h"
 
@@ -75,6 +76,17 @@ GameDetailsPanel::GameDetailsPanel(QWidget* parent) : QWidget(parent) {
   });
   layout->addWidget(edit);
 
+  // Also on the tile's right-click menu, but a right-click menu is not
+  // where anyone looks for "this game has the wrong picture".
+  auto* refresh_metadata = new QPushButton("Refresh cover art && metadata", panel);
+  refresh_metadata->setToolTip(
+      "Re-fetch this game's cover and store info. Worth doing after setting a SteamGridDB key, "
+      "which is what a non-Steam game needs before it can have artwork at all.");
+  connect(refresh_metadata, &QPushButton::clicked, this, [this] {
+    if (!game_id_.empty()) emit MetadataRefreshRequested(QString::fromStdString(game_id_));
+  });
+  layout->addWidget(refresh_metadata);
+
   auto* form = new QFormLayout();
   form->setLabelAlignment(Qt::AlignLeft);
   form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
@@ -114,14 +126,22 @@ void GameDetailsPanel::Clear() {
   stack_->setCurrentIndex(0);
 }
 
+void GameDetailsPanel::SetArtworkStore(ArtworkStore* store) { artwork_ = store; }
+
+void GameDetailsPanel::RefreshCover(const GameSummary& game) {
+  cover_->setPixmap(artwork_ != nullptr
+                        ? artwork_->Cover(game, kCoverSize, devicePixelRatioF())
+                        : PlaceholderCover(QString::fromStdString(game.name),
+                                           QString::fromStdString(game.id), kCoverSize,
+                                           devicePixelRatioF()));
+}
+
 void GameDetailsPanel::ShowGame(const GameSummary& game, bool running) {
   game_id_ = game.id;
   running_ = running;
   stack_->setCurrentIndex(1);
 
-  cover_->setPixmap(PlaceholderCover(QString::fromStdString(game.name),
-                                     QString::fromStdString(game.id), kCoverSize,
-                                     devicePixelRatioF()));
+  RefreshCover(game);
   name_->setText(QString::fromStdString(game.name));
 
   status_->setText(running ? "Playing now" : StatusLabel(game.status));

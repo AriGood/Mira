@@ -31,6 +31,33 @@ click launches. Right-click opens the per-game menu. Launching on the first
 click would turn a misclick into a started game, so a single click never
 launches anything.
 
+### Keyboard
+
+`Ctrl+Q` quits, `Ctrl+W` closes one window, `F1` lists every key the focused
+window responds to. Those three are installed by `ui/Shortcuts` on both
+views, so the classic table — which has no menu bar to hang an action on —
+still has them.
+
+Quit goes through `QApplication::closeAllWindows()` rather than `quit()`,
+because `LibraryWindow` saves its layout in `closeEvent` and a quit that
+skipped that handler would drop the prefs silently.
+
+The grid adds: `Ctrl+F` search, `Esc` (clears the search first, the
+selection second), `Ctrl+1`–`Ctrl+8` sidebar filters, `F5`/`Ctrl+R` refresh,
+`Ctrl+,` settings, `Ctrl++`/`Ctrl+-`/`Ctrl+0` tile size, and — only while
+the grid itself has focus — `Enter` to play or stop, `Alt+Enter` for details,
+`Delete` to remove.
+
+That last group is scoped `Qt::WidgetWithChildrenShortcut` rather than to the
+window. `Delete` and `Enter` have to keep meaning what they mean inside the
+search box, and window-scoped actions would swallow them: typing a game's
+name and pressing Backspace-Delete would otherwise open the remove prompt for
+whatever tile happened to be selected.
+
+`Ctrl+Q` and `Ctrl+,` are spelled out rather than taken from
+`QKeySequence::Quit`/`::Preferences`. Qt binds `Preferences` on macOS only,
+so the Settings row showed no shortcut at all on Linux.
+
 ## Layers
 
 Four directories, depending only downward:
@@ -100,10 +127,13 @@ This matters more than it looks:
   | `library_filter` | which sidebar filter was selected |
   | `sort_by`, `sort_descending` | grid order — see `ui/LibrarySort` |
   | `scan_on_startup` | whether opening the frontend runs `POST /v1/library/scan` |
+  | `notifications` | `auto` / `system` / `in_app` — see "Telling the user things" |
+  | `notification_timeout_s` | how long one stays up; `0` (the default) means until dismissed |
 
-  Only `scan_on_startup` gets a row in the settings screen, in an
-  "Interface (this frontend only)" group above the schema-driven ones. The
-  rest are implicit UI state: they are saved by using the window, not by
+  `scan_on_startup`, `notifications` and `notification_timeout_s` get rows in
+  the settings screen, in an "Interface (this frontend only)" group above the
+  schema-driven ones.
+  The rest are implicit UI state: they are saved by using the window, not by
   filling in a form.
 
 A window size is not something mirad should have an opinion about, so it
@@ -136,6 +166,8 @@ Everything `api.md` marks implemented has a path through the UI:
 | `DELETE /v1/games/{id}` | `DeleteGameDialog`, including `delete_files`/`delete_prefix` |
 | `GET`/`PATCH /v1/games/{id}/config` | `OverridesEditor` |
 | `POST /v1/games/{id}/launch`, `/stop` | Play/Stop, tile double-click, context menu |
+| `GET /v1/games/{id}/artwork` | `ui/ArtworkStore` — grid tiles and the details panel |
+| `POST /v1/games/{id}/metadata/refresh` | the details panel's button, the tile context menu, and *Library → Fetch missing cover art* |
 | `POST /v1/games/{id}/run` | *Run in prefix…* (`RunInPrefixDialog`) |
 | `POST /v1/games/{id}/finish-install` | *Mark as installed* |
 | `POST /v1/library/scan` | on startup, and *View → Refresh library* |
@@ -148,25 +180,157 @@ Everything `api.md` marks implemented has a path through the UI:
 | `GET /v1/events` | `EventStream` |
 
 Events handled: `game.added`, `game.updated`, `game.removed`, `game.state`,
+`game.launched`, `game.metadata_ready`/`.metadata_failed`,
 `runners.download.started`/`.finished`/`.failed`.
+
+**Dispatch on the event type, always.** Only `game.added` and `game.updated`
+carry a game record, and the library views check for exactly those two
+rather than treating whatever is left over as a game. They did not, once:
+a `runners.download.started` payload is a JSON object, so it parsed into a
+game with every field empty and the library grew a blank tile on every
+runner download. `ParseGameSummary` now also requires a non-empty string
+`id`, as a second line of defence — a `tricks.*` payload does carry one, and
+would have blanked a real row rather than adding a fake one.
 
 Two notes on shapes that are easy to get wrong:
 
 - `game.state` carries only `id`/`state` and a few launch-specific fields —
   not `play_seconds` or `last_played_at`. An `exited` is a signal to
   re-fetch, not something to patch a row from.
-- `GET /v1/runners` reports the same build once per search path it is found
-  under, and on a typical Arch/Steam setup `~/.steam/steam` is a symlink to
-  `~/.local/share/Steam`. Two entries sharing a `reference` are the same
-  runner by definition, so the client collapses them
-  (`DedupeRunnersByReference`) rather than offering a choice that isn't one.
+- **A Steam-launched game never emits `game.state` at all.** Under the
+  default `steam.launch_mode: "steam"`, mirad hands the game to
+  `steam://rungameid/<appid>` and never spawns it, so `POST .../launch`
+  answers `{"status": "launched_via_steam"}` and publishes `game.launched`
+  instead. Marking such a game as running pins it under "Playing now"
+  forever, because nothing will ever say it stopped — hence
+  `LaunchResult::tracked`, and hence `game.launched` clearing the id rather
+  than being ignored.
+- `GET /v1/runners` used to report the same build once per search path it
+  was found under, which a symlinked Steam directory makes the normal case.
+  The frontend collapsed those itself for a while; it no longer does, and
+  should not — `runner::DeduplicateBuilds` handles it in the daemon, where
+  every other API client gets the fix too. See `docs/api.md`.
+
+## Telling the user things
+
+Three shapes, and `ui/Notify` owns the first two so that two screens cannot
+disagree about what a failure looks like:
+
+| shape | when | where |
+|---|---|---|
+| **popup** | what you just asked for did not happen, or Mira needs an answer first | `notify::Failed`, `FailedWithHint`, `Info`, `Confirm` |
+| **toast** | something finished on the daemon's schedule, not yours | `notify::Toast` |
+| **inline status** | a dialog reporting on an operation it owns and can say "still going" about | the dialog's own label — see `RunnerDialog` |
+
+The split follows the API. Anything that returns **202** (`/runners/download`,
+`/games/{id}/metadata/refresh`, `/games/{id}/tricks`) finishes minutes later
+and reports through an SSE event, by which time the user has moved on — a
+modal for that is an ambush. Anything answering the request in front of you
+gets a popup.
+
+A toast goes to one of two places, and `notifications` in `frontend.toml`
+decides which:
+
+| value | behaviour |
+|---|---|
+| `auto` (default) | the desktop's notification service when Mira's window is not the active one, an in-window card when it is |
+| `system` | always the desktop's service |
+| `in_app` | always the in-window card |
+
+`auto` is the one that matters. A background job finishing while you are
+looking at something else is exactly what the desktop's notification area
+is for — it survives Mira being minimised, lands in the shell's history
+(Plasma's, on KDE) and obeys Do Not Disturb. A system popup for something
+that just happened in the window under your cursor is noise the desktop
+then keeps a record of.
+
+The system route is `org.freedesktop.Notifications` over the session bus
+(`ui/SystemNotifier`), with a `desktop-entry` hint of `mira` so the shell
+shows Mira's own name and icon and lists it in per-application notification
+settings. `QGuiApplication::setDesktopFileName("mira")` backs that up for
+the compositor. Urgency maps to the level: an error is `critical`, which
+most shells do not dismiss on a timeout.
+
+Any failure falls back to the in-window card, so choosing `system` on a
+desktop with no notification service loses nothing.
+
+**How long they stay is `notification_timeout_s`, and the default is 0 —
+until dismissed.** Auto-dismissing is the wrong default for what these
+report: a runner finished, metadata arrived, a fetch needs an API key. All
+of it happened while the user was doing something else, and all of it is
+worth still being there when they look back. A message that deletes itself
+is one you can miss entirely, and the frontend keeps no history to check
+afterwards.
+
+Zero maps onto both routes without translation: the freedesktop spec's
+`expire_timeout` of 0 already means "never expire, the user dismisses it",
+and an in-window card with no timeout simply gets no dismiss timer. A
+positive value applies to both, clamped to ten minutes since the file is
+hand-editable.
+
+In-window cards stack bottom-right, dismiss on click, and are capped at six.
+The cap is higher than a timed toast would need precisely because the
+default is untimed — pushing a card out of an untimed stack means discarding
+something nobody has read. They attach to the top-level window rather than
+to the widget that raised them, so a card survives the dialog that started
+the work.
+
+Every popup goes through one helper that sets `Qt::PlainText`. mirad's error
+messages quote paths and command fragments, and rich text would silently eat
+anything that looked like a tag.
+
+Failure popups show mirad's own message verbatim under a sentence naming
+what failed. The daemon explains its refusals better than a rewrite would.
 
 ## Cover art
 
-There is none from the backend yet. `ui/CoverArt` generates a placeholder
-from a hue derived from the game's **id** — stable across restarts, renames
-and machines, so a tile can be learned by sight. When real artwork lands
-this becomes the fallback for games that have none.
+Real artwork comes from `GET /v1/games/{id}/artwork`, which serves whatever
+image the metadata fetcher cached (Steam's CDN for a Steam-owned game,
+SteamGridDB otherwise — see `docs/api.md`). `ui/ArtworkStore` owns the whole
+story and hands out a pixmap that is never empty:
+
+- **404 is the normal answer**, not an error. Most games have no artwork
+  cached, and one message per game on a fresh library would be unusable.
+  `ui/CoverArt` generates the placeholder for those, from a hue derived from
+  the game's **id** — stable across restarts, renames and machines, so a
+  tile can be learned by sight.
+- **Ask once per game.** An id that has answered either way is not asked
+  again until `game.metadata_ready` or an explicit refresh invalidates it.
+  Without that rule an empty library becomes a request loop, because every
+  repaint asks for a cover.
+- **Four requests in flight, maximum.** Each one is a thread and a socket
+  (`client/Async.h`), and artwork is per game, so a 500-game library would
+  otherwise open 500 of each the moment the window appears.
+- **Keep the original, scale on demand.** The zoom slider changes the tile
+  size continuously; re-decoding a JPEG per step would be visible and
+  re-fetching it absurd. A rename drops the rendered copies (the
+  placeholder's initials changed) but not the fetched image.
+
+The grid and the details panel share one store, so a cover is fetched,
+decoded and cached once for both.
+
+**No key, no art, and now it says so.** A non-Steam game has no free cover
+source other than SteamGridDB, so with `steamgriddb.api_key` unset mirad
+fails the fetch with `no_steamgriddb_key` instead of quietly succeeding at
+nothing (`docs/api.md`). The frontend matches on that **code**, never on the
+message, and raises it once per session however many games report it: a
+popup offering to open Settings when the user asked for the fetch, a toast
+when a background scan did. Every other metadata failure is reported only
+for a game the user asked about.
+
+**Re-fetching.** mirad fetches metadata only when a game is *first*
+detected, so a game whose fetch failed — or any non-Steam game from before
+`steamgriddb.api_key` was set — keeps its placeholder until something asks
+again. Three ways to ask: the details panel's *Refresh cover art &
+metadata* button, the same entry on a tile's right-click menu, and
+*Library → Fetch missing cover art*, which does it for every game the store
+has no image for. The bulk path raises one toast for the batch rather than
+one per game.
+
+There is no `has_artwork` on a game summary, so "does this game have
+artwork" can only be answered by asking for it. That is the reason for the
+ask-once and in-flight rules above; a flag on `GET /v1/games` would remove
+the need for both.
 
 ## Tests
 
@@ -197,7 +361,21 @@ is visible rather than assumed.
 
 ## Not built yet
 
-- Real cover art (waiting on the backend).
+Everything here exists in the API and has no path through the UI:
+
+- **`GET /v1/games/{id}/metadata`** — the store info behind the artwork:
+  description, genres, categories, release date, developers/publishers,
+  price, metacritic, a Steam review summary, and a ProtonDB tier. Only the
+  cover image is used today. The ProtonDB tier in particular belongs on a
+  Linux launcher's game page.
+- **`POST /v1/games/{id}/tricks`** — winetricks verbs. No catalog endpoint
+  exists, so this wants a free-text verb field (plus, perhaps, a short list
+  of common ones) shaped like `RunInPrefixDialog`, and it 404s for a native
+  game or a prefix that was never provisioned, so the menu entry should be
+  disabled with the reason rather than hidden.
+- **`tricks.started`/`.finished`/`.failed`** — unhandled. They are the only
+  report a verb ever makes, since the endpoint returns 202.
+
 - `DaemonSupervisor` — starting and supervising `mirad` from the frontend.
   `architecture.md` describes the design; today `mira-gui` assumes the
   daemon is already running and reports it unreachable if not.

@@ -207,33 +207,6 @@ TEST_CASE("AssignDottedKey merges two keys sharing a prefix") {
   CHECK(document["default_runner"]["native"] == "native:native");
 }
 
-TEST_CASE("DedupeRunnersByReference collapses one build found twice") {
-  // The real case: ~/.steam/steam symlinks to ~/.local/share/Steam, so
-  // GET /v1/runners reports the same Proton build under two paths with an
-  // identical reference. Picking either does the same thing, so a runner
-  // picker must not offer both.
-  std::vector<RunnerInfo> runners = {
-      {"proton", "GE-Proton11-6", "1787951532", "proton:GE-Proton11-6"},
-      {"proton", "GE-Proton11-6", "1787951532", "proton:GE-Proton11-6"},
-      {"wine", "system", "wine-11.17", "wine:system"},
-  };
-
-  const std::vector<RunnerInfo> unique = mapping::DedupeRunnersByReference(runners);
-  REQUIRE(unique.size() == 2);
-  CHECK(unique[0].reference == "proton:GE-Proton11-6");
-  CHECK(unique[1].reference == "wine:system");
-}
-
-TEST_CASE("DedupeRunnersByReference keeps genuinely different builds and order") {
-  std::vector<RunnerInfo> runners = {
-      {"proton", "GE-Proton11-7", "2", "proton:GE-Proton11-7"},
-      {"proton", "GE-Proton11-6", "1", "proton:GE-Proton11-6"},
-  };
-  const std::vector<RunnerInfo> unique = mapping::DedupeRunnersByReference(runners);
-  REQUIRE(unique.size() == 2);
-  CHECK(unique[0].reference == "proton:GE-Proton11-7");  // newest-first order preserved
-}
-
 TEST_CASE("ParseRunnerDownload reads the state from the event type") {
   // The payload doesn't repeat which of started/finished/failed it is —
   // that only exists in the SSE `event:` line.

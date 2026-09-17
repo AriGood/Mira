@@ -29,6 +29,36 @@ TEST_CASE("ParseGameSummary rejects anything that isn't a JSON object") {
   CHECK_FALSE(MiradClient::ParseGameSummary("42", &game));
 }
 
+TEST_CASE("ParseGameSummary rejects a payload from a different event") {
+  // The real case: runners.download.started shares the event stream with
+  // game.added, and without an id check its payload parsed into a game with
+  // every field empty — one blank tile in the library per runner download.
+  GameSummary game;
+  CHECK_FALSE(MiradClient::ParseGameSummary(R"({"kind": "proton", "tag": "GE-Proton11-7"})", &game));
+  CHECK_FALSE(MiradClient::ParseGameSummary(R"({"id": ""})", &game));
+  CHECK_FALSE(MiradClient::ParseGameSummary(R"({"id": 42})", &game));
+}
+
+TEST_CASE("ParseMetadataEvent carries the code, not just the message") {
+  // The UI branches on the code. It exists precisely so that deciding what
+  // to do about a failure never means pattern-matching English prose.
+  MetadataEvent event;
+  REQUIRE(MiradClient::ParseMetadataEvent(
+      R"({"id": "blue-prince", "code": "no_steamgriddb_key", "error": "set steamgriddb.api_key"})",
+      &event));
+  CHECK(event.id == "blue-prince");
+  CHECK(event.code == "no_steamgriddb_key");
+  CHECK(event.error == "set steamgriddb.api_key");
+
+  // game.metadata_ready carries an id and nothing else.
+  REQUIRE(MiradClient::ParseMetadataEvent(R"({"id": "x"})", &event));
+  CHECK(event.code.empty());
+  CHECK(event.error.empty());
+
+  CHECK_FALSE(MiradClient::ParseMetadataEvent(R"({"code": "x"})", &event));
+  CHECK_FALSE(MiradClient::ParseMetadataEvent("not json", &event));
+}
+
 TEST_CASE("ParseGameState reads the launch/exit signal") {
   GameStateEvent state;
   REQUIRE(MiradClient::ParseGameState(R"({"id": "x", "state": "running", "pid": 1234})", &state));

@@ -58,6 +58,30 @@ Reply Get(const std::string& path, const Options& options) {
   return Finish(MakeClient(options).Get(path));
 }
 
+Blob GetBinary(const std::string& path, const Options& options) {
+  const httplib::Result res = MakeClient(options).Get(path);
+  Blob blob;
+  if (!res) {
+    blob.error = "cannot reach mirad at " + SocketPath() + " (" + httplib::to_string(res.error()) +
+                 ") — is it running?";
+    return blob;
+  }
+
+  blob.status = res->status;
+  if (res->status < 200 || res->status >= 300) {
+    const json body = json::parse(res->body, nullptr, false);
+    blob.error = body.is_discarded()
+                     ? res->body
+                     : body.value("error", json::object()).value("message", res->body);
+    return blob;
+  }
+
+  blob.ok = true;
+  blob.bytes = res->body;
+  blob.content_type = res->get_header_value("Content-Type");
+  return blob;
+}
+
 Reply Post(const std::string& path, const Options& options) {
   return Finish(MakeClient(options).Post(path));
 }

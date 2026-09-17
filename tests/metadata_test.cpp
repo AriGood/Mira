@@ -2,6 +2,8 @@
 
 #include <filesystem>
 #include <fstream>
+#include <string>
+#include <vector>
 
 #include <json.hpp>
 
@@ -29,7 +31,11 @@ fs::path TempDir(const char* name) {
 // mocking curl. The Steam/ProtonDB/SteamGridDB paths themselves were
 // verified live against real APIs during development, not here.
 
-TEST_CASE("Fetch on a non-Steam game with no SteamGridDB key writes a minimal cache file, no artwork") {
+TEST_CASE("Fetch on a non-Steam game with no SteamGridDB key fails, and caches nothing") {
+  // SteamGridDB is the only free cover source for a non-Steam game, so with
+  // no key there is nothing this could have tried. Reporting success left a
+  // cache file and a game.metadata_ready event behind, which reads as
+  // "looked and found nothing" — and the next attempt then looked answered.
   const fs::path dir = TempDir("metadata-nonsteam");
   config::Config config(dir / "settings.toml");
   config.Load();
@@ -40,15 +46,13 @@ TEST_CASE("Fetch on a non-Steam game with no SteamGridDB key writes a minimal ca
   // runner_ref left empty -> not Steam-owned.
 
   const Result<void> fetched = metadata::Fetch(config, game);
-  REQUIRE(fetched.has_value());
+  REQUIRE_FALSE(fetched.has_value());
+  CHECK(fetched.error().code == "no_steamgriddb_key");
+  // The message names the setting, because it is the whole remedy.
+  CHECK(fetched.error().message.find("steamgriddb.api_key") != std::string::npos);
 
-  const fs::path metadata_file = metadata::MetadataFile(config, game.id);
-  REQUIRE(fs::exists(metadata_file));
-
-  const nlohmann::json info = nlohmann::json::parse(std::ifstream(metadata_file));
-  CHECK(info["source"] == "steamgriddb");
-  CHECK_FALSE(info.contains("artwork"));  // no key configured, nothing to fetch
-  CHECK_FALSE(info.contains("steam"));
+  CHECK_FALSE(fs::exists(metadata::MetadataFile(config, game.id)));
+  CHECK_FALSE(fs::exists(metadata::ArtworkDir(config, game.id)));
 }
 
 TEST_CASE("Metadata/artwork cache paths sit next to settings.toml, not a global XDG lookup") {
@@ -95,5 +99,35 @@ TEST_CASE("FetchQueue::Enqueue force=true bypasses metadata.enabled") {
     queue.Enqueue(config, events, game, /*force=*/true);
   }  // destructor blocks until the forced fetch completes
 
-  CHECK(fs::exists(metadata::MetadataFile(config, game.id)));
+  // The fetch ran, which with no key means it ran and failed — the event is
+  // the observable, since a failed fetch deliberately writes no cache file.
+  const std::vector<model::Event> published = events.Since(0);
+  REQUIRE(published.size() == 1);
+  CHECK(published[0].type == "game.metadata_failed");
+  CHECK(published[0].payload.value("id", std::string()) == "forced-game");
+  CHECK(published[0].payload.value("error", std::string()).find("steamgriddb.api_key") !=
+        std::string::npos);
+}
+
+TEST_CASE("A failed fetch publishes game.metadata_failed and no game.metadata_ready") {
+  // What a client keys off: metadata_ready has to mean there is something to
+  // show, or a frontend refreshing its artwork on that event refreshes into
+  // the same placeholder it already had.
+  const fs::path dir = TempDir("metadata-failed-event");
+  config::Config config(dir / "settings.toml");
+  config.Load();
+
+  api::EventBus events;
+  model::Game game;
+  game.id = "keyless";
+  game.name = "Keyless";
+
+  {
+    metadata::FetchQueue queue;
+    queue.Enqueue(config, events, game);
+  }
+
+  for (const model::Event& event : events.Since(0)) {
+    CHECK(event.type != "game.metadata_ready");
+  }
 }

@@ -24,6 +24,30 @@ using nlohmann::json;
 // never pile up a stuck background thread.
 constexpr std::string_view kMaxTime = "10";
 
+// Reads one optional field, treating "absent" and "present but null" the
+// same way.
+//
+// This is not defensive decoration. nlohmann's value() throws
+// type_error.302 when the key exists holding a different type, and JSON
+// null is a different type — so `data.value("website", std::string())`
+// throws on every Steam store page that has no website. Neon White,
+// HoloCure and Armored Core VI are all such pages, and all three threw out
+// of Fetch and ended up with no metadata and no cover at all. Every field
+// read from a source we do not control goes through here.
+template <typename T>
+T Value(const json& object, const char* key, T fallback) {
+  if (!object.is_object()) return fallback;
+  const auto entry = object.find(key);
+  if (entry == object.end() || entry->is_null()) return fallback;
+  try {
+    return entry->get<T>();
+  } catch (const json::exception&) {
+    // A field of an unexpected type is the source's problem, not a reason
+    // to lose the rest of the record.
+    return fallback;
+  }
+}
+
 std::string UrlEncode(std::string_view input) {
   static constexpr char kHex[] = "0123456789ABCDEF";
   std::string out;
@@ -65,9 +89,14 @@ std::string ContentTypeFor(const fs::path& file) {
 // into `info` under "artwork" if it succeeds. Extension is taken from the
 // url itself, since that's the only place either source says what format it
 // sent.
+//
+// Deliberately sends no credentials. Both sources put their images on a
+// plain public CDN, and SteamGridDB's rejects an Authorization header for
+// its own API with a 401 — so passing the key along, which is the obvious
+// thing to do when the search that produced the url needed it, is what
+// stopped every non-Steam game from ever getting a cover.
 void FetchArtworkInto(const config::Config& config, const std::string& url, const std::string& game_id,
-                      std::string_view source, json& info,
-                      const std::vector<std::string>& extra_curl_args = {}) {
+                      std::string_view source, json& info) {
   std::string ext = fs::path(std::string(url)).extension().string();
   if (ext.empty() || ext.size() > 5) ext = ".jpg";
 
@@ -80,15 +109,16 @@ void FetchArtworkInto(const config::Config& config, const std::string& url, cons
   }
   const fs::path dest = dir / ("cover" + ext);
 
-  std::vector<std::string> argv = {"curl", "-sSL", "-f", "--max-time", std::string(kMaxTime)};
-  argv.insert(argv.end(), extra_curl_args.begin(), extra_curl_args.end());
-  argv.insert(argv.end(), {"-o", dest.string(), url});
-
   Command command;
-  command.argv = std::move(argv);
+  command.argv = {"curl", "-sSL",         "-f", "--max-time", std::string(kMaxTime),
+                  "-o",   dest.string(), url};
   const Result<runner::ExecResult> result = runner::RunAndWait(command);
   if (!result || result->exit_code != 0) {
+    log::Warn("couldn't download artwork for {} from {}", game_id, url);
     fs::remove(dest, ec);
+    // The directory was created for a file that never arrived; leaving it
+    // behind makes an empty artwork/<id>/ look like a cache entry.
+    fs::remove(dir, ec);
     return;
   }
   info["artwork"] = {{"file", dest.filename().string()}, {"content_type", ContentTypeFor(dest)},
@@ -99,32 +129,41 @@ void FetchSteamOwned(const config::Config& config, const std::string& appid, con
                      json& info) {
   const json store = CurlJson(
       {"curl", "-sSL", std::format("https://store.steampowered.com/api/appdetails?appids={}&l=english", appid)});
-  if (!store.is_discarded() && store.contains(appid) && store[appid].value("success", false)) {
-    const json& data = store[appid]["data"];
+  if (!store.is_discarded() && store.contains(appid) && Value(store[appid], "success", false)) {
+    const json data = Value(store[appid], "data", json::object());
     json steam_info = {
         {"appid", appid},
-        {"short_description", data.value("short_description", std::string())},
-        {"release_date", data.value("release_date", json::object()).value("date", std::string())},
-        {"is_free", data.value("is_free", false)},
-        {"developers", data.value("developers", json::array())},
-        {"publishers", data.value("publishers", json::array())},
-        {"website", data.value("website", std::string())},
+        {"short_description", Value(data, "short_description", std::string())},
+        {"release_date", Value(Value(data, "release_date", json::object()), "date", std::string())},
+        {"is_free", Value(data, "is_free", false)},
+        {"developers", Value(data, "developers", json::array())},
+        {"publishers", Value(data, "publishers", json::array())},
+        {"website", Value(data, "website", std::string())},
     };
-    if (data.contains("metacritic")) steam_info["metacritic_score"] = data["metacritic"].value("score", 0);
-    if (data.contains("price_overview")) {
-      steam_info["price"] = data["price_overview"].value("final_formatted", std::string());
+    // Written only when the store actually gave a value, so a free game
+    // reads as "no price" rather than as a price of "".
+    if (const int score = Value(Value(data, "metacritic", json::object()), "score", 0); score > 0) {
+      steam_info["metacritic_score"] = score;
     }
-    if (data.contains("recommendations")) {
-      steam_info["recommendations_total"] = data["recommendations"].value("total", 0);
+    if (const std::string price =
+            Value(Value(data, "price_overview", json::object()), "final_formatted", std::string());
+        !price.empty()) {
+      steam_info["price"] = price;
+    }
+    if (const int total = Value(Value(data, "recommendations", json::object()), "total", 0);
+        total > 0) {
+      steam_info["recommendations_total"] = total;
     }
     json genres = json::array();
-    for (const auto& genre : data.value("genres", json::array())) {
-      if (genre.contains("description")) genres.push_back(genre["description"]);
+    for (const auto& genre : Value(data, "genres", json::array())) {
+      const std::string description = Value(genre, "description", std::string());
+      if (!description.empty()) genres.push_back(description);
     }
     steam_info["genres"] = genres;
     json categories = json::array();
-    for (const auto& category : data.value("categories", json::array())) {
-      if (category.contains("description")) categories.push_back(category["description"]);
+    for (const auto& category : Value(data, "categories", json::array())) {
+      const std::string description = Value(category, "description", std::string());
+      if (!description.empty()) categories.push_back(description);
     }
     steam_info["categories"] = categories;
     info["steam"] = steam_info;
@@ -137,50 +176,64 @@ void FetchSteamOwned(const config::Config& config, const std::string& appid, con
                                  std::format("https://store.steampowered.com/appreviews/{}?json=1&language=all"
                                             "&purchase_type=all&num_per_page=0",
                                             appid)});
-  if (!reviews.is_discarded() && reviews.value("success", 0) == 1 && reviews.contains("query_summary")) {
-    const json& summary = reviews["query_summary"];
+  if (!reviews.is_discarded() && Value(reviews, "success", 0) == 1 && reviews.contains("query_summary")) {
+    const json summary = Value(reviews, "query_summary", json::object());
     info["steam_reviews"] = {
-        {"score_description", summary.value("review_score_desc", std::string())},
-        {"total_positive", summary.value("total_positive", 0)},
-        {"total_negative", summary.value("total_negative", 0)},
-        {"total_reviews", summary.value("total_reviews", 0)},
+        {"score_description", Value(summary, "review_score_desc", std::string())},
+        {"total_positive", Value(summary, "total_positive", 0)},
+        {"total_negative", Value(summary, "total_negative", 0)},
+        {"total_reviews", Value(summary, "total_reviews", 0)},
     };
   }
 
   const json proton =
       CurlJson({"curl", "-sSL", std::format("https://www.protondb.com/api/v1/reports/summaries/{}.json", appid)});
   if (!proton.is_discarded() && proton.contains("tier")) {
-    info["protondb"] = {{"tier", proton.value("tier", std::string())},
-                        {"confidence", proton.value("confidence", std::string())},
-                        {"total_reports", proton.value("total", 0)}};
+    info["protondb"] = {{"tier", Value(proton, "tier", std::string())},
+                        {"confidence", Value(proton, "confidence", std::string())},
+                        {"total_reports", Value(proton, "total", 0)}};
   }
 
   FetchArtworkInto(config, std::format("https://cdn.akamai.steamstatic.com/steam/apps/{}/library_600x900.jpg", appid),
                    game_id, "steam_cdn", info);
 }
 
-void FetchNonSteam(const config::Config& config, const std::string& name, const std::string& game_id, json& info) {
+Result<void> FetchNonSteam(const config::Config& config, const std::string& name,
+                           const std::string& game_id, json& info) {
   const std::string api_key = config.GetString("steamgriddb.api_key");
-  if (api_key.empty()) return;
+  // An error rather than a silent skip. There is no other free cover-art
+  // source for a non-Steam game, so with no key there is nothing this
+  // function can ever do — and reporting success left the caller with a
+  // cache entry, a game.metadata_ready event and no picture, which reads as
+  // "Mira looked and there was nothing" rather than "Mira was never given
+  // the one thing it needed".
+  if (api_key.empty()) {
+    return Err("no_steamgriddb_key",
+               "non-Steam games need a SteamGridDB API key for cover art — set "
+               "steamgriddb.api_key (it is free, from steamgriddb.com)");
+  }
 
   const std::string auth_header = std::format("Authorization: Bearer {}", api_key);
   const json search = CurlJson({"curl", "-sSL", "-H", auth_header,
                                 std::format("https://www.steamgriddb.com/api/v2/search/autocomplete/{}",
                                            UrlEncode(name))});
-  if (search.is_discarded() || !search.value("success", false) || search.value("data", json::array()).empty()) {
-    return;
+  if (search.is_discarded() || !Value(search, "success", false) ||
+      Value(search, "data", json::array()).empty()) {
+    return {};  // no match by name is an ordinary outcome, not a failure
   }
-  const std::int64_t griddb_id = search["data"][0].value("id", std::int64_t{0});
-  if (griddb_id == 0) return;
+  const std::int64_t griddb_id = Value(search["data"][0], "id", std::int64_t{0});
+  if (griddb_id == 0) return {};
 
   const json grids = CurlJson({"curl", "-sSL", "-H", auth_header,
                                std::format("https://www.steamgriddb.com/api/v2/grids/game/{}", griddb_id)});
-  if (grids.is_discarded() || !grids.value("success", false) || grids.value("data", json::array()).empty()) {
-    return;
+  if (grids.is_discarded() || !Value(grids, "success", false) ||
+      Value(grids, "data", json::array()).empty()) {
+    return {};
   }
-  const std::string url = grids["data"][0].value("url", std::string());
-  if (url.empty()) return;
-  FetchArtworkInto(config, url, game_id, "steamgriddb", info, {"-H", auth_header});
+  const std::string url = Value(grids["data"][0], "url", std::string());
+  if (url.empty()) return {};
+  FetchArtworkInto(config, url, game_id, "steamgriddb", info);
+  return {};
 }
 
 }  // namespace
@@ -201,7 +254,11 @@ Result<void> Fetch(const config::Config& config, const model::Game& game) {
     FetchSteamOwned(config, game.runner_ref.substr(std::string_view("steam:").size()), game.id, info);
   } else {
     info["source"] = "steamgriddb";
-    FetchNonSteam(config, game.name, game.id, info);
+    // Returned before anything is written: a failure here means nothing was
+    // fetched, and a cache file would make the next attempt look answered.
+    if (Result<void> fetched = FetchNonSteam(config, game.name, game.id, info); !fetched) {
+      return std::unexpected(fetched.error());
+    }
   }
 
   const fs::path metadata_file = MetadataFile(config, game.id);

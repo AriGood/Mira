@@ -1,8 +1,11 @@
 #include "runner/RunnerRegistry.h"
 
 #include <algorithm>
+#include <filesystem>
 #include <charconv>
 #include <format>
+#include <set>
+#include <system_error>
 
 #include "core/Log.h"
 #include "runner/NativeRunner.h"
@@ -49,6 +52,36 @@ RunnerRegistry::RunnerRegistry(config::Config& config) : config_(config) {
   runners_[steam->kind()] = std::move(steam);
 }
 
+// One build, discovered once.
+//
+// A runner is searched for under several roots, and on a normal Arch/Steam
+// setup two of them are the same directory: `~/.steam/steam` is a symlink to
+// `~/.local/share/Steam`, which `libraryfolders.vdf` also lists. The same
+// Proton build is then found twice, with identical kind/name/version and
+// only `path` differing — and since a game refers to a runner by
+// `kind:name` (model::RunnerBuild::Reference, docs/api.md), those two
+// entries are the same runner by definition. Every picker built from
+// GET /v1/runners offered the same build twice as a result.
+//
+// Resolved paths first, because that is the actual cause; then references,
+// because two builds sharing one are indistinguishable to any client and
+// offering a choice between them is offering a choice that isn't one.
+std::vector<model::RunnerBuild> DeduplicateBuilds(std::vector<model::RunnerBuild> builds) {
+  std::vector<model::RunnerBuild> unique;
+  std::set<std::string> seen_paths;
+  std::set<std::string> seen_references;
+
+  for (model::RunnerBuild& build : builds) {
+    std::error_code ec;
+    const std::filesystem::path resolved = std::filesystem::weakly_canonical(build.path, ec);
+    const std::string path_key = ec ? build.path : resolved.string();
+    if (!build.path.empty() && !seen_paths.insert(path_key).second) continue;
+    if (!seen_references.insert(build.Reference()).second) continue;
+    unique.push_back(std::move(build));
+  }
+  return unique;
+}
+
 const std::vector<model::RunnerBuild>& RunnerRegistry::BuildsFor(const std::string& kind) const {
   // Discovery is not free — WineRunner spawns `wine --version` per build —
   // and one scan resolves a runner for every new game it finds. A registry
@@ -58,7 +91,7 @@ const std::vector<model::RunnerBuild>& RunnerRegistry::BuildsFor(const std::stri
   if (auto it = cache_.find(kind); it != cache_.end()) return it->second;
   const auto runner = runners_.find(kind);
   if (runner == runners_.end()) return cache_[kind];  // empty
-  return cache_[kind] = runner->second->Discover(config_);
+  return cache_[kind] = DeduplicateBuilds(runner->second->Discover(config_));
 }
 
 std::vector<model::RunnerBuild> RunnerRegistry::DiscoverAll() const {

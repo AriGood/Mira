@@ -12,6 +12,8 @@
 
 #include "../client/EventStream.h"
 #include "../client/Types.h"
+#include "../ui/ArtworkStore.h"
+#include "../ui/Shortcuts.h"
 
 class QLabel;
 class QLineEdit;
@@ -51,6 +53,7 @@ private:
   QWidget* BuildSidebar();
   QWidget* BuildGrid();
   void BuildMenus();
+  void BuildShortcuts();
 
   // The frontend's own state (size, tile size, which filter) round-trips
   // through frontend.toml, not settings.toml — see FrontendPrefs. Applied
@@ -60,8 +63,12 @@ private:
   void SavePrefs();
   void closeEvent(QCloseEvent* event) override;
 
-  void RefreshHealth();
-  void RescanAndRefreshGames();
+  // `force_scan` separates the two callers: startup, which honours the
+  // scan_on_startup preference, and the Refresh command, which does not.
+  // Asking for a refresh and getting no scan is the preference answering a
+  // question nobody asked it.
+  void RefreshHealth(bool force_scan = false);
+  void RescanAndRefreshGames(bool force_scan);
   void RefreshGames();
   void SetHealthy(bool healthy, const QString& tooltip);
 
@@ -90,6 +97,12 @@ private:
   void OpenRunners();
   void ImportSteamLibrary();
   void OpenClassicView();
+  // `announce` is false for the bulk path, where one toast covers the batch
+  // and per-game messages would be one notification per game.
+  void RefreshMetadata(const std::string& id, bool announce = true);
+  void FetchMissingArtwork();
+  void ShowSteamGridDbNotice(bool asked_for);
+  void UpdateTileCover(const QString& id);
 
   void HandleGameEvent(const std::string& type, const std::string& data);
 
@@ -108,14 +121,24 @@ private:
 
   std::vector<mira_gui::GameSummary> games_;
   std::set<std::string> running_ids_;
+  // Games the user explicitly asked to refresh, so that a metadata failure
+  // for one of them is worth a toast and the dozens from an automatic scan
+  // are not.
+  std::set<std::string> awaiting_metadata_;
+  bool steamgriddb_notice_shown_ = false;
   std::string selected_id_;
-  int tile_width_ = 168;
+  // The tile width Ctrl+0 returns to, and the one a frontend.toml with
+  // no tile_width starts at.
+  static constexpr int kDefaultTileWidth = 168;
+  int tile_width_ = kDefaultTileWidth;
   std::string sort_key_ = "name";
   bool sort_descending_ = false;
   bool scan_on_startup_ = true;
+  std::string notifications_ = "auto";
   // Keyed by "<id>@<tile width>" — a generated cover is cheap but not free,
   // and ApplyFilter() rebuilds every visible tile on each keystroke.
-  QHash<QString, QPixmap> cover_cache_;
+  mira_gui::ArtworkStore* artwork_ = nullptr;
+  mira_gui::shortcuts::Common common_;
 
   mira_gui::EventStream event_stream_;
 };

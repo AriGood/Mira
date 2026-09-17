@@ -21,6 +21,15 @@ bool IsRunnerKey(const std::string& key) {
   return std::ranges::find(kRunnerKeys, key) != kRunnerKeys.end();
 }
 
+// Same problem as kRunnerKeys, different property: GET /v1/config/schema
+// describes steamgriddb.api_key as a plain string, and nothing in the schema
+// can say that a string is a credential.
+constexpr std::array<const char*, 1> kSecretKeys = {"steamgriddb.api_key"};
+
+bool IsSecretKey(const std::string& key) {
+  return std::ranges::find(kSecretKeys, key) != kSecretKeys.end();
+}
+
 // Groups rows for readability — see the class comment in SettingsDialog.h.
 // Everything currently in src/config/Schema.cpp is named explicitly; a
 // schema key added later without a matching entry here still lands
@@ -35,6 +44,11 @@ QString CategoryFor(const std::string& key) {
       {"wine_search_paths", "Runners"},    {"socket_path", "Advanced"},
       {"log.level", "Advanced"},           {"events.sse_keepalive_s", "Advanced"},
       {"library.remove_missing", "Library"},
+      // Both halves of the artwork/store-info feature, which the dotted
+      // prefixes would otherwise scatter into a "Metadata" group and a
+      // "Steamgriddb" one.
+      {"metadata.enabled", "Metadata"},
+      {"steamgriddb.api_key", "Metadata"},
   };
   if (const auto it = kOverrides.find(key); it != kOverrides.end()) return it->second;
 
@@ -57,9 +71,9 @@ QString CategoryFor(const std::string& key) {
 // Categories appear in this order when present; anything else (a future,
 // unmapped prefix) is appended alphabetically after — see CategoryFor.
 const QStringList& CategoryOrder() {
-  static const QStringList order = {"Library",    "Runners",         "Launching",
-                                     "Detection",  "Scanning",        "Desktop Entries",
-                                     "Advanced",   "General"};
+  static const QStringList order = {"Library",  "Runners",  "Launching",       "Detection",
+                                    "Scanning", "Metadata", "Desktop Entries", "Advanced",
+                                    "General"};
   return order;
 }
 }  // namespace mira_gui::settings

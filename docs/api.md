@@ -47,7 +47,16 @@ the backend stores but never interprets (see `docs/architecture.md`).
 ### `GET /v1/config/schema` — implemented
 Every setting's type, default, tier (`basic | advanced | expert` — a
 frontend should show `basic` and fold the rest behind a disclosure, never
-omit them), and one-line doc string:
+omit them), and one-line doc string.
+
+The tier is a judgement about the user, not about the value's complexity:
+`basic` means someone who just wants their games to work may have to change
+it, however fiddly it looks; `advanced` is tuning something that already
+works; `expert` is changing how Mira works rather than what it does. The bar
+for `basic` is deliberately low — see `src/config/Schema.h`, where the test
+is written down, and the `steamgriddb.api_key` that sat under `expert` and
+left whole libraries showing placeholder covers with no visible reason.
+
 ```json
 [{ "key": "scan.debounce_ms", "type": "an integer", "default": 3000,
    "tier": "advanced", "doc": "How long a new folder must stop changing before it is scanned." }]
@@ -248,6 +257,13 @@ settings use. `native` never appears here — it has no concept of "builds".
 Steam itself set a given prefix up with, resolved per-game, not a
 general-purpose installed build the registry tracks.
 
+Each build appears once, however many search paths reach it. On a typical
+Arch/Steam setup `~/.steam/steam` is a symlink to `~/.local/share/Steam`,
+which `libraryfolders.vdf` also lists, so the same Proton build is found
+under both — `runner::DeduplicateBuilds` collapses those by resolved path
+and then by `reference`, since two entries sharing a `reference` are the
+same runner by the definition above and no client could pick between them.
+
 ### `GET /v1/runners/catalog?kind=proton|wine` — implemented
 What's *available to install*, not what's installed (that's `/v1/runners`
 above) — lists releases from the source configured in
@@ -335,8 +351,13 @@ Steam-owned (`runner_ref` starting `"steam:"`):
   key.
 - **Everything else**: [SteamGridDB](https://www.steamgriddb.com), matched
   by name search, for cover art only — there is no equivalent free metadata
-  source for a non-Steam game. Needs `steamgriddb.api_key` set; silently
-  skipped without one.
+  source for a non-Steam game. Needs `steamgriddb.api_key` set. **Without
+  one the fetch fails with `no_steamgriddb_key`** rather than being skipped:
+  there is nothing else it could have tried, so reporting success would
+  leave a cache entry, a `game.metadata_ready` event and no picture — which
+  reads as "looked and found nothing" instead of "was never given a key".
+  `game.metadata_failed` carries that code, and it is the signal a client
+  should turn into "set a key" rather than "this game has no art".
 
 Fetched automatically the moment a game is first detected (`POST
 /v1/library/scan`, the inotify watcher, and `POST /v1/steam/scan` all
@@ -363,7 +384,10 @@ set, or the first automatic attempt failed transiently. Bypasses
 `metadata.enabled` (an explicit request should work even with automatic
 fetching off). Runs in the background the same way the automatic fetch
 does; returns `202` immediately. `game.metadata_ready`/`.metadata_failed` on
-the event stream say when it's done.
+the event stream say when it's done. A failure carries both `code` and
+`error` — match on the code, not the message. The one worth handling
+specially is `no_steamgriddb_key`, which is not a transient failure and is
+fixed by setting a config key rather than by retrying.
 
 ---
 

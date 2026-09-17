@@ -11,6 +11,10 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
+#include <QSpinBox>
+
+#include "../ui/Notify.h"
+#include "../ui/SystemNotifier.h"
 #include <QPushButton>
 #include <QScrollArea>
 #include <QStringList>
@@ -71,6 +75,32 @@ void SettingsDialog::BuildInterfaceGroup() {
       "while it runs, so this only matters for changes made while it was stopped.");
   form->addRow("Scan the library on startup", scan_on_startup_);
 
+  notifications_ = new QComboBox(box);
+  notifications_->addItem("When Mira isn't focused", "auto");
+  notifications_->addItem("Always as a desktop notification", "system");
+  notifications_->addItem("Always inside the window", "in_app");
+  notifications_->setToolTip(
+      mira_gui::notify::system_notifier::Available()
+          ? "Background results — a runner finishing downloading, metadata arriving — can go to "
+            "the desktop's notification service instead of a card inside the window. A desktop "
+            "notification survives Mira being minimised and lands in the shell's notification "
+            "history."
+          : "No desktop notification service is running, so everything is shown inside the "
+            "window whatever this says.");
+  form->addRow("Show background results", notifications_);
+
+  notification_timeout_ = new QSpinBox(box);
+  notification_timeout_->setRange(0, mira_gui::notify::kMaxTimeoutSeconds);
+  notification_timeout_->setSuffix(" seconds");
+  // Zero is not "no time at all", it is "no limit" — and it is the default,
+  // so the row has to say what it means rather than showing a bare 0.
+  notification_timeout_->setSpecialValueText("Until dismissed");
+  notification_timeout_->setToolTip(
+      "How long a notification stays up. \"Until dismissed\" is the default: these report "
+      "things that happened while you were doing something else, and a message that deletes "
+      "itself is one you can miss entirely.");
+  form->addRow("Keep notifications for", notification_timeout_);
+
   auto* note = new QLabel(
       "Stored in frontend.toml, beside settings.toml — the daemon keeps it verbatim and never "
       "interprets it. Everything below is a backend setting.",
@@ -84,17 +114,37 @@ void SettingsDialog::BuildInterfaceGroup() {
 }
 
 void SettingsDialog::LoadFrontendPrefs() {
+  // Seeded from what the process is already using, so the row is correct
+  // even before (or without) the round trip below.
+  notifications_original_ =
+      mira_gui::notify::DeliveryToString(mira_gui::notify::CurrentDelivery());
+  notifications_->setCurrentIndex(notifications_->findData(notifications_original_));
+  notification_timeout_original_ = mira_gui::notify::CurrentTimeoutSeconds();
+  notification_timeout_->setValue(notification_timeout_original_);
+
   mira_gui::MiradClient::GetFrontendPrefsAsync(this, [this](mira_gui::FrontendPrefsResult result) {
-    if (!result.ok || !result.prefs.scan_on_startup) return;  // the default is already shown
-    scan_on_startup_original_ = *result.prefs.scan_on_startup;
-    scan_on_startup_->setChecked(scan_on_startup_original_);
+    if (!result.ok) return;  // the defaults are already shown
+    if (result.prefs.scan_on_startup) {
+      scan_on_startup_original_ = *result.prefs.scan_on_startup;
+      scan_on_startup_->setChecked(scan_on_startup_original_);
+    }
+    if (result.prefs.notifications) {
+      notifications_original_ = QString::fromStdString(*result.prefs.notifications);
+      const int index = notifications_->findData(notifications_original_);
+      if (index >= 0) notifications_->setCurrentIndex(index);
+    }
+    if (result.prefs.notification_timeout_s) {
+      notification_timeout_->setValue(*result.prefs.notification_timeout_s);
+      notification_timeout_original_ = notification_timeout_->value();  // after the clamp
+    }
   });
 }
 
 void SettingsDialog::Load() {
   mira_gui::MiradClient::GetConfigSchemaAsync(this, [this](mira_gui::ConfigSchemaResult schema) {
     if (!schema.ok) {
-      QMessageBox::warning(this, "Failed to load settings", QString::fromStdString(schema.error));
+      mira_gui::notify::Failed(this, "Could not load the settings schema.",
+                               QString::fromStdString(schema.error));
       reject();
       return;
     }
@@ -114,7 +164,8 @@ void SettingsDialog::Load() {
 
     mira_gui::MiradClient::GetConfigAsync(this, [this](mira_gui::ConfigResult config) {
       if (!config.ok) {
-        QMessageBox::warning(this, "Failed to load settings", QString::fromStdString(config.error));
+        mira_gui::notify::Failed(this, "Could not load the current settings.",
+                                 QString::fromStdString(config.error));
         reject();
         return;
       }
@@ -194,6 +245,12 @@ void SettingsDialog::BuildRows() {
         field.line = new QLineEdit(row_widget);
         if (field.entry.type == "an array of strings") {
           field.line->setPlaceholderText("comma-separated");
+        }
+        if (mira_gui::settings::IsSecretKey(field.entry.key)) {
+          // PasswordEchoOnEdit, not Password: the value has to be checkable
+          // against what the site shows, and a key you can never read back
+          // is a key you re-paste every time you doubt it.
+          field.line->setEchoMode(QLineEdit::PasswordEchoOnEdit);
         }
         row_layout->addWidget(field.line, /*stretch=*/1);
 
@@ -283,7 +340,8 @@ void SettingsDialog::ResetField(size_t index) {
   mira_gui::MiradClient::ResetConfigKeyAsync(
       this, fields_[index].entry.key, [this, index](mira_gui::PatchConfigResult result) {
         if (!result.ok) {
-          QMessageBox::warning(this, "Reset failed", QString::fromStdString(result.error));
+          mira_gui::notify::Failed(this, "Could not reset that setting.",
+                                   QString::fromStdString(result.error));
           return;
         }
         Field& field = fields_[index];
@@ -297,10 +355,21 @@ void SettingsDialog::Save() {
   // file behind a different key — and unconditionally skipped when
   // unchanged, so opening and saving this dialog never rewrites
   // frontend.toml for nothing.
-  if (scan_on_startup_->isChecked() != scan_on_startup_original_) {
+  const QString notifications = notifications_->currentData().toString();
+  const int timeout = notification_timeout_->value();
+  if (scan_on_startup_->isChecked() != scan_on_startup_original_ ||
+      notifications != notifications_original_ || timeout != notification_timeout_original_) {
     mira_gui::FrontendPrefs prefs;
     prefs.scan_on_startup = scan_on_startup_->isChecked();
+    prefs.notifications = notifications.toStdString();
+    prefs.notification_timeout_s = timeout;
     scan_on_startup_original_ = *prefs.scan_on_startup;
+    notifications_original_ = notifications;
+    notification_timeout_original_ = timeout;
+    // Applied to the running process as well as saved: the next toast
+    // should obey the rows that were just changed, not wait for a restart.
+    mira_gui::notify::SetDelivery(mira_gui::notify::DeliveryFromString(notifications));
+    mira_gui::notify::SetTimeoutSeconds(timeout);
     mira_gui::MiradClient::SaveFrontendPrefsAsync(this, prefs, [](mira_gui::PatchConfigResult) {});
   }
 
@@ -321,7 +390,8 @@ void SettingsDialog::Save() {
   mira_gui::MiradClient::PatchConfigAsync(this, edits, [this](mira_gui::PatchConfigResult result) {
     setEnabled(true);
     if (!result.ok) {
-      QMessageBox::warning(this, "Save failed", QString::fromStdString(result.error));
+      mira_gui::notify::Failed(this, "Could not save the settings.",
+                               QString::fromStdString(result.error));
       return;
     }
     accept();

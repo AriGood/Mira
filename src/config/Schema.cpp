@@ -129,7 +129,7 @@ Schema::Schema() {
        "An already-initialised prefix to clone when prefix_provider is \"template\". "
        "Cloned with reflinks where the filesystem supports them."},
 
-      {"command_wrappers", Type::StringArray, json::array(), Tier::Advanced,
+      {"command_wrappers", Type::StringArray, json::array(), Tier::Basic,
        "Wrappers applied to the launch command in order, e.g. [\"gamescope\", \"mangohud\"]. "
        "The first entry ends up outermost. Each receives the game's command line as its "
        "arguments."},
@@ -189,7 +189,7 @@ Schema::Schema() {
        "archive is a real action to opt into, not assume. Extracting a .rar or .7z needs "
        "unrar/p7zip installed; a missing tool is reported, not silently skipped."},
 
-      {"scan.periodic_interval_s", Type::Int, 0, Tier::Expert,
+      {"scan.periodic_interval_s", Type::Int, 0, Tier::Advanced,
        "Seconds between full rescans. 0 disables them, which is the default: inotify is "
        "authoritative and a timer would cost idle wakeups for nothing.",
        Range(0, 86400)},
@@ -240,11 +240,11 @@ Schema::Schema() {
       {"steam.enabled", Type::Bool, true, Tier::Basic,
        "Detect installed Steam games and let Mira launch them alongside its own library."},
 
-      {"steam.root", Type::String, "", Tier::Expert,
+      {"steam.root", Type::String, "", Tier::Advanced,
        "Override for Steam's install directory. Empty auto-detects "
        "~/.steam/steam, then ~/.local/share/Steam."},
 
-      {"steam.launch_mode", Type::String, "steam", Tier::Advanced,
+      {"steam.launch_mode", Type::String, "steam", Tier::Basic,
        "How launching a Steam game works. \"steam\" fires "
        "steam://rungameid/<appid> and lets the Steam client launch it — full "
        "achievements/overlay support; Mira didn't spawn the process, so it "
@@ -285,9 +285,14 @@ Schema::Schema() {
        "public APIs and ProtonDB, no key needed; everything else needs "
        "steamgriddb.api_key set to fetch cover art, and has no metadata source at all."},
 
-      {"steamgriddb.api_key", Type::String, "", Tier::Expert,
-       "Free API key from steamgriddb.com, used to fetch cover art for non-Steam games by "
-       "name search. Empty skips that source silently — Steam-owned games don't need it."},
+      // Basic, not Expert: without this every non-Steam game in the library
+      // is stuck with a generated placeholder, and a setting you have to
+      // turn on "advanced" to discover is one nobody discovers.
+      {"steamgriddb.api_key", Type::String, "", Tier::Basic,
+       "Free API key from steamgriddb.com. Non-Steam games need it to get cover art at all — "
+       "there is no other free source for one. Steam-owned games never need it. Left empty, "
+       "fetching metadata for a non-Steam game fails with no_steamgriddb_key rather than "
+       "appearing to succeed."},
 
       {"events.sse_keepalive_s", Type::Int, 0, Tier::Expert,
        "Seconds between keepalive comments on the event stream. 0 disables them; a Unix "

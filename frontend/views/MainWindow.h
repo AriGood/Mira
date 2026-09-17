@@ -24,6 +24,7 @@ public:
   explicit MainWindow(QWidget* parent = nullptr);
 
 private:
+  void BuildShortcuts();
   void RefreshHealth();
   void RescanAndRefreshGames();
   void RefreshGames();
