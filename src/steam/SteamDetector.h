@@ -19,8 +19,19 @@ struct SteamApp {
   std::filesystem::path compat_data_dir;  // <library>/steamapps/compatdata/<appid>; empty if native
   std::filesystem::path proton_path;      // the "proton" script Steam actually used for this app;
                                           // empty if it couldn't be resolved (e.g. never launched yet)
+  std::filesystem::path client_install_path;  // STEAM_COMPAT_CLIENT_INSTALL_PATH Steam itself used
   std::filesystem::path steam_root;
   std::filesystem::path library_root;
+};
+
+// What's needed to run something through the same Proton build Steam
+// already set up a prefix with: the "proton" script itself, and the Steam
+// client install path Proton needs as STEAM_COMPAT_CLIENT_INSTALL_PATH.
+// Both come from the same compat_data_dir/config_info file, which is why
+// they're resolved together rather than separately.
+struct ProtonCompatInfo {
+  std::filesystem::path proton_path;
+  std::filesystem::path client_install_path;
 };
 
 // Finds the Steam installation: config's steam.root override if set,
@@ -39,11 +50,11 @@ std::vector<std::filesystem::path> LibraryFolders(const std::filesystem::path& s
 // by the caller.
 std::vector<SteamApp> ListApps(const std::filesystem::path& steam_root);
 
-// Resolves the "proton" script a Windows app's compat_data_dir was set up
-// with, by reading its config_info file — the same mechanism Steam itself
-// uses, so it's exactly the build that already provisioned the prefix.
-// Returns nullopt if compat_data_dir has no config_info yet (the app has
-// never actually been launched through Steam).
-std::optional<std::filesystem::path> ResolveProtonPath(const std::filesystem::path& compat_data_dir);
+// Resolves what a Windows app's compat_data_dir was actually set up with,
+// by reading its config_info file — the same mechanism Steam itself uses,
+// so it's exactly the build (and client path) that already provisioned the
+// prefix. Returns nullopt if compat_data_dir has no config_info yet (the
+// app has never actually been launched through Steam).
+std::optional<ProtonCompatInfo> ResolveProtonCompatInfo(const std::filesystem::path& compat_data_dir);
 
 }  // namespace mira::steam

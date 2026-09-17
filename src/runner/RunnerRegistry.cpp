@@ -7,6 +7,7 @@
 #include "core/Log.h"
 #include "runner/NativeRunner.h"
 #include "runner/ProtonRunner.h"
+#include "runner/SteamRunner.h"
 #include "runner/WineRunner.h"
 
 namespace mira::runner {
@@ -41,9 +42,11 @@ RunnerRegistry::RunnerRegistry(config::Config& config) : config_(config) {
   auto native = std::make_unique<NativeRunner>();
   auto proton = std::make_unique<ProtonRunner>();
   auto wine = std::make_unique<WineRunner>();
+  auto steam = std::make_unique<SteamRunner>();
   runners_[native->kind()] = std::move(native);
   runners_[proton->kind()] = std::move(proton);
   runners_[wine->kind()] = std::move(wine);
+  runners_[steam->kind()] = std::move(steam);
 }
 
 const std::vector<model::RunnerBuild>& RunnerRegistry::BuildsFor(const std::string& kind) const {

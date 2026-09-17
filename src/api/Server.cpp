@@ -14,7 +14,9 @@
 #include "core/Log.h"
 #include "desktop/DesktopEntries.h"
 #include "library/Scanner.h"
+#include "runner/Exec.h"
 #include "runner/RunnerRegistry.h"
+#include "steam/SteamScanner.h"
 
 namespace mira::api {
 namespace {
@@ -343,6 +345,19 @@ void Server::RegisterRoutes() {
                    {"restored", summary.restored}});
   });
 
+  // --- steam ------------------------------------------------------------
+
+  // Detected apps land in the same GameStore as everything else (see
+  // SteamScanner's class comment) — no separate GET endpoint needed, they
+  // just show up in GET /v1/games with runner_ref "steam:<appid>".
+  http_->Post("/v1/steam/scan", [this](const Request&, Response& res) {
+    steam::SteamScanner scanner(config_, games_, events_);
+    auto summary = scanner.Scan();
+    if (!summary) return SendError(res, 404, summary.error().code, summary.error().message);
+    SyncDesktopEntries(config_, games_);
+    SendJson(res, {{"added", summary->added}, {"updated", summary->updated}});
+  });
+
   // --- launching ------------------------------------------------------------
 
   http_->Post(R"(/v1/games/([^/]+)/launch)", [this](const Request& req, Response& res) {
@@ -355,6 +370,28 @@ void Server::RegisterRoutes() {
       return SendError(res, 409, "not_ready",
                        std::format("\"{}\" is {}, not ready to launch", game->id,
                                   model::ToString(game->status)));
+    }
+
+    // A Steam-sourced game defaults to asking the Steam client to launch it
+    // (steam://rungameid/<appid>) rather than Mira execing it directly: full
+    // achievements/overlay support, and Steam's own accounting is what
+    // GET /v1/games/{id} reads back for it (see steam.launch_mode's doc).
+    // Mira can't track a process it didn't spawn, so this path never
+    // touches ProcessSupervisor — deliberately, not a gap to fill in later.
+    if (game->runner_ref.starts_with("steam:")) {
+      const config::Resolver resolver(config_, game->overrides);
+      if (resolver.GetString("steam.launch_mode") == "steam") {
+        const std::string appid = game->runner_ref.substr(std::string_view("steam:").size());
+        Command command;
+        command.argv = {"steam", std::format("steam://rungameid/{}", appid)};
+        if (auto spawned = runner::SpawnDetached(command); !spawned) {
+          return SendError(res, 500, spawned.error().code, spawned.error().message);
+        }
+        [[maybe_unused]] auto _ =
+            games_.Update(game->id, [](model::Game& g) { g.last_played_at = model::NowSeconds(); });
+        events_.Publish("game.launched", {{"id", game->id}, {"via", "steam"}});
+        return SendJson(res, {{"status", "launched_via_steam"}});
+      }
     }
 
     const runner::RunnerRegistry registry(config_);

@@ -26,7 +26,12 @@ std::string Sanitize(std::string_view value) {
 }
 
 bool IsLaunchable(const model::Game& game) {
-  return game.status == model::GameStatus::Ready && !game.exe_path.empty();
+  if (game.status != model::GameStatus::Ready) return false;
+  // A Steam-sourced game launches via steam://rungameid by default (see
+  // SteamRunner), which needs no known exe_path at all — only its "direct"
+  // launch mode does, and that's an opt-in per-game override.
+  if (game.runner_ref.starts_with("steam:")) return true;
+  return !game.exe_path.empty();
 }
 
 }  // namespace

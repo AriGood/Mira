@@ -82,7 +82,7 @@ std::vector<fs::path> LibraryFolders(const fs::path& steam_root) {
   return folders;
 }
 
-std::optional<fs::path> ResolveProtonPath(const fs::path& compat_data_dir) {
+std::optional<ProtonCompatInfo> ResolveProtonCompatInfo(const fs::path& compat_data_dir) {
   const auto text = ReadFile(compat_data_dir / "config_info");
   if (!text) return std::nullopt;
 
@@ -91,9 +91,12 @@ std::optional<fs::path> ResolveProtonPath(const fs::path& compat_data_dir) {
   // calls off of it (fonts -> share -> files -> the tool's own root, where
   // its "proton" script lives) is the same resolution Proton-adjacent tools
   // (protontricks and others) use, since Steam doesn't expose this any other
-  // way short of parsing its own C++ source.
+  // way short of parsing its own C++ source. Line 4 (0-indexed 3) is the
+  // Steam client install path Steam itself passed as
+  // STEAM_COMPAT_CLIENT_INSTALL_PATH — reusing it verbatim means Proton
+  // sees exactly the same environment Steam gave it.
   const std::vector<std::string> lines = strings::Split(*text, '\n');
-  if (lines.size() < 2) return std::nullopt;
+  if (lines.size() < 4) return std::nullopt;
 
   // A trailing '/' makes std::filesystem::path treat the last component as
   // an empty pseudo-element, so parent_path() needs one extra call to get
@@ -108,7 +111,11 @@ std::optional<fs::path> ResolveProtonPath(const fs::path& compat_data_dir) {
 
   std::error_code ec;
   if (!fs::exists(proton, ec)) return std::nullopt;
-  return proton;
+
+  const fs::path client_install_path(strings::Trim(lines[3]));
+  if (client_install_path.empty()) return std::nullopt;
+
+  return ProtonCompatInfo{.proton_path = proton, .client_install_path = client_install_path};
 }
 
 std::vector<SteamApp> ListApps(const fs::path& steam_root) {
@@ -150,7 +157,10 @@ std::vector<SteamApp> ListApps(const fs::path& steam_root) {
       app.compat_data_dir = steamapps / "compatdata" / app.appid;
       app.is_native = !fs::is_directory(app.compat_data_dir, ec);
       if (!app.is_native) {
-        if (auto proton = ResolveProtonPath(app.compat_data_dir)) app.proton_path = *proton;
+        if (auto info = ResolveProtonCompatInfo(app.compat_data_dir)) {
+          app.proton_path = info->proton_path;
+          app.client_install_path = info->client_install_path;
+        }
       }
 
       apps.push_back(std::move(app));
