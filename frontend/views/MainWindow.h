@@ -6,7 +6,8 @@
 #include <set>
 #include <string>
 
-#include "MiradClient.h"
+#include "../client/EventStream.h"
+#include "../client/Types.h"
 
 class QComboBox;
 class QLabel;

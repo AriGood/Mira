@@ -1,22 +1,21 @@
 #include "MainWindow.h"
 
-#include "GameColors.h"
-#include "GameDetailDialog.h"
-#include "MiradClient.h"
-#include "SettingsDialog.h"
-
 #include <QAbstractItemView>
 #include <QComboBox>
-#include <QDateTime>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
-#include <QMessageBox>
 #include <QPushButton>
 #include <QTableWidget>
 #include <QTableWidgetItem>
 #include <QVBoxLayout>
 #include <QWidget>
+
+#include "../client/MiradClient.h"
+#include "../dialogs/GameDetailDialog.h"
+#include "../dialogs/SettingsDialog.h"
+#include "../ui/GameActions.h"
+#include "../ui/GamePresentation.h"
 
 namespace {
 
@@ -38,20 +37,6 @@ public:
 private:
   double sort_value_;
 };
-
-QString FormatLastPlayed(const std::optional<std::int64_t>& last_played_at) {
-  if (!last_played_at) return "Never";
-  return QDateTime::fromSecsSinceEpoch(*last_played_at).toString("yyyy-MM-dd HH:mm");
-}
-
-QString FormatPlaytime(std::int64_t play_seconds) {
-  if (play_seconds <= 0) return "—";
-  const std::int64_t hours = play_seconds / 3600;
-  const std::int64_t minutes = (play_seconds % 3600) / 60;
-  if (hours > 0) return QString("%1h %2m").arg(hours).arg(minutes);
-  if (minutes > 0) return QString("%1m").arg(minutes);
-  return "<1m";
-}
 
 }  // namespace
 
@@ -193,7 +178,11 @@ void MainWindow::RefreshGames() {
 int MainWindow::FindRow(const std::string& id) const {
   const QString target = QString::fromStdString(id);
   for (int row = 0; row < games_table_->rowCount(); ++row) {
-    if (games_table_->item(row, 0)->data(Qt::UserRole).toString() == target) return row;
+    // A freshly inserted row has no items until PopulateRow fills it, so
+    // this can legitimately be null — dereferencing it unconditionally
+    // turns any such moment into a crash.
+    const QTableWidgetItem* item = games_table_->item(row, 0);
+    if (item != nullptr && item->data(Qt::UserRole).toString() == target) return row;
   }
   return -1;
 }
@@ -216,10 +205,10 @@ void MainWindow::PopulateRow(int row, const mira_gui::GameSummary& game) {
   confidence_item->setForeground(mira_gui::ConfidenceColor(game.reviewed, game.confidence));
 
   auto* last_played_item = new NumericTableWidgetItem(
-      FormatLastPlayed(game.last_played_at), static_cast<double>(game.last_played_at.value_or(-1)));
+      mira_gui::FormatLastPlayed(game.last_played_at), static_cast<double>(game.last_played_at.value_or(-1)));
 
   auto* playtime_item =
-      new NumericTableWidgetItem(FormatPlaytime(game.play_seconds), static_cast<double>(game.play_seconds));
+      new NumericTableWidgetItem(mira_gui::FormatPlaytime(game.play_seconds), static_cast<double>(game.play_seconds));
 
   games_table_->setItem(row, 0, name_item);
   games_table_->setItem(row, 1, status_item);
@@ -280,7 +269,18 @@ void MainWindow::UpsertRow(const mira_gui::GameSummary& game) {
     row = games_table_->rowCount();
     games_table_->insertRow(row);
   }
+
+  // Sorting off for the same reason RefreshGames turns it off: Qt re-sorts
+  // on any change to the sort column, so PopulateRow's very first setItem()
+  // can move this row, and every column after it — plus the actions cell —
+  // would then be written into whatever row slid into this index. That hands
+  // one game another's status and playtime, and puts its Delete button on
+  // the wrong row, which is a good deal worse than a cosmetic glitch.
+  // Re-enabling sorts again, so a rename still lands in its new position.
+  const bool sorting = games_table_->isSortingEnabled();
+  games_table_->setSortingEnabled(false);
   PopulateRow(row, game);
+  games_table_->setSortingEnabled(sorting);
 }
 
 void MainWindow::RemoveRow(const std::string& id) {
@@ -316,29 +316,11 @@ void MainWindow::HandleGameEvent(const std::string& type, const std::string& dat
 }
 
 void MainWindow::DeleteGame(const std::string& id, const QString& name) {
-  const auto choice = QMessageBox::question(
-      this, "Remove game",
-      QString("Remove \"%1\" from the library? This does not touch its files on disk.").arg(name),
-      QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
-  if (choice != QMessageBox::Yes) return;
-
-  mira_gui::MiradClient::DeleteGameAsync(this, id, [this, name](mira_gui::DeleteResult result) {
-    if (!result.ok) {
-      QMessageBox::warning(this, "Remove failed",
-                            QString("Failed to remove \"%1\": %2")
-                                .arg(name, QString::fromStdString(result.error)));
-      return;
-    }
-    RefreshGames();
-  });
+  mira_gui::actions::Delete(this, id, name, [this] { RefreshGames(); });
 }
 
 void MainWindow::LaunchGame(const std::string& id) {
-  mira_gui::MiradClient::LaunchGameAsync(this, id, [this, id](mira_gui::LaunchResult result) {
-    if (!result.ok) {
-      QMessageBox::warning(this, "Launch failed", QString::fromStdString(result.error));
-      return;
-    }
+  mira_gui::actions::Launch(this, id, [this, id] {
     // Not waiting for the game.state "running" event to confirm this: it's
     // on its way regardless, so marking it now avoids a window where a
     // second click could fire another launch before the event arrives.
@@ -348,12 +330,10 @@ void MainWindow::LaunchGame(const std::string& id) {
 }
 
 void MainWindow::StopGame(const std::string& id) {
-  mira_gui::MiradClient::StopGameAsync(this, id, [this](mira_gui::StopResult result) {
-    if (!result.ok) QMessageBox::warning(this, "Stop failed", QString::fromStdString(result.error));
-    // Left in running_ids_ either way — Stop only sends SIGTERM and returns;
-    // the real state change arrives later as game.state "exited"/"crashed"
-    // (docs/api.md), same as with a game that quits on its own.
-  });
+  // Left in running_ids_ either way — Stop only sends SIGTERM and returns;
+  // the real state change arrives later as game.state "exited"/"crashed"
+  // (docs/api.md), same as with a game that quits on its own.
+  mira_gui::actions::Stop(this, id);
 }
 
 void MainWindow::OpenGameDetail(int row, int /*column*/) {

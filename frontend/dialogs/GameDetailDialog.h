@@ -5,7 +5,11 @@
 #include <string>
 #include <vector>
 
-#include "MiradClient.h"
+#include "../client/MiradClient.h"
+
+namespace mira_gui {
+class OverridesEditor;
+}
 
 class QCheckBox;
 class QComboBox;
@@ -33,21 +37,6 @@ public:
   GameDetailDialog(std::string id, QWidget* parent = nullptr);
 
 private:
-  // One row in the "Overrides" section: an overridable schema key
-  // (config::Resolver::IsOverridable) resolved for this specific game via
-  // GET /v1/games/{id}/config, editable the same way SettingsDialog edits
-  // the global value — just scoped to one game and layered on top of it.
-  struct OverrideField {
-    mira_gui::ConfigSchemaEntry entry;
-    std::string original;
-    std::string layer;  // "default" | "config" | "game" — which layer supplied the shown value
-    QCheckBox* check = nullptr;
-    QLineEdit* line = nullptr;
-    QLabel* layer_label = nullptr;
-    QPushButton* reset_button = nullptr;
-    QWidget* row_widget = nullptr;
-  };
-
   void Load();
   void Populate(const mira_gui::GameDetail& game);
   void PopulateExeCombo(const std::vector<mira_gui::GameDetail::Candidate>& candidates,
@@ -58,12 +47,6 @@ private:
   void OnRunnerComboActivated(int index);
   void BrowseExecutable();
   void SetAdvancedVisible(bool show);
-
-  void LoadOverrides();
-  void BuildOverrideRows(const mira_gui::ConfigSchemaResult& schema);
-  void ApplyOverrideValues(const mira_gui::GameConfigResult& config);
-  std::string OverrideCurrentText(const OverrideField& field) const;
-  void ResetOverride(size_t index);
 
   std::string id_;
   std::string install_path_;
@@ -83,8 +66,7 @@ private:
   QLineEdit* data_dir_edit_;
   QPlainTextEdit* runner_config_edit_;
   QPlainTextEdit* env_edit_;
-  QFormLayout* overrides_form_;
-  std::vector<OverrideField> override_fields_;
+  mira_gui::OverridesEditor* overrides_;
 
   QPushButton* save_button_;
 };

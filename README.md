@@ -5,8 +5,9 @@ Wine/Proton. Drop a game folder into a watched directory and Mira detects
 it, works out how to run it, and sets it up — no manual "add game" wizard.
 
 This repository is the **backend** (`mirad`), a **CLI** (`mira`), and a
-currently-blank **Qt frontend skeleton** (`mira-gui`). See
-[`docs/architecture.md`](docs/architecture.md) for how the three relate —
+**Qt frontend** (`mira-gui`). See
+[`docs/architecture.md`](docs/architecture.md) for how the three relate,
+and [`docs/frontend.md`](docs/frontend.md) for the frontend specifically —
 short version: `mira` and `mira-gui` are both plain REST clients over a Unix
 socket, and neither can do anything `mirad` doesn't expose through
 [`docs/api.md`](docs/api.md).
@@ -105,9 +106,12 @@ right way to run it while developing, not the recommended end-user path.
 
 ### Running the frontend
 
-The Qt frontend (`mira-gui`) is currently a blank skeleton — see
-`docs/architecture.md` for what it grows into. To build and launch it in one
-step during development:
+`mira-gui` opens on a cover-art library grid: one click selects a game and
+shows its details, a second launches it, right-click opens its menu. The
+older table view — every field of every game at once, which is what you want
+when auditing a fresh scan — is still there as `mira-gui --classic`, or via
+the grid's View menu. To build and launch the frontend in one step during
+development:
 
 ```sh
 cmake --build build/dev --target run-gui
