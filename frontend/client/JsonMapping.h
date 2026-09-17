@@ -42,6 +42,19 @@ std::vector<std::string> SplitCommaSeparated(const std::string& text);
 // guessing client-side would.
 nlohmann::json TypedValueFromText(const std::string& type, const std::string& value);
 
+// Drops runners that repeat a `reference` already seen, keeping the first.
+//
+// GET /v1/runners walks every configured search path, and on a typical
+// Arch/Steam setup ~/.steam/steam is a symlink to ~/.local/share/Steam — so
+// the same build is discovered twice and reported twice, with identical
+// kind/name/version/reference and only `path` differing. docs/api.md says
+// `reference` is the string that actually round-trips into `runner_ref`,
+// which makes two entries sharing one reference the same runner by
+// definition: picking either does exactly the same thing. Collapsing them
+// here keeps every runner picker in the UI from offering a choice that
+// isn't one.
+std::vector<RunnerInfo> DedupeRunnersByReference(std::vector<RunnerInfo> runners);
+
 // Expands a dotted key into nested objects inside `document`, assigning
 // `value` at the leaf: "scan.debounce_ms" becomes {"scan":{"debounce_ms":…}},
 // which is the shape PATCH /v1/config takes.

@@ -6,7 +6,8 @@ it, works out how to run it, and sets it up — no manual "add game" wizard.
 
 This repository is the **backend** (`mirad`), a **CLI** (`mira`), and a
 **Qt frontend** (`mira-gui`). See
-[`docs/architecture.md`](docs/architecture.md) for how the three relate —
+[`docs/architecture.md`](docs/architecture.md) for how the three relate,
+and [`docs/frontend.md`](docs/frontend.md) for the frontend specifically —
 short version: `mira` and `mira-gui` are both plain REST clients over a Unix
 socket, and neither can do anything `mirad` doesn't expose through
 [`docs/api.md`](docs/api.md).

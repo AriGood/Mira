@@ -9,6 +9,7 @@
 
 #include "../client/MiradClient.h"
 #include "../dialogs/DeleteGameDialog.h"
+#include "../dialogs/RunInPrefixDialog.h"
 
 namespace mira_gui::actions {
 
@@ -55,6 +56,30 @@ void Delete(QWidget* parent, const std::string& id, const QString& name,
           }
           if (on_deleted) on_deleted();
         });
+  });
+}
+
+void RunInPrefix(QWidget* parent, const std::string& id) {
+  MiradClient::GetGameAsync(parent, id, [parent, id](GameDetailResult result) {
+    if (!result.ok) {
+      QMessageBox::warning(parent, "Run failed", QString::fromStdString(result.error));
+      return;
+    }
+    RunInPrefixDialog dialog(id, result.game, parent);
+    dialog.exec();
+  });
+}
+
+void FinishInstall(QWidget* parent, const std::string& id, std::function<void()> on_finished) {
+  MiradClient::FinishInstallAsync(parent, id, [parent, on_finished](FinishInstallResult result) {
+    if (!result.ok) {
+      QMessageBox::warning(parent, "Could not mark as installed",
+                           QString("%1\n\nSet the game's executable to whatever the installer "
+                                   "produced first, then try again.")
+                               .arg(QString::fromStdString(result.error)));
+      return;
+    }
+    if (on_finished) on_finished();
   });
 }
 

@@ -63,6 +63,10 @@ qt_add_executable(mira-gui
   dialogs/DeleteGameDialog.h
   dialogs/GameDetailDialog.cpp
   dialogs/GameDetailDialog.h
+  dialogs/RunInPrefixDialog.cpp
+  dialogs/RunInPrefixDialog.h
+  dialogs/RunnerDialog.cpp
+  dialogs/RunnerDialog.h
   dialogs/OverridesEditor.cpp
   dialogs/OverridesEditor.h
   dialogs/SettingsDialog.cpp
@@ -114,9 +118,14 @@ file(GLOB MIRA_GUI_TEST_SOURCES CONFIGURE_DEPENDS tests/*.cpp)
 add_executable(mira_gui_tests
   ${MIRA_GUI_TEST_SOURCES}
   client/JsonMapping.cpp
+  client/MiradClient.cpp
+  client/Transport.cpp
 )
 target_include_directories(mira_gui_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(mira_gui_tests PRIVATE mira_third_party)
+# Qt6::Core, not Widgets: the covered code needs QPointer and the queued-call
+# machinery to compile, but never a widget, a window or an event loop — a
+# test that needed one of those would be testing the wrong layer.
+target_link_libraries(mira_gui_tests PRIVATE mira_third_party Qt6::Core)
 target_compile_features(mira_gui_tests PRIVATE cxx_std_20)
 target_compile_options(mira_gui_tests PRIVATE -Wall -Wextra)
 add_test(NAME frontend_unit COMMAND mira_gui_tests)

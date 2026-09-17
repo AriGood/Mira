@@ -30,6 +30,17 @@ void Stop(QWidget* parent, const std::string& id);
 void Delete(QWidget* parent, const std::string& id, const QString& name,
             std::function<void()> on_deleted);
 
+// Runs an executable inside the game's own prefix
+// (POST /v1/games/{id}/run), asking which one first. Needs the full record
+// for its candidate list, so it fetches before prompting.
+void RunInPrefix(QWidget* parent, const std::string& id);
+
+// Flips a needs_install game to ready (POST /v1/games/{id}/finish-install).
+// 409s while exe_path is still empty, which is the normal case right up
+// until the user points it at whatever the installer produced — so the
+// failure message matters more here than elsewhere.
+void FinishInstall(QWidget* parent, const std::string& id, std::function<void()> on_finished);
+
 // Opens the game's install_path in the desktop's file manager. Needs a
 // GET /v1/games/{id} first — install_path isn't in the list summary.
 void OpenInstallFolder(QWidget* parent, const std::string& id);

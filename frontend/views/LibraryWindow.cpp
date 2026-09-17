@@ -9,7 +9,9 @@
 #include <QListWidget>
 #include <QListWidgetItem>
 #include <QMenu>
+#include <QCloseEvent>
 #include <QMenuBar>
+#include <QMessageBox>
 #include <QPushButton>
 #include <QSlider>
 #include <QSplitter>
@@ -19,6 +21,7 @@
 
 #include "../client/MiradClient.h"
 #include "../dialogs/GameDetailDialog.h"
+#include "../dialogs/RunnerDialog.h"
 #include "../dialogs/SettingsDialog.h"
 #include "../ui/CoverArt.h"
 #include "../ui/GameActions.h"
@@ -62,21 +65,21 @@ LibraryWindow::LibraryWindow(QWidget* parent) : QMainWindow(parent) {
   connect(details_, &mira_gui::GameDetailsPanel::EditRequested, this,
           [this](const QString& id) { OpenGameDialog(id.toStdString()); });
 
-  auto* splitter = new QSplitter(Qt::Horizontal, this);
-  splitter->addWidget(BuildSidebar());
-  splitter->addWidget(BuildGrid());
-  splitter->addWidget(details_);
-  splitter->setStretchFactor(0, 0);
-  splitter->setStretchFactor(1, 1);
-  splitter->setStretchFactor(2, 0);
-  splitter->setSizes({190, 660, 330});
-  splitter->setChildrenCollapsible(false);
+  splitter_ = new QSplitter(Qt::Horizontal, this);
+  splitter_->addWidget(BuildSidebar());
+  splitter_->addWidget(BuildGrid());
+  splitter_->addWidget(details_);
+  splitter_->setStretchFactor(0, 0);
+  splitter_->setStretchFactor(1, 1);
+  splitter_->setStretchFactor(2, 0);
+  splitter_->setSizes({190, 660, 330});
+  splitter_->setChildrenCollapsible(false);
 
   auto* central = new QWidget(this);
   auto* layout = new QVBoxLayout(central);
   layout->setContentsMargins(0, 0, 0, 0);
   layout->setSpacing(0);
-  layout->addWidget(splitter, /*stretch=*/1);
+  layout->addWidget(splitter_, /*stretch=*/1);
 
   footer_ = new QLabel(central);
   footer_->setStyleSheet("font-size: 10px; color: #9e9e9e; padding: 4px 10px;");
@@ -84,6 +87,7 @@ LibraryWindow::LibraryWindow(QWidget* parent) : QMainWindow(parent) {
 
   setCentralWidget(central);
 
+  LoadPrefs();
   RefreshHealth();
 
   event_stream_.Start(this,
@@ -97,9 +101,82 @@ void LibraryWindow::BuildMenus() {
   view_menu->addSeparator();
   view_menu->addAction("Open &classic table view", this, &LibraryWindow::OpenClassicView);
 
+  auto* library_menu = menuBar()->addMenu("&Library");
+  library_menu->addAction("Import &Steam library", this, &LibraryWindow::ImportSteamLibrary);
+
   auto* tools_menu = menuBar()->addMenu("&Tools");
+  tools_menu->addAction("&Runners…", this, &LibraryWindow::OpenRunners);
   tools_menu->addAction("&Settings…", QKeySequence::Preferences, this,
                         &LibraryWindow::OpenSettings);
+}
+
+void LibraryWindow::LoadPrefs() {
+  mira_gui::MiradClient::GetFrontendPrefsAsync(this, [this](mira_gui::FrontendPrefsResult result) {
+    if (!result.ok) return;  // non-fatal: the built-in defaults are already applied
+    const mira_gui::FrontendPrefs& prefs = result.prefs;
+
+    if (prefs.window_width && prefs.window_height) {
+      resize(*prefs.window_width, *prefs.window_height);
+    }
+    if (prefs.tile_width) {
+      // Through the slider so the clamp to its range and SetTileWidth's
+      // cache invalidation both apply — a hand-edited frontend.toml must
+      // not be able to ask for a 4000px tile.
+      zoom_->setValue(*prefs.tile_width);
+    }
+    if (prefs.sidebar_width && prefs.details_width) {
+      const int middle = qMax(200, width() - *prefs.sidebar_width - *prefs.details_width);
+      splitter_->setSizes({*prefs.sidebar_width, middle, *prefs.details_width});
+    }
+    if (prefs.library_filter) {
+      const QString wanted = QString::fromStdString(*prefs.library_filter);
+      for (int row = 0; row < filters_->count(); ++row) {
+        if (filters_->item(row)->data(Qt::UserRole).toString() == wanted) {
+          filters_->setCurrentRow(row);
+          break;
+        }
+      }
+    }
+  });
+}
+
+void LibraryWindow::SavePrefs() {
+  mira_gui::FrontendPrefs prefs;
+  prefs.window_width = width();
+  prefs.window_height = height();
+  prefs.tile_width = tile_width_;
+  prefs.library_filter = CurrentFilterKey().toStdString();
+  const QList<int> sizes = splitter_->sizes();
+  if (sizes.size() == 3) {
+    prefs.sidebar_width = sizes[0];
+    prefs.details_width = sizes[2];
+  }
+  // Fire-and-forget: the window is closing, and a failure here costs a
+  // remembered layout, not data.
+  mira_gui::MiradClient::SaveFrontendPrefsAsync(this, prefs, [](mira_gui::PatchConfigResult) {});
+}
+
+void LibraryWindow::closeEvent(QCloseEvent* event) {
+  SavePrefs();
+  QMainWindow::closeEvent(event);
+}
+
+void LibraryWindow::OpenRunners() {
+  RunnerDialog dialog(this);
+  dialog.exec();
+}
+
+void LibraryWindow::ImportSteamLibrary() {
+  mira_gui::MiradClient::ScanSteamAsync(this, [this](mira_gui::SteamScanResult result) {
+    if (!result.ok) {
+      QMessageBox::warning(this, "Steam import failed", QString::fromStdString(result.error));
+      return;
+    }
+    QMessageBox::information(
+        this, "Steam import",
+        QString("Added %1 game(s), updated %2.").arg(result.added).arg(result.updated));
+    RefreshGames();
+  });
 }
 
 QWidget* LibraryWindow::BuildSidebar() {
@@ -406,6 +483,18 @@ void LibraryWindow::ShowContextMenu(const QPoint& pos) {
   QAction* details = menu.addAction("Details && settings…");
   QAction* folder = menu.addAction("Open install folder");
   menu.addSeparator();
+  // Both halves of the needs_install escape hatch (docs/api.md): run the
+  // installer inside this game's prefix, then say it worked. Offered for
+  // every game, since running something in a prefix is useful beyond
+  // installing, but only a needs_install game can be "marked installed".
+  QAction* run_in_prefix = menu.addAction("Run in prefix…");
+  QAction* finish_install = menu.addAction("Mark as installed");
+  finish_install->setEnabled(status == "needs_install");
+  finish_install->setToolTip(status == "needs_install"
+                                 ? "Flip this game to ready once its executable points at the "
+                                   "installed program"
+                                 : "Only applies to a game that still needs installing");
+  menu.addSeparator();
   QAction* remove = menu.addAction("Remove from library…");
 
   QAction* chosen = menu.exec(grid_->viewport()->mapToGlobal(pos));
@@ -415,6 +504,10 @@ void LibraryWindow::ShowContextMenu(const QPoint& pos) {
     OpenGameDialog(id);
   } else if (chosen == folder) {
     mira_gui::actions::OpenInstallFolder(this, id);
+  } else if (chosen == run_in_prefix) {
+    mira_gui::actions::RunInPrefix(this, id);
+  } else if (chosen == finish_install) {
+    mira_gui::actions::FinishInstall(this, id, [this] { RefreshGames(); });
   } else if (chosen == remove) {
     mira_gui::actions::Delete(this, id, name, [this] { RefreshGames(); });
   }

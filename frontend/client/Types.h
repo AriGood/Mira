@@ -234,4 +234,85 @@ struct PatchGameConfigResult {
   std::string error;
 };
 
+// One release from GET /v1/runners/catalog (docs/api.md): a runner build
+// that is *available to install*, as opposed to RunnerInfo, which is one
+// already installed. `tag` is what POST /v1/runners/download takes.
+struct RunnerRelease {
+  std::string tag;
+  std::string asset_name;
+  std::int64_t size_bytes = 0;
+  std::string published_at;
+  bool has_checksum = false;
+};
+
+struct RunnerCatalogResult {
+  bool ok = false;
+  std::string error;
+  std::vector<RunnerRelease> releases;
+};
+
+// POST /v1/runners/download returns 202 immediately and reports progress on
+// the event stream, so "ok" here only means the download started.
+struct RunnerDownloadResult {
+  bool ok = false;
+  std::string error;
+};
+
+// A `runners.download.started` / `.finished` / `.failed` payload.
+struct RunnerDownloadEvent {
+  std::string kind;
+  std::string tag;
+  std::string state;  // "started" | "finished" | "failed"
+  std::string error;  // only on "failed"
+};
+
+// POST /v1/steam/scan.
+struct SteamScanResult {
+  bool ok = false;
+  std::string error;
+  int added = 0;
+  int updated = 0;
+};
+
+// POST /v1/games/{id}/run — an arbitrary executable inside this game's own
+// prefix, tracked like a normal launch.
+struct RunInPrefixResult {
+  bool ok = false;
+  std::string error;
+};
+
+// POST /v1/games/{id}/finish-install.
+struct FinishInstallResult {
+  bool ok = false;
+  std::string error;
+};
+
+// The frontend's own preferences, which live in frontend.toml — the sibling
+// file the backend stores verbatim and never interprets
+// (docs/architecture.md), reachable as the opaque `frontend` key of
+// GET/PATCH /v1/config.
+//
+// Deliberately not settings.toml: every key there has to be declared in
+// src/config/Schema.cpp and means something to the daemon, whereas none of
+// this does. A window size is not a setting mirad should have an opinion
+// about, and putting it there would make the schema answer for it.
+//
+// Every field is optional because the file is allowed to be absent, partial
+// or hand-edited — an unset field means "use the built-in default", not
+// zero.
+struct FrontendPrefs {
+  std::optional<int> window_width;
+  std::optional<int> window_height;
+  std::optional<int> tile_width;
+  std::optional<std::string> library_filter;  // a sidebar filter key
+  std::optional<int> sidebar_width;
+  std::optional<int> details_width;
+};
+
+struct FrontendPrefsResult {
+  bool ok = false;
+  std::string error;
+  FrontendPrefs prefs;
+};
+
 }  // namespace mira_gui

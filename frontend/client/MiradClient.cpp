@@ -2,6 +2,7 @@
 
 #include <json.hpp>
 
+#include <string_view>
 #include <utility>
 
 #include "Async.h"
@@ -215,6 +216,7 @@ RunnersResult GetRunnersSync() {
     runner.reference = entry.value("reference", std::string());
     result.runners.push_back(std::move(runner));
   }
+  result.runners = mapping::DedupeRunnersByReference(std::move(result.runners));
   return result;
 }
 
@@ -243,6 +245,112 @@ GameConfigResult GetGameConfigSync(const std::string& id) {
     result.entries.push_back(std::move(e));
   }
   return result;
+}
+
+FrontendPrefsResult GetFrontendPrefsSync() {
+  FrontendPrefsResult result;
+  const transport::Reply reply = transport::Get("/v1/config");
+  if (!reply.ok) {
+    result.error = reply.error;
+    return result;
+  }
+
+  result.ok = true;
+  // Absent, or present but the wrong kind after a hand-edit: either way the
+  // frontend falls back to its built-in defaults rather than refusing to
+  // start. Nothing here is important enough to fail over.
+  const json table = reply.body.value("frontend", json::object());
+  if (!table.is_object()) return result;
+
+  const auto read_int = [&table](const char* key, std::optional<int>& out) {
+    if (table.contains(key) && table[key].is_number_integer()) out = table[key].get<int>();
+  };
+  read_int("window_width", result.prefs.window_width);
+  read_int("window_height", result.prefs.window_height);
+  read_int("tile_width", result.prefs.tile_width);
+  read_int("sidebar_width", result.prefs.sidebar_width);
+  read_int("details_width", result.prefs.details_width);
+  if (table.contains("library_filter") && table["library_filter"].is_string()) {
+    result.prefs.library_filter = table["library_filter"].get<std::string>();
+  }
+  return result;
+}
+
+PatchConfigResult SaveFrontendPrefsSync(const FrontendPrefs& prefs) {
+  json table = json::object();
+  if (prefs.window_width) table["window_width"] = *prefs.window_width;
+  if (prefs.window_height) table["window_height"] = *prefs.window_height;
+  if (prefs.tile_width) table["tile_width"] = *prefs.tile_width;
+  if (prefs.sidebar_width) table["sidebar_width"] = *prefs.sidebar_width;
+  if (prefs.details_width) table["details_width"] = *prefs.details_width;
+  if (prefs.library_filter) table["library_filter"] = *prefs.library_filter;
+
+  const transport::Reply reply = transport::Patch("/v1/config", json{{"frontend", table}});
+  return {reply.ok, reply.error};
+}
+
+RunnerCatalogResult GetRunnerCatalogSync(const std::string& kind) {
+  RunnerCatalogResult result;
+  // The only call in this client that leaves the machine (GitHub releases),
+  // so the default timeout is nowhere near enough.
+  const transport::Reply reply = transport::Get("/v1/runners/catalog?kind=" + kind,
+                                                {.read_timeout = std::chrono::seconds(30)});
+  if (!reply.ok) {
+    result.error = reply.error;
+    return result;
+  }
+  if (!reply.body.is_array()) {
+    result.error = transport::UnexpectedResponse("GET /v1/runners/catalog");
+    return result;
+  }
+
+  result.ok = true;
+  for (const json& entry : reply.body) {
+    RunnerRelease release;
+    release.tag = entry.value("tag", std::string());
+    release.asset_name = entry.value("asset_name", std::string());
+    release.size_bytes = entry.value("size_bytes", std::int64_t{0});
+    release.published_at = entry.value("published_at", std::string());
+    release.has_checksum = entry.value("has_checksum", false);
+    result.releases.push_back(std::move(release));
+  }
+  return result;
+}
+
+RunnerDownloadResult DownloadRunnerSync(const std::string& kind, const std::string& tag) {
+  const transport::Reply reply =
+      transport::PostJson("/v1/runners/download", json{{"kind", kind}, {"tag", tag}});
+  return {reply.ok, reply.error};
+}
+
+SteamScanResult ScanSteamSync() {
+  SteamScanResult result;
+  const transport::Reply reply =
+      transport::Post("/v1/steam/scan", {.read_timeout = std::chrono::seconds(30)});
+  if (!reply.ok) {
+    result.error = reply.error;
+    return result;
+  }
+  result.ok = true;
+  result.added = reply.body.value("added", 0);
+  result.updated = reply.body.value("updated", 0);
+  return result;
+}
+
+RunInPrefixResult RunInPrefixSync(const std::string& id, const std::string& exe_path,
+                                  const std::string& args) {
+  const transport::Reply reply = transport::PostJson(
+      "/v1/games/" + id + "/run", json{{"exe_path", exe_path}, {"args", args}},
+      // Provisions a prefix on demand if there isn't one yet, which is
+      // genuinely slow (it's initialising Wine/Proton, see
+      // docs/architecture.md).
+      {.read_timeout = std::chrono::seconds(120)});
+  return {reply.ok, reply.error};
+}
+
+FinishInstallResult FinishInstallSync(const std::string& id) {
+  const transport::Reply reply = transport::Post("/v1/games/" + id + "/finish-install");
+  return {reply.ok, reply.error};
 }
 
 PatchGameConfigResult PatchGameConfigSync(const std::string& id,
@@ -326,6 +434,43 @@ void MiradClient::ListRunnersAsync(QObject* context, std::function<void(RunnersR
   async::Run(context, [] { return GetRunnersSync(); }, std::move(callback));
 }
 
+void MiradClient::GetFrontendPrefsAsync(QObject* context,
+                                        std::function<void(FrontendPrefsResult)> callback) {
+  async::Run(context, [] { return GetFrontendPrefsSync(); }, std::move(callback));
+}
+
+void MiradClient::SaveFrontendPrefsAsync(QObject* context, const FrontendPrefs& prefs,
+                                         std::function<void(PatchConfigResult)> callback) {
+  async::Run(context, [prefs] { return SaveFrontendPrefsSync(prefs); }, std::move(callback));
+}
+
+void MiradClient::GetRunnerCatalogAsync(QObject* context, const std::string& kind,
+                                        std::function<void(RunnerCatalogResult)> callback) {
+  async::Run(context, [kind] { return GetRunnerCatalogSync(kind); }, std::move(callback));
+}
+
+void MiradClient::DownloadRunnerAsync(QObject* context, const std::string& kind,
+                                      const std::string& tag,
+                                      std::function<void(RunnerDownloadResult)> callback) {
+  async::Run(context, [kind, tag] { return DownloadRunnerSync(kind, tag); }, std::move(callback));
+}
+
+void MiradClient::ScanSteamAsync(QObject* context, std::function<void(SteamScanResult)> callback) {
+  async::Run(context, [] { return ScanSteamSync(); }, std::move(callback));
+}
+
+void MiradClient::RunInPrefixAsync(QObject* context, const std::string& id,
+                                   const std::string& exe_path, const std::string& args,
+                                   std::function<void(RunInPrefixResult)> callback) {
+  async::Run(context, [id, exe_path, args] { return RunInPrefixSync(id, exe_path, args); },
+             std::move(callback));
+}
+
+void MiradClient::FinishInstallAsync(QObject* context, const std::string& id,
+                                     std::function<void(FinishInstallResult)> callback) {
+  async::Run(context, [id] { return FinishInstallSync(id); }, std::move(callback));
+}
+
 void MiradClient::GetGameConfigAsync(QObject* context, const std::string& id,
                                      std::function<void(GameConfigResult)> callback) {
   async::Run(context, [id] { return GetGameConfigSync(id); }, std::move(callback));
@@ -356,6 +501,20 @@ std::string MiradClient::ParseRemovedId(const std::string& data) {
   const json entry = json::parse(data, nullptr, false);
   if (entry.is_discarded() || !entry.is_object()) return {};
   return entry.value("id", std::string());
+}
+
+bool MiradClient::ParseRunnerDownload(const std::string& event_type, const std::string& data,
+                                      RunnerDownloadEvent* out) {
+  constexpr std::string_view kPrefix = "runners.download.";
+  if (!event_type.starts_with(kPrefix)) return false;
+
+  const json entry = json::parse(data, nullptr, false);
+  if (entry.is_discarded() || !entry.is_object()) return false;
+  out->state = event_type.substr(kPrefix.size());
+  out->kind = entry.value("kind", std::string());
+  out->tag = entry.value("tag", std::string());
+  out->error = entry.value("error", std::string());
+  return true;
 }
 
 }  // namespace mira_gui

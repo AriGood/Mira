@@ -62,6 +62,10 @@ Reply Post(const std::string& path, const Options& options) {
   return Finish(MakeClient(options).Post(path));
 }
 
+Reply PostJson(const std::string& path, const json& body, const Options& options) {
+  return Finish(MakeClient(options).Post(path, body.dump(), "application/json"));
+}
+
 Reply Patch(const std::string& path, const json& body, const Options& options) {
   return Finish(MakeClient(options).Patch(path, body.dump(), "application/json"));
 }

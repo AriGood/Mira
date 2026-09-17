@@ -43,6 +43,7 @@ std::string SocketPath();
 
 Reply Get(const std::string& path, const Options& options = {});
 Reply Post(const std::string& path, const Options& options = {});
+Reply PostJson(const std::string& path, const nlohmann::json& body, const Options& options = {});
 Reply Patch(const std::string& path, const nlohmann::json& body, const Options& options = {});
 Reply Delete(const std::string& path, const Options& options = {});
 

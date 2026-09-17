@@ -89,9 +89,51 @@ public:
   static void ResetConfigKeyAsync(QObject* context, const std::string& key,
                                   std::function<void(PatchConfigResult)> callback);
 
+  // GET /v1/config, reading only the opaque `frontend` table — see
+  // FrontendPrefs for why the frontend's own state lives there and not in
+  // settings.toml.
+  static void GetFrontendPrefsAsync(QObject* context,
+                                    std::function<void(FrontendPrefsResult)> callback);
+
+  // PATCH /v1/config with a `frontend` key. Merge-patch, so only the fields
+  // set in `prefs` are written and a key this build doesn't know about
+  // (an older or newer frontend's) survives untouched.
+  static void SaveFrontendPrefsAsync(QObject* context, const FrontendPrefs& prefs,
+                                     std::function<void(PatchConfigResult)> callback);
+
   // GET /v1/runners. Freshly discovered on every call — no caching needed on
   // this side either.
   static void ListRunnersAsync(QObject* context, std::function<void(RunnersResult)> callback);
+
+  // GET /v1/runners/catalog?kind=proton|wine — what is available to
+  // install. Unlike everything else here this goes out to the GitHub API,
+  // so it has real network latency and its own longer timeout.
+  static void GetRunnerCatalogAsync(QObject* context, const std::string& kind,
+                                    std::function<void(RunnerCatalogResult)> callback);
+
+  // POST /v1/runners/download. Returns 202 as soon as the download starts;
+  // the outcome arrives as a runners.download.finished/.failed event, since
+  // a build can be 500+ MB and there is no job queue yet (docs/api.md).
+  static void DownloadRunnerAsync(QObject* context, const std::string& kind,
+                                  const std::string& tag,
+                                  std::function<void(RunnerDownloadResult)> callback);
+
+  // POST /v1/steam/scan. Idempotent: updates Steam-owned fields without
+  // touching anything the user configured.
+  static void ScanSteamAsync(QObject* context, std::function<void(SteamScanResult)> callback);
+
+  // POST /v1/games/{id}/run. Runs `exe_path` inside this game's prefix,
+  // provisioning one on demand — which is how a needs_install game's
+  // installer actually gets run, since Scanner never auto-provisions one.
+  static void RunInPrefixAsync(QObject* context, const std::string& id,
+                               const std::string& exe_path, const std::string& args,
+                               std::function<void(RunInPrefixResult)> callback);
+
+  // POST /v1/games/{id}/finish-install — flips a needs_install game to
+  // ready once exe_path points at whatever the installer produced. 409 if
+  // exe_path is still empty.
+  static void FinishInstallAsync(QObject* context, const std::string& id,
+                                 std::function<void(FinishInstallResult)> callback);
 
   // GET /v1/games/{id}/config — this game's resolved settings, tagged by
   // layer (see GameConfigEntry).
@@ -124,6 +166,12 @@ public:
 
   // Parses `game.removed`'s payload (`{"id": "..."}`, Server.cpp).
   static std::string ParseRemovedId(const std::string& data);
+
+  // Parses a `runners.download.started`/`.finished`/`.failed` payload.
+  // `state` comes from the event type, which the payload itself doesn't
+  // repeat.
+  static bool ParseRunnerDownload(const std::string& event_type, const std::string& data,
+                                  RunnerDownloadEvent* out);
 };
 
 }  // namespace mira_gui

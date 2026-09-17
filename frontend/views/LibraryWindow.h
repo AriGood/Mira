@@ -17,6 +17,7 @@ class QLabel;
 class QLineEdit;
 class QListWidget;
 class QSlider;
+class QSplitter;
 
 namespace mira_gui {
 class GameDetailsPanel;
@@ -49,6 +50,14 @@ private:
   QWidget* BuildGrid();
   void BuildMenus();
 
+  // The frontend's own state (size, tile size, which filter) round-trips
+  // through frontend.toml, not settings.toml — see FrontendPrefs. Applied
+  // after the window is already up, so a slow or absent daemon costs a
+  // visible resize rather than a blank window.
+  void LoadPrefs();
+  void SavePrefs();
+  void closeEvent(QCloseEvent* event) override;
+
   void RefreshHealth();
   void RescanAndRefreshGames();
   void RefreshGames();
@@ -76,6 +85,8 @@ private:
   void LaunchGame(const std::string& id);
   void OpenGameDialog(const std::string& id);
   void OpenSettings();
+  void OpenRunners();
+  void ImportSteamLibrary();
   void OpenClassicView();
 
   void HandleGameEvent(const std::string& type, const std::string& data);
@@ -85,6 +96,7 @@ private:
   QListWidget* grid_ = nullptr;
   mira_gui::GameTileDelegate* delegate_ = nullptr;
   QSlider* zoom_ = nullptr;
+  QSplitter* splitter_ = nullptr;
   QLabel* health_badge_ = nullptr;
   QLabel* footer_ = nullptr;
   QLabel* empty_hint_ = nullptr;

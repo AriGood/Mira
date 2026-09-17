@@ -397,6 +397,11 @@ why the *default* way to launch a Steam game (`steam.launch_mode:
 
 ## Built: the frontend
 
+[`frontend.md`](frontend.md) is the full picture — the two views, the four
+layers, which endpoints have a path through the UI, and which file each
+setting belongs in. What follows is the part that is architectural rather
+than a tour.
+
 `frontend/MiradClient.{h,cpp}` is the only thing in `mira-gui` that speaks to
 `mirad` — plain httplib over the Unix socket plus nlohmann::json, mirroring
 `mira`'s own client (`src/cli/main.cpp`), never `mira_core`. Every call is a

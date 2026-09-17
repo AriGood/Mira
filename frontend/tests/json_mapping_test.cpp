@@ -3,6 +3,7 @@
 #include <json.hpp>
 
 #include "client/JsonMapping.h"
+#include "client/MiradClient.h"
 
 using nlohmann::json;
 using namespace mira_gui;
@@ -204,4 +205,52 @@ TEST_CASE("AssignDottedKey merges two keys sharing a prefix") {
   CHECK(document["default_runner"].size() == 2);
   CHECK(document["default_runner"]["windows"] == "proton_umu:auto");
   CHECK(document["default_runner"]["native"] == "native:native");
+}
+
+TEST_CASE("DedupeRunnersByReference collapses one build found twice") {
+  // The real case: ~/.steam/steam symlinks to ~/.local/share/Steam, so
+  // GET /v1/runners reports the same Proton build under two paths with an
+  // identical reference. Picking either does the same thing, so a runner
+  // picker must not offer both.
+  std::vector<RunnerInfo> runners = {
+      {"proton", "GE-Proton11-6", "1787951532", "proton:GE-Proton11-6"},
+      {"proton", "GE-Proton11-6", "1787951532", "proton:GE-Proton11-6"},
+      {"wine", "system", "wine-11.17", "wine:system"},
+  };
+
+  const std::vector<RunnerInfo> unique = mapping::DedupeRunnersByReference(runners);
+  REQUIRE(unique.size() == 2);
+  CHECK(unique[0].reference == "proton:GE-Proton11-6");
+  CHECK(unique[1].reference == "wine:system");
+}
+
+TEST_CASE("DedupeRunnersByReference keeps genuinely different builds and order") {
+  std::vector<RunnerInfo> runners = {
+      {"proton", "GE-Proton11-7", "2", "proton:GE-Proton11-7"},
+      {"proton", "GE-Proton11-6", "1", "proton:GE-Proton11-6"},
+  };
+  const std::vector<RunnerInfo> unique = mapping::DedupeRunnersByReference(runners);
+  REQUIRE(unique.size() == 2);
+  CHECK(unique[0].reference == "proton:GE-Proton11-7");  // newest-first order preserved
+}
+
+TEST_CASE("ParseRunnerDownload reads the state from the event type") {
+  // The payload doesn't repeat which of started/finished/failed it is —
+  // that only exists in the SSE `event:` line.
+  RunnerDownloadEvent event;
+  REQUIRE(MiradClient::ParseRunnerDownload(
+      "runners.download.finished", R"({"kind": "proton", "tag": "GE-Proton11-7"})", &event));
+  CHECK(event.state == "finished");
+  CHECK(event.kind == "proton");
+  CHECK(event.tag == "GE-Proton11-7");
+  CHECK(event.error.empty());
+
+  REQUIRE(MiradClient::ParseRunnerDownload(
+      "runners.download.failed", R"({"kind": "wine", "tag": "x", "error": "checksum mismatch"})",
+      &event));
+  CHECK(event.state == "failed");
+  CHECK(event.error == "checksum mismatch");
+
+  CHECK_FALSE(MiradClient::ParseRunnerDownload("game.updated", R"({"id": "x"})", &event));
+  CHECK_FALSE(MiradClient::ParseRunnerDownload("runners.download.finished", "not json", &event));
 }
