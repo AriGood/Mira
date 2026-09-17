@@ -187,6 +187,11 @@ public:
   // a row from directly.
   static bool ParseGameState(const std::string& data, GameStateEvent* out);
 
+  // Parses `game.launched`. `tracked` defaults to false when the payload
+  // omits it: an older daemon published this event only for the case where
+  // nothing was watching, so that is what its silence meant.
+  static bool ParseGameLaunched(const std::string& data, GameLaunchedEvent* out);
+
   // Parses `game.removed`'s payload (`{"id": "..."}`, Server.cpp).
   static std::string ParseRemovedId(const std::string& data);
 

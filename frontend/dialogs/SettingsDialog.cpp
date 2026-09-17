@@ -4,6 +4,7 @@
 
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDoubleSpinBox>
 #include <QDialogButtonBox>
 #include <QFormLayout>
 #include <QGroupBox>
@@ -220,6 +221,32 @@ void SettingsDialog::BuildRows() {
         field.check = new QCheckBox(row_widget);
         row_layout->addWidget(field.check);
         row_layout->addStretch(1);
+      } else if (!field.entry.one_of.empty()) {
+        // The daemon published exactly what it accepts (docs/api.md), so
+        // offer that and nothing else. Not editable, unlike the runner
+        // combo below: there the daemon genuinely takes values GET
+        // /v1/runners never lists, whereas here the list *is* the rule and
+        // a typed value could only ever be rejected after saving.
+        field.combo = new QComboBox(row_widget);
+        for (const std::string& option : field.entry.one_of) {
+          field.combo->addItem(QString::fromStdString(option));
+        }
+        row_layout->addWidget(field.combo, /*stretch=*/1);
+        row_layout->addStretch(1);
+      } else if (field.entry.minimum && field.entry.maximum &&
+                 (field.entry.type == "an integer" || field.entry.type == "a number")) {
+        field.spin = new QDoubleSpinBox(row_widget);
+        // Whole numbers for an int key: decimals(0) makes cleanText() read
+        // back "1500", not "1500.00", so the value PATCHed stays the same
+        // JSON kind it arrived as.
+        field.spin->setDecimals(field.entry.type == "an integer" ? 0 : 2);
+        field.spin->setRange(*field.entry.minimum, *field.entry.maximum);
+        field.spin->setKeyboardTracking(false);
+        field.spin->setToolTip(QString("Between %1 and %2")
+                                   .arg(*field.entry.minimum)
+                                   .arg(*field.entry.maximum));
+        row_layout->addWidget(field.spin, /*stretch=*/1);
+        row_layout->addStretch(1);
       } else if (mira_gui::settings::IsRunnerKey(field.entry.key)) {
         // Same editable-combo pattern as GameDetailDialog's runner field:
         // typeable (for a runner GET /v1/runners won't list, e.g. "native:
@@ -280,7 +307,10 @@ void SettingsDialog::BuildRows() {
 
 void SettingsDialog::PopulateRunnerCombos(const mira_gui::RunnersResult& result) {
   for (Field& field : fields_) {
-    if (!field.combo) continue;
+    // Runner combos only. A schema enum is a combo too, and filling it with
+    // installed Proton builds would replace the values the daemon said it
+    // accepts with a list it would reject.
+    if (!field.combo || !mira_gui::settings::IsRunnerKey(field.entry.key)) continue;
 
     // clear() + addItem() resets the displayed text to the first item added
     // — that happens as part of the widget's own state, not a signal, so
@@ -318,6 +348,7 @@ void SettingsDialog::SetAdvancedVisible(bool show) {
 
 std::string SettingsDialog::CurrentText(const Field& field) const {
   if (field.check) return field.check->isChecked() ? "true" : "false";
+  if (field.spin) return field.spin->cleanText().toStdString();
   if (field.combo) return field.combo->currentText().toStdString();
   return field.line->text().toStdString();
 }
@@ -325,6 +356,24 @@ std::string SettingsDialog::CurrentText(const Field& field) const {
 void SettingsDialog::SetFieldText(Field& field, const std::string& text) {
   if (field.check) {
     field.check->setChecked(text == "true");
+    return;
+  }
+  if (field.spin) {
+    field.spin->setValue(QString::fromStdString(text).toDouble());
+    return;
+  }
+  if (field.combo != nullptr && !field.combo->isEditable()) {
+    // A schema enum. An unknown value means the daemon is offering
+    // something this build's list doesn't have, or the stored config
+    // predates a narrowing — show it rather than silently snapping to
+    // whatever happens to be first, which would save a change nobody made.
+    const int index = field.combo->findText(QString::fromStdString(text));
+    if (index >= 0) {
+      field.combo->setCurrentIndex(index);
+    } else if (!text.empty()) {
+      field.combo->insertItem(0, QString::fromStdString(text));
+      field.combo->setCurrentIndex(0);
+    }
     return;
   }
   QLineEdit* edit = field.combo ? field.combo->lineEdit() : field.line;

@@ -61,11 +61,15 @@ DeleteResult DeleteGameSync(const std::string& id, bool delete_files, bool delet
 
 LaunchResult LaunchGameSync(const std::string& id) {
   const transport::Reply reply = transport::Post("/v1/games/" + id + "/launch");
-  // "launched_via_steam" is mirad saying it handed the game to the Steam
-  // client and is not watching the process (docs/api.md). Any other success
-  // body means ProcessSupervisor has it and game.state events will follow.
-  const bool tracked =
-      !reply.body.is_object() || reply.body.value("status", std::string()) != "launched_via_steam";
+  // mirad answers `tracked` directly (docs/api.md): whether game.state
+  // events are coming for this launch. Defaulting to true for a body
+  // without it keeps an older daemon behaving as it did — every launch it
+  // reported was tracked except the Steam one, which is what the status
+  // string used to be read for.
+  const bool tracked = !reply.body.is_object() ||
+                       reply.body.value("tracked",
+                                        reply.body.value("status", std::string()) !=
+                                            "launched_via_steam");
   return {reply.ok, reply.error, tracked};
 }
 
@@ -164,6 +168,17 @@ ConfigSchemaResult GetConfigSchemaSync() {
     e.tier = entry.value("tier", std::string());
     e.doc = entry.value("doc", std::string());
     if (entry.contains("default")) e.default_display = mapping::ToDisplayString(entry["default"]);
+    if (entry.contains("one_of") && entry["one_of"].is_array()) {
+      for (const json& option : entry["one_of"]) {
+        if (option.is_string()) e.one_of.push_back(option.get<std::string>());
+      }
+    }
+    if (entry.contains("minimum") && entry["minimum"].is_number()) {
+      e.minimum = entry["minimum"].get<double>();
+    }
+    if (entry.contains("maximum") && entry["maximum"].is_number()) {
+      e.maximum = entry["maximum"].get<double>();
+    }
     result.entries.push_back(std::move(e));
   }
   return result;
@@ -562,6 +577,15 @@ bool MiradClient::ParseGameState(const std::string& data, GameStateEvent* out) {
   out->id = entry.value("id", std::string());
   out->state = entry.value("state", std::string());
   return !out->id.empty();
+}
+
+bool MiradClient::ParseGameLaunched(const std::string& data, GameLaunchedEvent* out) {
+  const json entry = json::parse(data, nullptr, false);
+  if (entry.is_discarded() || !entry.is_object()) return false;
+  out->id = entry.value("id", std::string());
+  if (out->id.empty()) return false;
+  out->tracked = entry.value("tracked", false);
+  return true;
 }
 
 std::string MiradClient::ParseRemovedId(const std::string& data) {

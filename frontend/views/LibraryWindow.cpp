@@ -893,13 +893,15 @@ void LibraryWindow::HandleGameEvent(const std::string& type, const std::string& 
   }
 
   if (type == "game.launched") {
-    // The untracked counterpart to game.state (docs/api.md): mirad handed
-    // this one to Steam and is not watching it. Clearing rather than
-    // ignoring, because the launch may have come from elsewhere — the CLI,
-    // the other window — that did mark it running.
-    const std::string id = mira_gui::MiradClient::ParseRemovedId(data);
-    if (!id.empty()) {
-      running_ids_.erase(id);
+    // mirad hands a Steam game to steam://rungameid and says whether it is
+    // watching the process. Tracked: leave it alone, real game.state events
+    // are on their way once the /proc scan finds it. Untracked: clear it,
+    // because nothing will ever say it stopped — and clear rather than
+    // ignore, since the launch may have come from the CLI or the other
+    // window, which did mark it running.
+    mira_gui::GameLaunchedEvent launched;
+    if (mira_gui::MiradClient::ParseGameLaunched(data, &launched) && !launched.tracked) {
+      running_ids_.erase(launched.id);
       RefreshGames();
     }
     return;

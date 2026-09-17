@@ -10,6 +10,7 @@
 
 class QCheckBox;
 class QComboBox;
+class QDoubleSpinBox;
 class QFormLayout;
 class QGroupBox;
 class QLineEdit;
@@ -46,7 +47,9 @@ private:
     std::string original;  // last value loaded from the daemon, for change detection
     QCheckBox* check = nullptr;
     QLineEdit* line = nullptr;
-    QComboBox* combo = nullptr;     // set instead of `line` for kRunnerKeys
+    QComboBox* combo = nullptr;     // set instead of `line` for a runner key
+                                    // (editable) or a schema enum (not)
+    QDoubleSpinBox* spin = nullptr;  // set instead of `line` for a bounded number
     QWidget* row_widget = nullptr;  // the field column's widget, for setRowVisible
     QFormLayout* owner_form = nullptr;  // the category group's form this row lives in
   };

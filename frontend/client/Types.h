@@ -57,16 +57,30 @@ struct DeleteResult {
 // crashed) arrives later as a `game.state` SSE event (docs/api.md), since
 // launch returns as soon as the process exists, not when it finishes.
 //
-// `tracked` is false for the one case where no such event is ever coming:
-// a Steam-sourced game under `steam.launch_mode: "steam"`, which mirad
-// hands to `steam://rungameid/<appid>` and never spawns itself. It answers
-// `{"status": "launched_via_steam"}` and publishes `game.launched` instead.
-// A caller that assumes tracking here marks the game as playing forever,
-// because nothing will ever say it stopped.
+// `tracked` is mirad's own answer to "are game.state events coming for this
+// launch" (docs/api.md), not something inferred here. It is false only for
+// a Steam-sourced game under `steam.launch_mode: "steam"` *with*
+// `steam.track_process` off — mirad handed it to
+// `steam://rungameid/<appid>` and is watching nothing. With track_process
+// on (the default) mirad polls /proc for it and real game.state events do
+// arrive, a few seconds later than a normal launch.
+//
+// A caller that assumes tracking when there is none marks the game as
+// playing forever, because nothing will ever say it stopped; a caller that
+// assumes none when there is marks it stopped while it runs.
 struct LaunchResult {
   bool ok = false;
   std::string error;
   bool tracked = true;
+};
+
+// `game.launched` — the event mirad publishes for a Steam launch, carrying
+// the same `tracked` the launch reply does. Needed as an event and not just
+// a reply because the launch may have come from somewhere else entirely
+// (the CLI, the other window), and then this is all a client ever sees.
+struct GameLaunchedEvent {
+  std::string id;
+  bool tracked = false;
 };
 
 // GET /v1/games/{id}/artwork — the cached cover image itself, as bytes.
@@ -194,6 +208,16 @@ struct ConfigSchemaEntry {
   std::string tier;
   std::string doc;
   std::string default_display;
+
+  // What the daemon will accept, when that has a shape worth rendering
+  // (docs/api.md). Both are absent unless they apply, so a non-empty
+  // `one_of` means "this is an enum, offer exactly these" and a set
+  // `minimum` means "this is bounded, clamp the spin box to it". Without
+  // them every setting is a free-text box and the rules only surface as a
+  // rejection after saving.
+  std::vector<std::string> one_of;
+  std::optional<double> minimum;
+  std::optional<double> maximum;
 };
 
 struct ConfigSchemaResult {
