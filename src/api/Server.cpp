@@ -416,6 +416,87 @@ void Server::RegisterRoutes() {
     SendJson(res, {{"status", "stopping"}});
   });
 
+  // Runs an arbitrary exe inside this game's own prefix — normal
+  // ProcessSupervisor tracking, same as /launch, but the exe/args come from
+  // the request instead of the stored game. This is what actually runs a
+  // needs_install game's installer (provisioning on demand, since Scanner
+  // never provisions one), and it's the general "run something in this
+  // prefix" escape hatch (winetricks-equivalent work, one-off tools) short
+  // of a full custom-tricks implementation, which stays out of scope.
+  http_->Post(R"(/v1/games/([^/]+)/run)", [this](const Request& req, Response& res) {
+    auto game = games_.Find(req.matches[1]);
+    if (!game) return SendError(res, 404, "game_not_found", "no such game");
+
+    json body = json::parse(req.body, nullptr, false);
+    if (body.is_discarded() || !body.contains("exe_path") || !body["exe_path"].is_string()) {
+      return SendError(res, 400, "invalid_body", R"(expected {"exe_path": "...", "args": "..."})");
+    }
+    const std::string exe_path = body["exe_path"];
+    const std::string args = body.value("args", std::string());
+
+    // A needs_install/setting_up game (or one whose prefix vanished) has no
+    // usable prefix yet — provision one now rather than requiring a
+    // separate call first.
+    std::error_code ec;
+    const bool needs_provisioning = game->platform == model::Platform::Windows &&
+        (game->runner_ref.empty() || !std::filesystem::exists(std::filesystem::path(game->data_dir) / "drive_c", ec));
+    if (needs_provisioning) {
+      const runner::RunnerRegistry provisioner(config_);
+      const model::Game provisioned = provisioner.ProvisionGame(*game);
+      auto saved = games_.Update(game->id, [&](model::Game& g) {
+        g.runner_ref = provisioned.runner_ref;
+        if (provisioned.status == model::GameStatus::Broken) {
+          g.status = model::GameStatus::Broken;
+          g.last_error = provisioned.last_error;
+        } else {
+          g.last_error.clear();
+        }
+      });
+      if (!saved) return SendError(res, 404, saved.error().code, saved.error().message);
+      game = *saved;
+      if (game->status == model::GameStatus::Broken) {
+        return SendError(res, 409, "provision_failed", game->last_error);
+      }
+    }
+
+    const runner::RunnerRegistry registry(config_);
+    auto resolved = registry.Resolve(game->runner_ref.empty() ? "native:native" : game->runner_ref);
+    if (!resolved) return SendError(res, 400, resolved.error().code, resolved.error().message);
+
+    model::Game run_as = *game;
+    run_as.exe_path = exe_path;
+    run_as.args = args;
+
+    auto command = resolved->runner->BuildCommand(run_as, resolved->build);
+    if (!command) return SendError(res, 400, command.error().code, command.error().message);
+    ApplyCommandWrappers(*command, config_.GetStringArray("command_wrappers"));
+
+    if (auto launched = supervisor_.Launch(*game, *command); !launched) {
+      return SendError(res, 409, launched.error().code, launched.error().message);
+    }
+    SendJson(res, {{"status", "running"}});
+  });
+
+  // The escape hatch out of needs_install: run the installer via /run
+  // above, PATCH exe_path to whatever it actually installed, then call
+  // this to make the game launchable through the normal /launch path.
+  http_->Post(R"(/v1/games/([^/]+)/finish-install)", [this](const Request& req, Response& res) {
+    auto game = games_.Find(req.matches[1]);
+    if (!game) return SendError(res, 404, "game_not_found", "no such game");
+    if (game->exe_path.empty()) {
+      return SendError(res, 409, "no_executable",
+                       "PATCH exe_path to the installed game's real executable first");
+    }
+    auto result = games_.Update(game->id, [](model::Game& g) {
+      g.status = model::GameStatus::Ready;
+      g.last_error.clear();
+    });
+    if (!result) return SendError(res, 404, result.error().code, result.error().message);
+    SyncDesktopEntries(config_, games_);
+    events_.Publish("game.updated", model::ToJson(*result));
+    SendJson(res, model::ToJson(*result));
+  });
+
   // --- runners --------------------------------------------------------------
 
   http_->Get("/v1/runners", [this](const Request&, Response& res) {
