@@ -4,6 +4,7 @@
 
 #include "core/Log.h"
 #include "core/Strings.h"
+#include "desktop/DesktopEntries.h"
 #include "library/AutoSetup.h"
 #include "library/Detector.h"
 #include "library/WinePrefix.h"
@@ -45,6 +46,25 @@ DetectorSettings SettingsFromConfig(const config::Config& config) {
   settings.installer_min_size_mb = config.GetInt("detect.installer_min_size_mb");
   settings.ignore_globs = config.GetStringArray("scan.ignore_globs");
   return settings;
+}
+
+// Provisions `game` if it's a Windows game still SettingUp, and writes back
+// only the fields provisioning owns (see the writeback comment at the call
+// site for why not a full Upsert). No-op for anything already past SettingUp.
+void TryProvision(model::Game game, const runner::RunnerRegistry& runners, store::GameStore& games,
+                  api::EventBus& events) {
+  if (game.status != model::GameStatus::SettingUp) return;
+  const model::Game provisioned = runners.ProvisionGame(game);
+  auto result = games.Update(game.id, [&](model::Game& stored) {
+    stored.runner_ref = provisioned.runner_ref;
+    stored.status = provisioned.status;
+    stored.last_error = provisioned.last_error;
+  });
+  if (!result) {
+    log::Error("failed to save provisioning result for {}: {}", game.id, result.error().message);
+    return;
+  }
+  events.Publish("game.updated", model::ToJson(*result));
 }
 
 }  // namespace
@@ -102,9 +122,19 @@ ScanSummary Scanner::ScanRoot(const fs::path& root) {
           game.status = RestoredStatus(game);
           if (game.status != model::GameStatus::NeedsInstall) game.last_error.clear();
         });
-        if (!result) log::Error("failed to restore {}: {}", existing->id, result.error().message);
+        if (!result) {
+          log::Error("failed to restore {}: {}", existing->id, result.error().message);
+        } else {
+          existing = *result;
+        }
         ++summary.restored;
       }
+      // Retry provisioning for a game still stuck at SettingUp: auto_setup
+      // may have been off when it was first detected and turned on since, a
+      // previous attempt may have failed transiently, or the daemon may have
+      // restarted mid-provision last time. Without this, SettingUp is a dead
+      // end reachable only by the one provisioning attempt at detection time.
+      if (config_.GetBool("auto_setup")) TryProvision(*existing, runners, games_, events_);
       continue;  // already known; never re-detect over a user's configuration
     }
 
@@ -115,28 +145,11 @@ ScanSummary Scanner::ScanRoot(const fs::path& root) {
 
     // With auto_setup off, a game is still detected and stored (so it shows
     // up for the frontend to configure) but never auto-provisioned.
-    if (game.status == model::GameStatus::SettingUp && config_.GetBool("auto_setup")) {
-      // Only Windows games reach here (AutoSetup marks native ready
-      // immediately, broken if nothing was found). Provisioning blocks —
-      // umu/Proton's first-run init is a real few-second cost — but there's
-      // no job queue yet to move it off this thread; see docs/architecture.md.
-      const model::Game provisioned = runners.ProvisionGame(game);
-      // Write back only the fields provisioning owns. game.added already went
-      // out with open_config, so the user may well have PATCHed exe_path or
-      // runner_ref while the (deliberately slow) prefix creation ran — saving
-      // the whole stale snapshot would silently throw that away.
-      auto result = games_.Update(game.id, [&](model::Game& stored) {
-        stored.runner_ref = provisioned.runner_ref;
-        stored.status = provisioned.status;
-        stored.last_error = provisioned.last_error;
-      });
-      if (!result) {
-        log::Error("failed to save provisioning result for {}: {}", game.id,
-                  result.error().message);
-      } else {
-        events_.Publish("game.updated", model::ToJson(*result));
-      }
-    }
+    // Only Windows games reach here still SettingUp (AutoSetup marks native
+    // ready immediately, broken if nothing was found). Provisioning blocks —
+    // umu/Proton's first-run init is a real few-second cost — but there's no
+    // job queue yet to move it off this thread; see docs/architecture.md.
+    if (config_.GetBool("auto_setup")) TryProvision(game, runners, games_, events_);
   }
 
   // Anything previously known under this root but not seen this pass has
@@ -151,6 +164,12 @@ ScanSummary Scanner::ScanRoot(const fs::path& root) {
     if (!result) log::Error("failed to mark {} missing: {}", game.id, result.error().message);
     ++summary.missing;
     log::Info("game folder disappeared, marking missing: {}", game.install_path);
+  }
+
+  // The application menu follows the library: a game that just became
+  // launchable gains an entry, one that vanished loses it.
+  if (auto synced = desktop::DesktopEntries(config_).Sync(games_.All()); !synced) {
+    log::Warn("could not update application menu entries: {}", synced.error().message);
   }
 
   return summary;
