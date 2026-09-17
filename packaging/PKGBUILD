@@ -1,6 +1,6 @@
 # Maintainer: arigood99 <arigood99@gmail.com>
-pkgname=mira
-pkgver=0.4.0
+pkgname=mira-launcher
+pkgver=0.5.0
 pkgrel=1
 pkgdesc="Linux game launcher for native games and Windows games via Wine/Proton"
 arch=('x86_64')
@@ -15,11 +15,8 @@ optdepends=('wine: run Windows games without Proton'
            'unrar: auto-extract .rar archives dropped into a library root'
            'p7zip: auto-extract .7z archives dropped into a library root')
 backup=()
-source=("$pkgname-$pkgver.tar.gz::https://github.com/AriGood/Mira/archive/refs/tags/v$pkgver.tar.gz")
-# SKIP: the repo is private right now, so this can't be fetched anonymously
-# to compute a real checksum. Run `updpkgsums` once it's public and before
-# any real AUR submission -- AUR requires a real sum here, not SKIP.
-sha256sums=('SKIP')
+source=("mira-$pkgver.tar.gz::https://github.com/AriGood/Mira/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('02902552b2ab98f851a609aad88d0e12a4b0cc003dd7baa2ff48d0e89a35dd48')
 
 build() {
   # GitHub's archive directory name varies by endpoint (Mira-<version> vs.

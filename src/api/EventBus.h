@@ -29,6 +29,12 @@ public:
   // blocked subscriber. Thread-safe; called from any thread.
   model::Event Publish(std::string type, nlohmann::json payload);
 
+  // Publishes a "notification" event: the frontend's cue to show a toast or
+  // system notification, with the message already decided here rather than
+  // reconstructed from other events client-side.
+  model::Event PublishNotification(model::NotifyLevel level, std::string message,
+                                    nlohmann::json extra = nlohmann::json::object());
+
   // Blocks until an event past `after_id` exists or `timeout` elapses,
   // whichever comes first. The SSE handler's entire read loop is one call to
   // this: real events are delivered with no added latency, and the bounded

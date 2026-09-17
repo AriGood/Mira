@@ -64,8 +64,6 @@ private:
   ArtworkStore* artwork_ = nullptr;
   std::string game_id_;
   bool running_ = false;
-  // Which game path_ was last fetched for — see ShowGame.
-  std::string path_id_;
 };
 
 }  // namespace mira_gui

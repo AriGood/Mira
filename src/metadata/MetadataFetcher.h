@@ -9,29 +9,13 @@
 
 namespace mira::metadata {
 
-// Cover art + store metadata for a game, fetched from public web APIs and
-// cached on disk under paths::UserDir() — never in games.toml, since none of
-// it is user-editable state and it can always be re-fetched. Two sources,
-// picked by whether `game` is Steam-owned (runner_ref "steam:<appid>"):
-//
-//   Steam-owned: Steam's own public store API (description, genres, release
-//   date, developers/publishers, metacritic — no key needed), ProtonDB's
-//   compatibility tier (no key needed), and cover art from Steam's CDN (no
-//   key needed).
-//
-//   Everything else: SteamGridDB, matched by name search, for cover/hero/
-//   logo/icon art — there is no equivalent free metadata source for a
-//   non-Steam game. Needs steamgriddb.api_key configured; without one this
-//   fails with no_steamgriddb_key and caches nothing, rather than
-//   succeeding at having done nothing. Every slot caches its full candidate
-//   list (info["art_candidates"][slot]) alongside the auto-picked default,
-//   so a caller can offer a choice via SelectArtwork below.
-//
-// Shells out to curl, consistent with runner/Downloader.cpp, rather than
-// linking libcurl for what's occasional, human-triggered-adjacent traffic.
-// Synchronous — see metadata/FetchQueue.h for the background-safe wrapper
-// every real caller should use instead of calling this directly off a
-// short-lived thread.
+// Cover art + store metadata for a game, cached on disk under
+// paths::UserDir() (never in games.toml, since it's always re-fetchable).
+// Steam-owned games use Steam's store API + ProtonDB + Steam's CDN, all
+// keyless; everything else uses SteamGridDB (needs steamgriddb.api_key, or
+// fails with no_steamgriddb_key). Shells out to curl rather than linking
+// libcurl, same as runner/Downloader.cpp. Synchronous — see
+// metadata/FetchQueue.h for the background-safe wrapper.
 Result<void> Fetch(const config::Config& config, const model::Game& game);
 
 // Re-downloads one SteamGridDB candidate (by the id it was listed with in

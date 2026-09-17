@@ -4,18 +4,14 @@
 
 namespace mira::runner {
 
-// Runs something through the exact Proton build and prefix Steam itself
-// already set up — game.data_dir is Steam's own compatdata/<appid>
-// directory, not one Mira created. "Which Proton build" isn't a choice
-// here: it's resolved fresh from compat_data_dir/config_info at
-// BuildCommand time, the same way Steam itself would, so there is nothing
-// to Discover() and no build to pick.
+// Runs something through the exact Proton build and prefix Steam itself set
+// up (game.data_dir is Steam's own compatdata/<appid>). The Proton build is
+// resolved fresh from compat_data_dir/config_info at BuildCommand time, so
+// there's no Discover() and no build to pick.
 //
-// Used for a Steam game's steam.launch_mode == "direct" (Mira launches it
-// itself, normal ProcessSupervisor tracking) and for running an arbitrary
-// exe inside a Steam-owned prefix — steam.launch_mode == "steam" (the
-// default) never reaches this class at all, since that mode asks the
-// Steam client to launch it via steam://rungameid/<appid> instead.
+// Used for steam.launch_mode == "direct" and for running an exe inside a
+// Steam-owned prefix. launch_mode == "steam" (the default) never reaches
+// this class — that mode hands off to steam://rungameid/<appid> instead.
 class SteamRunner : public IRunner {
 public:
   std::string kind() const override { return "steam"; }

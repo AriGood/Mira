@@ -28,6 +28,10 @@ namespace mira_gui::notify {
 
 enum class Level { Info, Success, Warning, Error };
 
+// The wire spelling used by mirad's `notification` event (level field).
+// An unknown string reads as Info rather than as an error.
+Level LevelFromString(const QString& text);
+
 // --- Popups ----------------------------------------------------------------
 
 // The standard failure popup. `what` names what failed, as a sentence the
