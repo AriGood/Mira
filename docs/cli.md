@@ -140,6 +140,16 @@ catalog above (checksum-verified against the release's own `.sha512sum`
 first). Runs detached; the command returns immediately and says to watch
 `mira watch` for `runners.download.finished`/`.failed`.
 
+## `mira runners schema <kind>`
+`GET /v1/runners/{kind}/schema` — what `game.runner_config` accepts for
+that kind (e.g. `gameid` for `proton`). `[]` for a kind with no fields.
+
+## `mira runners remove <kind:name>`
+`DELETE /v1/runners/{kind}:{name}` — the other half of `download`:
+uninstalls a build. Refuses anything not really inside
+`runner_search_paths`/`wine_search_paths` — the system wine, or a
+hand-edited path, can't be removed this way.
+
 ## `mira config get|set|list|reset`
 - `get <key>` — one value from `GET /v1/config` (dotted key, e.g.
   `scan.debounce_ms`).

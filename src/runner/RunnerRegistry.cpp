@@ -70,6 +70,11 @@ std::vector<model::RunnerBuild> RunnerRegistry::DiscoverAll() const {
   return all;
 }
 
+const IRunner* RunnerRegistry::FindByKind(const std::string& kind) const {
+  const auto it = runners_.find(kind);
+  return it == runners_.end() ? nullptr : it->second.get();
+}
+
 Result<RunnerRegistry::Resolved> RunnerRegistry::Resolve(const std::string& runner_ref) const {
   const auto colon = runner_ref.find(':');
   if (colon == std::string::npos) {

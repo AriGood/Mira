@@ -141,12 +141,50 @@ int CmdRunnersDownload(int argc, char** argv) {
   return 0;
 }
 
+int CmdRunnersSchema(int argc, char** argv) {
+  if (argc < 1) {
+    std::fprintf(stderr, "usage: mira runners schema <kind>\n");
+    return 2;
+  }
+  auto client = Connect();
+  auto res = client.Get(std::format("/v1/runners/{}/schema", argv[0]));
+  if (!Ok(res)) {
+    PrintError(res);
+    return 1;
+  }
+  std::cout << json::parse(res->body).dump(2) << '\n';
+  return 0;
+}
+
+int CmdRunnersRemove(int argc, char** argv) {
+  if (argc < 1) {
+    std::fprintf(stderr,
+                 "usage: mira runners remove <kind:name>\n"
+                 "  uninstalls a build fetched via `runners download` (e.g. proton:GE-Proton11-7).\n"
+                 "  Refuses anything not really inside runner_search_paths/wine_search_paths --\n"
+                 "  the system wine, or a hand-edited path, can't be removed this way.\n");
+    return 2;
+  }
+  auto client = Connect();
+  auto res = client.Delete(std::format("/v1/runners/{}", argv[0]));
+  if (!Ok(res)) {
+    PrintError(res);
+    return 1;
+  }
+  std::puts("removed");
+  return 0;
+}
+
 int CmdRunners(int argc, char** argv) {
   if (argc == 0) return CmdRunnersList();
   const std::string_view sub = argv[0];
   if (sub == "catalog") return CmdRunnersCatalog(argc - 1, argv + 1);
   if (sub == "download") return CmdRunnersDownload(argc - 1, argv + 1);
-  std::fprintf(stderr, "usage: mira runners [catalog [--kind K] | download --kind K --tag TAG]\n");
+  if (sub == "schema") return CmdRunnersSchema(argc - 1, argv + 1);
+  if (sub == "remove") return CmdRunnersRemove(argc - 1, argv + 1);
+  std::fprintf(stderr,
+              "usage: mira runners [catalog [--kind K] | download --kind K --tag TAG |\n"
+              "                     schema <kind> | remove <kind:name>]\n");
   return 2;
 }
 

@@ -241,8 +241,30 @@ Runs detached (a build can be 500+ MB; no job queue yet, see
 `docs/architecture.md`) and returns `202` immediately. Progress is on the
 event stream: `runners.download.started` / `.finished` / `.failed`.
 
-### `GET /v1/runners/{kind}/schema` — planned
-### `POST /v1/runners/refresh` — planned (not needed today; see above)
+### `DELETE /v1/runners/{kind}:{name}` — implemented
+Uninstalls a build fetched via `/v1/runners/download` — the other half of
+catalog/download; discovery (`GET /v1/runners`) picks the removal up on the
+next call, nothing separate to update. Deletes only a path that both
+resolves to this exact build and really sits inside a configured
+`runner_search_paths`/`wine_search_paths` entry — same containment check
+`DELETE /v1/games/{id}` uses, so `wine:system` (the real system binary,
+found on `PATH`) 400s rather than being deleted. `400` for `auto`/`latest`
+(name a concrete build) or a kind with no separate builds at all (`native`,
+`steam`); `404` if that build isn't actually installed.
+
+### `GET /v1/runners/{kind}/schema` — implemented
+What `game.runner_config` accepts for one kind, so a frontend can render it
+generically instead of hardcoding per-runner knowledge (see
+`docs/architecture.md`, Replaceability):
+```json
+[{ "key": "gameid", "type": "string", "doc": "Steam AppID umu should report..." }]
+```
+`[]` for a kind with no fields — every kind but `proton` today. `404` for
+an unknown kind.
+
+### `POST /v1/runners/refresh` — planned (not needed: `GET /v1/runners`
+already discovers fresh on every call, with no caching to invalidate — see
+above)
 
 ---
 

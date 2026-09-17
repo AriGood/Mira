@@ -4,7 +4,10 @@
 
 #include <chrono>
 #include <filesystem>
+#include <fstream>
 #include <thread>
+
+#include <json.hpp>
 
 #include "api/EventBus.h"
 #include "api/Server.h"
@@ -105,4 +108,87 @@ TEST_CASE("PATCH /v1/games/{id} env: a top-level null clears every entry") {
   auto stored = server.games().Find("celeste");
   REQUIRE(stored.has_value());
   CHECK(stored->env.empty());
+}
+
+TEST_CASE("GET /v1/runners/{kind}/schema reflects what each runner actually reads out of runner_config") {
+  LiveServer server(TempDir("server-runner-schema"));
+  httplib::Client client = server.Client();
+
+  auto proton = client.Get("/v1/runners/proton/schema");
+  REQUIRE(proton != nullptr);
+  CHECK(proton->status == 200);
+  CHECK(proton->body.find("\"gameid\"") != std::string::npos);
+
+  // Every kind but proton reads nothing out of runner_config today.
+  auto native = client.Get("/v1/runners/native/schema");
+  REQUIRE(native != nullptr);
+  CHECK(native->status == 200);
+  CHECK(native->body == "[]");
+
+  auto bogus = client.Get("/v1/runners/bogus/schema");
+  REQUIRE(bogus != nullptr);
+  CHECK(bogus->status == 404);
+}
+
+TEST_CASE("DELETE /v1/runners/{reference} removes an installed build's directory") {
+  const fs::path state_dir = TempDir("server-runner-delete-state");
+  const fs::path runners_dir = TempDir("server-runner-delete-runners");
+  LiveServer server(state_dir);
+  httplib::Client client = server.Client();
+
+  // A minimal directory ProtonRunner::Discover recognizes (proton +
+  // toolmanifest.vdf present, version file "<timestamp> <name>").
+  const fs::path build_dir = runners_dir / "Fake-Proton-1";
+  fs::create_directories(build_dir);
+  std::ofstream(build_dir / "proton").close();
+  std::ofstream(build_dir / "toolmanifest.vdf").close();
+  std::ofstream(build_dir / "version") << "1700000000 Fake-Proton-1";
+
+  auto patched = client.Patch("/v1/config",
+                              nlohmann::json{{"runner_search_paths", nlohmann::json::array({runners_dir.string()})}}
+                                  .dump(),
+                              "application/json");
+  REQUIRE(patched != nullptr);
+  REQUIRE(patched->status == 200);
+
+  REQUIRE(fs::exists(build_dir));
+  auto deleted = client.Delete("/v1/runners/proton:Fake-Proton-1");
+  REQUIRE(deleted != nullptr);
+  CHECK(deleted->status == 200);
+  CHECK_FALSE(fs::exists(build_dir));
+}
+
+TEST_CASE("DELETE /v1/runners/{reference} refuses a path outside every configured search root") {
+  LiveServer server(TempDir("server-runner-delete-outside"));
+  httplib::Client client = server.Client();
+
+  auto listed = client.Get("/v1/runners");
+  REQUIRE(listed != nullptr);
+  const bool has_system_wine = listed->body.find("\"wine:system\"") != std::string::npos;
+  INFO("has_system_wine=", has_system_wine, " (depends on whether this machine has wine installed)");
+
+  // wine:system is discovered via PATH, not wine_search_paths -- must never
+  // be deletable, since that's the real system wine binary. Only makes
+  // sense to check when there's a real one to try against.
+  if (has_system_wine) {
+    auto deleted = client.Delete("/v1/runners/wine:system");
+    REQUIRE(deleted != nullptr);
+    CHECK(deleted->status == 400);
+    CHECK(deleted->body.find("path_outside_root") != std::string::npos);
+  }
+}
+
+TEST_CASE("DELETE /v1/runners/{reference} rejects a kind with no separate builds, or a non-concrete name") {
+  LiveServer server(TempDir("server-runner-delete-invalid"));
+  httplib::Client client = server.Client();
+
+  auto native = client.Delete("/v1/runners/native:whatever");
+  REQUIRE(native != nullptr);
+  CHECK(native->status == 400);
+  CHECK(native->body.find("not_a_build") != std::string::npos);
+
+  auto auto_ref = client.Delete("/v1/runners/proton:auto");
+  REQUIRE(auto_ref != nullptr);
+  CHECK(auto_ref->status == 400);
+  CHECK(auto_ref->body.find("invalid_reference") != std::string::npos);
 }

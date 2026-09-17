@@ -112,4 +112,14 @@ Result<Command> ProtonRunner::BuildCommand(const model::Game& game,
   return command;
 }
 
+nlohmann::json ProtonRunner::SettingsSchema() const {
+  return nlohmann::json::array({
+      {{"key", "gameid"},
+       {"type", "string"},
+       {"doc", "Steam AppID umu should report via the GAMEID env var — affects which "
+               "protonfixes/compat-DB entry Proton applies. Optional; umu falls back to a "
+               "generic default (\"umu-default\") without it."}},
+  });
+}
+
 }  // namespace mira::runner

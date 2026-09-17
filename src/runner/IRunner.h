@@ -4,6 +4,8 @@
 #include <string>
 #include <vector>
 
+#include <json.hpp>
+
 #include "core/Command.h"
 #include "core/Result.h"
 #include "model/Types.h"
@@ -41,6 +43,13 @@ public:
 
   virtual Result<Command> BuildCommand(const model::Game& game,
                                        const std::optional<model::RunnerBuild>& build) const = 0;
+
+  // Declares what game.runner_config accepts for this kind, so a frontend
+  // can render it generically instead of hardcoding per-runner knowledge
+  // (see docs/architecture.md, Replaceability) — a custom runner with
+  // entirely different knobs needs zero frontend changes. Empty for a
+  // runner with no runner_config fields at all, which is most of them.
+  virtual nlohmann::json SettingsSchema() const { return nlohmann::json::array(); }
 };
 
 }  // namespace mira::runner

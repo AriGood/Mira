@@ -646,6 +646,56 @@ void Server::RegisterRoutes() {
     SendJson(res, {{"status", "downloading"}, {"tag", tag}}, 202);
   });
 
+  // What game.runner_config accepts for one kind — see IRunner::SettingsSchema
+  // for why this exists (a frontend renders runner_config generically instead
+  // of hardcoding per-runner knowledge; a custom runner with different knobs
+  // needs no frontend change). Empty array for a kind with no fields, which
+  // is every kind but proton today.
+  http_->Get(R"(/v1/runners/([^/]+)/schema)", [this](const Request& req, Response& res) {
+    const runner::RunnerRegistry registry(config_);
+    const runner::IRunner* found = registry.FindByKind(req.matches[1]);
+    if (!found) return SendError(res, 404, "unknown_runner_kind", "no runner of that kind");
+    SendJson(res, found->SettingsSchema());
+  });
+
+  // Removes an installed build's directory — the other half of
+  // GET /v1/runners/catalog + POST /v1/runners/download; discovery
+  // (GET /v1/runners) picks it back up on the next call, no separate
+  // bookkeeping to update. Only ever deletes a path that both resolves to
+  // this exact build (via the same RunnerRegistry::Resolve every launch
+  // uses) and really sits inside a configured search path — same
+  // containment check DELETE /v1/games/{id} uses for install_path/data_dir,
+  // so "wine:system" (the real system wine binary, found on PATH, not under
+  // any search path) is rejected rather than deleted. A kind with no
+  // concept of separate builds (native, steam) 400s.
+  http_->Delete(R"(/v1/runners/([^:]+):(.+))", [this](const Request& req, Response& res) {
+    const std::string kind = req.matches[1];
+    const std::string name = req.matches[2];
+    if (name == "auto" || name == "latest") {
+      return SendError(res, 400, "invalid_reference", "name a concrete build, not \"auto\"/\"latest\"");
+    }
+
+    const runner::RunnerRegistry registry(config_);
+    auto resolved = registry.Resolve(kind + ":" + name);
+    if (!resolved) return SendError(res, 404, resolved.error().code, resolved.error().message);
+    if (!resolved->build) {
+      return SendError(res, 400, "not_a_build", std::format("\"{}\" has no separate installed builds", kind));
+    }
+
+    // Proton's build->path is already the build's own root directory; Wine's
+    // is the wine binary inside it (<root>/bin/wine — see WineRunner.cpp),
+    // so the actual directory to remove is two levels up.
+    const std::filesystem::path build_path(resolved->build->path);
+    const std::filesystem::path target = kind == "wine" ? build_path.parent_path().parent_path() : build_path;
+    const std::vector<std::filesystem::path> roots = kind == "wine" ? config_.GetPathArray("wine_search_paths")
+                                                                    : config_.GetPathArray("runner_search_paths");
+    if (auto deleted = DeleteUnderRoot(target.string(), roots); !deleted) {
+      return SendError(res, 400, deleted.error().code, deleted.error().message);
+    }
+    events_.Publish("runners.removed", {{"kind", kind}, {"name", name}});
+    SendJson(res, json::object());
+  });
+
   // --- events (SSE) -----------------------------------------------------
 
   http_->Get("/v1/events", [this](const Request& req, Response& res) {
