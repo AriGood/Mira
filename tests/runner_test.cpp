@@ -1,6 +1,8 @@
 #include <doctest.h>
 
 #include <filesystem>
+#include <system_error>
+#include <vector>
 
 #include "config/Config.h"
 #include "runner/NativeRunner.h"
@@ -59,6 +61,53 @@ TEST_CASE("RunnerRegistry::Resolve rejects a malformed or unknown reference") {
 
   CHECK_FALSE(registry.Resolve("no-colon-here").has_value());
   CHECK_FALSE(registry.Resolve("not_a_real_kind:whatever").has_value());
+}
+
+TEST_CASE("DeduplicateBuilds collapses one build reached through a symlink") {
+  // The real case this exists for: on a normal Arch/Steam setup
+  // ~/.steam/steam is a symlink to ~/.local/share/Steam, and
+  // libraryfolders.vdf lists the target as well — so every Proton build under
+  // it is discovered twice, once per search path, with only `path` differing.
+  const fs::path root = fs::temp_directory_path() / "mira-tests" / "runner-dedupe";
+  fs::remove_all(root);
+  const fs::path real = root / "real" / "GE-Proton11-7";
+  fs::create_directories(real);
+  const fs::path link = root / "link";
+  std::error_code ec;
+  fs::create_directory_symlink(root / "real", link, ec);
+  REQUIRE_FALSE(ec);
+
+  std::vector<model::RunnerBuild> builds = {
+      {"proton", "GE-Proton11-7", real.string(), "2"},
+      {"proton", "GE-Proton11-7", (link / "GE-Proton11-7").string(), "2"},
+  };
+
+  const std::vector<model::RunnerBuild> unique = runner::DeduplicateBuilds(builds);
+  REQUIRE(unique.size() == 1);
+  CHECK(unique[0].path == real.string());  // first occurrence wins
+  fs::remove_all(root);
+}
+
+TEST_CASE("DeduplicateBuilds collapses two entries sharing a reference") {
+  // Different directories, same "kind:name" — which is all a game stores
+  // (model::RunnerBuild::Reference), so no client could pick between them.
+  std::vector<model::RunnerBuild> builds = {
+      {"proton", "GE-Proton11-7", "/a/GE-Proton11-7", "2"},
+      {"proton", "GE-Proton11-7", "/b/GE-Proton11-7", "2"},
+  };
+  CHECK(runner::DeduplicateBuilds(builds).size() == 1);
+}
+
+TEST_CASE("DeduplicateBuilds keeps genuinely different builds, in order") {
+  std::vector<model::RunnerBuild> builds = {
+      {"proton", "GE-Proton11-7", "/a/GE-Proton11-7", "2"},
+      {"proton", "GE-Proton11-6", "/a/GE-Proton11-6", "1"},
+      {"wine", "system", "/usr/bin/wine", "wine-11.17"},
+  };
+  const std::vector<model::RunnerBuild> unique = runner::DeduplicateBuilds(builds);
+  REQUIRE(unique.size() == 3);
+  CHECK(unique[0].name == "GE-Proton11-7");  // newest-first order preserved
+  CHECK(unique[2].kind == "wine");
 }
 
 TEST_CASE("ProvisionGame marks a native game ready with no build") {

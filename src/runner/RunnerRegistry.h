@@ -5,6 +5,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "config/Config.h"
 #include "core/Command.h"
@@ -13,6 +14,13 @@
 #include "runner/IRunner.h"
 
 namespace mira::runner {
+
+// Collapses builds that are the same runner found more than once — the same
+// directory reached through a symlinked search path, or two entries sharing
+// a "kind:name" reference, which no client can tell apart. Order is
+// preserved and the first occurrence wins. Exposed for its own test; every
+// discovery goes through it.
+std::vector<model::RunnerBuild> DeduplicateBuilds(std::vector<model::RunnerBuild> builds);
 
 // Owns every IRunner and resolves a "kind:name" reference (name may be
 // "auto"/"latest" for the newest discovered build) to a concrete runner +

@@ -221,6 +221,13 @@ settings use. `native` never appears here — it has no concept of "builds".
 Steam itself set a given prefix up with, resolved per-game, not a
 general-purpose installed build the registry tracks.
 
+Each build appears once, however many search paths reach it. On a typical
+Arch/Steam setup `~/.steam/steam` is a symlink to `~/.local/share/Steam`,
+which `libraryfolders.vdf` also lists, so the same Proton build is found
+under both — `runner::DeduplicateBuilds` collapses those by resolved path
+and then by `reference`, since two entries sharing a `reference` are the
+same runner by the definition above and no client could pick between them.
+
 ### `GET /v1/runners/catalog?kind=proton|wine` — implemented
 What's *available to install*, not what's installed (that's `/v1/runners`
 above) — lists releases from the source configured in
