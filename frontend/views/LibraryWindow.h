@@ -16,8 +16,10 @@
 class QLabel;
 class QLineEdit;
 class QListWidget;
+class QComboBox;
 class QSlider;
 class QSplitter;
+class QToolButton;
 
 namespace mira_gui {
 class GameDetailsPanel;
@@ -96,6 +98,8 @@ private:
   QListWidget* grid_ = nullptr;
   mira_gui::GameTileDelegate* delegate_ = nullptr;
   QSlider* zoom_ = nullptr;
+  QComboBox* sort_ = nullptr;
+  QToolButton* sort_direction_ = nullptr;
   QSplitter* splitter_ = nullptr;
   QLabel* health_badge_ = nullptr;
   QLabel* footer_ = nullptr;
@@ -106,6 +110,9 @@ private:
   std::set<std::string> running_ids_;
   std::string selected_id_;
   int tile_width_ = 168;
+  std::string sort_key_ = "name";
+  bool sort_descending_ = false;
+  bool scan_on_startup_ = true;
   // Keyed by "<id>@<tile width>" — a generated cover is cheap but not free,
   // and ApplyFilter() rebuilds every visible tile on each keystroke.
   QHash<QString, QPixmap> cover_cache_;

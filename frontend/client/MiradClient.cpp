@@ -270,9 +270,16 @@ FrontendPrefsResult GetFrontendPrefsSync() {
   read_int("tile_width", result.prefs.tile_width);
   read_int("sidebar_width", result.prefs.sidebar_width);
   read_int("details_width", result.prefs.details_width);
-  if (table.contains("library_filter") && table["library_filter"].is_string()) {
-    result.prefs.library_filter = table["library_filter"].get<std::string>();
-  }
+  const auto read_string = [&table](const char* key, std::optional<std::string>& out) {
+    if (table.contains(key) && table[key].is_string()) out = table[key].get<std::string>();
+  };
+  const auto read_bool = [&table](const char* key, std::optional<bool>& out) {
+    if (table.contains(key) && table[key].is_boolean()) out = table[key].get<bool>();
+  };
+  read_string("library_filter", result.prefs.library_filter);
+  read_string("sort_by", result.prefs.sort_by);
+  read_bool("sort_descending", result.prefs.sort_descending);
+  read_bool("scan_on_startup", result.prefs.scan_on_startup);
   return result;
 }
 
@@ -284,6 +291,9 @@ PatchConfigResult SaveFrontendPrefsSync(const FrontendPrefs& prefs) {
   if (prefs.sidebar_width) table["sidebar_width"] = *prefs.sidebar_width;
   if (prefs.details_width) table["details_width"] = *prefs.details_width;
   if (prefs.library_filter) table["library_filter"] = *prefs.library_filter;
+  if (prefs.sort_by) table["sort_by"] = *prefs.sort_by;
+  if (prefs.sort_descending) table["sort_descending"] = *prefs.sort_descending;
+  if (prefs.scan_on_startup) table["scan_on_startup"] = *prefs.scan_on_startup;
 
   const transport::Reply reply = transport::Patch("/v1/config", json{{"frontend", table}});
   return {reply.ok, reply.error};

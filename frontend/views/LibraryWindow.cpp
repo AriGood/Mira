@@ -10,11 +10,13 @@
 #include <QListWidgetItem>
 #include <QMenu>
 #include <QCloseEvent>
+#include <QComboBox>
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QPushButton>
 #include <QSlider>
 #include <QSplitter>
+#include <QToolButton>
 #include <QVBoxLayout>
 
 #include <iterator>
@@ -27,6 +29,7 @@
 #include "../ui/GameActions.h"
 #include "../ui/GameDetailsPanel.h"
 #include "../ui/GameTileDelegate.h"
+#include "../ui/LibrarySort.h"
 #include "MainWindow.h"
 
 namespace {
@@ -128,6 +131,17 @@ void LibraryWindow::LoadPrefs() {
       const int middle = qMax(200, width() - *prefs.sidebar_width - *prefs.details_width);
       splitter_->setSizes({*prefs.sidebar_width, middle, *prefs.details_width});
     }
+    if (prefs.scan_on_startup) scan_on_startup_ = *prefs.scan_on_startup;
+    if (prefs.sort_descending) {
+      sort_descending_ = *prefs.sort_descending;
+      sort_direction_->setArrowType(sort_descending_ ? Qt::DownArrow : Qt::UpArrow);
+    }
+    if (prefs.sort_by) {
+      const int index = sort_->findData(QString::fromStdString(*prefs.sort_by));
+      // An unknown key (hand-edited, or from a newer build) leaves the
+      // picker where it is rather than selecting nothing.
+      if (index >= 0) sort_->setCurrentIndex(index);
+    }
     if (prefs.library_filter) {
       const QString wanted = QString::fromStdString(*prefs.library_filter);
       for (int row = 0; row < filters_->count(); ++row) {
@@ -146,6 +160,9 @@ void LibraryWindow::SavePrefs() {
   prefs.window_height = height();
   prefs.tile_width = tile_width_;
   prefs.library_filter = CurrentFilterKey().toStdString();
+  prefs.sort_by = sort_key_;
+  prefs.sort_descending = sort_descending_;
+  prefs.scan_on_startup = scan_on_startup_;
   const QList<int> sizes = splitter_->sizes();
   if (sizes.size() == 3) {
     prefs.sidebar_width = sizes[0];
@@ -230,6 +247,32 @@ QWidget* LibraryWindow::BuildGrid() {
   layout->setSpacing(6);
 
   auto* toolbar = new QHBoxLayout();
+  auto* sort_label = new QLabel("Sort by", container);
+  sort_label->setStyleSheet("font-size: 11px; color: #9e9e9e;");
+  toolbar->addWidget(sort_label);
+
+  sort_ = new QComboBox(container);
+  for (const mira_gui::SortOption& option : mira_gui::SortOptions()) {
+    sort_->addItem(option.label, QString(option.key));
+  }
+  connect(sort_, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this] {
+    sort_key_ = sort_->currentData().toString().toStdString();
+    ApplyFilter();
+  });
+  toolbar->addWidget(sort_);
+
+  sort_direction_ = new QToolButton(container);
+  sort_direction_->setArrowType(Qt::UpArrow);
+  sort_direction_->setToolTip("Ascending — click for descending");
+  connect(sort_direction_, &QToolButton::clicked, this, [this] {
+    sort_descending_ = !sort_descending_;
+    sort_direction_->setArrowType(sort_descending_ ? Qt::DownArrow : Qt::UpArrow);
+    sort_direction_->setToolTip(sort_descending_ ? "Descending — click for ascending"
+                                                 : "Ascending — click for descending");
+    ApplyFilter();
+  });
+  toolbar->addWidget(sort_direction_);
+
   toolbar->addStretch(1);
   auto* zoom_label = new QLabel("Tile size", container);
   zoom_label->setStyleSheet("font-size: 11px; color: #9e9e9e;");
@@ -328,6 +371,13 @@ void LibraryWindow::RefreshHealth() {
 }
 
 void LibraryWindow::RescanAndRefreshGames() {
+  if (!scan_on_startup_) {
+    // The daemon's own watcher keeps the library current while it runs
+    // (library::Watcher), so skipping the startup scan costs nothing except
+    // on a library that changed while mirad was stopped.
+    RefreshGames();
+    return;
+  }
   mira_gui::MiradClient::ScanLibraryAsync(this, [this](mira_gui::ScanResult) { RefreshGames(); });
 }
 
@@ -368,6 +418,11 @@ bool LibraryWindow::MatchesFilter(const mira_gui::GameSummary& game) const {
 
 void LibraryWindow::ApplyFilter() {
   const std::string previously_selected = selected_id_;
+
+  // Sorted here rather than at fetch time so a sort change costs a rebuild
+  // of the tiles and not a round trip — and so an event that patches one
+  // game into games_ lands in the right place without re-fetching either.
+  mira_gui::SortGames(games_, sort_key_, sort_descending_);
 
   grid_->blockSignals(true);
   grid_->clear();

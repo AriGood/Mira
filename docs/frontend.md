@@ -86,10 +86,25 @@ This matters more than it looks:
   `src/config/Schema.cpp`, and `SettingsDialog` is generated entirely from
   `GET /v1/config/schema` — almost no setting name is hardcoded in the
   frontend. Adding a backend setting requires no frontend change.
-- **`frontend.toml`** holds the frontend's own state: window size, tile
-  size, which sidebar filter was selected, splitter widths. The backend
+- **`frontend.toml`** holds the frontend's own state and preferences:
+  window size, tile size, which sidebar filter and sort were selected,
+  splitter widths, and whether to scan the library on startup. The backend
   stores it verbatim and never validates it, reachable as the opaque
   `frontend` key of `GET`/`PATCH /v1/config` (see `FrontendPrefs`).
+
+  | key | what it does |
+  |---|---|
+  | `window_width`, `window_height` | remembered window size |
+  | `sidebar_width`, `details_width` | remembered splitter layout |
+  | `tile_width` | cover tile size (clamped to the zoom slider's range) |
+  | `library_filter` | which sidebar filter was selected |
+  | `sort_by`, `sort_descending` | grid order — see `ui/LibrarySort` |
+  | `scan_on_startup` | whether opening the frontend runs `POST /v1/library/scan` |
+
+  Only `scan_on_startup` gets a row in the settings screen, in an
+  "Interface (this frontend only)" group above the schema-driven ones. The
+  rest are implicit UI state: they are saved by using the window, not by
+  filling in a form.
 
 A window size is not something mirad should have an opinion about, so it
 never goes in `settings.toml`, where the schema would have to answer for it.
@@ -162,8 +177,9 @@ able to reach backend code could pass against an implementation the real
 header-only third-party deps the client itself uses.
 
 It covers the layers with no event loop and no socket in them: the JSON
-mapping, the SSE payload parsers, and the pure client-side rules
-(runner dedupe, dotted-key expansion, the display-string round trip).
+mapping, the SSE payload parsers, the library sort order, and the pure
+client-side rules (runner dedupe, dotted-key expansion, the display-string
+round trip).
 Widgets are exercised against a real daemon instead — run one on its own
 socket and point the frontend at it:
 

@@ -37,6 +37,8 @@ SettingsDialog::SettingsDialog(QWidget* parent) : QDialog(parent) {
   auto* groups_container = new QWidget(this);
   groups_layout_ = new QVBoxLayout(groups_container);
   groups_layout_->setContentsMargins(2, 2, 2, 2);
+  // After groups_layout_ exists, not before — this adds a widget to it.
+  BuildInterfaceGroup();
   groups_layout_->setSpacing(14);
 
   auto* scroll = new QScrollArea(this);
@@ -54,6 +56,39 @@ SettingsDialog::SettingsDialog(QWidget* parent) : QDialog(parent) {
 
   setEnabled(false);
   Load();
+}
+
+void SettingsDialog::BuildInterfaceGroup() {
+  auto* box = new QGroupBox("Interface (this frontend only)", this);
+  auto* form = new QFormLayout(box);
+  form->setVerticalSpacing(8);
+  form->setHorizontalSpacing(14);
+
+  scan_on_startup_ = new QCheckBox(box);
+  scan_on_startup_->setChecked(true);
+  scan_on_startup_->setToolTip(
+      "Run a library scan when the frontend opens. mirad's own watcher keeps the library current "
+      "while it runs, so this only matters for changes made while it was stopped.");
+  form->addRow("Scan the library on startup", scan_on_startup_);
+
+  auto* note = new QLabel(
+      "Stored in frontend.toml, beside settings.toml — the daemon keeps it verbatim and never "
+      "interprets it. Everything below is a backend setting.",
+      box);
+  note->setWordWrap(true);
+  note->setStyleSheet("color: #9e9e9e; font-size: 11px;");
+  form->addRow(note);
+
+  groups_layout_->addWidget(box);
+  LoadFrontendPrefs();
+}
+
+void SettingsDialog::LoadFrontendPrefs() {
+  mira_gui::MiradClient::GetFrontendPrefsAsync(this, [this](mira_gui::FrontendPrefsResult result) {
+    if (!result.ok || !result.prefs.scan_on_startup) return;  // the default is already shown
+    scan_on_startup_original_ = *result.prefs.scan_on_startup;
+    scan_on_startup_->setChecked(scan_on_startup_original_);
+  });
 }
 
 void SettingsDialog::Load() {
@@ -258,6 +293,17 @@ void SettingsDialog::ResetField(size_t index) {
 }
 
 void SettingsDialog::Save() {
+  // Sent separately from the schema edits below, because it is a different
+  // file behind a different key — and unconditionally skipped when
+  // unchanged, so opening and saving this dialog never rewrites
+  // frontend.toml for nothing.
+  if (scan_on_startup_->isChecked() != scan_on_startup_original_) {
+    mira_gui::FrontendPrefs prefs;
+    prefs.scan_on_startup = scan_on_startup_->isChecked();
+    scan_on_startup_original_ = *prefs.scan_on_startup;
+    mira_gui::MiradClient::SaveFrontendPrefsAsync(this, prefs, [](mira_gui::PatchConfigResult) {});
+  }
+
   std::vector<mira_gui::ConfigEdit> edits;
   for (const Field& field : fields_) {
     const std::string current = CurrentText(field);

@@ -61,6 +61,8 @@ private:
   };
 
   void Load();
+  void LoadFrontendPrefs();
+  void BuildInterfaceGroup();
   void BuildRows();
   void PopulateRunnerCombos(const mira_gui::RunnersResult& result);
   void SetAdvancedVisible(bool show);
@@ -69,9 +71,15 @@ private:
   std::string CurrentText(const Field& field) const;
   void SetFieldText(Field& field, const std::string& text);
 
-  QVBoxLayout* groups_layout_;
-  QCheckBox* show_advanced_;
+  QVBoxLayout* groups_layout_ = nullptr;
+  QCheckBox* show_advanced_ = nullptr;
+  // The frontend's own settings, kept visually and mechanically apart from
+  // the schema-driven ones below: these are written to frontend.toml via
+  // the opaque `frontend` key, never to settings.toml, because no schema
+  // entry describes them and the daemon has no opinion about them.
+  QCheckBox* scan_on_startup_ = nullptr;
+  bool scan_on_startup_original_ = true;
   std::vector<Field> fields_;
   std::vector<CategoryGroup> groups_;
-  QPushButton* save_button_;
+  QPushButton* save_button_ = nullptr;
 };
