@@ -322,21 +322,26 @@ readable from disk, so it's only known if set manually — relevant only to
 ## Metadata
 
 Cover art and store info, fetched from public web APIs and cached on disk
-next to `settings.toml` (`metadata/<id>.json`, `artwork/<id>/cover.*`) —
+next to `settings.toml` (`metadata/<id>.json`, `artwork/<id>/<slot>.*`) —
 never written into `games.toml`, since none of it is user-editable state and
 it can always be re-fetched. Two sources, picked by whether a game is
 Steam-owned (`runner_ref` starting `"steam:"`):
 
 - **Steam-owned**: Steam's own public store API (`store.steampowered.com`)
   for description, genres, categories, release date, developers/publishers,
-  price, metacritic score, website; Steam's public review-summary endpoint
-  for the aggregate score; [ProtonDB](https://www.protondb.com)'s
-  compatibility tier; cover art from Steam's own CDN. None of these need a
-  key.
+  price, metacritic score, website, header/background image URLs,
+  supported languages, PC requirements, DLC app ids, content descriptors,
+  achievement count, screenshot and trailer URLs; Steam's public
+  review-summary endpoint for the aggregate score; [ProtonDB]
+  (https://www.protondb.com)'s compatibility tier; four art slots from
+  Steam's own CDN — `cover` (`library_600x900`), `hero` (`library_hero`,
+  the wide banner), `capsule` (small store-listing thumbnail), `header`
+  (the classic store-page banner). None of these need a key.
 - **Everything else**: [SteamGridDB](https://www.steamgriddb.com), matched
-  by name search, for cover art only — there is no equivalent free metadata
-  source for a non-Steam game. Needs `steamgriddb.api_key` set; silently
-  skipped without one.
+  by name search, for four art slots — `cover` (grids), `hero`, `logo`
+  (transparent overlay), `icon` — there is no equivalent free metadata
+  source for a non-Steam game beyond art. Needs `steamgriddb.api_key` set;
+  silently skipped without one.
 
 Fetched automatically the moment a game is first detected (`POST
 /v1/library/scan`, the inotify watcher, and `POST /v1/steam/scan` all
@@ -348,14 +353,24 @@ source never blocks a scan. Controlled by `metadata.enabled` (default on).
 ### `GET /v1/games/{id}/metadata` — implemented
 The cached JSON verbatim, `{"source": "steam"|"steamgriddb", "fetched_at":
 ..., "steam": {...}, "steam_reviews": {...}, "protondb": {...}, "artwork":
-{...}}` — every top-level key besides `source`/`fetched_at`/`artwork` is
-present only if that source actually returned something. `404` means either
-"never fetched" or "fetched, found nothing" — `POST .../metadata/refresh`
-below disambiguates by trying again.
+{...}, "hero": {...}, "capsule": {...}, "header": {...}, "logo": {...},
+"icon": {...}}` — every top-level key besides `source`/`fetched_at` is
+present only if that source actually returned something for it; `artwork`
+is the cover slot specifically, kept under that name for wire compatibility
+with clients written before `hero` existed. Each art key that is present
+looks like `{"file": "hero.jpg", "content_type": "image/jpeg", "source":
+"steam_cdn"|"steamgriddb"}`. `404` means either "never fetched" or
+"fetched, found nothing" — `POST .../metadata/refresh` below disambiguates
+by trying again.
 
-### `GET /v1/games/{id}/artwork` — implemented
-The cached cover image itself (`image/jpeg` or `image/png`, whatever the
-source sent), read straight off disk. `404` if nothing's cached yet.
+### `GET /v1/games/{id}/artwork?type=` — implemented
+The cached image itself for one art slot (`image/jpeg` or `image/png`,
+whatever the source sent), read straight off disk. `type` defaults to
+`cover`; also accepts `hero`, `capsule`, `header` (Steam-owned games) or
+`hero`, `logo`, `icon` (SteamGridDB games) — see the slot list above for
+which source fills which. `404` if that slot isn't cached, whether because
+nothing's been fetched yet or the source didn't have that slot for this
+game.
 
 ### `POST /v1/games/{id}/metadata/refresh` — implemented
 Re-runs the fetch for one game on demand — a `steamgriddb.api_key` was just

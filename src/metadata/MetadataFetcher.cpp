@@ -60,13 +60,16 @@ std::string ContentTypeFor(const fs::path& file) {
   return "image/jpeg";
 }
 
-// Downloads `url` into this game's artwork dir (fails closed on any non-2xx
-// via curl -f, so a 404 never gets saved as if it were art), recording it
-// into `info` under "artwork" if it succeeds. Extension is taken from the
-// url itself, since that's the only place either source says what format it
-// sent.
+// Downloads `url` into this game's artwork dir under `slot` (fails closed
+// on any non-2xx via curl -f, so a 404 never gets saved as if it were art),
+// recording it into `info[slot == "cover" ? "artwork" : slot]` if it
+// succeeds -- "artwork" rather than "cover" for the cover slot specifically
+// is legacy naming kept for wire compatibility with what
+// GET /v1/games/{id}/metadata already documented before "hero" existed.
+// Extension is taken from the url itself, since that's the only place
+// either source says what format it sent.
 void FetchArtworkInto(const config::Config& config, const std::string& url, const std::string& game_id,
-                      std::string_view source, json& info,
+                      std::string_view source, std::string_view slot, json& info,
                       const std::vector<std::string>& extra_curl_args = {}) {
   std::string ext = fs::path(std::string(url)).extension().string();
   if (ext.empty() || ext.size() > 5) ext = ".jpg";
@@ -78,7 +81,7 @@ void FetchArtworkInto(const config::Config& config, const std::string& url, cons
     log::Warn("couldn't create artwork dir for {}: {}", game_id, ec.message());
     return;
   }
-  const fs::path dest = dir / ("cover" + ext);
+  const fs::path dest = dir / (std::string(slot) + ext);
 
   std::vector<std::string> argv = {"curl", "-sSL", "-f", "--max-time", std::string(kMaxTime)};
   argv.insert(argv.end(), extra_curl_args.begin(), extra_curl_args.end());
@@ -91,8 +94,9 @@ void FetchArtworkInto(const config::Config& config, const std::string& url, cons
     fs::remove(dest, ec);
     return;
   }
-  info["artwork"] = {{"file", dest.filename().string()}, {"content_type", ContentTypeFor(dest)},
-                     {"source", source}};
+  const std::string key = slot == "cover" ? "artwork" : std::string(slot);
+  info[key] = {{"file", dest.filename().string()}, {"content_type", ContentTypeFor(dest)},
+              {"source", source}};
 }
 
 void FetchSteamOwned(const config::Config& config, const std::string& appid, const std::string& game_id,
@@ -127,6 +131,41 @@ void FetchSteamOwned(const config::Config& config, const std::string& appid, con
       if (category.contains("description")) categories.push_back(category["description"]);
     }
     steam_info["categories"] = categories;
+
+    if (data.contains("header_image")) steam_info["header_image_url"] = data["header_image"];
+    if (data.contains("background_raw")) steam_info["background_url"] = data["background_raw"];
+    steam_info["supported_languages"] = data.value("supported_languages", std::string());
+    if (data.contains("pc_requirements") && data["pc_requirements"].is_object()) {
+      steam_info["pc_requirements"] = {
+          {"minimum", data["pc_requirements"].value("minimum", std::string())},
+          {"recommended", data["pc_requirements"].value("recommended", std::string())},
+      };
+    }
+    json dlc = json::array();
+    for (const auto& id : data.value("dlc", json::array())) dlc.push_back(id);
+    steam_info["dlc"] = dlc;
+    json descriptors = json::array();
+    if (data.contains("content_descriptors") && data["content_descriptors"].is_object()) {
+      for (const auto& note : data["content_descriptors"].value("notes", json::array())) descriptors.push_back(note);
+    }
+    steam_info["content_descriptors"] = descriptors;
+    if (data.contains("achievements")) {
+      steam_info["achievements_total"] = data["achievements"].value("total", 0);
+    }
+    json screenshots = json::array();
+    for (const auto& shot : data.value("screenshots", json::array())) {
+      const std::string url = shot.value("path_full", std::string());
+      if (!url.empty()) screenshots.push_back(url);
+    }
+    steam_info["screenshots"] = screenshots;
+    json movies = json::array();
+    for (const auto& movie : data.value("movies", json::array())) {
+      if (!movie.contains("mp4")) continue;
+      const std::string url = movie["mp4"].value("max", std::string());
+      if (!url.empty()) movies.push_back(url);
+    }
+    steam_info["movies"] = movies;
+
     info["steam"] = steam_info;
   }
 
@@ -156,7 +195,18 @@ void FetchSteamOwned(const config::Config& config, const std::string& appid, con
   }
 
   FetchArtworkInto(config, std::format("https://cdn.akamai.steamstatic.com/steam/apps/{}/library_600x900.jpg", appid),
-                   game_id, "steam_cdn", info);
+                   game_id, "steam_cdn", "cover", info);
+  // Steam's own CDN serves this too, same appid, no key -- the wide banner
+  // shown at the top of a game's store/library page, distinct from the
+  // vertical library_600x900 cover above.
+  FetchArtworkInto(config, std::format("https://cdn.akamai.steamstatic.com/steam/apps/{}/library_hero.jpg", appid),
+                   game_id, "steam_cdn", "hero", info);
+  // Small store-listing thumbnail and the classic top-of-page banner --
+  // same CDN, same no-key pattern, just two more fixed filenames per appid.
+  FetchArtworkInto(config, std::format("https://cdn.akamai.steamstatic.com/steam/apps/{}/capsule_231x87.jpg", appid),
+                   game_id, "steam_cdn", "capsule", info);
+  FetchArtworkInto(config, std::format("https://cdn.akamai.steamstatic.com/steam/apps/{}/header.jpg", appid), game_id,
+                   "steam_cdn", "header", info);
 }
 
 void FetchNonSteam(const config::Config& config, const std::string& name, const std::string& game_id, json& info) {
@@ -175,12 +225,35 @@ void FetchNonSteam(const config::Config& config, const std::string& name, const 
 
   const json grids = CurlJson({"curl", "-sSL", "-H", auth_header,
                                std::format("https://www.steamgriddb.com/api/v2/grids/game/{}", griddb_id)});
-  if (grids.is_discarded() || !grids.value("success", false) || grids.value("data", json::array()).empty()) {
-    return;
+  if (!grids.is_discarded() && grids.value("success", false) && !grids.value("data", json::array()).empty()) {
+    const std::string url = grids["data"][0].value("url", std::string());
+    if (!url.empty()) FetchArtworkInto(config, url, game_id, "steamgriddb", "cover", info, {"-H", auth_header});
   }
-  const std::string url = grids["data"][0].value("url", std::string());
-  if (url.empty()) return;
-  FetchArtworkInto(config, url, game_id, "steamgriddb", info, {"-H", auth_header});
+
+  // Same griddb_id already resolved above -- a separate SteamGridDB
+  // endpoint, not a field on the grids response.
+  const json heroes = CurlJson({"curl", "-sSL", "-H", auth_header,
+                                std::format("https://www.steamgriddb.com/api/v2/heroes/game/{}", griddb_id)});
+  if (!heroes.is_discarded() && heroes.value("success", false) && !heroes.value("data", json::array()).empty()) {
+    const std::string url = heroes["data"][0].value("url", std::string());
+    if (!url.empty()) FetchArtworkInto(config, url, game_id, "steamgriddb", "hero", info, {"-H", auth_header});
+  }
+
+  // Transparent logo (overlaid on hero/background in a GUI) and small
+  // square icon -- two more SteamGridDB endpoints, same griddb_id, same
+  // independent-of-each-other treatment as grids/heroes above.
+  const json logos = CurlJson({"curl", "-sSL", "-H", auth_header,
+                               std::format("https://www.steamgriddb.com/api/v2/logos/game/{}", griddb_id)});
+  if (!logos.is_discarded() && logos.value("success", false) && !logos.value("data", json::array()).empty()) {
+    const std::string url = logos["data"][0].value("url", std::string());
+    if (!url.empty()) FetchArtworkInto(config, url, game_id, "steamgriddb", "logo", info, {"-H", auth_header});
+  }
+  const json icons = CurlJson({"curl", "-sSL", "-H", auth_header,
+                               std::format("https://www.steamgriddb.com/api/v2/icons/game/{}", griddb_id)});
+  if (!icons.is_discarded() && icons.value("success", false) && !icons.value("data", json::array()).empty()) {
+    const std::string url = icons["data"][0].value("url", std::string());
+    if (!url.empty()) FetchArtworkInto(config, url, game_id, "steamgriddb", "icon", info, {"-H", auth_header});
+  }
 }
 
 }  // namespace

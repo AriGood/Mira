@@ -594,20 +594,25 @@ void Server::RegisterRoutes() {
 
   http_->Get(R"(/v1/games/([^/]+)/artwork)", [this](const Request& req, Response& res) {
     if (!games_.Find(req.matches[1])) return SendError(res, 404, "game_not_found", "no such game");
+    // ?type= picks a non-default art slot; "cover" (stored as "artwork" for
+    // wire compatibility) is the default. See MetadataFetcher for the full
+    // set of slots each source writes.
+    const std::string type = req.has_param("type") ? req.get_param_value("type") : "cover";
+    const std::string key = type == "cover" ? "artwork" : type;
     const std::filesystem::path metadata_file = metadata::MetadataFile(config_, req.matches[1]);
     std::ifstream meta_in(metadata_file);
     if (!meta_in) return SendError(res, 404, "artwork_not_found", "no artwork cached for this game yet");
     const json info = json::parse(meta_in, nullptr, false);
-    if (info.is_discarded() || !info.contains("artwork")) {
+    if (info.is_discarded() || !info.contains(key)) {
       return SendError(res, 404, "artwork_not_found", "no artwork cached for this game yet");
     }
     const std::filesystem::path file =
-        metadata::ArtworkDir(config_, req.matches[1]) / info["artwork"].value("file", std::string());
+        metadata::ArtworkDir(config_, req.matches[1]) / info[key].value("file", std::string());
     std::ifstream in(file, std::ios::binary);
     if (!in) return SendError(res, 404, "artwork_not_found", "cached artwork file is missing");
     std::ostringstream buffer;
     buffer << in.rdbuf();
-    res.set_content(buffer.str(), info["artwork"].value("content_type", "image/jpeg"));
+    res.set_content(buffer.str(), info[key].value("content_type", "image/jpeg"));
   });
 
   // Re-runs the fetch for one game on demand — a new SteamGridDB key was

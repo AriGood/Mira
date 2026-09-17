@@ -12,6 +12,7 @@
 #include "api/EventBus.h"
 #include "api/Server.h"
 #include "config/Config.h"
+#include "metadata/MetadataFetcher.h"
 #include "store/GameStore.h"
 
 using namespace mira;
@@ -58,6 +59,7 @@ public:
   }
 
   store::GameStore& games() { return games_; }
+  const config::Config& config() const { return config_; }
 
 private:
   config::Config config_;
@@ -165,6 +167,51 @@ TEST_CASE("PATCH /v1/games/{id} tags replaces the array wholesale") {
   REQUIRE(cleared != nullptr);
   CHECK(cleared->status == 200);
   CHECK(server.games().Find("celeste")->tags.empty());
+}
+
+TEST_CASE("GET /v1/games/{id}/artwork?type= serves the requested slot, 404s for an unknown one") {
+  LiveServer server(TempDir("server-artwork-type"));
+
+  model::Game game;
+  game.id = "celeste";
+  game.name = "Celeste";
+  REQUIRE(server.games().Upsert(game).has_value());
+
+  const fs::path artwork_dir = metadata::ArtworkDir(server.config(), "celeste");
+  fs::create_directories(artwork_dir);
+  {
+    std::ofstream cover(artwork_dir / "cover.jpg");
+    cover << "cover-bytes";
+  }
+  {
+    std::ofstream hero(artwork_dir / "hero.jpg");
+    hero << "hero-bytes";
+  }
+  {
+    const fs::path metadata_file = metadata::MetadataFile(server.config(), "celeste");
+    fs::create_directories(metadata_file.parent_path());
+    std::ofstream meta(metadata_file);
+    meta << nlohmann::json{
+        {"artwork", {{"file", "cover.jpg"}, {"content_type", "image/jpeg"}, {"source", "steam_cdn"}}},
+        {"hero", {{"file", "hero.jpg"}, {"content_type", "image/jpeg"}, {"source", "steam_cdn"}}},
+    }.dump();
+  }
+
+  httplib::Client client = server.Client();
+
+  auto cover_res = client.Get("/v1/games/celeste/artwork");
+  REQUIRE(cover_res != nullptr);
+  CHECK(cover_res->status == 200);
+  CHECK(cover_res->body == "cover-bytes");
+
+  auto hero_res = client.Get("/v1/games/celeste/artwork?type=hero");
+  REQUIRE(hero_res != nullptr);
+  CHECK(hero_res->status == 200);
+  CHECK(hero_res->body == "hero-bytes");
+
+  auto missing_res = client.Get("/v1/games/celeste/artwork?type=logo");
+  REQUIRE(missing_res != nullptr);
+  CHECK(missing_res->status == 404);
 }
 
 TEST_CASE("GET /v1/runners/{kind}/schema reflects what each runner actually reads out of runner_config") {
