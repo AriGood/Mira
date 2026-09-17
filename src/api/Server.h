@@ -48,6 +48,7 @@ private:
   proc::ProcessSupervisor supervisor_;
   metadata::FetchQueue metadata_fetches_;
   BackgroundQueue tricks_queue_;
+  BackgroundQueue artwork_selects_;
   std::atomic<bool> stopping_{false};  // checked by open SSE connections; see EventBus::WaitNext
 };
 
