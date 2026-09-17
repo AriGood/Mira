@@ -61,9 +61,19 @@ model::Game ParseGamePatch(const model::Game& base, const json& patch) {
   if (patch.contains("runner_config") && patch["runner_config"].is_object()) {
     game.runner_config.merge_patch(patch["runner_config"]);
   }
-  if (patch.contains("env") && patch["env"].is_object()) {
+  // "env": null clears every entry; "env": {"K": null} removes just K
+  // (same null-removes convention as ApplyOverridesPatch below) — merge-only
+  // with no way to shrink the map left no way to actually unset a variable
+  // once set, or reset it to empty without deleting and recreating the game.
+  if (patch.contains("env") && patch["env"].is_null()) {
+    game.env.clear();
+  } else if (patch.contains("env") && patch["env"].is_object()) {
     for (const auto& [key, value] : patch["env"].items()) {
-      if (value.is_string()) game.env[key] = value.get<std::string>();
+      if (value.is_null()) {
+        game.env.erase(key);
+      } else if (value.is_string()) {
+        game.env[key] = value.get<std::string>();
+      }
     }
   }
   game.reviewed = true;  // any correction counts as the human having looked
