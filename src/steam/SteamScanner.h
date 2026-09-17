@@ -1,8 +1,11 @@
 #pragma once
 
+#include <vector>
+
 #include "api/EventBus.h"
 #include "config/Config.h"
 #include "core/Result.h"
+#include "model/Types.h"
 #include "store/GameStore.h"
 
 namespace mira::steam {
@@ -10,6 +13,10 @@ namespace mira::steam {
 struct SteamScanSummary {
   int added = 0;
   int updated = 0;
+
+  // The newly-added games — see ScanSummary::added_games in
+  // library/Scanner.h for why a metadata fetch isn't triggered in here.
+  std::vector<model::Game> added_games;
 };
 
 // Detects installed Steam games and upserts them into the same GameStore
