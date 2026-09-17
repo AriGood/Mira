@@ -27,10 +27,13 @@ std::string Sanitize(std::string_view value) {
 
 bool IsLaunchable(const model::Game& game) {
   if (game.status != model::GameStatus::Ready) return false;
-  // A Steam-sourced game launches via steam://rungameid by default (see
-  // SteamRunner), which needs no known exe_path at all — only its "direct"
-  // launch mode does, and that's an opt-in per-game override.
-  if (game.runner_ref.starts_with("steam:")) return true;
+  // Steam already puts every game in your Steam library into the desktop
+  // menu itself (via its own Linux integration) — a second, Mira-owned
+  // entry for the same game is redundant clutter, not a missing feature,
+  // regardless of steam.launch_mode. Sync() below removes any mira-<id>
+  // entry that stops being "wanted", so this also cleans up an entry a
+  // Steam game already had from before this exclusion existed.
+  if (game.runner_ref.starts_with("steam:")) return false;
   return !game.exe_path.empty();
 }
 
