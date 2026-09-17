@@ -165,8 +165,8 @@ watcher; this endpoint works immediately either way.
 Every installed build of every runner kind, freshly discovered on each
 call (no caching, no refresh endpoint needed as a result):
 ```json
-[{ "kind": "proton_umu", "name": "GE-Proton11-7", "path": "/home/x/.steam/steam/compatibilitytools.d/GE-Proton11-7-x86_64",
-   "version": "1789520217", "reference": "proton_umu:GE-Proton11-7" }]
+[{ "kind": "proton", "name": "GE-Proton11-7", "path": "/home/x/.steam/steam/compatibilitytools.d/GE-Proton11-7-x86_64",
+   "version": "1789520217", "reference": "proton:GE-Proton11-7" }]
 ```
 `reference` is what a game's `runner_ref` field and `default_runner.*`
 settings use. `native` never appears here — it has no concept of "builds".

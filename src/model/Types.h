@@ -52,7 +52,7 @@ struct Game {
   std::string args;
   std::string working_dir;   // relative to install_path; empty means the exe's directory
 
-  // "kind:name", e.g. "proton_umu:GE-Proton11-7"; empty until resolved.
+  // "kind:name", e.g. "proton:GE-Proton11-7"; empty until resolved.
   std::string runner_ref;
 
   // The game's private directory. A Wine/Proton prefix today, but core does
@@ -76,7 +76,7 @@ struct Game {
 // on demand rather than persisted, so it has no stored id — a game refers to
 // one by its "kind:name" reference string.
 struct RunnerBuild {
-  std::string kind;  // "native", "wine", "proton_umu", ...
+  std::string kind;  // "native", "wine", "proton", ...
   std::string name;
   std::string path;
   std::string version;

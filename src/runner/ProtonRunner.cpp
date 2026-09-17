@@ -1,4 +1,4 @@
-#include "runner/UmuRunner.h"
+#include "runner/ProtonRunner.h"
 
 #include <filesystem>
 #include <format>
@@ -20,7 +20,7 @@ void ApplyGameId(Command& command, const model::Game& game) {
 
 }  // namespace
 
-std::vector<model::RunnerBuild> UmuRunner::Discover(const config::Config& config) const {
+std::vector<model::RunnerBuild> ProtonRunner::Discover(const config::Config& config) const {
   std::vector<model::RunnerBuild> builds;
   // A Proton build is useless without the launcher that runs it.
   if (!FindOnPath("umu-run")) return builds;
@@ -35,7 +35,7 @@ std::vector<model::RunnerBuild> UmuRunner::Discover(const config::Config& config
       if (!fs::exists(dir / "proton", ec) || !fs::exists(dir / "toolmanifest.vdf", ec)) continue;
 
       model::RunnerBuild build;
-      build.kind = "proton_umu";
+      build.kind = "proton";
       build.path = dir.string();
 
       // The version file is "<unix timestamp> <name>", e.g.
@@ -57,7 +57,7 @@ std::vector<model::RunnerBuild> UmuRunner::Discover(const config::Config& config
   return builds;
 }
 
-Result<void> UmuRunner::Provision(const model::Game& game,
+Result<void> ProtonRunner::Provision(const model::Game& game,
                                   const std::optional<model::RunnerBuild>& build) const {
   if (!build) return Err("no_runner_build", "no Proton build resolved for this game");
   if (game.data_dir.empty()) return Err("no_data_dir", "game has no data_dir set");
@@ -88,7 +88,7 @@ Result<void> UmuRunner::Provision(const model::Game& game,
   return {};
 }
 
-Result<Command> UmuRunner::BuildCommand(const model::Game& game,
+Result<Command> ProtonRunner::BuildCommand(const model::Game& game,
                                         const std::optional<model::RunnerBuild>& build) const {
   if (!build) return Err("no_runner_build", "no Proton build resolved for this game");
   if (game.exe_path.empty()) return Err("no_executable", "no exe_path set for this game");

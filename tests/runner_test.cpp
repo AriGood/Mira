@@ -77,18 +77,18 @@ TEST_CASE("ProvisionGame marks a native game ready with no build") {
   CHECK(result.runner_ref == "native:native");
 }
 
-// Everything below actually exercises UmuRunner — real umu-run, real Proton,
+// Everything below actually exercises ProtonRunner — real umu-run, real Proton,
 // a real prefix on disk. Environment-dependent by nature (this is what it's
 // testing), so it adapts to what's actually installed rather than assuming
 // a specific machine: it checks what RunnerRegistry itself discovers first,
 // then asserts the outcome that implies, on either branch.
-TEST_CASE("UmuRunner provisioning matches what's actually installed on this machine") {
+TEST_CASE("ProtonRunner provisioning matches what's actually installed on this machine") {
   config::Config config(TempFile("runner-registry-umu-settings.toml"));
   config.Load();
   runner::RunnerRegistry registry(config);
 
   const bool has_proton = std::ranges::any_of(
-      registry.DiscoverAll(), [](const model::RunnerBuild& b) { return b.kind == "proton_umu"; });
+      registry.DiscoverAll(), [](const model::RunnerBuild& b) { return b.kind == "proton"; });
 
   const fs::path data_dir = TempFile("umu-provision-prefix");
   fs::remove_all(data_dir);
@@ -106,7 +106,7 @@ TEST_CASE("UmuRunner provisioning matches what's actually installed on this mach
     INFO("a Proton build was discovered; expecting real provisioning to succeed");
     CHECK(result.status == model::GameStatus::Ready);
     CHECK(fs::exists(data_dir / "drive_c"));
-    CHECK(result.runner_ref.starts_with("proton_umu:"));
+    CHECK(result.runner_ref.starts_with("proton:"));
   } else {
     INFO("no Proton build installed here; expecting a graceful, specific failure");
     CHECK(result.status == model::GameStatus::Broken);
@@ -165,14 +165,14 @@ TEST_CASE("WineRunner provisioning matches what's actually installed on this mac
   fs::remove_all(data_dir);
 }
 
-TEST_CASE("\"auto\" prefers proton_umu when a Proton build exists, else falls back to wine") {
+TEST_CASE("\"auto\" prefers proton when a Proton build exists, else falls back to wine") {
   config::Config config(TempFile("auto-fallback-settings.toml"));
   config.Load();
   runner::RunnerRegistry registry(config);
 
   const auto builds = registry.DiscoverAll();
   const bool has_proton = std::ranges::any_of(
-      builds, [](const model::RunnerBuild& b) { return b.kind == "proton_umu"; });
+      builds, [](const model::RunnerBuild& b) { return b.kind == "proton"; });
   const bool has_wine =
       std::ranges::any_of(builds, [](const model::RunnerBuild& b) { return b.kind == "wine"; });
 
@@ -188,7 +188,7 @@ TEST_CASE("\"auto\" prefers proton_umu when a Proton build exists, else falls ba
   model::Game result = registry.ProvisionGame(game);
 
   if (has_proton) {
-    CHECK(result.runner_ref.starts_with("proton_umu:"));
+    CHECK(result.runner_ref.starts_with("proton:"));
   } else if (has_wine) {
     CHECK(result.runner_ref.starts_with("wine:"));
   } else {
@@ -209,11 +209,28 @@ TEST_CASE("Resolve reports an uninstalled build instead of succeeding with none"
   // Regression: this used to return success-with-no-build, which made a
   // Windows game resolve to "no build" and report a vague error — and made
   // native:anything-at-all silently "succeed" for a Windows game.
-  auto proton = registry.Resolve("proton_umu:GE-Proton-Nonexistent");
+  auto proton = registry.Resolve("proton:GE-Proton-Nonexistent");
   CHECK_FALSE(proton.has_value());
 
   // native has no build concept at all, so it still resolves.
   auto native = registry.Resolve("native:native");
   REQUIRE(native.has_value());
   CHECK_FALSE(native->build.has_value());
+}
+
+TEST_CASE("the old proton_umu: runner_ref spelling still resolves after the rename") {
+  // umu was briefly modelled as its own runner kind; it's the mechanism
+  // Proton runs through, not a runner. A games.toml written before the
+  // rename must keep working.
+  config::Config config(TempFile("legacy-ref.toml"));
+  config.Load();
+  runner::RunnerRegistry registry(config);
+
+  const bool has_proton = std::ranges::any_of(
+      registry.DiscoverAll(), [](const model::RunnerBuild& b) { return b.kind == "proton"; });
+  if (!has_proton) return;  // nothing installed to resolve against on this machine
+
+  auto legacy = registry.Resolve("proton_umu:latest");
+  REQUIRE(legacy.has_value());
+  CHECK(legacy->runner->kind() == "proton");
 }

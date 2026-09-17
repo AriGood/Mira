@@ -15,7 +15,7 @@ class Config;
 namespace mira::runner {
 
 // One way to run a game: native exec, or Proton via umu today. Every
-// umu/Proton-specific detail lives inside UmuRunner — this interface knows
+// umu/Proton-specific detail lives inside ProtonRunner — this interface knows
 // none of it, so a future custom Proton runner is a new file, not a
 // redesign (see docs/architecture.md, Replaceability).
 class IRunner {

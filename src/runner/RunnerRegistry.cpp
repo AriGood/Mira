@@ -6,7 +6,7 @@
 
 #include "core/Log.h"
 #include "runner/NativeRunner.h"
-#include "runner/UmuRunner.h"
+#include "runner/ProtonRunner.h"
 #include "runner/WineRunner.h"
 
 namespace mira::runner {
@@ -39,10 +39,10 @@ std::int64_t ParseVersion(const std::string& version) {
 
 RunnerRegistry::RunnerRegistry(config::Config& config) : config_(config) {
   auto native = std::make_unique<NativeRunner>();
-  auto umu = std::make_unique<UmuRunner>();
+  auto proton = std::make_unique<ProtonRunner>();
   auto wine = std::make_unique<WineRunner>();
   runners_[native->kind()] = std::move(native);
-  runners_[umu->kind()] = std::move(umu);
+  runners_[proton->kind()] = std::move(proton);
   runners_[wine->kind()] = std::move(wine);
 }
 
@@ -72,7 +72,11 @@ Result<RunnerRegistry::Resolved> RunnerRegistry::Resolve(const std::string& runn
   if (colon == std::string::npos) {
     return Err("invalid_runner_ref", std::format("\"{}\" is not \"kind:name\"", runner_ref));
   }
-  const std::string kind = runner_ref.substr(0, colon);
+  std::string kind = runner_ref.substr(0, colon);
+  // umu used to be modelled as its own runner kind. It's the mechanism
+  // Proton runs through, not a runner — accept the old spelling so a
+  // games.toml written before the rename keeps resolving.
+  if (kind == "proton_umu") kind = "proton";
   const std::string name = runner_ref.substr(colon + 1);
 
   const auto runner_it = runners_.find(kind);
@@ -108,14 +112,9 @@ model::Game RunnerRegistry::ProvisionGame(model::Game game) const {
                                                                      : "default_runner.windows");
   }
   // "auto" isn't itself "kind:name" — it means "the best available windows
-  // runner": Proton via umu if a build is installed (gets protonfixes for
-  // free), else plain Wine, else there's nothing usable and Resolve below
-  // reports that clearly.
-  if (ref == "auto") {
-    const bool has_proton = std::ranges::any_of(
-        runners_.at("proton_umu")->Discover(config_), [](const auto&) { return true; });
-    ref = has_proton ? "proton_umu:latest" : "wine:latest";
-  }
+  // runner": Proton if a build is installed (protonfixes come with it),
+  // else plain Wine, else nothing usable and Resolve below says so clearly.
+  if (ref == "auto") ref = BuildsFor("proton").empty() ? "wine:latest" : "proton:latest";
 
   const Result<Resolved> resolved = Resolve(ref);
   if (!resolved) {
