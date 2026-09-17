@@ -15,8 +15,10 @@
 #include <QComboBox>
 #include <QMenuBar>
 #include <QPushButton>
+#include <QScrollArea>
 #include <QSlider>
 #include <QSplitter>
+#include <QStackedWidget>
 #include <QToolButton>
 #include <QVBoxLayout>
 
@@ -25,13 +27,15 @@
 #include "../client/MiradClient.h"
 #include "../dialogs/GameDetailDialog.h"
 #include "../dialogs/RunnerDialog.h"
-#include "../dialogs/SettingsDialog.h"
+
 #include "../ui/CoverArt.h"
 #include "../ui/GameActions.h"
 #include "../ui/GameDetailsPanel.h"
+#include "../ui/GameEditForm.h"
 #include "../ui/GameTileDelegate.h"
 #include "../ui/LibrarySort.h"
 #include "../ui/Notify.h"
+#include "../ui/SettingsPanel.h"
 #include "../ui/Shortcuts.h"
 #include "../ui/Tray.h"
 #include "MainWindow.h"
@@ -85,10 +89,19 @@ LibraryWindow::LibraryWindow(QWidget* parent) : QMainWindow(parent) {
   connect(details_, &mira_gui::GameDetailsPanel::MetadataRefreshRequested, this,
           [this](const QString& id) { RefreshMetadata(id.toStdString()); });
 
+  // page 1 (game_edit_page_) is built lazily by OpenGameDialog.
+  sidebar_stack_ = new QStackedWidget(this);
+  sidebar_stack_->addWidget(details_);
+
+  // page 1 (settings) is built lazily by OpenSettings. Takes over only
+  // this middle slot — sidebar and details stay mounted either side.
+  middle_stack_ = new QStackedWidget(this);
+  middle_stack_->addWidget(BuildGrid());
+
   splitter_ = new QSplitter(Qt::Horizontal, this);
   splitter_->addWidget(BuildSidebar());
-  splitter_->addWidget(BuildGrid());
-  splitter_->addWidget(details_);
+  splitter_->addWidget(middle_stack_);
+  splitter_->addWidget(sidebar_stack_);
   splitter_->setStretchFactor(0, 0);
   splitter_->setStretchFactor(1, 1);
   splitter_->setStretchFactor(2, 0);
@@ -111,6 +124,9 @@ LibraryWindow::LibraryWindow(QWidget* parent) : QMainWindow(parent) {
   // then puts the three window-wide actions into File and Help.
   BuildShortcuts();
   BuildMenus();
+  // Hidden by default — held open with Alt (keyPressEvent/keyReleaseEvent
+  // below) or pinned from the View menu. LoadPrefs() may pin it back on.
+  menuBar()->setVisible(menu_bar_pinned_);
 
   LoadPrefs();
   RefreshHealth(/*force_scan=*/false);
@@ -135,11 +151,11 @@ void LibraryWindow::BuildMenus() {
   // F5 is the platform's own Refresh; Ctrl+R is the one every browser
   // taught, and a second binding costs nothing.
   refresh->setShortcuts({QKeySequence(QKeySequence::Refresh), QKeySequence(Qt::CTRL | Qt::Key_R)});
-  toolbar_pin_action_ = view_menu->addAction("Show &toolbar", this,
-                                             [this] { SetToolbarPinned(!toolbar_pinned_); });
-  toolbar_pin_action_->setCheckable(true);
-  toolbar_pin_action_->setChecked(toolbar_pinned_);
-  toolbar_pin_action_->setToolTip("Keep the sort/zoom row open instead of holding Alt to show it");
+  menu_bar_pin_action_ = view_menu->addAction("Always show this &menu bar", this,
+                                              [this] { SetMenuBarPinned(!menu_bar_pinned_); });
+  menu_bar_pin_action_->setCheckable(true);
+  menu_bar_pin_action_->setChecked(menu_bar_pinned_);
+  menu_bar_pin_action_->setToolTip("Keep this menu bar open instead of holding Alt to show it");
   view_menu->addSeparator();
   view_menu->addAction("Open &classic table view", this, &LibraryWindow::OpenClassicView);
 
@@ -314,7 +330,8 @@ void LibraryWindow::LoadPrefs() {
         }
       }
     }
-    if (prefs.toolbar_pinned) SetToolbarPinned(*prefs.toolbar_pinned);
+    if (prefs.menu_bar_pinned) SetMenuBarPinned(*prefs.menu_bar_pinned);
+    if (prefs.game_settings_in_sidebar) game_settings_in_sidebar_ = *prefs.game_settings_in_sidebar;
   });
 }
 
@@ -332,7 +349,7 @@ void LibraryWindow::SavePrefs() {
   prefs.notifications =
       mira_gui::notify::DeliveryToString(mira_gui::notify::CurrentDelivery()).toStdString();
   prefs.notification_timeout_s = mira_gui::notify::CurrentTimeoutSeconds();
-  prefs.toolbar_pinned = toolbar_pinned_;
+  prefs.menu_bar_pinned = menu_bar_pinned_;
   const QList<int> sizes = splitter_->sizes();
   if (sizes.size() == 3) {
     prefs.sidebar_width = sizes[0];
@@ -354,38 +371,36 @@ void LibraryWindow::SavePrefs() {
   mira_gui::MiradClient::SaveFrontendPrefsBlocking(prefs);
 }
 
-void LibraryWindow::SetToolbarPinned(bool pinned) {
-  toolbar_pinned_ = pinned;
-  toolbar_widget_->setVisible(pinned);
-  if (toolbar_pin_action_) toolbar_pin_action_->setChecked(pinned);
+void LibraryWindow::SetMenuBarPinned(bool pinned) {
+  menu_bar_pinned_ = pinned;
+  menuBar()->setVisible(pinned);
+  if (menu_bar_pin_action_) menu_bar_pin_action_->setChecked(pinned);
 }
 
 void LibraryWindow::keyPressEvent(QKeyEvent* event) {
   // isAutoRepeat() excludes the repeat events X11/Wayland send for a held
   // key — without it every one would re-run this and cost nothing but
   // clarity, but there's no reason to rely on that when the check is free.
-  if (!toolbar_pinned_ && event->key() == Qt::Key_Alt && !event->isAutoRepeat()) {
-    toolbar_widget_->setVisible(true);
+  if (!menu_bar_pinned_ && event->key() == Qt::Key_Alt && !event->isAutoRepeat()) {
+    menuBar()->setVisible(true);
     return;
   }
   QMainWindow::keyPressEvent(event);
 }
 
 void LibraryWindow::keyReleaseEvent(QKeyEvent* event) {
-  if (!toolbar_pinned_ && event->key() == Qt::Key_Alt && !event->isAutoRepeat()) {
-    toolbar_widget_->setVisible(false);
+  if (!menu_bar_pinned_ && event->key() == Qt::Key_Alt && !event->isAutoRepeat()) {
+    menuBar()->setVisible(false);
     return;
   }
   QMainWindow::keyReleaseEvent(event);
 }
 
 void LibraryWindow::changeEvent(QEvent* event) {
-  // Alt+Tabbing away, or a menu opening, ends the hold without ever
-  // delivering a KeyRelease for it — X11/Wayland deliver the release to
-  // whatever now has focus, not to this window. Left alone, the toolbar
-  // would stay open until the next stray Alt press happened to toggle it.
+  // Alt+Tab away never delivers a KeyRelease to this window, so the hold
+  // would otherwise stay "on" until the next stray Alt press.
   if (event->type() == QEvent::WindowDeactivate || event->type() == QEvent::ActivationChange) {
-    if (!toolbar_pinned_ && !isActiveWindow()) toolbar_widget_->setVisible(false);
+    if (!menu_bar_pinned_ && !isActiveWindow()) menuBar()->setVisible(false);
   }
   QMainWindow::changeEvent(event);
 }
@@ -514,13 +529,6 @@ QWidget* LibraryWindow::BuildGrid() {
   zoom_->setMaximumWidth(140);
   connect(zoom_, &QSlider::valueChanged, this, &LibraryWindow::SetTileWidth);
   toolbar->addWidget(zoom_);
-  // Hidden by default (see SetToolbarPinned) — a bare row of a combo box
-  // and a slider read as leftover chrome above a cover grid. Held open
-  // with Alt, or pinned from the View menu for anyone who wants it there
-  // permanently. Everything in it also has a menu or shortcut route:
-  // Ctrl+= / Ctrl+- / Ctrl+0 for zoom (BuildShortcuts), and sort direction
-  // rarely needs changing once set.
-  toolbar_widget_->setVisible(toolbar_pinned_);
   layout->addWidget(toolbar_widget_);
 
   grid_ = new QListWidget(container);
@@ -700,12 +708,10 @@ void LibraryWindow::RescanAndRefreshGames(bool force_scan) {
 }
 
 void LibraryWindow::RefreshGames() {
-  // Two fetches, not one: mirad leaves a hidden-tagged game out of the bare
-  // list entirely (docs/api.md) — ?tag=hidden is the only call that
-  // returns it. Fetching both up front, rather than only on demand when
-  // the Hidden filter is picked, keeps games_ the single source of truth
-  // every filter reads from client-side (see ApplyFilter/MatchesFilter),
-  // so Ctrl+H is an instant filter-row switch rather than a round trip.
+  // Two fetches: mirad leaves hidden-tagged games out of the bare list
+  // (docs/api.md) — ?tag=hidden is the only call that returns them. Both
+  // land in games_ up front so Ctrl+H is a client-side filter switch, not
+  // a round trip.
   mira_gui::MiradClient::ListGamesAsync(this, [this](mira_gui::GamesResult visible) {
     if (!visible.ok) {
       health_badge_->setToolTip(QString("mirad is reachable, but GET /v1/games failed: %1")
@@ -941,13 +947,8 @@ void LibraryWindow::ToggleHidden(const std::string& id) {
                                QString::fromStdString(result.error));
       return;
     }
-    // A game.updated event is also on its way from mirad and would patch
-    // games_ the same way, but not until the round trip completes — moving
-    // the tile immediately is what makes Hide/Unhide feel like a toggle
-    // rather than a request. No re-fetch needed: RefreshGames already
-    // pulls both the visible and the ?tag=hidden half into games_, so
-    // either direction just needs that one entry's tags corrected in
-    // place before ApplyFilter re-sorts it into (or out of) view.
+    // Patched in place rather than waiting for the game.updated event, so
+    // Hide/Unhide feels instant.
     for (mira_gui::GameSummary& stored : games_) {
       if (stored.id == id) {
         stored.tags = tags;
@@ -979,14 +980,116 @@ void LibraryWindow::LaunchGame(const std::string& id) {
 }
 
 void LibraryWindow::OpenGameDialog(const std::string& id) {
-  GameDetailDialog dialog(id, this);
-  dialog.exec();
+  if (!game_settings_in_sidebar_) {
+    GameDetailDialog dialog(id, this);
+    dialog.exec();
+    RefreshGames();
+    return;
+  }
+
+  // Fresh instance each time: GameEditForm loads its id at construction.
+  if (game_edit_page_ != nullptr) {
+    sidebar_stack_->removeWidget(game_edit_page_);
+    game_edit_page_->deleteLater();
+  }
+  game_edit_page_ = BuildGameEditPage(id);
+  sidebar_stack_->addWidget(game_edit_page_);
+  sidebar_stack_->setCurrentWidget(game_edit_page_);
+}
+
+void LibraryWindow::CloseGameEdit() {
+  sidebar_stack_->setCurrentWidget(details_);
   RefreshGames();
 }
 
 void LibraryWindow::OpenSettings() {
-  SettingsDialog dialog(this);
-  dialog.exec();
+  if (settings_panel_ == nullptr) middle_stack_->addWidget(BuildSettingsPage());
+  middle_stack_->setCurrentIndex(1);
+}
+
+void LibraryWindow::CloseSettings() {
+  middle_stack_->setCurrentIndex(0);
+}
+
+QWidget* LibraryWindow::BuildSettingsPage() {
+  auto* page = new QWidget(this);
+  auto* layout = new QVBoxLayout(page);
+  layout->setContentsMargins(16, 12, 16, 16);
+  layout->setSpacing(10);
+
+  auto* header = new QHBoxLayout();
+  auto* back = new QPushButton("← Back to library", page);
+  connect(back, &QPushButton::clicked, this, &LibraryWindow::CloseSettings);
+  header->addWidget(back);
+  auto* title = new QLabel("Settings", page);
+  title->setStyleSheet("font-size: 16px; font-weight: 600;");
+  header->addWidget(title);
+  header->addStretch(1);
+  auto* save = new QPushButton("Save", page);
+  header->addWidget(save);
+  layout->addLayout(header);
+
+  settings_panel_ = new mira_gui::SettingsPanel(page);
+  connect(save, &QPushButton::clicked, settings_panel_, &mira_gui::SettingsPanel::Save);
+  connect(settings_panel_, &mira_gui::SettingsPanel::LoadFailed, this, [this](QString error) {
+    mira_gui::notify::Failed(this, "Could not load the settings.", error);
+    CloseSettings();
+  });
+  connect(settings_panel_, &mira_gui::SettingsPanel::SaveFinished, this,
+          [this](bool ok, QString error) {
+            if (!ok) {
+              mira_gui::notify::Failed(this, "Could not save the settings.", error);
+              return;
+            }
+            mira_gui::notify::Toast(this, mira_gui::notify::Level::Success, "Settings saved.");
+            CloseSettings();
+            // Frontend-only prefs (menu_bar_pinned, game_settings_in_sidebar) just
+            // changed on the daemon; re-reading them is how this window picks the
+            // change up without a restart.
+            LoadPrefs();
+          });
+  layout->addWidget(settings_panel_, /*stretch=*/1);
+
+  return page;
+}
+
+QWidget* LibraryWindow::BuildGameEditPage(const std::string& id) {
+  auto* page = new QWidget(this);
+  auto* layout = new QVBoxLayout(page);
+  layout->setContentsMargins(12, 12, 12, 12);
+  layout->setSpacing(10);
+
+  auto* header = new QHBoxLayout();
+  auto* back = new QPushButton("← Back", page);
+  connect(back, &QPushButton::clicked, this, &LibraryWindow::CloseGameEdit);
+  header->addWidget(back);
+  header->addStretch(1);
+  auto* save = new QPushButton("Save", page);
+  header->addWidget(save);
+  layout->addLayout(header);
+
+  auto* scroll = new QScrollArea(page);
+  scroll->setWidgetResizable(true);
+  scroll->setFrameShape(QFrame::NoFrame);
+  game_edit_form_ = new mira_gui::GameEditForm(id, scroll);
+  connect(save, &QPushButton::clicked, game_edit_form_, &mira_gui::GameEditForm::Save);
+  connect(game_edit_form_, &mira_gui::GameEditForm::LoadFailed, this, [this](QString error) {
+    mira_gui::notify::Failed(this, "Could not load this game.", error);
+    CloseGameEdit();
+  });
+  connect(game_edit_form_, &mira_gui::GameEditForm::SaveFinished, this,
+          [this](bool ok, QString error) {
+            if (!ok) {
+              mira_gui::notify::Failed(this, "Could not save this game.", error);
+              return;
+            }
+            mira_gui::notify::Toast(this, mira_gui::notify::Level::Success, "Game saved.");
+            CloseGameEdit();
+          });
+  scroll->setWidget(game_edit_form_);
+  layout->addWidget(scroll, /*stretch=*/1);
+
+  return page;
 }
 
 void LibraryWindow::OpenClassicView() {

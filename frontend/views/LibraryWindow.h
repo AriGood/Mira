@@ -21,12 +21,15 @@ class QListWidget;
 class QComboBox;
 class QSlider;
 class QSplitter;
+class QStackedWidget;
 class QAction;
 class QToolButton;
 
 namespace mira_gui {
 class GameDetailsPanel;
+class GameEditForm;
 class GameTileDelegate;
+class SettingsPanel;
 }
 
 // The primary library view: a cover-art grid, a filter sidebar, and a
@@ -53,6 +56,7 @@ public:
 private:
   QWidget* BuildSidebar();
   QWidget* BuildGrid();
+  QWidget* BuildSettingsPage();
   void BuildMenus();
   void BuildShortcuts();
 
@@ -95,7 +99,10 @@ private:
   void ToggleHidden(const std::string& id);
   void LaunchGame(const std::string& id);
   void OpenGameDialog(const std::string& id);
+  QWidget* BuildGameEditPage(const std::string& id);
+  void CloseGameEdit();
   void OpenSettings();
+  void CloseSettings();
   void OpenRunners();
   void ImportSteamLibrary();
   void OpenClassicView();
@@ -109,14 +116,13 @@ private:
   void HandleGameEvent(const std::string& type, const std::string& data);
   int FilterRow(const QString& key) const;
 
-  // Alt held while toolbar_pinned_ is false shows the toolbar for as long
-  // as it's down; releasing it (or losing focus mid-hold — WindowDeactivate)
-  // hides it again. keyPressEvent/keyReleaseEvent, not a shortcut, because
-  // a lone modifier key press has no QKeySequence to bind.
+  // Alt held (while not pinned) shows the menu bar; releasing it hides it
+  // again. keyPressEvent/keyReleaseEvent since a lone modifier key has no
+  // QKeySequence to bind as a shortcut.
   void keyPressEvent(QKeyEvent* event) override;
   void keyReleaseEvent(QKeyEvent* event) override;
   void changeEvent(QEvent* event) override;
-  void SetToolbarPinned(bool pinned);
+  void SetMenuBarPinned(bool pinned);
 
   QLineEdit* search_ = nullptr;
   QListWidget* filters_ = nullptr;
@@ -125,9 +131,20 @@ private:
   QSlider* zoom_ = nullptr;
   QComboBox* sort_ = nullptr;
   QToolButton* sort_direction_ = nullptr;
-  QWidget* toolbar_widget_ = nullptr;   // the sort/zoom row, hidden unless pinned or Alt is held
-  QAction* toolbar_pin_action_ = nullptr;
+  QWidget* toolbar_widget_ = nullptr;  // the grid's own sort/zoom row, always visible
+  QAction* menu_bar_pin_action_ = nullptr;
   QSplitter* splitter_ = nullptr;
+  // The splitter's middle slot: page 0 is the grid (BuildGrid), page 1 is
+  // settings taking over just that space — the sidebar and details panel
+  // either side of it stay mounted and visible throughout.
+  QStackedWidget* middle_stack_ = nullptr;
+  mira_gui::SettingsPanel* settings_panel_ = nullptr;
+  // The splitter's right slot: page 0 is details_, page 1 is a game's
+  // editable form taking over that space (game_settings_in_sidebar pref).
+  QStackedWidget* sidebar_stack_ = nullptr;
+  QWidget* game_edit_page_ = nullptr;
+  mira_gui::GameEditForm* game_edit_form_ = nullptr;
+  bool game_settings_in_sidebar_ = true;
   QLabel* health_badge_ = nullptr;
   QLabel* footer_ = nullptr;
   QLabel* empty_hint_ = nullptr;
@@ -149,7 +166,7 @@ private:
   bool sort_descending_ = false;
   bool scan_on_startup_ = true;
   std::string notifications_ = "auto";
-  bool toolbar_pinned_ = false;
+  bool menu_bar_pinned_ = false;
   // Keyed by "<id>@<tile width>" — a generated cover is cheap but not free,
   // and ApplyFilter() rebuilds every visible tile on each keystroke.
   mira_gui::ArtworkStore* artwork_ = nullptr;

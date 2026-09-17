@@ -310,7 +310,8 @@ FrontendPrefsResult GetFrontendPrefsSync() {
   read_bool("scan_on_startup", result.prefs.scan_on_startup);
   read_string("notifications", result.prefs.notifications);
   read_int("notification_timeout_s", result.prefs.notification_timeout_s);
-  read_bool("toolbar_pinned", result.prefs.toolbar_pinned);
+  read_bool("menu_bar_pinned", result.prefs.menu_bar_pinned);
+  read_bool("game_settings_in_sidebar", result.prefs.game_settings_in_sidebar);
   return result;
 }
 
@@ -329,7 +330,10 @@ PatchConfigResult SaveFrontendPrefsSync(const FrontendPrefs& prefs) {
   if (prefs.notification_timeout_s) {
     table["notification_timeout_s"] = *prefs.notification_timeout_s;
   }
-  if (prefs.toolbar_pinned) table["toolbar_pinned"] = *prefs.toolbar_pinned;
+  if (prefs.menu_bar_pinned) table["menu_bar_pinned"] = *prefs.menu_bar_pinned;
+  if (prefs.game_settings_in_sidebar) {
+    table["game_settings_in_sidebar"] = *prefs.game_settings_in_sidebar;
+  }
 
   // Short, because SaveFrontendPrefsBlocking runs this on the UI thread
   // while a window is closing.
