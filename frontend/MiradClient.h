@@ -2,6 +2,7 @@
 
 #include <QObject>
 
+#include <cstdint>
 #include <functional>
 #include <map>
 #include <optional>
@@ -25,8 +26,12 @@ struct GameSummary {
   std::string name;
   std::string status;
   std::string platform;
+  std::string runner_ref;
+  std::string last_error;
   bool reviewed = false;
   double confidence = 0.0;
+  std::optional<std::int64_t> last_played_at;
+  std::int64_t play_seconds = 0;
 };
 
 struct GamesResult {
@@ -35,7 +40,28 @@ struct GamesResult {
   std::vector<GameSummary> games;
 };
 
+// docs/api.md's `game.state` event, trimmed to what a row's Launch/Stop
+// button needs — see ParseGameState.
+struct GameStateEvent {
+  std::string id;
+  std::string state;  // "running" | "exited" | "crashed"
+};
+
 struct DeleteResult {
+  bool ok = false;
+  std::string error;
+};
+
+// POST /v1/games/{id}/launch and /stop both return just ok/error — the
+// actual outcome (running, exited, crashed) arrives later as a `game.state`
+// SSE event (docs/api.md), since launch returns as soon as the process
+// exists, not when it finishes.
+struct LaunchResult {
+  bool ok = false;
+  std::string error;
+};
+
+struct StopResult {
   bool ok = false;
   std::string error;
 };
@@ -56,6 +82,7 @@ struct GameDetail {
     std::string kind;
     double score = 0.0;
     bool chosen = false;
+    bool is_installer = false;  // name + size say this is a setup.exe, not the game
   };
 
   std::string id;
@@ -67,9 +94,17 @@ struct GameDetail {
   std::string args;
   std::string working_dir;
   std::string runner_ref;
+  std::string data_dir;
   std::string last_error;
   bool reviewed = false;
   double confidence = 0.0;
+  std::optional<std::int64_t> last_played_at;
+  std::int64_t play_seconds = 0;
+  // `runner_config`/`env` are arbitrary JSON objects (docs/api.md) with no
+  // fixed shape to build widgets for, so they round-trip as raw JSON text —
+  // pretty-printed for display, re-parsed on save (MiradClient.cpp).
+  std::string runner_config_json;
+  std::string env_json;
   std::vector<Candidate> candidates;
 };
 
@@ -87,6 +122,10 @@ struct GamePatch {
   std::optional<std::string> args;
   std::optional<std::string> working_dir;
   std::optional<std::string> runner_ref;
+  std::optional<std::string> data_dir;
+  // Raw JSON text (must parse to an object) — see GameDetail's comment.
+  std::optional<std::string> runner_config_json;
+  std::optional<std::string> env_json;
 };
 
 struct PatchGameResult {
@@ -142,9 +181,66 @@ struct PatchConfigResult {
   std::string error;
 };
 
+// One entry from GET /v1/runners (docs/api.md): an installed build of one
+// runner kind, discovered fresh on every call. `reference` is what a game's
+// `runner_ref` field and the `default_runner.*` settings both use — the
+// only string that actually round-trips, `name`/`version` are just for
+// display.
+struct RunnerInfo {
+  std::string kind;
+  std::string name;
+  std::string version;
+  std::string reference;
+};
+
+struct RunnersResult {
+  bool ok = false;
+  std::string error;
+  std::vector<RunnerInfo> runners;
+};
+
+// One key from GET /v1/games/{id}/config (docs/api.md): every schema key
+// resolved through default -> settings.toml -> this game's overrides,
+// tagged with which layer supplied it. Only entries with `overridable: true`
+// (config::Resolver::IsOverridable) make sense to show as editable — some
+// settings describe the daemon rather than a game (e.g. `library_roots`)
+// and are excluded there for exactly that reason.
+struct GameConfigEntry {
+  std::string key;
+  std::string value_display;  // stringified like ConfigResult::values
+  std::string layer;          // "default" | "config" | "game"
+  bool overridable = false;
+};
+
+struct GameConfigResult {
+  bool ok = false;
+  std::string error;
+  std::vector<GameConfigEntry> entries;
+};
+
+// One edit to send in a PATCH /v1/games/{id}/config body. `clear` sends a
+// JSON null for `key`, removing this game's override and falling back to
+// the next layer down — the per-game equivalent of ConfigEdit, which has no
+// such concept since a global setting has no further layer to fall back to.
+struct GameConfigEdit {
+  std::string key;
+  std::string type;
+  std::string value;
+  bool clear = false;
+};
+
+struct PatchGameConfigResult {
+  bool ok = false;
+  std::string error;
+};
+
 class MiradClient {
 public:
-  // Mirrors core/Paths.h's DefaultSocket(): $XDG_RUNTIME_DIR/mira/mirad.sock,
+  // $MIRA_SOCKET if set — the same override `mirad --socket` accepts on the
+  // daemon side, so `MIRA_SOCKET=/path/to.sock mirad --socket
+  // /path/to.sock` and `MIRA_SOCKET=/path/to.sock mira-gui` unambiguously
+  // talk to each other regardless of what else is running. Without it,
+  // mirrors core/Paths.h's DefaultSocket(): $XDG_RUNTIME_DIR/mira/mirad.sock,
   // falling back to /tmp/mira if XDG_RUNTIME_DIR is unset. Does not yet honor
   // a socket_path override from settings.toml — that needs a `GET /v1/config`
   // round trip through a socket we haven't resolved yet, so it's out of scope
@@ -157,13 +253,26 @@ public:
   // request finishes: Qt drops the callback instead of invoking it.
   static void CheckHealthAsync(QObject* context, std::function<void(HealthStatus)> callback);
 
-  // Same pattern as CheckHealthAsync, for GET /v1/games.
-  static void ListGamesAsync(QObject* context, std::function<void(GamesResult)> callback);
+  // Same pattern as CheckHealthAsync, for GET /v1/games[?status=...]. An
+  // empty `status_filter` omits the query param entirely (every status).
+  static void ListGamesAsync(QObject* context, std::function<void(GamesResult)> callback,
+                             const std::string& status_filter = std::string());
 
   // DELETE /v1/games/{id}. Never touches the game's files on disk (docs/api.md)
   // — this only forgets it, the same as `delete_data` being left unset.
   static void DeleteGameAsync(QObject* context, const std::string& id,
                               std::function<void(DeleteResult)> callback);
+
+  // POST /v1/games/{id}/launch. Returns once the process exists, not once
+  // it exits — 409 if the game isn't `ready` (message explains why, e.g.
+  // needs_install) or 400 if the runner reference doesn't resolve.
+  static void LaunchGameAsync(QObject* context, const std::string& id,
+                              std::function<void(LaunchResult)> callback);
+
+  // POST /v1/games/{id}/stop. SIGTERMs the game's process group; 409 if it
+  // isn't currently running.
+  static void StopGameAsync(QObject* context, const std::string& id,
+                            std::function<void(StopResult)> callback);
 
   // POST /v1/library/scan. Runs synchronously on mirad's side (docs/api.md
   // notes there's no job queue yet), so this still goes through the async
@@ -185,6 +294,14 @@ public:
   // returns. Returns false if `data` isn't a JSON object.
   static bool ParseGameSummary(const std::string& data, GameSummary* out);
 
+  // Parses a `game.state` event's payload (`{"id", "state": "running" |
+  // "exited" | "crashed", ...}`, docs/api.md) down to just id/state — enough
+  // to know which row's Launch/Stop button to flip. Unlike game.added/
+  // updated, this carries no other game fields (not even play_seconds), so
+  // a "exited"/"crashed" state is a signal to re-fetch, not something to
+  // patch a row from directly.
+  static bool ParseGameState(const std::string& data, GameStateEvent* out);
+
   // Parses `game.removed`'s payload (`{"id": "..."}`, Server.cpp) down to
   // just the id.
   static std::string ParseRemovedId(const std::string& data);
@@ -205,6 +322,21 @@ public:
   // POST /v1/config/reset?key=<dotted.key>.
   static void ResetConfigKeyAsync(QObject* context, const std::string& key,
                                   std::function<void(PatchConfigResult)> callback);
+
+  // GET /v1/runners. Freshly discovered on every call — no caching needed on
+  // this side either.
+  static void ListRunnersAsync(QObject* context, std::function<void(RunnersResult)> callback);
+
+  // GET /v1/games/{id}/config — this game's resolved settings, tagged by
+  // layer (see GameConfigEntry).
+  static void GetGameConfigAsync(QObject* context, const std::string& id,
+                                 std::function<void(GameConfigResult)> callback);
+
+  // PATCH /v1/games/{id}/config. Same all-or-nothing validation as
+  // PATCH /v1/config (docs/api.md) — only send edits that actually changed.
+  static void PatchGameConfigAsync(QObject* context, const std::string& id,
+                                   const std::vector<GameConfigEdit>& edits,
+                                   std::function<void(PatchGameConfigResult)> callback);
 };
 
 // A long-lived connection to GET /v1/events (docs/api.md), which streams

@@ -153,13 +153,34 @@ ScanSummary Scanner::ScanRoot(const fs::path& root) {
   }
 
   // Anything previously known under this root but not seen this pass has
-  // disappeared — mark it, don't delete it, so configuration and playtime
-  // survive an unplugged drive or a temporarily-offline network share.
+  // disappeared. Default: mark it, don't delete it, so configuration and
+  // playtime survive an unplugged drive or a temporarily-offline network
+  // share. `library.remove_missing` trades that safety net for an
+  // always-current list — still never touches the game's files themselves,
+  // same as DELETE /v1/games/{id}.
+  const bool remove_missing = config_.GetBool("library.remove_missing");
   for (const model::Game& game : games_.All()) {
     if (fs::path(game.install_path).parent_path() != root) continue;
-    if (game.status == model::GameStatus::Missing) continue;
     if (std::ranges::find(seen_install_paths, game.install_path) != seen_install_paths.end()) continue;
 
+    // Checked before the already-Missing skip below, not after: otherwise
+    // turning the toggle on would only ever catch a game the *next* time it
+    // disappears, leaving anything already sitting at Missing stuck there
+    // forever — surprising, since the whole point of flipping it on is to
+    // clean up what's already gone.
+    if (remove_missing) {
+      auto removed = games_.Remove(game.id);
+      if (!removed) {
+        log::Error("failed to remove missing game {}: {}", game.id, removed.error().message);
+        continue;
+      }
+      events_.Publish("game.removed", {{"id", game.id}});
+      ++summary.missing;
+      log::Info("game folder disappeared, removing (library.remove_missing): {}", game.install_path);
+      continue;
+    }
+
+    if (game.status == model::GameStatus::Missing) continue;
     auto result = games_.Update(game.id, [](model::Game& g) { g.status = model::GameStatus::Missing; });
     if (!result) log::Error("failed to mark {} missing: {}", game.id, result.error().message);
     ++summary.missing;

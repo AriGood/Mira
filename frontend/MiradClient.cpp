@@ -13,6 +13,9 @@ namespace mira_gui {
 using nlohmann::json;
 
 std::string MiradClient::ResolveSocketPath() {
+  const char* override_path = std::getenv("MIRA_SOCKET");
+  if (override_path && *override_path) return override_path;
+
   const char* runtime_dir = std::getenv("XDG_RUNTIME_DIR");
   const std::filesystem::path base = runtime_dir && *runtime_dir ? runtime_dir : "/tmp";
   return (base / "mira" / "mirad.sock").string();
@@ -26,8 +29,14 @@ GameSummary ParseGameSummaryJson(const json& entry) {
   game.name = entry.value("name", std::string());
   game.status = entry.value("status", std::string());
   game.platform = entry.value("platform", std::string());
+  game.runner_ref = entry.value("runner_ref", std::string());
+  game.last_error = entry.value("last_error", std::string());
   game.reviewed = entry.value("reviewed", false);
   game.confidence = entry.value("confidence", 0.0);
+  if (entry.contains("last_played_at") && entry["last_played_at"].is_number()) {
+    game.last_played_at = entry["last_played_at"].get<std::int64_t>();
+  }
+  game.play_seconds = entry.value("play_seconds", std::int64_t{0});
   return game;
 }
 
@@ -42,9 +51,16 @@ GameDetail ParseGameDetailJson(const json& entry) {
   game.args = entry.value("args", std::string());
   game.working_dir = entry.value("working_dir", std::string());
   game.runner_ref = entry.value("runner_ref", std::string());
+  game.data_dir = entry.value("data_dir", std::string());
   game.last_error = entry.value("last_error", std::string());
   game.reviewed = entry.value("reviewed", false);
   game.confidence = entry.value("confidence", 0.0);
+  if (entry.contains("last_played_at") && entry["last_played_at"].is_number()) {
+    game.last_played_at = entry["last_played_at"].get<std::int64_t>();
+  }
+  game.play_seconds = entry.value("play_seconds", std::int64_t{0});
+  game.runner_config_json = entry.value("runner_config", json::object()).dump(2);
+  game.env_json = entry.value("env", json::object()).dump(2);
 
   for (const json& candidate : entry.value("candidates", json::array())) {
     GameDetail::Candidate c;
@@ -52,6 +68,7 @@ GameDetail ParseGameDetailJson(const json& entry) {
     c.kind = candidate.value("kind", std::string());
     c.score = candidate.value("score", 0.0);
     c.chosen = candidate.value("chosen", false);
+    c.is_installer = candidate.value("is_installer", false);
     game.candidates.push_back(std::move(c));
   }
   return game;
@@ -92,7 +109,7 @@ HealthStatus GetHealthSync() {
   return status;
 }
 
-GamesResult GetGamesSync() {
+GamesResult GetGamesSync(const std::string& status_filter) {
   GamesResult result;
   const std::string socket_path = MiradClient::ResolveSocketPath();
 
@@ -100,7 +117,8 @@ GamesResult GetGamesSync() {
   client.set_address_family(AF_UNIX);
   client.set_connection_timeout(std::chrono::seconds(2));
 
-  auto res = client.Get("/v1/games");
+  const std::string path = status_filter.empty() ? "/v1/games" : "/v1/games?status=" + status_filter;
+  auto res = client.Get(path);
   if (!res || res->status < 200 || res->status >= 300) {
     result.ok = false;
     result.error = DescribeError(res, socket_path);
@@ -128,6 +146,44 @@ DeleteResult DeleteGameSync(const std::string& id) {
   client.set_connection_timeout(std::chrono::seconds(2));
 
   auto res = client.Delete("/v1/games/" + id);
+  if (res && res->status >= 200 && res->status < 300) {
+    result.ok = true;
+    return result;
+  }
+
+  result.ok = false;
+  result.error = DescribeError(res, socket_path);
+  return result;
+}
+
+LaunchResult LaunchGameSync(const std::string& id) {
+  LaunchResult result;
+  const std::string socket_path = MiradClient::ResolveSocketPath();
+
+  httplib::Client client(socket_path, 80);
+  client.set_address_family(AF_UNIX);
+  client.set_connection_timeout(std::chrono::seconds(2));
+
+  auto res = client.Post("/v1/games/" + id + "/launch");
+  if (res && res->status >= 200 && res->status < 300) {
+    result.ok = true;
+    return result;
+  }
+
+  result.ok = false;
+  result.error = DescribeError(res, socket_path);
+  return result;
+}
+
+StopResult StopGameSync(const std::string& id) {
+  StopResult result;
+  const std::string socket_path = MiradClient::ResolveSocketPath();
+
+  httplib::Client client(socket_path, 80);
+  client.set_address_family(AF_UNIX);
+  client.set_connection_timeout(std::chrono::seconds(2));
+
+  auto res = client.Post("/v1/games/" + id + "/stop");
   if (res && res->status >= 200 && res->status < 300) {
     result.ok = true;
     return result;
@@ -203,6 +259,29 @@ PatchGameResult PatchGameSync(const std::string& id, const GamePatch& patch) {
   if (patch.args) body["args"] = *patch.args;
   if (patch.working_dir) body["working_dir"] = *patch.working_dir;
   if (patch.runner_ref) body["runner_ref"] = *patch.runner_ref;
+  if (patch.data_dir) body["data_dir"] = *patch.data_dir;
+
+  // Parsed client-side rather than left for the server to reject: a bad
+  // JSON object here is a typing mistake, not something worth a round trip
+  // to discover.
+  if (patch.runner_config_json) {
+    const json parsed = json::parse(*patch.runner_config_json, nullptr, false);
+    if (parsed.is_discarded() || !parsed.is_object()) {
+      result.ok = false;
+      result.error = "Runner config must be a JSON object, e.g. {}";
+      return result;
+    }
+    body["runner_config"] = parsed;
+  }
+  if (patch.env_json) {
+    const json parsed = json::parse(*patch.env_json, nullptr, false);
+    if (parsed.is_discarded() || !parsed.is_object()) {
+      result.ok = false;
+      result.error = "Environment must be a JSON object of strings, e.g. {}";
+      return result;
+    }
+    body["env"] = parsed;
+  }
 
   auto res = client.Patch("/v1/games/" + id, body.dump(), "application/json");
   if (!res || res->status < 200 || res->status >= 300) {
@@ -328,6 +407,31 @@ ConfigResult GetConfigSync() {
   return result;
 }
 
+// Converts a field's edited display text back to the JSON kind its schema
+// type calls for, so a value round-trips through the display strings both
+// PatchConfigSync and PatchGameConfigSync work with. Falls back to sending
+// the raw text for a malformed number — the server's own validator explains
+// the bad input better than guessing client-side would.
+json TypedValueFromText(const std::string& type, const std::string& value) {
+  if (type == "a boolean") return value == "true";
+  if (type == "an integer") {
+    try {
+      return static_cast<std::int64_t>(std::stoll(value));
+    } catch (...) {
+      return value;
+    }
+  }
+  if (type == "a number") {
+    try {
+      return std::stod(value);
+    } catch (...) {
+      return value;
+    }
+  }
+  if (type == "an array of strings") return SplitCommaSeparated(value);
+  return value;
+}
+
 PatchConfigResult PatchConfigSync(const std::vector<ConfigEdit>& edits) {
   PatchConfigResult result;
   const std::string socket_path = MiradClient::ResolveSocketPath();
@@ -338,26 +442,7 @@ PatchConfigResult PatchConfigSync(const std::vector<ConfigEdit>& edits) {
 
   json body = json::object();
   for (const ConfigEdit& edit : edits) {
-    json value;
-    if (edit.type == "a boolean") {
-      value = (edit.value == "true");
-    } else if (edit.type == "an integer") {
-      try {
-        value = static_cast<std::int64_t>(std::stoll(edit.value));
-      } catch (...) {
-        value = edit.value;  // let the server's validator explain the bad input
-      }
-    } else if (edit.type == "a number") {
-      try {
-        value = std::stod(edit.value);
-      } catch (...) {
-        value = edit.value;
-      }
-    } else if (edit.type == "an array of strings") {
-      value = SplitCommaSeparated(edit.value);
-    } else {
-      value = edit.value;
-    }
+    const json value = TypedValueFromText(edit.type, edit.value);
 
     json* cursor = &body;
     size_t start = 0;
@@ -404,6 +489,102 @@ PatchConfigResult ResetConfigKeySync(const std::string& key) {
   return result;
 }
 
+RunnersResult GetRunnersSync() {
+  RunnersResult result;
+  const std::string socket_path = MiradClient::ResolveSocketPath();
+
+  httplib::Client client(socket_path, 80);
+  client.set_address_family(AF_UNIX);
+  client.set_connection_timeout(std::chrono::seconds(2));
+
+  auto res = client.Get("/v1/runners");
+  if (!res || res->status < 200 || res->status >= 300) {
+    result.ok = false;
+    result.error = DescribeError(res, socket_path);
+    return result;
+  }
+
+  const json body = json::parse(res->body, nullptr, false);
+  if (body.is_discarded() || !body.is_array()) {
+    result.ok = false;
+    result.error = "mirad returned an unexpected response for GET /v1/runners";
+    return result;
+  }
+
+  result.ok = true;
+  for (const json& entry : body) {
+    RunnerInfo runner;
+    runner.kind = entry.value("kind", std::string());
+    runner.name = entry.value("name", std::string());
+    runner.version = entry.value("version", std::string());
+    runner.reference = entry.value("reference", std::string());
+    result.runners.push_back(std::move(runner));
+  }
+  return result;
+}
+
+GameConfigResult GetGameConfigSync(const std::string& id) {
+  GameConfigResult result;
+  const std::string socket_path = MiradClient::ResolveSocketPath();
+
+  httplib::Client client(socket_path, 80);
+  client.set_address_family(AF_UNIX);
+  client.set_connection_timeout(std::chrono::seconds(2));
+
+  auto res = client.Get("/v1/games/" + id + "/config");
+  if (!res || res->status < 200 || res->status >= 300) {
+    result.ok = false;
+    result.error = DescribeError(res, socket_path);
+    return result;
+  }
+
+  const json body = json::parse(res->body, nullptr, false);
+  if (body.is_discarded() || !body.is_object()) {
+    result.ok = false;
+    result.error = "mirad returned an unexpected response for GET /v1/games/" + id + "/config";
+    return result;
+  }
+
+  result.ok = true;
+  // Schema::Entries() order (Server.cpp's EffectiveDocument iterates it
+  // directly), so this comes out in the same stable order GET
+  // /v1/config/schema does — useful for a caller joining the two by key.
+  for (const auto& [key, entry] : body.items()) {
+    GameConfigEntry e;
+    e.key = key;
+    e.value_display = JsonToDisplayString(entry.value("value", json()));
+    e.layer = entry.value("layer", std::string());
+    e.overridable = entry.value("overridable", false);
+    result.entries.push_back(std::move(e));
+  }
+  return result;
+}
+
+PatchGameConfigResult PatchGameConfigSync(const std::string& id,
+                                          const std::vector<GameConfigEdit>& edits) {
+  PatchGameConfigResult result;
+  const std::string socket_path = MiradClient::ResolveSocketPath();
+
+  httplib::Client client(socket_path, 80);
+  client.set_address_family(AF_UNIX);
+  client.set_connection_timeout(std::chrono::seconds(2));
+
+  json body = json::object();
+  for (const GameConfigEdit& edit : edits) {
+    body[edit.key] = edit.clear ? json(nullptr) : TypedValueFromText(edit.type, edit.value);
+  }
+
+  auto res = client.Patch("/v1/games/" + id + "/config", body.dump(), "application/json");
+  if (!res || res->status < 200 || res->status >= 300) {
+    result.ok = false;
+    result.error = DescribeError(res, socket_path);
+    return result;
+  }
+
+  result.ok = true;
+  return result;
+}
+
 }  // namespace
 
 void MiradClient::CheckHealthAsync(QObject* context, std::function<void(HealthStatus)> callback) {
@@ -415,9 +596,10 @@ void MiradClient::CheckHealthAsync(QObject* context, std::function<void(HealthSt
   }).detach();
 }
 
-void MiradClient::ListGamesAsync(QObject* context, std::function<void(GamesResult)> callback) {
-  std::thread([context, callback = std::move(callback)]() {
-    GamesResult result = GetGamesSync();
+void MiradClient::ListGamesAsync(QObject* context, std::function<void(GamesResult)> callback,
+                                 const std::string& status_filter) {
+  std::thread([context, callback = std::move(callback), status_filter]() {
+    GamesResult result = GetGamesSync(status_filter);
     QMetaObject::invokeMethod(
         context, [callback, result = std::move(result)]() mutable { callback(std::move(result)); },
         Qt::QueuedConnection);
@@ -434,11 +616,39 @@ void MiradClient::DeleteGameAsync(QObject* context, const std::string& id,
   }).detach();
 }
 
+void MiradClient::LaunchGameAsync(QObject* context, const std::string& id,
+                                  std::function<void(LaunchResult)> callback) {
+  std::thread([context, id, callback = std::move(callback)]() {
+    LaunchResult result = LaunchGameSync(id);
+    QMetaObject::invokeMethod(
+        context, [callback, result = std::move(result)]() mutable { callback(std::move(result)); },
+        Qt::QueuedConnection);
+  }).detach();
+}
+
+void MiradClient::StopGameAsync(QObject* context, const std::string& id,
+                                std::function<void(StopResult)> callback) {
+  std::thread([context, id, callback = std::move(callback)]() {
+    StopResult result = StopGameSync(id);
+    QMetaObject::invokeMethod(
+        context, [callback, result = std::move(result)]() mutable { callback(std::move(result)); },
+        Qt::QueuedConnection);
+  }).detach();
+}
+
 bool MiradClient::ParseGameSummary(const std::string& data, GameSummary* out) {
   const json entry = json::parse(data, nullptr, false);
   if (entry.is_discarded() || !entry.is_object()) return false;
   *out = ParseGameSummaryJson(entry);
   return true;
+}
+
+bool MiradClient::ParseGameState(const std::string& data, GameStateEvent* out) {
+  const json entry = json::parse(data, nullptr, false);
+  if (entry.is_discarded() || !entry.is_object()) return false;
+  out->id = entry.value("id", std::string());
+  out->state = entry.value("state", std::string());
+  return !out->id.empty();
 }
 
 std::string MiradClient::ParseRemovedId(const std::string& data) {
@@ -509,6 +719,36 @@ void MiradClient::ResetConfigKeyAsync(QObject* context, const std::string& key,
                                       std::function<void(PatchConfigResult)> callback) {
   std::thread([context, key, callback = std::move(callback)]() {
     PatchConfigResult result = ResetConfigKeySync(key);
+    QMetaObject::invokeMethod(
+        context, [callback, result = std::move(result)]() mutable { callback(std::move(result)); },
+        Qt::QueuedConnection);
+  }).detach();
+}
+
+void MiradClient::ListRunnersAsync(QObject* context, std::function<void(RunnersResult)> callback) {
+  std::thread([context, callback = std::move(callback)]() {
+    RunnersResult result = GetRunnersSync();
+    QMetaObject::invokeMethod(
+        context, [callback, result = std::move(result)]() mutable { callback(std::move(result)); },
+        Qt::QueuedConnection);
+  }).detach();
+}
+
+void MiradClient::GetGameConfigAsync(QObject* context, const std::string& id,
+                                     std::function<void(GameConfigResult)> callback) {
+  std::thread([context, id, callback = std::move(callback)]() {
+    GameConfigResult result = GetGameConfigSync(id);
+    QMetaObject::invokeMethod(
+        context, [callback, result = std::move(result)]() mutable { callback(std::move(result)); },
+        Qt::QueuedConnection);
+  }).detach();
+}
+
+void MiradClient::PatchGameConfigAsync(QObject* context, const std::string& id,
+                                       const std::vector<GameConfigEdit>& edits,
+                                       std::function<void(PatchGameConfigResult)> callback) {
+  std::thread([context, id, edits, callback = std::move(callback)]() {
+    PatchGameConfigResult result = PatchGameConfigSync(id, edits);
     QMetaObject::invokeMethod(
         context, [callback, result = std::move(result)]() mutable { callback(std::move(result)); },
         Qt::QueuedConnection);

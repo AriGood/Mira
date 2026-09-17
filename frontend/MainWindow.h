@@ -3,10 +3,12 @@
 #include <QMainWindow>
 #include <QString>
 
+#include <set>
 #include <string>
 
 #include "MiradClient.h"
 
+class QComboBox;
 class QLabel;
 class QPushButton;
 class QTableWidget;
@@ -25,6 +27,8 @@ private:
   void RescanAndRefreshGames();
   void RefreshGames();
   void DeleteGame(const std::string& id, const QString& name);
+  void LaunchGame(const std::string& id);
+  void StopGame(const std::string& id);
   void OpenGameDetail(int row, int column);
   void OpenSettings();
   void SetHealthy(bool healthy, const QString& tooltip);
@@ -37,10 +41,17 @@ private:
   void PopulateRow(int row, const mira_gui::GameSummary& game);
   void UpsertRow(const mira_gui::GameSummary& game);
   void RemoveRow(const std::string& id);
+  std::string CurrentStatusFilter() const;
 
   QLabel* health_badge_;
+  QComboBox* status_filter_;
   QPushButton* settings_button_;
   QPushButton* refresh_button_;
   QTableWidget* games_table_;
+  QLabel* connection_footer_;
+  // Client-side only — derived from game.state events, not any GET response
+  // (docs/api.md: a game's persisted status is never "running"). Consulted
+  // by PopulateRow to decide each row's Launch/Stop button.
+  std::set<std::string> running_ids_;
   mira_gui::EventStream event_stream_;
 };

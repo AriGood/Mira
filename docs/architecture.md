@@ -9,7 +9,7 @@ It is three programs sharing one contract:
 |------------|------------------------------------------------|------|
 | `mirad`    | the backend daemon                             | owns all state, does all the work |
 | `mira`     | a command-line client                          | a REST client over the same API the GUI uses |
-| `mira-gui` | the Qt frontend (currently a blank skeleton)    | a REST client over the same API the CLI uses |
+| `mira-gui` | the Qt frontend                                 | a REST client over the same API the CLI uses |
 
 **The only thing that connects them is the REST API described in
 [`api.md`](api.md), served over a Unix domain socket.** This is the single
@@ -62,8 +62,12 @@ src/
   cli/      main.cpp for `mira` — see cli.md for what it does.
   mirad_main.cpp   entry point for the daemon.
 
-frontend/   the Qt skeleton (mira-gui). A separate CMake project scope;
-            never add a target_link_libraries(mira-gui PRIVATE mira_core).
+frontend/   the Qt frontend (mira-gui): MiradClient (the REST + SSE client,
+            the only thing that talks to mirad), MainWindow (the library
+            table), GameDetailDialog (view/edit one game), SettingsDialog
+            (generated from the config schema), GameColors (shared status/
+            confidence presentation). A separate CMake project scope; never
+            add a target_link_libraries(mira-gui PRIVATE mira_core).
 
 tests/      doctest-based unit tests, one executable (mira_tests).
 packaging/  the systemd user unit and the .desktop entry.
@@ -144,11 +148,12 @@ frontend's. Closing the frontend can either stop the daemon immediately or
 (if the user enables "keep running in background" / tray mode) leave it
 running until the frontend is told to fully quit.
 
-This is currently a documented design, not yet implemented — `mira-gui` is
-still the blank skeleton described above. Recorded here because it is a
-load-bearing decision for how the frontend is built, not an afterthought:
-whoever implements this should add a small `DaemonSupervisor` in the
-frontend that:
+This is currently a documented design, not yet implemented — `mira-gui`
+today assumes `mirad` is already running and just reports it unreachable if
+not (see "Built: the frontend" below for what does exist). Recorded here
+because it is a load-bearing decision for how the frontend is built, not an
+afterthought: whoever implements this should add a small `DaemonSupervisor`
+in the frontend that:
 
 1. Probes `GET /v1/health` on the configured socket.
 2. On failure, resolves `mirad` next to its own binary (mirroring what
@@ -325,6 +330,77 @@ synchronously right after `AutoSetup` stores a new Windows game — like
 scanning itself, this blocks the calling thread for real wall-clock time
 (several seconds; it's genuinely initialising Proton/Wine) because there is
 no job queue yet to move it off-thread.
+
+## Built: the frontend
+
+`frontend/MiradClient.{h,cpp}` is the only thing in `mira-gui` that speaks to
+`mirad` — plain httplib over the Unix socket plus nlohmann::json, mirroring
+`mira`'s own client (`src/cli/main.cpp`), never `mira_core`. Every call is a
+static method that spawns a worker thread, blocks there, then delivers the
+result back on the caller's thread via `QMetaObject::invokeMethod(context,
+..., Qt::QueuedConnection)` — safe even if `context` (the widget that asked)
+is destroyed before the request finishes, since Qt just drops a queued call
+whose context object is gone rather than invoking it. `EventStream` is the
+one stateful exception: a long-lived connection to `GET /v1/events`,
+reconnecting on any drop with a fixed backoff and replaying via
+`Last-Event-ID` so a reconnect doesn't miss anything still in `mirad`'s
+500-event buffer.
+
+`MainWindow` lists the library (`games_table_`) and rescans
+(`POST /v1/library/scan` then `GET /v1/games`) once on launch. It never
+re-fetches the whole list in response to a live event: `HandleGameEvent`
+patches the specific row directly from each event's own payload —
+`game.added`/`game.updated` carry the full record (`Server.cpp`,
+`AutoSetup.cpp`), so `UpsertRow` needs nothing else; `game.removed` carries
+only an id, so `RemoveRow` just deletes that row. Deliberately no idle-cost
+fallback (no periodic reconciliation poll) — an occasional missed event was
+judged cheaper than a timer that wakes up forever on the off chance one
+was dropped (see "Idle cost" above for why that trade-off matters here).
+Status and confidence are rendered through `GameColors.h`'s shared
+`StatusColor`/`ConfidenceColor` helpers (one color per `GameStatus`,
+red-to-green confidence gradient) so a game reads the same way here and in
+the detail dialog.
+
+`GameDetailDialog` (opened by double-clicking a row) loads the full record
+via `GET /v1/games/{id}` and saves corrections via `PATCH /v1/games/{id}`.
+The executable field is an editable combo box listing every detected
+candidate (`GameDetail::Candidate`, labeled with its kind and score,
+flagged when `is_installer` is set) alongside a "Browse…" button that opens
+the desktop's native file picker (`QFileDialog`) and stores the result
+relative to the game's `install_path` when possible. The runner field is
+the same pattern sourced from `GET /v1/runners` — a reference like
+`"proton_umu:GE-Proton11-7"` reads as a real name instead of raw text, while
+staying editable for a runner `GET /v1/runners` won't list (`native`, which
+has no concept of installed "builds").
+
+`SettingsDialog` is generated entirely from `GET /v1/config/schema` — almost
+no setting name is hardcoded anywhere in the frontend. One row per schema
+entry (a checkbox for `Type::Bool`, a line edit otherwise), grouped by
+`tier`: `basic` shown by default, `advanced`/`expert` behind a single
+disclosure toggle, matching `api.md`'s guidance to never omit them outright.
+Saving diffs each field's current text against the value it loaded with and
+sends only the changed keys in one `PATCH /v1/config` — a dialog left open
+and then saved unedited is a no-op, not a resend of every setting. A
+checkbox has no reset button (its default is always one click away); every
+other row does (`POST /v1/config/reset?key=...`). The one deliberate
+exception to "no hardcoded setting names": `default_runner.windows`/
+`default_runner.native` get the same runner-picker combo as
+`GameDetailDialog`'s runner field instead of a plain line edit — the schema
+has no way to mark a string as "this one's a runner reference," so
+`SettingsDialog.cpp`'s `kRunnerKeys` names those two keys directly rather
+than leaving them as free text a user has to already know the right syntax
+for.
+
+`MiradClient::ResolveSocketPath()` checks `$MIRA_SOCKET` before falling back
+to the default `$XDG_RUNTIME_DIR/mira/mirad.sock` — the same override
+`mirad --socket` takes on the daemon side. Without it, a `mirad` launched
+without the dev sandbox's `XDG_CONFIG_HOME` (e.g. typed as a bare `mirad` in
+a stray terminal) binds to that same default path and silently takes over
+the socket a sandboxed dev daemon was already serving on, since
+`XDG_CONFIG_HOME` only separates *config*, not the socket. Running the dev
+daemon with its own `--socket` (e.g. `~/.mira-dev/mirad.sock`) and the
+frontend with the matching `$MIRA_SOCKET` makes that collision structurally
+impossible instead of just unlikely.
 
 ## Planned, not yet built
 
