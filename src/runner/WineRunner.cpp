@@ -58,6 +58,12 @@ Result<void> WineRunner::Provision(const model::Game& game,
   Command command;
   command.argv = {build->path, "wineboot", "-u"};
   command.env["WINEPREFIX"] = game.data_dir;
+  // Provisioning runs unattended, off a background scan the user never
+  // asked for -- a Gecko/Mono install prompt popping up and waiting for a
+  // click would hang it indefinitely (and pop a real window on the user's
+  // desktop for a prefix they didn't know was being created). Neither DLL
+  // is needed for a plain wineboot init.
+  command.env["WINEDLLOVERRIDES"] = "mscoree,mshtml=";
 
   auto result = RunAndWait(command);
   if (!result) return std::unexpected(result.error());

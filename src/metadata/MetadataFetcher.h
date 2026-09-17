@@ -19,11 +19,13 @@ namespace mira::metadata {
 //   compatibility tier (no key needed), and cover art from Steam's CDN (no
 //   key needed).
 //
-//   Everything else: SteamGridDB, matched by name search, for cover art
-//   only — there is no equivalent free metadata source for a non-Steam
-//   game. Needs steamgriddb.api_key configured; without one this fails with
-//   no_steamgriddb_key and caches nothing, rather than succeeding at having
-//   done nothing.
+//   Everything else: SteamGridDB, matched by name search, for cover/hero/
+//   logo/icon art — there is no equivalent free metadata source for a
+//   non-Steam game. Needs steamgriddb.api_key configured; without one this
+//   fails with no_steamgriddb_key and caches nothing, rather than
+//   succeeding at having done nothing. Every slot caches its full candidate
+//   list (info["art_candidates"][slot]) alongside the auto-picked default,
+//   so a caller can offer a choice via SelectArtwork below.
 //
 // Shells out to curl, consistent with runner/Downloader.cpp, rather than
 // linking libcurl for what's occasional, human-triggered-adjacent traffic.
@@ -31,6 +33,12 @@ namespace mira::metadata {
 // every real caller should use instead of calling this directly off a
 // short-lived thread.
 Result<void> Fetch(const config::Config& config, const model::Game& game);
+
+// Re-downloads one SteamGridDB candidate (by the id it was listed with in
+// info["art_candidates"][slot], from a prior Fetch()) and makes it the
+// active image for `slot`, leaving every other cached slot untouched.
+Result<void> SelectArtwork(const config::Config& config, const std::string& game_id, const std::string& slot,
+                           std::int64_t candidate_id);
 
 // Absolute paths to a game's cached files, whether or not they exist yet.
 // Siblings of settings.toml (config.File().parent_path()/metadata,

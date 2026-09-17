@@ -84,19 +84,24 @@ std::string ContentTypeFor(const fs::path& file) {
   return "image/jpeg";
 }
 
-// Downloads `url` into this game's artwork dir (fails closed on any non-2xx
-// via curl -f, so a 404 never gets saved as if it were art), recording it
-// into `info` under "artwork" if it succeeds. Extension is taken from the
-// url itself, since that's the only place either source says what format it
-// sent.
+// Downloads `url` into this game's artwork dir under `slot` (fails closed
+// on any non-2xx via curl -f, so a 404 never gets saved as if it were art),
+// recording it into `info[slot == "cover" ? "artwork" : slot]` if it
+// succeeds -- "artwork" rather than "cover" for the cover slot specifically
+// is legacy naming kept for wire compatibility with what
+// GET /v1/games/{id}/metadata already documented before "hero" existed.
+// Extension is taken from the url itself, since that's the only place
+// either source says what format it sent. Returns whether the download
+// actually landed, so a caller re-picking a slot (SelectArtwork below) can
+// tell a bad pick from a good one instead of silently keeping stale info.
 //
 // Deliberately sends no credentials. Both sources put their images on a
 // plain public CDN, and SteamGridDB's rejects an Authorization header for
 // its own API with a 401 — so passing the key along, which is the obvious
 // thing to do when the search that produced the url needed it, is what
 // stopped every non-Steam game from ever getting a cover.
-void FetchArtworkInto(const config::Config& config, const std::string& url, const std::string& game_id,
-                      std::string_view source, json& info) {
+bool FetchArtworkInto(const config::Config& config, const std::string& url, const std::string& game_id,
+                      std::string_view source, std::string_view slot, json& info) {
   std::string ext = fs::path(std::string(url)).extension().string();
   if (ext.empty() || ext.size() > 5) ext = ".jpg";
 
@@ -105,9 +110,9 @@ void FetchArtworkInto(const config::Config& config, const std::string& url, cons
   fs::create_directories(dir, ec);
   if (ec) {
     log::Warn("couldn't create artwork dir for {}: {}", game_id, ec.message());
-    return;
+    return false;
   }
-  const fs::path dest = dir / ("cover" + ext);
+  const fs::path dest = dir / (std::string(slot) + ext);
 
   Command command;
   command.argv = {"curl", "-sSL",         "-f", "--max-time", std::string(kMaxTime),
@@ -117,12 +122,51 @@ void FetchArtworkInto(const config::Config& config, const std::string& url, cons
     log::Warn("couldn't download artwork for {} from {}", game_id, url);
     fs::remove(dest, ec);
     // The directory was created for a file that never arrived; leaving it
-    // behind makes an empty artwork/<id>/ look like a cache entry.
+    // behind makes an empty artwork/<id>/ look like a cache entry. Harmless
+    // if another slot already landed a file here -- remove() only clears an
+    // empty directory.
     fs::remove(dir, ec);
-    return;
+    return false;
   }
-  info["artwork"] = {{"file", dest.filename().string()}, {"content_type", ContentTypeFor(dest)},
-                     {"source", source}};
+  const std::string key = slot == "cover" ? "artwork" : std::string(slot);
+  info[key] = {{"file", dest.filename().string()}, {"content_type", ContentTypeFor(dest)},
+              {"source", source}};
+  return true;
+}
+
+// Fetches every SteamGridDB candidate for one art slot (grids/heroes/logos/
+// icons -> cover/hero/logo/icon), stores the full list in
+// info["art_candidates"][slot] so a caller can offer a choice, and downloads
+// the first (SteamGridDB's own top-ranked result) as the slot's default --
+// same behaviour as before this existed, just without a second round trip
+// once the user wants to pick a different one via SelectArtwork.
+void FetchGriddbSlot(const config::Config& config, const std::string& auth_header, std::int64_t griddb_id,
+                     const std::string& game_id, std::string_view endpoint, std::string_view slot, json& info) {
+  const json response = CurlJson({"curl", "-sSL", "-H", auth_header,
+                                  std::format("https://www.steamgriddb.com/api/v2/{}/game/{}", endpoint, griddb_id)});
+  if (response.is_discarded() || !Value(response, "success", false)) return;
+  const json data = Value(response, "data", json::array());
+  if (data.empty()) return;
+
+  json candidates = json::array();
+  for (const auto& item : data) {
+    const std::string url = Value(item, "url", std::string());
+    if (url.empty()) continue;
+    candidates.push_back({
+        {"id", Value(item, "id", std::int64_t{0})},
+        {"url", url},
+        {"thumb", Value(item, "thumb", std::string())},
+        {"width", Value(item, "width", 0)},
+        {"height", Value(item, "height", 0)},
+        {"style", Value(item, "style", std::string())},
+    });
+  }
+  if (candidates.empty()) return;
+  info["art_candidates"][std::string(slot)] = candidates;
+
+  // No credentials on the image download itself -- see FetchArtworkInto.
+  const std::string best_url = Value(candidates[0], "url", std::string());
+  FetchArtworkInto(config, best_url, game_id, "steamgriddb", slot, info);
 }
 
 void FetchSteamOwned(const config::Config& config, const std::string& appid, const std::string& game_id,
@@ -166,6 +210,41 @@ void FetchSteamOwned(const config::Config& config, const std::string& appid, con
       if (!description.empty()) categories.push_back(description);
     }
     steam_info["categories"] = categories;
+
+    if (data.contains("header_image")) steam_info["header_image_url"] = data["header_image"];
+    if (data.contains("background_raw")) steam_info["background_url"] = data["background_raw"];
+    steam_info["supported_languages"] = data.value("supported_languages", std::string());
+    if (data.contains("pc_requirements") && data["pc_requirements"].is_object()) {
+      steam_info["pc_requirements"] = {
+          {"minimum", data["pc_requirements"].value("minimum", std::string())},
+          {"recommended", data["pc_requirements"].value("recommended", std::string())},
+      };
+    }
+    json dlc = json::array();
+    for (const auto& id : data.value("dlc", json::array())) dlc.push_back(id);
+    steam_info["dlc"] = dlc;
+    json descriptors = json::array();
+    if (data.contains("content_descriptors") && data["content_descriptors"].is_object()) {
+      for (const auto& note : data["content_descriptors"].value("notes", json::array())) descriptors.push_back(note);
+    }
+    steam_info["content_descriptors"] = descriptors;
+    if (data.contains("achievements")) {
+      steam_info["achievements_total"] = data["achievements"].value("total", 0);
+    }
+    json screenshots = json::array();
+    for (const auto& shot : data.value("screenshots", json::array())) {
+      const std::string url = shot.value("path_full", std::string());
+      if (!url.empty()) screenshots.push_back(url);
+    }
+    steam_info["screenshots"] = screenshots;
+    json movies = json::array();
+    for (const auto& movie : data.value("movies", json::array())) {
+      if (!movie.contains("mp4")) continue;
+      const std::string url = movie["mp4"].value("max", std::string());
+      if (!url.empty()) movies.push_back(url);
+    }
+    steam_info["movies"] = movies;
+
     info["steam"] = steam_info;
   }
 
@@ -195,7 +274,18 @@ void FetchSteamOwned(const config::Config& config, const std::string& appid, con
   }
 
   FetchArtworkInto(config, std::format("https://cdn.akamai.steamstatic.com/steam/apps/{}/library_600x900.jpg", appid),
-                   game_id, "steam_cdn", info);
+                   game_id, "steam_cdn", "cover", info);
+  // Steam's own CDN serves this too, same appid, no key -- the wide banner
+  // shown at the top of a game's store/library page, distinct from the
+  // vertical library_600x900 cover above.
+  FetchArtworkInto(config, std::format("https://cdn.akamai.steamstatic.com/steam/apps/{}/library_hero.jpg", appid),
+                   game_id, "steam_cdn", "hero", info);
+  // Small store-listing thumbnail and the classic top-of-page banner --
+  // same CDN, same no-key pattern, just two more fixed filenames per appid.
+  FetchArtworkInto(config, std::format("https://cdn.akamai.steamstatic.com/steam/apps/{}/capsule_231x87.jpg", appid),
+                   game_id, "steam_cdn", "capsule", info);
+  FetchArtworkInto(config, std::format("https://cdn.akamai.steamstatic.com/steam/apps/{}/header.jpg", appid), game_id,
+                   "steam_cdn", "header", info);
 }
 
 Result<void> FetchNonSteam(const config::Config& config, const std::string& name,
@@ -224,15 +314,18 @@ Result<void> FetchNonSteam(const config::Config& config, const std::string& name
   const std::int64_t griddb_id = Value(search["data"][0], "id", std::int64_t{0});
   if (griddb_id == 0) return {};
 
-  const json grids = CurlJson({"curl", "-sSL", "-H", auth_header,
-                               std::format("https://www.steamgriddb.com/api/v2/grids/game/{}", griddb_id)});
-  if (grids.is_discarded() || !Value(grids, "success", false) ||
-      Value(grids, "data", json::array()).empty()) {
-    return {};
-  }
-  const std::string url = Value(grids["data"][0], "url", std::string());
-  if (url.empty()) return {};
-  FetchArtworkInto(config, url, game_id, "steamgriddb", info);
+  // Every candidate for every slot goes into info["art_candidates"][slot]
+  // (see FetchGriddbSlot) so a caller can offer a choice instead of only
+  // ever getting SteamGridDB's top pick.
+  FetchGriddbSlot(config, auth_header, griddb_id, game_id, "grids", "cover", info);
+  // Same griddb_id already resolved above -- a separate SteamGridDB
+  // endpoint, not a field on the grids response.
+  FetchGriddbSlot(config, auth_header, griddb_id, game_id, "heroes", "hero", info);
+  // Transparent logo (overlaid on hero/background in a GUI) and small
+  // square icon -- two more SteamGridDB endpoints, same griddb_id, same
+  // independent-of-each-other treatment as grids/heroes above.
+  FetchGriddbSlot(config, auth_header, griddb_id, game_id, "logos", "logo", info);
+  FetchGriddbSlot(config, auth_header, griddb_id, game_id, "icons", "icon", info);
   return {};
 }
 
@@ -265,6 +358,41 @@ Result<void> Fetch(const config::Config& config, const model::Game& game) {
   std::error_code ec;
   fs::create_directories(metadata_file.parent_path(), ec);
   if (ec) return Err("metadata_dir_failed", ec.message());
+
+  std::ofstream out(metadata_file, std::ios::trunc);
+  if (!out) return Err("metadata_write_failed", "couldn't open " + metadata_file.string() + " for writing");
+  out << info.dump(2);
+  return {};
+}
+
+Result<void> SelectArtwork(const config::Config& config, const std::string& game_id, const std::string& slot,
+                           std::int64_t candidate_id) {
+  const fs::path metadata_file = MetadataFile(config, game_id);
+  std::ifstream in(metadata_file);
+  if (!in) return Err("metadata_not_found", "no metadata cached for this game yet");
+  json info = json::parse(in, nullptr, false);
+  in.close();
+  if (info.is_discarded()) return Err("metadata_not_found", "cached metadata is corrupt");
+
+  if (!info.contains("art_candidates") || !info["art_candidates"].contains(slot)) {
+    return Err("no_candidates", "no candidate list cached for this slot");
+  }
+  std::string url;
+  for (const auto& candidate : info["art_candidates"][slot]) {
+    if (Value(candidate, "id", std::int64_t{-1}) == candidate_id) {
+      url = Value(candidate, "url", std::string());
+      break;
+    }
+  }
+  if (url.empty()) return Err("candidate_not_found", "no such candidate id for this slot");
+
+  // Looked up by id against the list this same code already fetched and
+  // cached, rather than accepting a caller-supplied URL directly -- so the
+  // daemon never ends up fetching an arbitrary URL on the API's behalf. No
+  // credentials on the download itself -- see FetchArtworkInto.
+  if (!FetchArtworkInto(config, url, game_id, "steamgriddb", slot, info)) {
+    return Err("download_failed", "couldn't download the selected image");
+  }
 
   std::ofstream out(metadata_file, std::ios::trunc);
   if (!out) return Err("metadata_write_failed", "couldn't open " + metadata_file.string() + " for writing");

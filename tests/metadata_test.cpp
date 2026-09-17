@@ -83,6 +83,32 @@ TEST_CASE("FetchQueue::Enqueue is a no-op when metadata.enabled is false") {
   CHECK_FALSE(fs::exists(metadata::MetadataFile(config, game.id)));
 }
 
+TEST_CASE("SelectArtwork fails closed: no metadata, no candidate list, unknown id") {
+  const fs::path dir = TempDir("metadata-select-artwork");
+  config::Config config(dir / "settings.toml");
+  config.Load();
+
+  // Nothing fetched yet for this game at all.
+  CHECK_FALSE(metadata::SelectArtwork(config, "no-such-game", "hero", 1).has_value());
+
+  const fs::path metadata_file = metadata::MetadataFile(config, "celeste");
+  fs::create_directories(metadata_file.parent_path());
+  {
+    // Has a metadata file, but no art_candidates for "hero" -- e.g. a
+    // Steam-owned game, which never populates that key at all.
+    std::ofstream(metadata_file) << nlohmann::json{{"source", "steam"}}.dump();
+  }
+  CHECK_FALSE(metadata::SelectArtwork(config, "celeste", "hero", 1).has_value());
+
+  {
+    std::ofstream(metadata_file) << nlohmann::json{
+        {"art_candidates", {{"hero", nlohmann::json::array({{{"id", 42}, {"url", "https://example.invalid/a.jpg"}}})}}},
+    }.dump();
+  }
+  // Right slot, wrong id.
+  CHECK_FALSE(metadata::SelectArtwork(config, "celeste", "hero", 999).has_value());
+}
+
 TEST_CASE("FetchQueue::Enqueue force=true bypasses metadata.enabled") {
   const fs::path dir = TempDir("metadata-forced");
   config::Config config(dir / "settings.toml");
