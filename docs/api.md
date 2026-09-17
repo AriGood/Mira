@@ -145,17 +145,32 @@ wrapped by `command_wrappers` in order (first entry outermost), tracked by
 `proc::ProcessSupervisor` for crash detection and playtime. 404 if unknown,
 409 if `needs_install` or not `ready`.
 
+`launch.pre_script` (global default, overridable per game via `.../config`)
+runs first, via `sh -c`, and blocks the request — a non-zero exit aborts
+the launch entirely with `409 pre_launch_failed` and the script's own
+output as the error, so a script that's supposed to prepare something the
+game needs (mount a drive, set a CPU governor) actually gets to finish
+before the game starts. `launch.post_script` runs once the game process
+exits (clean, crashed, or stopped, always) — in the background, so it
+never blocks anything, and its own exit code is only logged, never
+reflected in the recorded playtime/crash state.
+
 A Steam-sourced game (`runner_ref` starting `steam:`) is a special case:
-if the effective `steam.launch_mode` (global default, overridable per game
-via `.../config`) is `"steam"` — the default — this instead fires
-`steam steam://rungameid/<appid>` and returns immediately. Mira didn't
-spawn that process, so it's never tracked by ProcessSupervisor; Steam's own
-accounting is the source of truth for playtime on these games. Set
-`steam.launch_mode` to `"direct"` (globally or per game) to have Mira exec
-it itself instead, through the same Proton build and prefix Steam already
-set up — normal tracking applies, but `exe_path` has to be set manually
-first (see `POST /v1/steam/scan` below for why Mira can't determine it on
-its own).
+if the effective `steam.launch_mode` is `"steam"` — the default — this
+instead fires `steam steam://rungameid/<appid>` and returns immediately.
+Mira didn't spawn that process, so `proc::ProcessSupervisor::Launch`'s
+normal `waitpid()`-based tracking can't apply to it; instead, if
+`steam.track_process` is on (the default), a background watcher polls
+`/proc` for a process carrying `SteamAppId`/`SteamGameId=<appid>` in its
+environment — the same variable the Steamworks API itself reads — so
+Mira still shows the game `running` and records playtime, just without a
+real exit code/signal (not obtainable for a process Mira didn't spawn;
+Steam's own client already has that). `launch.post_script` still runs
+once it's gone. Set `steam.launch_mode` to `"direct"` (globally or per
+game) to have Mira exec it itself instead, through the same Proton build
+and prefix Steam already set up — normal tracking applies, but `exe_path`
+has to be set manually first (see `POST /v1/steam/scan` below for why
+Mira can't determine it on its own).
 
 ### `POST /v1/games/{id}/stop` — implemented
 Sends SIGTERM to the whole process group, escalating to SIGKILL after

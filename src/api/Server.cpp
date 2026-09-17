@@ -400,14 +400,27 @@ void Server::RegisterRoutes() {
                                   model::ToString(game->status)));
     }
 
+    const config::Resolver resolver(config_, game->overrides);
+    const std::string pre_script = resolver.GetString("launch.pre_script");
+    const std::string post_script = resolver.GetString("launch.post_script");
+    if (!pre_script.empty()) {
+      Command script;
+      script.argv = {"sh", "-c", pre_script};
+      const Result<runner::ExecResult> ran = runner::RunAndWait(script);
+      if (!ran || ran->exit_code != 0) {
+        return SendError(res, 409, "pre_launch_failed",
+                         !ran ? ran.error().message
+                             : std::format("launch.pre_script exited {}: {}", ran->exit_code, ran->output));
+      }
+    }
+
     // A Steam-sourced game defaults to asking the Steam client to launch it
     // (steam://rungameid/<appid>) rather than Mira execing it directly: full
     // achievements/overlay support, and Steam's own accounting is what
     // GET /v1/games/{id} reads back for it (see steam.launch_mode's doc).
-    // Mira can't track a process it didn't spawn, so this path never
-    // touches ProcessSupervisor — deliberately, not a gap to fill in later.
+    // Mira didn't spawn this process, so it can't waitpid() it — that's what
+    // steam.track_process (a /proc scan, see ProcessSupervisor) is for.
     if (game->runner_ref.starts_with("steam:")) {
-      const config::Resolver resolver(config_, game->overrides);
       if (resolver.GetString("steam.launch_mode") == "steam") {
         const std::string appid = game->runner_ref.substr(std::string_view("steam:").size());
         Command command;
@@ -418,6 +431,11 @@ void Server::RegisterRoutes() {
         [[maybe_unused]] auto _ =
             games_.Update(game->id, [](model::Game& g) { g.last_played_at = model::NowSeconds(); });
         events_.Publish("game.launched", {{"id", game->id}, {"via", "steam"}});
+        if (resolver.GetBool("steam.track_process")) {
+          if (auto tracked = supervisor_.TrackSteamLaunch(*game, appid, post_script); !tracked) {
+            log::Warn("couldn't start tracking {}: {}", game->id, tracked.error().message);
+          }
+        }
         return SendJson(res, {{"status", "launched_via_steam"}});
       }
     }
@@ -431,7 +449,7 @@ void Server::RegisterRoutes() {
 
     ApplyCommandWrappers(*command, config_.GetStringArray("command_wrappers"));
 
-    if (auto launched = supervisor_.Launch(*game, *command); !launched) {
+    if (auto launched = supervisor_.Launch(*game, *command, post_script); !launched) {
       return SendError(res, 409, launched.error().code, launched.error().message);
     }
     SendJson(res, {{"status", "running"}});

@@ -1,11 +1,16 @@
 #include "proc/ProcessSupervisor.h"
 
+#include <dirent.h>
 #include <signal.h>
 #include <string.h>
 #include <sys/wait.h>
 
+#include <cctype>
 #include <chrono>
+#include <cstdlib>
 #include <format>
+#include <fstream>
+#include <set>
 
 #include "core/Log.h"
 #include "runner/Exec.h"
@@ -20,6 +25,61 @@ constexpr auto kPollInterval = std::chrono::milliseconds(1000);
 // anything not yet checkpointed is lost. This bounds that loss to a minute
 // instead of the whole session.
 constexpr std::int64_t kCheckpointSeconds = 60;
+
+// How long to wait for a Steam-launched game to actually show up in /proc
+// before giving up -- Steam itself has real startup latency (client
+// wakeup, update checks, Proton's own prefix work) before the game process
+// exists at all.
+constexpr auto kSteamDetectTimeout = std::chrono::seconds(60);
+
+void RunScript(const std::string& script, const std::string& game_id, const char* which) {
+  if (script.empty()) return;
+  Command command;
+  command.argv = {"sh", "-c", script};
+  if (auto result = runner::RunAndWait(command); !result || result->exit_code != 0) {
+    log::Warn("launch.{}_script for {} failed: {}", which, game_id,
+             !result ? result.error().message : std::format("exited {}", result->exit_code));
+  }
+}
+
+// Every pid under this UID whose /proc/<pid>/environ carries
+// SteamAppId=<appid> or SteamGameId=<appid> -- the whole subtree Steam's
+// launch produces (reaper, pressure-vessel, proton, the game itself), not
+// one specific process, since which of those is "the" game process varies
+// by title and none of them is a child of this daemon either way.
+std::set<pid_t> FindSteamProcesses(const std::string& appid) {
+  std::set<pid_t> found;
+  const std::string marker_app = "SteamAppId=" + appid;
+  const std::string marker_game = "SteamGameId=" + appid;
+
+  DIR* proc_dir = ::opendir("/proc");
+  if (!proc_dir) return found;
+  while (const dirent* entry = ::readdir(proc_dir)) {
+    const std::string name = entry->d_name;
+    if (name.empty() || !std::isdigit(static_cast<unsigned char>(name[0]))) continue;
+    const pid_t pid = std::atoi(name.c_str());
+
+    std::ifstream environ_file("/proc/" + name + "/environ", std::ios::binary);
+    if (!environ_file) continue;  // gone, or not our own process (permission denied)
+    const std::string environ((std::istreambuf_iterator<char>(environ_file)),
+                              std::istreambuf_iterator<char>());
+    // environ is NUL-separated, not newline-separated -- a plain substring
+    // search still works since neither marker can span a NUL boundary by
+    // construction (both are single "KEY=VALUE" entries).
+    if (environ.find(marker_app) != std::string::npos || environ.find(marker_game) != std::string::npos) {
+      found.insert(pid);
+    }
+  }
+  ::closedir(proc_dir);
+  return found;
+}
+
+bool AnyAlive(const std::set<pid_t>& pids) {
+  for (pid_t pid : pids) {
+    if (::kill(pid, 0) == 0) return true;
+  }
+  return false;
+}
 
 }  // namespace
 
@@ -41,7 +101,8 @@ ProcessSupervisor::~ProcessSupervisor() {
   }
 }
 
-Result<void> ProcessSupervisor::Launch(const model::Game& game, const Command& command) {
+Result<void> ProcessSupervisor::Launch(const model::Game& game, const Command& command,
+                                       std::string post_script) {
   {
     std::lock_guard lock(mutex_);
     if (running_.contains(game.id)) {
@@ -63,7 +124,8 @@ Result<void> ProcessSupervisor::Launch(const model::Game& game, const Command& c
       if (stale->second.joinable()) stale->second.detach();
       watchers_.erase(stale);
     }
-    watchers_[game.id] = std::thread(&ProcessSupervisor::Watch, this, game.id, *pid, started_at);
+    watchers_[game.id] =
+        std::thread(&ProcessSupervisor::Watch, this, game.id, *pid, started_at, std::move(post_script));
   }
 
   // Written now, not at exit: this is "when you last started playing", and
@@ -90,6 +152,14 @@ Result<void> ProcessSupervisor::Stop(const std::string& game_id) {
     }
     pid = it->second;
   }
+  // 0 is TrackSteamLaunch's "reserved, not confirmed yet" sentinel — kill(0,
+  // ...)/kill(-0, ...) both mean "signal every process in the caller's own
+  // group" per POSIX, which would hit mirad itself. A real pid is always > 0.
+  if (pid <= 0) {
+    return Err("not_yet_confirmed",
+              std::format("\"{}\" was launched but its process isn't confirmed yet — try again shortly",
+                          game_id));
+  }
   // Negative pid signals the whole process group — see the setpgid note in
   // runner::SpawnDetached.
   if (::kill(-pid, SIGTERM) != 0 && ::kill(pid, SIGTERM) != 0) {
@@ -108,7 +178,8 @@ bool ProcessSupervisor::IsRunning(const std::string& game_id) const {
   return running_.contains(game_id);
 }
 
-void ProcessSupervisor::Watch(std::string game_id, pid_t pid, std::int64_t started_at) {
+void ProcessSupervisor::Watch(std::string game_id, pid_t pid, std::int64_t started_at,
+                              std::string post_script) {
   int status = 0;
   std::int64_t credited = 0;  // seconds already written to the store
   while (!stopping_.load(std::memory_order_relaxed)) {
@@ -194,6 +265,106 @@ void ProcessSupervisor::Watch(std::string game_id, pid_t pid, std::int64_t start
                                  {"signal", signal_number},
                                  {"played_seconds", played},
                                  {"error", error}});
+
+  RunScript(post_script, game_id, "post");
+}
+
+Result<void> ProcessSupervisor::TrackSteamLaunch(const model::Game& game, const std::string& appid,
+                                                 std::string post_script) {
+  {
+    std::lock_guard lock(mutex_);
+    if (running_.contains(game.id)) {
+      return Err("already_running", std::format("\"{}\" is already running", game.id));
+    }
+    // Reserved immediately, before detection even starts, for the same
+    // reason Launch() reserves it before its process even exists yet:
+    // without this, firing /launch twice in quick succession for the same
+    // Steam game starts two independent detection watchers that could both
+    // eventually find the same real process. 0 is never a real pid (see
+    // Stop()'s guard below) so it's unambiguous as "not confirmed yet".
+    running_[game.id] = 0;
+    if (auto stale = watchers_.find(game.id); stale != watchers_.end()) {
+      if (stale->second.joinable()) stale->second.detach();
+      watchers_.erase(stale);
+    }
+    watchers_[game.id] = std::thread(&ProcessSupervisor::WatchSteam, this, game.id, appid,
+                                     model::NowSeconds(), std::move(post_script));
+  }
+  return {};
+}
+
+void ProcessSupervisor::WatchSteam(std::string game_id, std::string appid, std::int64_t requested_at,
+                                   std::string post_script) {
+  std::set<pid_t> matched;
+  std::int64_t started_at = 0;
+
+  // Detection phase: wait for the launch to actually produce a process.
+  while (!stopping_.load(std::memory_order_relaxed) && matched.empty()) {
+    matched = FindSteamProcesses(appid);
+    if (!matched.empty()) break;
+    if (model::NowSeconds() - requested_at >= kSteamDetectTimeout.count()) {
+      log::Warn("never detected a process for {} (appid {}) after {}s -- giving up", game_id, appid,
+               kSteamDetectTimeout.count());
+      std::lock_guard lock(mutex_);
+      running_.erase(game_id);
+      return;
+    }
+    std::this_thread::sleep_for(kPollInterval);
+  }
+  if (stopping_.load(std::memory_order_relaxed)) return;  // daemon going away
+
+  started_at = model::NowSeconds();
+  {
+    std::lock_guard lock(mutex_);
+    running_[game_id] = *matched.begin();
+  }
+  auto stamped = games_.Update(game_id, [&](model::Game& stored) { stored.last_played_at = started_at; });
+  if (!stamped) log::Error("failed to record launch time for {}: {}", game_id, stamped.error().message);
+  log::Info("detected {} running (appid {}, {} process(es))", game_id, appid, matched.size());
+  events_.Publish("game.state", {{"id", game_id}, {"state", "running"}});
+
+  // Liveness phase: re-scan every tick rather than just poll the pids
+  // already found, since the process tree can reshape early on (pressure-
+  // vessel/proton forking further children) and a stale pid set would
+  // report "exited" the moment the first-seen process happens to reap.
+  std::int64_t credited = 0;
+  while (!stopping_.load(std::memory_order_relaxed)) {
+    const std::set<pid_t> current = FindSteamProcesses(appid);
+    if (current.empty() && !AnyAlive(matched)) break;
+    if (!current.empty()) matched = current;
+
+    const std::int64_t elapsed = model::NowSeconds() - started_at;
+    if (elapsed - credited >= kCheckpointSeconds) {
+      const std::int64_t delta = elapsed - credited;
+      auto checkpoint = games_.Update(game_id, [&](model::Game& game) { game.play_seconds += delta; });
+      if (checkpoint) credited = elapsed;
+    }
+    std::this_thread::sleep_for(kPollInterval);
+  }
+  if (stopping_.load(std::memory_order_relaxed)) return;  // daemon going away
+
+  const std::int64_t ended_at = model::NowSeconds();
+  const std::int64_t played = ended_at > started_at ? ended_at - started_at : 0;
+
+  {
+    std::lock_guard lock(mutex_);
+    running_.erase(game_id);
+    kill_deadlines_.erase(game_id);
+    stop_requested_.erase(game_id);
+  }
+
+  // No real exit code/signal available for a process Mira didn't spawn, so
+  // no crash detection here -- Steam's own client already shows that;
+  // last_error is left alone rather than guessed at.
+  auto updated =
+      games_.Update(game_id, [&](model::Game& game) { game.play_seconds += played - credited; });
+  if (!updated) log::Error("failed to record playtime for {}: {}", game_id, updated.error().message);
+
+  log::Info("{} (Steam-launched) exited after {}s", game_id, played);
+  events_.Publish("game.state",
+                 {{"id", game_id}, {"state", "exited"}, {"played_seconds", played}});
+
+  RunScript(post_script, game_id, "post");
 }
 
 }  // namespace mira::proc

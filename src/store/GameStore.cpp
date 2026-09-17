@@ -49,9 +49,23 @@ void GameStore::Load() {
 }
 
 Result<void> GameStore::Save() {
+  // Every caller (Upsert/Update/Remove) releases mutex_ before calling this,
+  // so locking again here is safe, not a re-entrant deadlock -- and
+  // necessary: without it, this read of games_ raced a concurrent Update()
+  // on another thread (TSan caught this for real, not hypothetically, once
+  // ProcessSupervisor's own background watcher thread and a caller thread
+  // both touched the same GameStore around the same time). Copied under the
+  // lock, then serialized/written from the copy so a slow disk write never
+  // holds mutex_ and blocks an unrelated Find()/Update() the whole time.
+  std::vector<model::Game> games_copy;
+  {
+    std::lock_guard lock(mutex_);
+    games_copy = games_;
+  }
+
   json whole = json::object();
   whole["game"] = json::array();
-  for (const model::Game& game : games_) whole["game"].push_back(model::ToJson(game));
+  for (const model::Game& game : games_copy) whole["game"].push_back(model::ToJson(game));
 
   std::error_code ec;
   std::filesystem::create_directories(file_.parent_path(), ec);
