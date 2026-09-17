@@ -1,6 +1,8 @@
 #include "GameDetailDialog.h"
 
-#include "GameColors.h"
+#include "OverridesEditor.h"
+
+#include "../ui/GamePresentation.h"
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -128,21 +130,8 @@ GameDetailDialog::GameDetailDialog(std::string id, QWidget* parent)
 
   advanced_layout->addLayout(advanced_form);
 
-  auto* overrides_label = new QLabel("Overrides (global settings, just for this game):", advanced_container_);
-  overrides_label->setStyleSheet("font-weight: 600;");
-  advanced_layout->addWidget(overrides_label);
-
-  auto* overrides_widget = new QWidget(advanced_container_);
-  overrides_form_ = new QFormLayout(overrides_widget);
-  overrides_form_->setVerticalSpacing(8);
-  overrides_form_->setHorizontalSpacing(14);
-
-  auto* overrides_scroll = new QScrollArea(advanced_container_);
-  overrides_scroll->setWidget(overrides_widget);
-  overrides_scroll->setWidgetResizable(true);
-  overrides_scroll->setMaximumHeight(200);
-  overrides_scroll->setFrameShape(QFrame::NoFrame);
-  advanced_layout->addWidget(overrides_scroll);
+  overrides_ = new mira_gui::OverridesEditor(id_, advanced_container_);
+  advanced_layout->addWidget(overrides_);
 
   advanced_container_->hide();
   layout->addWidget(advanced_container_, /*stretch=*/1);
@@ -177,7 +166,7 @@ void GameDetailDialog::Load() {
     setEnabled(true);
     Populate(result.game);
   });
-  LoadOverrides();
+  overrides_->Load();
 }
 
 void GameDetailDialog::Populate(const mira_gui::GameDetail& game) {
@@ -293,100 +282,6 @@ void GameDetailDialog::BrowseExecutable() {
   exe_combo_->lineEdit()->setCursorPosition(0);
 }
 
-// --- per-game overrides (GET/PATCH /v1/games/{id}/config) -----------------
-
-void GameDetailDialog::LoadOverrides() {
-  mira_gui::MiradClient::GetConfigSchemaAsync(this, [this](mira_gui::ConfigSchemaResult schema) {
-    if (!schema.ok) return;  // non-fatal: the main game fields still work without this section
-    BuildOverrideRows(schema);
-
-    mira_gui::MiradClient::GetGameConfigAsync(this, id_, [this](mira_gui::GameConfigResult config) {
-      if (!config.ok) return;
-      ApplyOverrideValues(config);
-    });
-  });
-}
-
-void GameDetailDialog::BuildOverrideRows(const mira_gui::ConfigSchemaResult& schema) {
-  for (const mira_gui::ConfigSchemaEntry& entry : schema.entries) {
-    OverrideField field;
-    field.entry = entry;
-
-    auto* row_widget = new QWidget(this);
-    auto* row_layout = new QHBoxLayout(row_widget);
-    row_layout->setContentsMargins(0, 0, 0, 0);
-    row_layout->setSpacing(8);
-
-    if (entry.type == "a boolean") {
-      field.check = new QCheckBox(row_widget);
-      row_layout->addWidget(field.check);
-    } else {
-      field.line = new QLineEdit(row_widget);
-      if (entry.type == "an array of strings") field.line->setPlaceholderText("comma-separated");
-      row_layout->addWidget(field.line, /*stretch=*/1);
-    }
-
-    field.layer_label = new QLabel(row_widget);
-    field.layer_label->setStyleSheet("color: #9e9e9e; font-size: 11px;");
-    field.layer_label->setMinimumWidth(56);
-    row_layout->addWidget(field.layer_label);
-
-    // Only meaningful once this game actually has an override to remove —
-    // disabled until ApplyOverrideValues confirms layer == "game", since
-    // there's nothing to clear otherwise.
-    field.reset_button = new QPushButton("Clear", row_widget);
-    field.reset_button->setMaximumWidth(48);
-    field.reset_button->setEnabled(false);
-    field.reset_button->setToolTip("No per-game override set for this key");
-    row_layout->addWidget(field.reset_button);
-
-    auto* label = new QLabel(QString::fromStdString(entry.key), this);
-    label->setToolTip(QString::fromStdString(entry.doc));
-    row_widget->setToolTip(QString::fromStdString(entry.doc));
-
-    field.row_widget = row_widget;
-    override_fields_.push_back(field);
-    const size_t index = override_fields_.size() - 1;
-    connect(field.reset_button, &QPushButton::clicked, this, [this, index] { ResetOverride(index); });
-    overrides_form_->addRow(label, row_widget);
-  }
-}
-
-void GameDetailDialog::ApplyOverrideValues(const mira_gui::GameConfigResult& config) {
-  // BuildOverrideRows makes one row per schema key, since only this
-  // (per-game, not the schema itself) response says which are overridable —
-  // library_roots and friends (config::Resolver::kDaemonOnlyKeys) describe
-  // the daemon, not this game, and are hidden here rather than never built.
-  for (const mira_gui::GameConfigEntry& entry : config.entries) {
-    const auto it = std::ranges::find(override_fields_, entry.key,
-                                      [](const OverrideField& f) { return f.entry.key; });
-    if (it == override_fields_.end()) continue;
-    OverrideField& field = *it;
-
-    overrides_form_->setRowVisible(field.row_widget, entry.overridable);
-    if (!entry.overridable) continue;
-
-    field.layer = entry.layer;
-    field.layer_label->setText(QString("(%1)").arg(QString::fromStdString(entry.layer)));
-    field.reset_button->setEnabled(entry.layer == "game");
-    field.reset_button->setToolTip(entry.layer == "game"
-                                        ? "Remove this game's override, falling back to the setting below it"
-                                        : "No per-game override set for this key");
-    if (field.check) {
-      field.check->setChecked(entry.value_display == "true");
-    } else {
-      field.line->setText(QString::fromStdString(entry.value_display));
-      field.line->setCursorPosition(0);
-    }
-    field.original = OverrideCurrentText(field);
-  }
-}
-
-std::string GameDetailDialog::OverrideCurrentText(const OverrideField& field) const {
-  if (field.check) return field.check->isChecked() ? "true" : "false";
-  return field.line->text().toStdString();
-}
-
 void GameDetailDialog::Save() {
   mira_gui::GamePatch patch;
   patch.name = name_edit_->text().toStdString();
@@ -398,13 +293,7 @@ void GameDetailDialog::Save() {
   patch.runner_config_json = runner_config_edit_->toPlainText().toStdString();
   patch.env_json = env_edit_->toPlainText().toStdString();
 
-  std::vector<mira_gui::GameConfigEdit> override_edits;
-  for (const OverrideField& field : override_fields_) {
-    const std::string current = OverrideCurrentText(field);
-    if (!field.layer.empty() && current != field.original) {
-      override_edits.push_back(mira_gui::GameConfigEdit{field.entry.key, field.entry.type, current, false});
-    }
-  }
+  const std::vector<mira_gui::GameConfigEdit> override_edits = overrides_->PendingEdits();
 
   setEnabled(false);
   mira_gui::MiradClient::PatchGameAsync(this, id_, patch, [this, override_edits](mira_gui::PatchGameResult result) {
@@ -429,19 +318,4 @@ void GameDetailDialog::Save() {
           accept();
         });
   });
-}
-
-void GameDetailDialog::ResetOverride(size_t index) {
-  OverrideField& field = override_fields_[index];
-  mira_gui::MiradClient::PatchGameConfigAsync(
-      this, id_, {mira_gui::GameConfigEdit{field.entry.key, field.entry.type, std::string(), true}},
-      [this](mira_gui::PatchGameConfigResult result) {
-        if (!result.ok) {
-          QMessageBox::warning(this, "Reset failed", QString::fromStdString(result.error));
-          return;
-        }
-        mira_gui::MiradClient::GetGameConfigAsync(this, id_, [this](mira_gui::GameConfigResult config) {
-          if (config.ok) ApplyOverrideValues(config);
-        });
-      });
 }

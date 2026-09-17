@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-#include "MiradClient.h"
+#include "../client/MiradClient.h"
 
 class QCheckBox;
 class QComboBox;

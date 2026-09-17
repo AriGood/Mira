@@ -1,7 +1,8 @@
-# The Qt frontend. Deliberately minimal for now — a blank window is the whole
-# scope of this pass (see docs/architecture.md for what it grows into: a
-# tray-capable process that can supervise mirad itself when systemd isn't
-# managing it). It is a separate binary and a separate CMake project scope
+# The Qt frontend: a cover-art library grid (LibraryWindow) with the older
+# table view (MainWindow) kept as `mira-gui --classic`. See
+# docs/architecture.md for what it still grows into: a tray-capable process
+# that can supervise mirad itself when systemd isn't managing it.
+# It is a separate binary and a separate CMake project scope
 # from mira_core: the frontend talks to the daemon exclusively over the REST
 # API in docs/api.md, never by linking backend code directly.
 #
@@ -27,15 +28,47 @@ qt_standard_project_setup()
 
 qt_add_executable(mira-gui
   main.cpp
-  MainWindow.cpp
-  MainWindow.h
-  MiradClient.cpp
-  MiradClient.h
-  GameColors.h
-  GameDetailDialog.cpp
-  GameDetailDialog.h
-  SettingsDialog.cpp
-  SettingsDialog.h
+
+  # client/ — everything that talks to mirad, and nothing that draws.
+  client/Async.h
+  client/EventStream.cpp
+  client/EventStream.h
+  client/JsonMapping.cpp
+  client/JsonMapping.h
+  client/MiradClient.cpp
+  client/MiradClient.h
+  client/Transport.cpp
+  client/Transport.h
+  client/Types.h
+
+  # ui/ — presentation shared by more than one view or dialog.
+  ui/CoverArt.cpp
+  ui/CoverArt.h
+  ui/GameActions.cpp
+  ui/GameActions.h
+  ui/GameDetailsPanel.cpp
+  ui/GameDetailsPanel.h
+  ui/GamePresentation.h
+  ui/GameTileDelegate.cpp
+  ui/GameTileDelegate.h
+
+  # views/ — the two top-level library windows.
+  views/LibraryWindow.cpp
+  views/LibraryWindow.h
+  views/MainWindow.cpp
+  views/MainWindow.h
+
+  # dialogs/
+  dialogs/DeleteGameDialog.cpp
+  dialogs/DeleteGameDialog.h
+  dialogs/GameDetailDialog.cpp
+  dialogs/GameDetailDialog.h
+  dialogs/OverridesEditor.cpp
+  dialogs/OverridesEditor.h
+  dialogs/SettingsDialog.cpp
+  dialogs/SettingsCategories.cpp
+  dialogs/SettingsCategories.h
+  dialogs/SettingsDialog.h
 )
 
 # The placeholder app icon, embedded so mira-gui has a window/taskbar icon

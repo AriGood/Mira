@@ -85,12 +85,26 @@ src/
   cli/      main.cpp for `mira` — see cli.md for what it does.
   mirad_main.cpp   entry point for the daemon.
 
-frontend/   the Qt frontend (mira-gui): MiradClient (the REST + SSE client,
-            the only thing that talks to mirad), MainWindow (the library
-            table), GameDetailDialog (view/edit one game), SettingsDialog
-            (generated from the config schema), GameColors (shared status/
-            confidence presentation). A separate CMake project scope; never
-            add a target_link_libraries(mira-gui PRIVATE mira_core).
+frontend/   the Qt frontend (mira-gui), in four layers that only ever
+            depend downward:
+  client/   everything that talks to mirad and nothing that draws:
+            Transport (one socket round trip: timeouts, the error
+            envelope), JsonMapping (JSON <-> the structs in Types.h),
+            Async (the worker-thread hop and the liveness rule that
+            makes it safe), MiradClient (one method per endpoint),
+            EventStream (the SSE connection).
+  ui/       presentation shared by more than one view or dialog:
+            GamePresentation (status/confidence colours and the
+            date/playtime formatters), CoverArt (generated placeholder
+            covers), GameTileDelegate, GameDetailsPanel, GameActions
+            (launch/stop/delete with their prompts).
+  views/    LibraryWindow (the default cover-art grid) and MainWindow
+            (the classic table, kept as --classic).
+  dialogs/  GameDetailDialog + OverridesEditor (per-game config),
+            SettingsDialog + SettingsCategories (generated from the
+            config schema), DeleteGameDialog.
+            A separate CMake project scope; never add a
+            target_link_libraries(mira-gui PRIVATE mira_core).
 
 tests/      doctest-based unit tests, one executable (mira_tests).
 packaging/  the systemd user unit and the .desktop entry.
@@ -395,6 +409,32 @@ one stateful exception: a long-lived connection to `GET /v1/events`,
 reconnecting on any drop with a fixed backoff and replaying via
 `Last-Event-ID` so a reconnect doesn't miss anything still in `mirad`'s
 500-event buffer.
+
+There are two library views, and both are kept on purpose. `LibraryWindow`
+is the one that opens by default: a cover-art grid modelled on Playnite's
+shelf, with a filter sidebar, a search box and a details panel. `MainWindow`
+is the table — every field of every game visible at once — reachable as
+`mira-gui --classic` or from the grid's View menu, which opens it as a second
+top-level window rather than swapping the grid out. The grid is the better
+browser and the table is the better audit tool for a library that was just
+scanned, so neither replaces the other. Both are thin clients over the same
+`MiradClient` calls and each holds its own `EventStream`, so two open windows
+can't disagree about what the daemon said.
+
+`LibraryWindow` fetches the whole library once (no `?status=` filter) and
+filters it client-side in `ApplyFilter`. That's what lets the search box feel
+instant, and it's the only way "Playing now" and "Never played" can be
+filters at all — neither is a server-side query. One click selects a tile and
+fills the details panel; a second (double) click launches; right-click opens
+the per-game menu (play/stop, details & settings, open install folder,
+remove). Launching on the *first* click would turn a misclick into a started
+game, so the details panel is always what a single click produces. The tile
+itself is painted by `GameTileDelegate` straight from the item's own roles,
+so a repaint never reaches back into the window's state. `CoverArt.h`
+generates the artwork: the backend has none yet, and a grid of identical grey
+rectangles is unusable, so each game gets a hue derived from its *id* — stable
+across restarts, renames and machines, so a user can learn a tile by sight.
+When real artwork lands it becomes the fallback for games that have none.
 
 `MainWindow` lists the library (`games_table_`) and rescans
 (`POST /v1/library/scan` then `GET /v1/games`) once on launch. It never
