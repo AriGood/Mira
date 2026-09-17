@@ -61,6 +61,27 @@ TEST_CASE("Config round-trips a value and preserves frontend settings") {
   CHECK(reloaded.FrontendSettings().value("theme", "") == "dark");
 }
 
+TEST_CASE("frontend settings live in their own file, never leaking into settings.toml") {
+  const fs::path file = TempFile("settings-frontend-split.toml");
+  fs::remove(file);
+  const fs::path frontend_file = file.parent_path() / "frontend.toml";
+  fs::remove(frontend_file);
+
+  Config config(file);
+  config.Load();
+  REQUIRE(config.Patch({{"frontend", {{"theme", "dark"}}}, {"scan", {{"debounce_ms", 9000}}}}).has_value());
+
+  CHECK(fs::exists(frontend_file));
+  std::ifstream backend(file);
+  std::string backend_text((std::istreambuf_iterator<char>(backend)), std::istreambuf_iterator<char>());
+  CHECK(backend_text.find("frontend") == std::string::npos);
+
+  Config reloaded(file);
+  reloaded.Load();
+  CHECK(reloaded.GetInt("scan.debounce_ms") == 9000);
+  CHECK(reloaded.FrontendSettings().value("theme", "") == "dark");
+}
+
 TEST_CASE("Config::Set rejects an invalid value and changes nothing") {
   const fs::path file = TempFile("settings-invalid.toml");
   fs::remove(file);

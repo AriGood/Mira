@@ -18,10 +18,11 @@ namespace mira::config {
 // core/TomlJson. Unknown backend keys are preserved across writes, so a newer
 // frontend/daemon's settings survive an older one rather than being dropped.
 //
-// One TOML table, [frontend], is reserved for the frontend's own settings.
-// The backend does not know its shape and never validates it — it is stored
-// and returned verbatim so the two processes can share one settings file
-// without the daemon needing to track the frontend's schema.
+// The frontend's own settings live in a sibling file, frontend.toml, kept
+// deliberately separate from settings.toml: the daemon owns and validates
+// every key in settings.toml against the schema, while frontend.toml is
+// opaque, stored and returned verbatim, so the frontend can evolve its own
+// settings shape without ever touching the backend's schema.
 class Config {
 public:
   explicit Config(std::filesystem::path file);
@@ -59,9 +60,11 @@ public:
 
 private:
   nlohmann::json GetLocked(std::string_view key) const;
+  Result<void> SaveFrontendFile();
 
   mutable std::mutex mutex_;
-  std::filesystem::path file_;
+  std::filesystem::path file_;           // settings.toml: backend keys only
+  std::filesystem::path frontend_file_;  // frontend.toml: opaque, the frontend's own
   nlohmann::json document_;
   nlohmann::json frontend_ = nlohmann::json::object();
 };
