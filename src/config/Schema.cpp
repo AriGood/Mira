@@ -4,6 +4,7 @@
 #include <format>
 
 #include "config/KnownExePatterns.h"
+#include "config/RunnerSources.h"
 #include "core/Strings.h"
 
 namespace mira::config {
@@ -220,6 +221,21 @@ Schema::Schema() {
        "process tracking (stop/crash/playtime) — override per game via "
        "games.toml overrides if one game needs the other mode.",
        OneOf({"steam", "direct"})},
+
+      {"runner_sources.proton_ge.repo", Type::String, std::string(runner_sources::kProtonGERepo),
+       Tier::Advanced, "GitHub \"owner/repo\" Proton-GE builds are downloaded from."},
+
+      {"runner_sources.proton_ge.asset_pattern", Type::String,
+       std::string(runner_sources::kProtonGEAssetPattern), Tier::Expert,
+       "Glob a release's assets are filtered to before offering one to download — "
+       "excludes non-x86_64 builds and checksum files."},
+
+      {"runner_sources.wine_ge.repo", Type::String, std::string(runner_sources::kWineGERepo),
+       Tier::Advanced, "GitHub \"owner/repo\" Wine-GE builds are downloaded from."},
+
+      {"runner_sources.wine_ge.asset_pattern", Type::String,
+       std::string(runner_sources::kWineGEAssetPattern), Tier::Expert,
+       "Glob a release's assets are filtered to before offering one to download."},
 
       {"events.sse_keepalive_s", Type::Int, 0, Tier::Expert,
        "Seconds between keepalive comments on the event stream. 0 disables them; a Unix "

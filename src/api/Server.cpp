@@ -6,6 +6,7 @@
 #include <atomic>
 #include <filesystem>
 #include <format>
+#include <thread>
 
 #include <httplib.h>
 
@@ -14,6 +15,7 @@
 #include "core/Log.h"
 #include "desktop/DesktopEntries.h"
 #include "library/Scanner.h"
+#include "runner/Downloader.h"
 #include "runner/Exec.h"
 #include "runner/RunnerRegistry.h"
 #include "steam/SteamScanner.h"
@@ -504,6 +506,58 @@ void Server::RegisterRoutes() {
     json out = json::array();
     for (const model::RunnerBuild& build : registry.DiscoverAll()) out.push_back(model::ToJson(build));
     SendJson(res, std::move(out));
+  });
+
+  // What's available to install, not what's installed (that's GET
+  // /v1/runners above) — hits GitHub's API live, so it's the one endpoint
+  // in this file with real network latency baked in.
+  http_->Get("/v1/runners/catalog", [this](const Request& req, Response& res) {
+    const std::string kind = req.has_param("kind") ? req.get_param_value("kind") : "proton";
+    auto releases = runner::ListReleases(config_, kind);
+    if (!releases) return SendError(res, 502, releases.error().code, releases.error().message);
+    json out = json::array();
+    for (const auto& r : *releases) {
+      out.push_back({{"tag", r.tag}, {"asset_name", r.asset_name}, {"size_bytes", r.size_bytes},
+                     {"published_at", r.published_at}, {"has_checksum", !r.checksum_url.empty()}});
+    }
+    SendJson(res, std::move(out));
+  });
+
+  // Downloads and installs a build from the catalog above. Runs detached —
+  // a Proton-GE tarball is 500+ MB, minutes over a slow connection, and
+  // there's no job queue yet (see docs/architecture.md) to track it
+  // properly; runners.download.finished/failed on the event stream is how
+  // a caller finds out it's done, the same pattern game launches already
+  // use for "don't block the request thread on something slow."
+  http_->Post("/v1/runners/download", [this](const Request& req, Response& res) {
+    json body = json::parse(req.body, nullptr, false);
+    if (body.is_discarded() || !body.contains("kind") || !body.contains("tag")) {
+      return SendError(res, 400, "invalid_body", R"(expected {"kind": "proton"|"wine", "tag": "..."})");
+    }
+    const std::string kind = body["kind"];
+    const std::string tag = body["tag"];
+
+    auto releases = runner::ListReleases(config_, kind);
+    if (!releases) return SendError(res, 502, releases.error().code, releases.error().message);
+    const auto match = std::ranges::find(*releases, tag, &runner::ReleaseAsset::tag);
+    if (match == releases->end()) {
+      return SendError(res, 404, "release_not_found", std::format("no {} release tagged \"{}\"", kind, tag));
+    }
+
+    const runner::ReleaseAsset asset = *match;
+    events_.Publish("runners.download.started", {{"kind", kind}, {"tag", tag}});
+    std::thread([this, kind, tag, asset] {
+      if (auto installed = runner::DownloadAndInstall(config_, kind, asset); !installed) {
+        log::Error("runner download failed ({} {}): {}", kind, tag, installed.error().message);
+        events_.Publish("runners.download.failed",
+                       {{"kind", kind}, {"tag", tag}, {"error", installed.error().message}});
+      } else {
+        log::Info("installed {} {}", kind, tag);
+        events_.Publish("runners.download.finished", {{"kind", kind}, {"tag", tag}});
+      }
+    }).detach();
+
+    SendJson(res, {{"status", "downloading"}, {"tag", tag}}, 202);
   });
 
   // --- events (SSE) -----------------------------------------------------
