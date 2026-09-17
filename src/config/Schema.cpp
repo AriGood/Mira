@@ -203,6 +203,24 @@ Schema::Schema() {
        "name-matched candidate to actually count as an installer, so a small stub or "
        "helper named like one doesn't get misflagged.", Range(0, 1'000'000)},
 
+      {"steam.enabled", Type::Bool, true, Tier::Basic,
+       "Detect installed Steam games and let Mira launch them alongside its own library."},
+
+      {"steam.root", Type::String, "", Tier::Expert,
+       "Override for Steam's install directory. Empty auto-detects "
+       "~/.steam/steam, then ~/.local/share/Steam."},
+
+      {"steam.launch_mode", Type::String, "steam", Tier::Advanced,
+       "How launching a Steam game works. \"steam\" fires "
+       "steam://rungameid/<appid> and lets the Steam client launch it — full "
+       "achievements/overlay support, but Mira can't track its process "
+       "(Steam already accounts for playtime, read from its own files "
+       "instead). \"direct\" has Mira exec the game itself, through the same "
+       "Proton build and prefix Steam already set up, with normal Mira "
+       "process tracking (stop/crash/playtime) — override per game via "
+       "games.toml overrides if one game needs the other mode.",
+       OneOf({"steam", "direct"})},
+
       {"events.sse_keepalive_s", Type::Int, 0, Tier::Expert,
        "Seconds between keepalive comments on the event stream. 0 disables them; a Unix "
        "socket does not need them and a timer would cost idle wakeups.",
