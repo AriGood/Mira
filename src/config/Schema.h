@@ -41,13 +41,27 @@ enum class Type { Bool, Int, Double, String, StringArray, Object };
 // rejected with a reason rather than silently clamped.
 using Validator = std::function<std::optional<std::string>(const nlohmann::json&)>;
 
+// A Validator plus the shape it enforces, so /v1/config/schema can publish
+// that shape instead of a UI only learning it from a rejected PATCH.
+// Constructible from a plain Validator when there's no shape to describe.
+struct Constraint {
+  Validator validate = {};
+  std::vector<std::string> one_of;      // empty unless this is an enum
+  std::optional<double> minimum;        // unset unless this is ranged
+  std::optional<double> maximum;
+
+  Constraint() = default;
+  Constraint(Validator validator) : validate(std::move(validator)) {}  // NOLINT: implicit
+  explicit operator bool() const { return static_cast<bool>(validate); }
+};
+
 struct Entry {
   std::string key;  // dotted, e.g. "scan.debounce_ms"
   Type type;
   nlohmann::json default_value;
   Tier tier;
   std::string doc;
-  Validator validator = {};  // optional
+  Constraint constraint = {};  // optional
 };
 
 // Every configurable value in the daemon is declared here exactly once. The

@@ -16,6 +16,10 @@
 
 namespace mira::proc {
 
+// Every pid whose WINEPREFIX/STEAM_COMPAT_DATA_PATH points at data_dir.
+// Exposed for testing the prefix-collision rule (see the .cpp).
+std::set<pid_t> FindPrefixProcesses(const std::string& data_dir);
+
 // Tracks the games currently running. One watcher thread per running game,
 // which is fine at a launcher's scale (usually one) and — unlike a single
 // blanket waitpid(-1) reaper — cannot steal the exit status of the
@@ -76,6 +80,7 @@ private:
 
   mutable std::mutex mutex_;
   std::map<std::string, pid_t> running_;
+  std::map<std::string, std::string> prefixes_;  // game id -> data_dir, for Stop()
   std::map<std::string, std::int64_t> kill_deadlines_;  // game id -> when to SIGKILL
   std::set<std::string> stop_requested_;  // Stop() was called; the exit isn't a crash
   std::map<std::string, std::thread> watchers_;
