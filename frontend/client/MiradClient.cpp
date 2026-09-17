@@ -295,7 +295,10 @@ PatchConfigResult SaveFrontendPrefsSync(const FrontendPrefs& prefs) {
   if (prefs.sort_descending) table["sort_descending"] = *prefs.sort_descending;
   if (prefs.scan_on_startup) table["scan_on_startup"] = *prefs.scan_on_startup;
 
-  const transport::Reply reply = transport::Patch("/v1/config", json{{"frontend", table}});
+  // Short, because SaveFrontendPrefsBlocking runs this on the UI thread
+  // while a window is closing.
+  const transport::Reply reply = transport::Patch("/v1/config", json{{"frontend", table}},
+                                                  {.read_timeout = std::chrono::seconds(2)});
   return {reply.ok, reply.error};
 }
 
@@ -452,6 +455,10 @@ void MiradClient::GetFrontendPrefsAsync(QObject* context,
 void MiradClient::SaveFrontendPrefsAsync(QObject* context, const FrontendPrefs& prefs,
                                          std::function<void(PatchConfigResult)> callback) {
   async::Run(context, [prefs] { return SaveFrontendPrefsSync(prefs); }, std::move(callback));
+}
+
+PatchConfigResult MiradClient::SaveFrontendPrefsBlocking(const FrontendPrefs& prefs) {
+  return SaveFrontendPrefsSync(prefs);
 }
 
 void MiradClient::GetRunnerCatalogAsync(QObject* context, const std::string& kind,

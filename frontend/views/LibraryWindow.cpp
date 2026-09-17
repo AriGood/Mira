@@ -30,6 +30,7 @@
 #include "../ui/GameDetailsPanel.h"
 #include "../ui/GameTileDelegate.h"
 #include "../ui/LibrarySort.h"
+#include "../ui/Shortcuts.h"
 #include "MainWindow.h"
 
 namespace {
@@ -57,8 +58,6 @@ const FilterEntry kFilters[] = {
 LibraryWindow::LibraryWindow(QWidget* parent) : QMainWindow(parent) {
   setWindowTitle("Mira");
   resize(1180, 720);
-
-  BuildMenus();
 
   details_ = new mira_gui::GameDetailsPanel(this);
   connect(details_, &mira_gui::GameDetailsPanel::PlayRequested, this,
@@ -90,6 +89,11 @@ LibraryWindow::LibraryWindow(QWidget* parent) : QMainWindow(parent) {
 
   setCentralWidget(central);
 
+  // After the widgets, because most of these act on one: BuildMenus
+  // then puts the three window-wide actions into File and Help.
+  BuildShortcuts();
+  BuildMenus();
+
   LoadPrefs();
   RefreshHealth();
 
@@ -98,9 +102,18 @@ LibraryWindow::LibraryWindow(QWidget* parent) : QMainWindow(parent) {
 }
 
 void LibraryWindow::BuildMenus() {
+  // The actions themselves come from BuildShortcuts, which already added
+  // them to the window. Listing one in a menu is what makes its key
+  // discoverable — Qt draws the sequence next to the label.
+  auto* file_menu = menuBar()->addMenu("&File");
+  file_menu->addAction(common_.close_window);
+  file_menu->addAction(common_.quit);
+
   auto* view_menu = menuBar()->addMenu("&View");
-  view_menu->addAction("&Refresh library", QKeySequence::Refresh, this,
-                       &LibraryWindow::RefreshHealth);
+  QAction* refresh = view_menu->addAction("&Refresh library", this, &LibraryWindow::RefreshHealth);
+  // F5 is the platform's own Refresh; Ctrl+R is the one every browser
+  // taught, and a second binding costs nothing.
+  refresh->setShortcuts({QKeySequence(QKeySequence::Refresh), QKeySequence(Qt::CTRL | Qt::Key_R)});
   view_menu->addSeparator();
   view_menu->addAction("Open &classic table view", this, &LibraryWindow::OpenClassicView);
 
@@ -109,8 +122,108 @@ void LibraryWindow::BuildMenus() {
 
   auto* tools_menu = menuBar()->addMenu("&Tools");
   tools_menu->addAction("&Runners…", this, &LibraryWindow::OpenRunners);
-  tools_menu->addAction("&Settings…", QKeySequence::Preferences, this,
-                        &LibraryWindow::OpenSettings);
+  QAction* settings = tools_menu->addAction("&Settings…", this, &LibraryWindow::OpenSettings);
+  // Spelled out rather than QKeySequence::Preferences, which Qt binds on
+  // macOS only — this row showed no shortcut at all on Linux.
+  settings->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Comma));
+
+  auto* help_menu = menuBar()->addMenu("&Help");
+  help_menu->addAction(common_.reference);
+}
+
+void LibraryWindow::BuildShortcuts() {
+  common_ = mira_gui::shortcuts::Install(
+      this, {
+                {"Ctrl+F", "Focus the search box"},
+                {"Esc", "Clear the search, then the selection"},
+                {"Ctrl+1…8", "Pick a sidebar filter"},
+                {"F5, Ctrl+R", "Refresh the library"},
+                {"Enter", "Play the selected game — Stop while it runs"},
+                {"Alt+Enter", "Details & settings"},
+                {"Delete", "Remove the selected game"},
+                {"Ctrl++, Ctrl+-", "Tile size"},
+                {"Ctrl+0", "Reset tile size"},
+                {"Ctrl+,", "Settings"},
+            });
+
+  auto window_action = [this](std::initializer_list<QKeySequence> keys, auto slot) {
+    auto* action = new QAction(this);
+    action->setShortcuts(QList<QKeySequence>(keys));
+    connect(action, &QAction::triggered, this, slot);
+    addAction(action);
+  };
+
+  // Scoped to the grid, not to the window: Delete and Enter still have to
+  // mean what they mean inside the search box, and WidgetWithChildrenShortcut
+  // is what keeps a keystroke aimed at a text field from reaching the
+  // library instead.
+  auto grid_action = [this](std::initializer_list<QKeySequence> keys, auto slot) {
+    auto* action = new QAction(grid_);
+    action->setShortcuts(QList<QKeySequence>(keys));
+    action->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+    connect(action, &QAction::triggered, this, slot);
+    grid_->addAction(action);
+  };
+
+  window_action({QKeySequence(QKeySequence::Find)}, [this] {
+    search_->setFocus(Qt::ShortcutFocusReason);
+    search_->selectAll();
+  });
+
+  // One key, two jobs, in the order a user expects to undo them: the search
+  // narrowed the library, so it goes first, and only an already-empty box
+  // means Escape was aimed at the selection.
+  window_action({QKeySequence(Qt::Key_Escape)}, [this] {
+    if (!search_->text().isEmpty()) {
+      search_->clear();
+      return;
+    }
+    grid_->clearSelection();
+    grid_->setCurrentItem(nullptr);
+  });
+
+  window_action({QKeySequence(QKeySequence::ZoomIn), QKeySequence(Qt::CTRL | Qt::Key_Equal)},
+                [this] { zoom_->setValue(zoom_->value() + zoom_->pageStep()); });
+  window_action({QKeySequence(QKeySequence::ZoomOut)},
+                [this] { zoom_->setValue(zoom_->value() - zoom_->pageStep()); });
+  window_action({QKeySequence(Qt::CTRL | Qt::Key_0)},
+                [this] { zoom_->setValue(kDefaultTileWidth); });
+
+  // Ctrl+1 through Ctrl+8, in sidebar order. Guarded by count() rather than
+  // by kFilters so adding a ninth filter cannot walk past Ctrl+9.
+  for (int row = 0; row < filters_->count() && row < 9; ++row) {
+    window_action({QKeySequence(Qt::CTRL | static_cast<Qt::Key>(Qt::Key_1 + row))},
+                  [this, row] { filters_->setCurrentRow(row); });
+  }
+
+  // Qt::Key_Enter is the keypad one — a separate key from Qt::Key_Return,
+  // and binding only Return would leave it dead.
+  grid_action({QKeySequence(Qt::Key_Return), QKeySequence(Qt::Key_Enter)}, [this] {
+    const mira_gui::GameSummary* game = FindGame(selected_id_);
+    if (game == nullptr) return;
+    // The same rule the context menu's Play entry enforces: a game that is
+    // not ready has nothing to launch, and Enter does not get to be the one
+    // path that ignores that.
+    if (!running_ids_.contains(game->id) && game->status != "ready") return;
+    ToggleRunning(std::string(game->id));
+  });
+
+  grid_action({QKeySequence(Qt::ALT | Qt::Key_Return), QKeySequence(Qt::ALT | Qt::Key_Enter)},
+              [this] {
+                if (selected_id_.empty()) return;
+                OpenGameDialog(std::string(selected_id_));
+              });
+
+  grid_action({QKeySequence(Qt::Key_Delete)}, [this] {
+    const mira_gui::GameSummary* game = FindGame(selected_id_);
+    if (game == nullptr) return;
+    // Copied before the call: actions::Delete opens a modal dialog, and an
+    // event arriving while it is up can refresh games_ out from under this
+    // pointer.
+    const std::string id = game->id;
+    const QString name = QString::fromStdString(game->name);
+    mira_gui::actions::Delete(this, id, name, [this] { RefreshGames(); });
+  });
 }
 
 void LibraryWindow::LoadPrefs() {
@@ -168,9 +281,20 @@ void LibraryWindow::SavePrefs() {
     prefs.sidebar_width = sizes[0];
     prefs.details_width = sizes[2];
   }
-  // Fire-and-forget: the window is closing, and a failure here costs a
-  // remembered layout, not data.
-  mira_gui::MiradClient::SaveFrontendPrefsAsync(this, prefs, [](mira_gui::PatchConfigResult) {});
+  // Blocking, not fire-and-forget: this runs from closeEvent, and on the
+  // last window the process exits before a worker thread ever reaches the
+  // socket. A failure here costs a remembered layout, not data, so the
+  // result is still not worth reporting — but losing the write to a race
+  // was not a trade-off, it was a bug.
+  // Blocking, not fire-and-forget. The async form hands the request to a
+  // detached thread (async::Run), and this is the one call site where the
+  // process may exit before that thread reaches the socket — closeEvent on
+  // the last window is immediately followed by exec() returning. The race
+  // is normally won, and every attempt to lose it here did win, but
+  // "usually saves your layout" is not what a Quit key should promise. A
+  // failure is still not worth reporting: the cost is a remembered layout,
+  // not data.
+  mira_gui::MiradClient::SaveFrontendPrefsBlocking(prefs);
 }
 
 void LibraryWindow::closeEvent(QCloseEvent* event) {
@@ -212,6 +336,7 @@ QWidget* LibraryWindow::BuildSidebar() {
   layout->addWidget(health_badge_);
 
   search_ = new QLineEdit(sidebar);
+  search_->setObjectName("library_search");
   search_->setPlaceholderText("Search…");
   search_->setClearButtonEnabled(true);
   connect(search_, &QLineEdit::textChanged, this, [this] { ApplyFilter(); });
@@ -286,6 +411,7 @@ QWidget* LibraryWindow::BuildGrid() {
   layout->addLayout(toolbar);
 
   grid_ = new QListWidget(container);
+  grid_->setObjectName("library_grid");
   delegate_ = new mira_gui::GameTileDelegate(grid_, TileSize());
   grid_->setItemDelegate(delegate_);
   grid_->setViewMode(QListView::IconMode);

@@ -12,6 +12,7 @@
 
 #include "../client/EventStream.h"
 #include "../client/Types.h"
+#include "../ui/Shortcuts.h"
 
 class QLabel;
 class QLineEdit;
@@ -51,6 +52,7 @@ private:
   QWidget* BuildSidebar();
   QWidget* BuildGrid();
   void BuildMenus();
+  void BuildShortcuts();
 
   // The frontend's own state (size, tile size, which filter) round-trips
   // through frontend.toml, not settings.toml — see FrontendPrefs. Applied
@@ -109,13 +111,17 @@ private:
   std::vector<mira_gui::GameSummary> games_;
   std::set<std::string> running_ids_;
   std::string selected_id_;
-  int tile_width_ = 168;
+  // The tile width Ctrl+0 returns to, and the one a frontend.toml with
+  // no tile_width starts at.
+  static constexpr int kDefaultTileWidth = 168;
+  int tile_width_ = kDefaultTileWidth;
   std::string sort_key_ = "name";
   bool sort_descending_ = false;
   bool scan_on_startup_ = true;
   // Keyed by "<id>@<tile width>" — a generated cover is cheap but not free,
   // and ApplyFilter() rebuilds every visible tile on each keystroke.
   QHash<QString, QPixmap> cover_cache_;
+  mira_gui::shortcuts::Common common_;
 
   mira_gui::EventStream event_stream_;
 };

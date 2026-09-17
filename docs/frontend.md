@@ -31,6 +31,33 @@ click launches. Right-click opens the per-game menu. Launching on the first
 click would turn a misclick into a started game, so a single click never
 launches anything.
 
+### Keyboard
+
+`Ctrl+Q` quits, `Ctrl+W` closes one window, `F1` lists every key the focused
+window responds to. Those three are installed by `ui/Shortcuts` on both
+views, so the classic table — which has no menu bar to hang an action on —
+still has them.
+
+Quit goes through `QApplication::closeAllWindows()` rather than `quit()`,
+because `LibraryWindow` saves its layout in `closeEvent` and a quit that
+skipped that handler would drop the prefs silently.
+
+The grid adds: `Ctrl+F` search, `Esc` (clears the search first, the
+selection second), `Ctrl+1`–`Ctrl+8` sidebar filters, `F5`/`Ctrl+R` refresh,
+`Ctrl+,` settings, `Ctrl++`/`Ctrl+-`/`Ctrl+0` tile size, and — only while
+the grid itself has focus — `Enter` to play or stop, `Alt+Enter` for details,
+`Delete` to remove.
+
+That last group is scoped `Qt::WidgetWithChildrenShortcut` rather than to the
+window. `Delete` and `Enter` have to keep meaning what they mean inside the
+search box, and window-scoped actions would swallow them: typing a game's
+name and pressing Backspace-Delete would otherwise open the remove prompt for
+whatever tile happened to be selected.
+
+`Ctrl+Q` and `Ctrl+,` are spelled out rather than taken from
+`QKeySequence::Quit`/`::Preferences`. Qt binds `Preferences` on macOS only,
+so the Settings row showed no shortcut at all on Linux.
+
 ## Layers
 
 Four directories, depending only downward:

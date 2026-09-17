@@ -53,6 +53,8 @@ qt_add_executable(mira-gui
   ui/LibrarySort.h
   ui/GameTileDelegate.cpp
   ui/GameTileDelegate.h
+  ui/Shortcuts.cpp
+  ui/Shortcuts.h
 
   # views/ — the two top-level library windows.
   views/LibraryWindow.cpp

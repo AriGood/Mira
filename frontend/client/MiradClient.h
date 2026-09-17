@@ -101,6 +101,16 @@ public:
   static void SaveFrontendPrefsAsync(QObject* context, const FrontendPrefs& prefs,
                                      std::function<void(PatchConfigResult)> callback);
 
+  // The same PATCH, run on the calling thread.
+  //
+  // For the one caller that has nowhere to deliver a result to and no time
+  // to wait for one: a window saving its layout from closeEvent. The async
+  // form hands the request to a detached thread, which the process can
+  // outrun on its way out. One round trip over a Unix socket is cheap
+  // enough to just wait for, and the short timeout below means an
+  // unreachable daemon cannot turn quitting into a hang.
+  static PatchConfigResult SaveFrontendPrefsBlocking(const FrontendPrefs& prefs);
+
   // GET /v1/runners. Freshly discovered on every call — no caching needed on
   // this side either.
   static void ListRunnersAsync(QObject* context, std::function<void(RunnersResult)> callback);
