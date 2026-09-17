@@ -93,7 +93,10 @@ struct MetadataRefreshResult {
 // UI acts on.
 struct MetadataEvent {
   std::string id;
-  std::string error;  // only on .metadata_failed
+  // Both only on .metadata_failed. Branch on `code`, never on `error`:
+  // `error` is a sentence written for a human to read.
+  std::string code;
+  std::string error;
 };
 
 struct StopResult {
@@ -352,6 +355,9 @@ struct FrontendPrefs {
   // "auto" | "system" | "in_app" — where a toast goes. See notify::Delivery
   // for what each one means and why "auto" is not just a hedge.
   std::optional<std::string> notifications;
+  // Seconds a notification stays up; 0 means until dismissed, which is the
+  // default. See notify::SetTimeoutSeconds.
+  std::optional<int> notification_timeout_s;
 };
 
 struct FrontendPrefsResult {

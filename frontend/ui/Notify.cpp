@@ -3,6 +3,8 @@
 #include "SystemNotifier.h"
 
 #include <QEvent>
+
+#include <algorithm>
 #include <QFont>
 #include <QFontMetrics>
 #include <QFrame>
@@ -35,17 +37,9 @@ QString AccentFor(Level level) {
   return "#1e88e5";
 }
 
-// How long a message stays up, by how much it matters. An error gets read
-// twice; an "imported 3 games" gets read once or not at all.
-int LifetimeMs(Level level) {
-  switch (level) {
-    case Level::Error: return 10000;
-    case Level::Warning: return 8000;
-    case Level::Success:
-    case Level::Info: break;
-  }
-  return 5000;
-}
+// Process-wide, from frontend.toml. Zero means "until dismissed" — see
+// Notify.h for why that is the default rather than a curiosity.
+int g_timeout_seconds = 0;
 
 constexpr int kMargin = 16;
 // Fixed, so that a one-line toast and a three-line one are the same shape
@@ -55,7 +49,11 @@ constexpr int kCardPadding = 12;
 constexpr int kCardSpacing = 8;
 constexpr int kTextWidth = kCardWidth - 2 * kCardPadding;
 constexpr int kFontPixelSize = 12;
-constexpr int kMaxVisible = 4;
+// Higher than it needs to be for a timed toast, because the default is
+// untimed: with "until dismissed", pushing a card out of the stack is
+// discarding something nobody has read. Still bounded — a window has a
+// bottom edge, and a burst has to stop somewhere.
+constexpr int kMaxVisible = 6;
 constexpr const char* kHostName = "mira_toast_host";
 
 // Process-wide, set once from frontend.toml at startup. A per-window
@@ -174,7 +172,10 @@ public:
     // the time the stack is measured.
     card->show();
 
-    QTimer::singleShot(LifetimeMs(level), card, [card] { card->Dismiss(); });
+    if (const int seconds = CurrentTimeoutSeconds(); seconds > 0) {
+      QTimer::singleShot(seconds * 1000, card, [card] { card->Dismiss(); });
+    }
+    // Otherwise it stays until clicked, or until kMaxVisible pushes it out.
     // The card's own destruction shrinks the stack, so the host has to
     // follow it back down as well as up.
     connect(card, &QObject::destroyed, this, [this] { QTimer::singleShot(0, this, [this] {
@@ -269,6 +270,12 @@ bool Confirm(QWidget* parent, const QString& title, const QString& question, con
 }
 
 void SetDelivery(Delivery delivery) { g_delivery = delivery; }
+
+void SetTimeoutSeconds(int seconds) {
+  g_timeout_seconds = std::clamp(seconds, 0, kMaxTimeoutSeconds);
+}
+
+int CurrentTimeoutSeconds() { return g_timeout_seconds; }
 
 Delivery CurrentDelivery() { return g_delivery; }
 

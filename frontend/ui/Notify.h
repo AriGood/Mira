@@ -74,6 +74,22 @@ Delivery CurrentDelivery();
 QString DeliveryToString(Delivery delivery);
 Delivery DeliveryFromString(const QString& text);
 
+// How long a toast stays up, in seconds. **Zero means until dismissed**,
+// and that is the default.
+//
+// Auto-dismissing is the wrong default for what these report. A toast says
+// a runner finished downloading, or that metadata arrived, or that a fetch
+// needs an API key — all things that happened while the user was doing
+// something else, and all of which are worth still being there when they
+// look back. A message that deletes itself is one you can miss entirely,
+// and there is no history to check afterwards.
+//
+// Clamped to kMaxTimeoutSeconds, because the value is hand-editable and a
+// nonsense one should read as "a long time", not as an overflow.
+constexpr int kMaxTimeoutSeconds = 600;
+void SetTimeoutSeconds(int seconds);
+int CurrentTimeoutSeconds();
+
 // A transient card stacked in the bottom-right of `parent`'s window. It
 // dismisses itself, and a click dismisses it early.
 //

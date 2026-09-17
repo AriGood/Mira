@@ -14,6 +14,7 @@ class QFormLayout;
 class QGroupBox;
 class QLineEdit;
 class QPushButton;
+class QSpinBox;
 class QVBoxLayout;
 
 // A settings screen generated entirely from GET /v1/config/schema
@@ -81,6 +82,8 @@ private:
   bool scan_on_startup_original_ = true;
   QComboBox* notifications_ = nullptr;
   QString notifications_original_;
+  QSpinBox* notification_timeout_ = nullptr;
+  int notification_timeout_original_ = 0;
   std::vector<Field> fields_;
   std::vector<CategoryGroup> groups_;
   QPushButton* save_button_ = nullptr;

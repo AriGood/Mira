@@ -198,9 +198,20 @@ void FetchSteamOwned(const config::Config& config, const std::string& appid, con
                    game_id, "steam_cdn", info);
 }
 
-void FetchNonSteam(const config::Config& config, const std::string& name, const std::string& game_id, json& info) {
+Result<void> FetchNonSteam(const config::Config& config, const std::string& name,
+                           const std::string& game_id, json& info) {
   const std::string api_key = config.GetString("steamgriddb.api_key");
-  if (api_key.empty()) return;
+  // An error rather than a silent skip. There is no other free cover-art
+  // source for a non-Steam game, so with no key there is nothing this
+  // function can ever do — and reporting success left the caller with a
+  // cache entry, a game.metadata_ready event and no picture, which reads as
+  // "Mira looked and there was nothing" rather than "Mira was never given
+  // the one thing it needed".
+  if (api_key.empty()) {
+    return Err("no_steamgriddb_key",
+               "non-Steam games need a SteamGridDB API key for cover art — set "
+               "steamgriddb.api_key (it is free, from steamgriddb.com)");
+  }
 
   const std::string auth_header = std::format("Authorization: Bearer {}", api_key);
   const json search = CurlJson({"curl", "-sSL", "-H", auth_header,
@@ -208,20 +219,21 @@ void FetchNonSteam(const config::Config& config, const std::string& name, const 
                                            UrlEncode(name))});
   if (search.is_discarded() || !Value(search, "success", false) ||
       Value(search, "data", json::array()).empty()) {
-    return;
+    return {};  // no match by name is an ordinary outcome, not a failure
   }
   const std::int64_t griddb_id = Value(search["data"][0], "id", std::int64_t{0});
-  if (griddb_id == 0) return;
+  if (griddb_id == 0) return {};
 
   const json grids = CurlJson({"curl", "-sSL", "-H", auth_header,
                                std::format("https://www.steamgriddb.com/api/v2/grids/game/{}", griddb_id)});
   if (grids.is_discarded() || !Value(grids, "success", false) ||
       Value(grids, "data", json::array()).empty()) {
-    return;
+    return {};
   }
   const std::string url = Value(grids["data"][0], "url", std::string());
-  if (url.empty()) return;
+  if (url.empty()) return {};
   FetchArtworkInto(config, url, game_id, "steamgriddb", info);
+  return {};
 }
 
 }  // namespace
@@ -242,7 +254,11 @@ Result<void> Fetch(const config::Config& config, const model::Game& game) {
     FetchSteamOwned(config, game.runner_ref.substr(std::string_view("steam:").size()), game.id, info);
   } else {
     info["source"] = "steamgriddb";
-    FetchNonSteam(config, game.name, game.id, info);
+    // Returned before anything is written: a failure here means nothing was
+    // fetched, and a cache file would make the next attempt look answered.
+    if (Result<void> fetched = FetchNonSteam(config, game.name, game.id, info); !fetched) {
+      return std::unexpected(fetched.error());
+    }
   }
 
   const fs::path metadata_file = MetadataFile(config, game.id);

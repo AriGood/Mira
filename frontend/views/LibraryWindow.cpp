@@ -265,6 +265,9 @@ void LibraryWindow::LoadPrefs() {
       mira_gui::notify::SetDelivery(
           mira_gui::notify::DeliveryFromString(QString::fromStdString(notifications_)));
     }
+    if (prefs.notification_timeout_s) {
+      mira_gui::notify::SetTimeoutSeconds(*prefs.notification_timeout_s);
+    }
     if (prefs.sort_descending) {
       sort_descending_ = *prefs.sort_descending;
       sort_direction_->setArrowType(sort_descending_ ? Qt::DownArrow : Qt::UpArrow);
@@ -300,6 +303,7 @@ void LibraryWindow::SavePrefs() {
   // the settings dialog survives closing the window that did not make it.
   prefs.notifications =
       mira_gui::notify::DeliveryToString(mira_gui::notify::CurrentDelivery()).toStdString();
+  prefs.notification_timeout_s = mira_gui::notify::CurrentTimeoutSeconds();
   const QList<int> sizes = splitter_->sizes();
   if (sizes.size() == 3) {
     prefs.sidebar_width = sizes[0];
@@ -500,6 +504,32 @@ void LibraryWindow::UpdateTileCover(const QString& id) {
     // same nudge — it has no way to notice the store changed under it.
     if (selected_id_ == game->id) details_->RefreshCover(*game);
     return;
+  }
+}
+
+void LibraryWindow::ShowSteamGridDbNotice(bool asked_for) {
+  // Once per session, however many games report it. A library of fifty
+  // non-Steam games produces fifty of these events on one scan, and they
+  // all have the same single answer.
+  if (steamgriddb_notice_shown_) return;
+  steamgriddb_notice_shown_ = true;
+
+  const QString explanation =
+      "Non-Steam games need a free SteamGridDB API key before Mira can find cover art for "
+      "them — there is no other free source for one. Steam games are unaffected.\n\n"
+      "Paste a key into \"steamgriddb.api_key\" in Settings, then use Library → Fetch "
+      "missing cover art.";
+
+  if (!asked_for) {
+    // Nobody asked for this; a modal over a background scan is an ambush.
+    mira_gui::notify::Toast(
+        this, mira_gui::notify::Level::Warning,
+        "No SteamGridDB API key set — non-Steam games can't get cover art. See Settings.");
+    return;
+  }
+
+  if (mira_gui::notify::Confirm(this, "No SteamGridDB API key", explanation, "Open settings…")) {
+    OpenSettings();
   }
 }
 
@@ -841,11 +871,21 @@ void LibraryWindow::HandleGameEvent(const std::string& type, const std::string& 
       artwork_->Invalidate(event.id);
       return;
     }
-    // A failure is reported only for a game the user asked about. On a fresh
-    // scan mirad fetches for every new game at once, and most of those
-    // failures are "this isn't on Steam and there's no SteamGridDB key" —
-    // one toast per game would bury the window.
-    if (awaiting_metadata_.erase(event.id) > 0) {
+    const bool asked_for = awaiting_metadata_.erase(event.id) > 0;
+
+    // The one failure worth interrupting for, because it is the only one
+    // the user can fix and it is never transient: no SteamGridDB key means
+    // every non-Steam game in the library will keep its placeholder
+    // forever, and nothing else on screen says why.
+    if (event.code == "no_steamgriddb_key") {
+      ShowSteamGridDbNotice(asked_for);
+      return;
+    }
+
+    // Everything else is reported only for a game the user asked about. On
+    // a fresh scan mirad fetches for every new game at once, and one toast
+    // per game would bury the window.
+    if (asked_for) {
       mira_gui::notify::Toast(this, mira_gui::notify::Level::Warning,
                               QString("No metadata found: %1")
                                   .arg(event.error.empty()

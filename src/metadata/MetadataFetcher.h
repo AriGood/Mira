@@ -21,7 +21,9 @@ namespace mira::metadata {
 //
 //   Everything else: SteamGridDB, matched by name search, for cover art
 //   only — there is no equivalent free metadata source for a non-Steam
-//   game. Needs steamgriddb.api_key configured; silently skipped without one.
+//   game. Needs steamgriddb.api_key configured; without one this fails with
+//   no_steamgriddb_key and caches nothing, rather than succeeding at having
+//   done nothing.
 //
 // Shells out to curl, consistent with runner/Downloader.cpp, rather than
 // linking libcurl for what's occasional, human-triggered-adjacent traffic.

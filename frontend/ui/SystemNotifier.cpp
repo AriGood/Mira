@@ -33,15 +33,10 @@ uchar UrgencyFor(Level level) {
   return 0;
 }
 
-int TimeoutFor(Level level) {
-  switch (level) {
-    case Level::Error: return 10000;
-    case Level::Warning: return 8000;
-    case Level::Info:
-    case Level::Success: break;
-  }
-  return 5000;
-}
+// The spec's expire_timeout: milliseconds, or 0 for "never expire, the
+// user must dismiss it". Which is exactly what CurrentTimeoutSeconds() == 0
+// means, so the two agree without translation.
+int ExpireTimeoutMs() { return CurrentTimeoutSeconds() * 1000; }
 
 QDBusInterface& Interface() {
   static QDBusInterface interface(kService, kPath, kService, QDBusConnection::sessionBus());
@@ -83,7 +78,7 @@ bool Send(Level level, const QString& text) {
   // which is how a notification ends up unreadable at a glance.
   const QDBusReply<uint> reply =
       Interface().call("Notify", QString("Mira"), 0U, QString(kDesktopEntry), QString("Mira"), text,
-                       QStringList(), hints, TimeoutFor(level));
+                       QStringList(), hints, ExpireTimeoutMs());
   return reply.isValid();
 }
 

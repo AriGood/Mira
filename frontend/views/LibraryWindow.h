@@ -101,6 +101,7 @@ private:
   // and per-game messages would be one notification per game.
   void RefreshMetadata(const std::string& id, bool announce = true);
   void FetchMissingArtwork();
+  void ShowSteamGridDbNotice(bool asked_for);
   void UpdateTileCover(const QString& id);
 
   void HandleGameEvent(const std::string& type, const std::string& data);
@@ -124,6 +125,7 @@ private:
   // for one of them is worth a toast and the dozens from an automatic scan
   // are not.
   std::set<std::string> awaiting_metadata_;
+  bool steamgriddb_notice_shown_ = false;
   std::string selected_id_;
   // The tile width Ctrl+0 returns to, and the one a frontend.toml with
   // no tile_width starts at.

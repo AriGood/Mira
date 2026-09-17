@@ -128,9 +128,11 @@ This matters more than it looks:
   | `sort_by`, `sort_descending` | grid order — see `ui/LibrarySort` |
   | `scan_on_startup` | whether opening the frontend runs `POST /v1/library/scan` |
   | `notifications` | `auto` / `system` / `in_app` — see "Telling the user things" |
+  | `notification_timeout_s` | how long one stays up; `0` (the default) means until dismissed |
 
-  `scan_on_startup` and `notifications` get rows in the settings screen, in
-  an "Interface (this frontend only)" group above the schema-driven ones.
+  `scan_on_startup`, `notifications` and `notification_timeout_s` get rows in
+  the settings screen, in an "Interface (this frontend only)" group above the
+  schema-driven ones.
   The rest are implicit UI state: they are saved by using the window, not by
   filling in a form.
 
@@ -252,10 +254,26 @@ most shells do not dismiss on a timeout.
 Any failure falls back to the in-window card, so choosing `system` on a
 desktop with no notification service loses nothing.
 
-In-window cards stack bottom-right, dismiss themselves (longer for an error
-than for a success), and dismiss on click. They attach to the top-level
-window rather than to the widget that raised them, so a card survives the
-dialog that started the work.
+**How long they stay is `notification_timeout_s`, and the default is 0 —
+until dismissed.** Auto-dismissing is the wrong default for what these
+report: a runner finished, metadata arrived, a fetch needs an API key. All
+of it happened while the user was doing something else, and all of it is
+worth still being there when they look back. A message that deletes itself
+is one you can miss entirely, and the frontend keeps no history to check
+afterwards.
+
+Zero maps onto both routes without translation: the freedesktop spec's
+`expire_timeout` of 0 already means "never expire, the user dismisses it",
+and an in-window card with no timeout simply gets no dismiss timer. A
+positive value applies to both, clamped to ten minutes since the file is
+hand-editable.
+
+In-window cards stack bottom-right, dismiss on click, and are capped at six.
+The cap is higher than a timed toast would need precisely because the
+default is untimed — pushing a card out of an untimed stack means discarding
+something nobody has read. They attach to the top-level window rather than
+to the widget that raised them, so a card survives the dialog that started
+the work.
 
 Every popup goes through one helper that sets `Qt::PlainText`. mirad's error
 messages quote paths and command fragments, and rich text would silently eat
@@ -290,6 +308,15 @@ story and hands out a pixmap that is never empty:
 
 The grid and the details panel share one store, so a cover is fetched,
 decoded and cached once for both.
+
+**No key, no art, and now it says so.** A non-Steam game has no free cover
+source other than SteamGridDB, so with `steamgriddb.api_key` unset mirad
+fails the fetch with `no_steamgriddb_key` instead of quietly succeeding at
+nothing (`docs/api.md`). The frontend matches on that **code**, never on the
+message, and raises it once per session however many games report it: a
+popup offering to open Settings when the user asked for the fetch, a toast
+when a background scan did. Every other metadata failure is reported only
+for a game the user asked about.
 
 **Re-fetching.** mirad fetches metadata only when a game is *first*
 detected, so a game whose fetch failed — or any non-Steam game from before

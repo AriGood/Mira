@@ -285,6 +285,7 @@ FrontendPrefsResult GetFrontendPrefsSync() {
   read_bool("sort_descending", result.prefs.sort_descending);
   read_bool("scan_on_startup", result.prefs.scan_on_startup);
   read_string("notifications", result.prefs.notifications);
+  read_int("notification_timeout_s", result.prefs.notification_timeout_s);
   return result;
 }
 
@@ -300,6 +301,9 @@ PatchConfigResult SaveFrontendPrefsSync(const FrontendPrefs& prefs) {
   if (prefs.sort_descending) table["sort_descending"] = *prefs.sort_descending;
   if (prefs.scan_on_startup) table["scan_on_startup"] = *prefs.scan_on_startup;
   if (prefs.notifications) table["notifications"] = *prefs.notifications;
+  if (prefs.notification_timeout_s) {
+    table["notification_timeout_s"] = *prefs.notification_timeout_s;
+  }
 
   // Short, because SaveFrontendPrefsBlocking runs this on the UI thread
   // while a window is closing.
@@ -571,6 +575,7 @@ bool MiradClient::ParseMetadataEvent(const std::string& data, MetadataEvent* out
   const std::string id = payload.value("id", std::string());
   if (id.empty()) return false;
   out->id = id;
+  out->code = payload.value("code", std::string());
   out->error = payload.value("error", std::string());
   return true;
 }
