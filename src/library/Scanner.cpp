@@ -1,7 +1,10 @@
 #include "library/Scanner.h"
 
+#include <algorithm>
+
 #include "core/Log.h"
 #include "core/Strings.h"
+#include "desktop/DesktopEntries.h"
 #include "library/AutoSetup.h"
 #include "library/Detector.h"
 #include "library/WinePrefix.h"
@@ -10,6 +13,26 @@
 namespace mira::library {
 namespace {
 namespace fs = std::filesystem;
+
+// What a game's status should be when its folder reappears after being
+// marked Missing. Derived from the game's own data rather than assumed:
+// "has an exe_path" is not the same as "launchable" — an installer has one
+// too, and a Windows game that was never provisioned has no prefix behind
+// it. Getting this wrong silently un-did the installer guard.
+model::GameStatus RestoredStatus(const model::Game& game) {
+  const auto chosen = std::ranges::find(game.candidates, true, &model::Candidate::chosen);
+  if (chosen != game.candidates.end() && chosen->is_installer) {
+    return model::GameStatus::NeedsInstall;
+  }
+  if (game.exe_path.empty()) return model::GameStatus::SettingUp;
+  if (game.platform == model::Platform::Native) return model::GameStatus::Ready;
+
+  // Windows: only ready if something actually provisioned it.
+  std::error_code ec;
+  const bool provisioned =
+      !game.runner_ref.empty() && !game.data_dir.empty() && fs::exists(game.data_dir, ec);
+  return provisioned ? model::GameStatus::Ready : model::GameStatus::SettingUp;
+}
 
 DetectorSettings SettingsFromConfig(const config::Config& config) {
   DetectorSettings settings;
@@ -23,6 +46,25 @@ DetectorSettings SettingsFromConfig(const config::Config& config) {
   settings.installer_min_size_mb = config.GetInt("detect.installer_min_size_mb");
   settings.ignore_globs = config.GetStringArray("scan.ignore_globs");
   return settings;
+}
+
+// Provisions `game` if it's a Windows game still SettingUp, and writes back
+// only the fields provisioning owns (see the writeback comment at the call
+// site for why not a full Upsert). No-op for anything already past SettingUp.
+void TryProvision(model::Game game, const runner::RunnerRegistry& runners, store::GameStore& games,
+                  api::EventBus& events) {
+  if (game.status != model::GameStatus::SettingUp) return;
+  const model::Game provisioned = runners.ProvisionGame(game);
+  auto result = games.Update(game.id, [&](model::Game& stored) {
+    stored.runner_ref = provisioned.runner_ref;
+    stored.status = provisioned.status;
+    stored.last_error = provisioned.last_error;
+  });
+  if (!result) {
+    log::Error("failed to save provisioning result for {}: {}", game.id, result.error().message);
+    return;
+  }
+  events.Publish("game.updated", model::ToJson(*result));
 }
 
 }  // namespace
@@ -77,12 +119,22 @@ ScanSummary Scanner::ScanRoot(const fs::path& root) {
     if (auto existing = games_.FindByInstallPath(install_path)) {
       if (existing->status == model::GameStatus::Missing) {
         auto result = games_.Update(existing->id, [](model::Game& game) {
-          game.status = game.exe_path.empty() ? model::GameStatus::SettingUp : model::GameStatus::Ready;
-          game.last_error.clear();
+          game.status = RestoredStatus(game);
+          if (game.status != model::GameStatus::NeedsInstall) game.last_error.clear();
         });
-        if (!result) log::Error("failed to restore {}: {}", existing->id, result.error().message);
+        if (!result) {
+          log::Error("failed to restore {}: {}", existing->id, result.error().message);
+        } else {
+          existing = *result;
+        }
         ++summary.restored;
       }
+      // Retry provisioning for a game still stuck at SettingUp: auto_setup
+      // may have been off when it was first detected and turned on since, a
+      // previous attempt may have failed transiently, or the daemon may have
+      // restarted mid-provision last time. Without this, SettingUp is a dead
+      // end reachable only by the one provisioning attempt at detection time.
+      if (config_.GetBool("auto_setup")) TryProvision(*existing, runners, games_, events_);
       continue;  // already known; never re-detect over a user's configuration
     }
 
@@ -93,18 +145,11 @@ ScanSummary Scanner::ScanRoot(const fs::path& root) {
 
     // With auto_setup off, a game is still detected and stored (so it shows
     // up for the frontend to configure) but never auto-provisioned.
-    if (game.status == model::GameStatus::SettingUp && config_.GetBool("auto_setup")) {
-      // Only Windows games reach here (AutoSetup marks native ready
-      // immediately, broken if nothing was found). Provisioning blocks —
-      // umu/Proton's first-run init is a real few-second cost — but there's
-      // no job queue yet to move it off this thread; see docs/architecture.md.
-      const model::Game provisioned = runners.ProvisionGame(game);
-      if (auto result = games_.Upsert(provisioned); !result) {
-        log::Error("failed to save provisioning result for {}: {}", provisioned.id,
-                  result.error().message);
-      }
-      events_.Publish("game.updated", model::ToJson(provisioned));
-    }
+    // Only Windows games reach here still SettingUp (AutoSetup marks native
+    // ready immediately, broken if nothing was found). Provisioning blocks —
+    // umu/Proton's first-run init is a real few-second cost — but there's no
+    // job queue yet to move it off this thread; see docs/architecture.md.
+    if (config_.GetBool("auto_setup")) TryProvision(game, runners, games_, events_);
   }
 
   // Anything previously known under this root but not seen this pass has
@@ -119,6 +164,12 @@ ScanSummary Scanner::ScanRoot(const fs::path& root) {
     if (!result) log::Error("failed to mark {} missing: {}", game.id, result.error().message);
     ++summary.missing;
     log::Info("game folder disappeared, marking missing: {}", game.install_path);
+  }
+
+  // The application menu follows the library: a game that just became
+  // launchable gains an entry, one that vanished loses it.
+  if (auto synced = desktop::DesktopEntries(config_).Sync(games_.All()); !synced) {
+    log::Warn("could not update application menu entries: {}", synced.error().message);
   }
 
   return summary;

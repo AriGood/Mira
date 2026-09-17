@@ -21,14 +21,22 @@ namespace mira::config::known_exe_patterns {
 // inside a real game's own folder and would otherwise be auto-picked over
 // the actual game.
 inline constexpr std::array kDeny = {
-    // prerequisite installers
-    "unins*", "setup*", "vcredist*", "dxsetup*", "dotnet*", "directx*", "*redist*", "touchup*",
+    // prerequisite installers — redistributables commonly dropped next to a
+    // game's own exe by InstallShield/Inno Setup packaging
+    "unins*", "setup*", "vcredist*", "vc_redist*", "dxsetup*", "dxwebsetup*", "dotnet*", "ndp*",
+    "directx*", "*redist*", "touchup*", "oalinst*", "physxinstaller*", "*physx_setup*",
+    "gfwlivesetup*", "xnafx*", "*prereqsetup*", "*prerequisites*",
     // Unreal Engine helpers
-    "*crashreport*", "*cefsubprocess*",
+    "*crashreport*", "*cefsubprocess*", "*crashpad*",
     // Unity helpers — see the Lutris issue cited above
     "*crashhandler*",
-    // launcher / DRM / anti-cheat helpers bundled alongside a game
-    "*launcher_installer*", "*webhelper*", "upc.exe", "*anticheat*", "battleye*",
+    // other common crash reporters (BugTrap/BugSplat, and legacy Dr. Watson)
+    "*bugsplat*", "bssndrpt*", "crashsender*", "drwtsn32*",
+    // launcher / DRM / anti-cheat helpers bundled alongside a game — these
+    // ship as their own subfolder+exe in nearly every game that uses them
+    // (e.g. EasyAntiCheat/EasyAntiCheat.exe, BattlEye/BEService.exe)
+    "*launcher_installer*", "*webhelper*", "upc.exe", "*anticheat*", "battleye*", "beservice*",
+    "pnkbstr*",
 };
 
 // A candidate matching one of these, combined with a size signal (see

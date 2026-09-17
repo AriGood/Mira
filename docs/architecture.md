@@ -54,7 +54,7 @@ src/
             library roots, reconciles against GameStore), AutoSetup (turns
             a detection into a stored game), Watcher (inotify, drives
             Scanner automatically).
-  runner/   IRunner + NativeRunner/UmuRunner/WineRunner, RunnerRegistry
+  runner/   IRunner + NativeRunner/ProtonRunner/WineRunner, RunnerRegistry
             (resolves "kind:name" -> a concrete runner + build), Exec (the
             blocking run-and-wait helper provisioning uses).
   api/      EventBus (in-memory pub/sub) and Server (the REST routes) —
@@ -221,11 +221,11 @@ doesn't:
 
 - **Runners** (`runner/IRunner.h`) — `umu-run` is a means to a working
   Proton launch, not a permanent dependency. Validated, not just asserted:
-  `NativeRunner`, `UmuRunner`, and `WineRunner` (plain system Wine, no
+  `NativeRunner`, `ProtonRunner`, and `WineRunner` (plain system Wine, no
   Proton) are three real implementations of the same four-method interface,
   and CI runs `grep -rniE 'umu|protonpath|gameid|steam_compat' src/
   --exclude-dir=runner` — every umu/Proton-specific token is still contained
-  to `runner/UmuRunner.{h,cpp}` (a couple of explanatory comments elsewhere
+  to `runner/ProtonRunner.{h,cpp}` (a couple of explanatory comments elsewhere
   just name the tool; none encode its env vars or behavior). A future custom
   Proton runner replacing umu is a fourth file, not a redesign.
 - **Detection rules** — per-user heuristics that are certain to need
@@ -299,7 +299,7 @@ speculative interface surface with no caller is exactly the kind of
 abstraction this project avoids building ahead of need.
 
 `NativeRunner` execs the game directly, no build, no provisioning.
-`UmuRunner` and `WineRunner` both provision a prefix and both had a real,
+`ProtonRunner` and `WineRunner` both provision a prefix and both had a real,
 non-obvious bug caught by actually running them rather than trusting the
 docs: **neither's exit code is a reliable success signal** — `umu-run`
 returns 1 even after successfully initialising a prefix (it's reporting
@@ -307,7 +307,7 @@ returns 1 even after successfully initialising a prefix (it's reporting
 passes none), and `wine wineboot -u` returns 0 even when it did nothing
 (e.g. the prefix directory didn't exist yet). Both runners instead check
 whether `drive_c` actually appeared on disk — the only signal that means
-what it says. `UmuRunner::Discover` also checks `umu-run` itself is on
+what it says. `ProtonRunner::Discover` also checks `umu-run` itself is on
 `PATH` before reporting any Proton build as usable, not just that the
 build directory exists.
 

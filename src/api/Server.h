@@ -7,6 +7,7 @@
 #include "api/EventBus.h"
 #include "config/Config.h"
 #include "core/Result.h"
+#include "proc/ProcessSupervisor.h"
 #include "store/GameStore.h"
 
 // httplib::Server is used only by Server.cpp; forward-declared here so
@@ -42,6 +43,7 @@ private:
   store::GameStore& games_;
   EventBus& events_;
   std::unique_ptr<httplib::Server> http_;
+  proc::ProcessSupervisor supervisor_;
   std::atomic<bool> stopping_{false};  // checked by open SSE connections; see EventBus::WaitNext
 };
 

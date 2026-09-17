@@ -85,8 +85,12 @@ std::vector<RawCandidate> WalkForExecutables(const fs::path& folder, const Detec
   const std::function<void(const fs::path&, int)> walk = [&](const fs::path& dir, int depth) {
     if (depth > settings.max_depth) return;
     // Computed once per directory rather than per candidate: every
-    // name-matching file in the same folder shares this signal.
-    const bool dir_has_large_file = DirectoryHasLargeFile(dir, min_installer_bytes);
+    // name-matching file in the same folder shares this signal. Skipped
+    // entirely when no installer patterns are configured — it costs a second
+    // full directory pass plus a stat per entry, which for an asset-heavy
+    // game folder roughly doubles scan I/O for nothing.
+    const bool dir_has_large_file = !settings.installer_name_patterns.empty() &&
+                                    DirectoryHasLargeFile(dir, min_installer_bytes);
     std::error_code ec;
     for (const auto& entry : fs::directory_iterator(dir, fs::directory_options::skip_permission_denied, ec)) {
       const fs::path rel = fs::relative(entry.path(), folder, ec);

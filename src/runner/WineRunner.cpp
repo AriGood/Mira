@@ -64,7 +64,7 @@ Result<void> WineRunner::Provision(const model::Game& game,
 
   // Observed directly: `wine wineboot` reports exit 0 even when it failed
   // outright (e.g. WINEPREFIX not pre-created) — the only reliable signal,
-  // same as UmuRunner, is whether the prefix actually appeared on disk.
+  // same as ProtonRunner, is whether the prefix actually appeared on disk.
   if (!fs::exists(fs::path(game.data_dir) / "drive_c", ec)) {
     return Err("provision_failed",
               std::format("wineboot produced no prefix (exit {}): {}", result->exit_code, result->output));

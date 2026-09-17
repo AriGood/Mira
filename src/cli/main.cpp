@@ -94,6 +94,36 @@ int CmdRunners() {
   return 0;
 }
 
+int CmdLaunch(int argc, char** argv) {
+  if (argc < 1) {
+    std::fprintf(stderr, "usage: mira launch <id>\n");
+    return 2;
+  }
+  auto client = Connect();
+  auto res = client.Post(std::format("/v1/games/{}/launch", argv[0]));
+  if (!Ok(res)) {
+    PrintError(res);
+    return 1;
+  }
+  std::puts("running");
+  return 0;
+}
+
+int CmdStop(int argc, char** argv) {
+  if (argc < 1) {
+    std::fprintf(stderr, "usage: mira stop <id>\n");
+    return 2;
+  }
+  auto client = Connect();
+  auto res = client.Post(std::format("/v1/games/{}/stop", argv[0]));
+  if (!Ok(res)) {
+    PrintError(res);
+    return 1;
+  }
+  std::puts("stopping");
+  return 0;
+}
+
 int CmdList(int argc, char** argv) {
   std::string status_filter;
   for (int i = 0; i < argc; ++i) {
@@ -351,6 +381,8 @@ void PrintUsage() {
       "  daemon [args...]       exec mirad in the foreground\n"
       "  scan                   scan all library roots now\n"
       "  runners                list installed Proton/Wine builds\n"
+      "  launch <id>            launch a game\n"
+      "  stop <id>              stop a running game\n"
       "  list [--status S]      list games\n"
       "  show <id> [--effective] show one game, or its resolved settings\n"
       "  set <id> [flags...]    correct a game's auto-detected configuration\n"
@@ -376,6 +408,8 @@ int main(int argc, char** argv) {
   if (command == "status") return CmdStatus();
   if (command == "scan") return CmdScan();
   if (command == "runners") return CmdRunners();
+  if (command == "launch") return CmdLaunch(rest_argc, rest);
+  if (command == "stop") return CmdStop(rest_argc, rest);
   if (command == "daemon") return CmdDaemon(rest_argc, rest, argv[0]);
   if (command == "list") return CmdList(rest_argc, rest);
   if (command == "show") return CmdShow(rest_argc, rest);
