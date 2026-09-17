@@ -95,3 +95,16 @@ option(MIRA_BUILD_FRONTEND "Build the Qt frontend skeleton if Qt6 is available" 
 if(MIRA_BUILD_FRONTEND)
   add_subdirectory(frontend)
 endif()
+
+# Dev convenience only, not part of the install story: builds mira-gui (and
+# whatever it depends on) then execs it, so trying the GUI is one command.
+# Only defined when mira-gui actually exists as a target — MIRA_BUILD_FRONTEND
+# off, or Qt6 missing, means frontend/CMakeLists.txt returns before defining
+# it (see the "Qt6 not found" branch there).
+if(TARGET mira-gui)
+  add_custom_target(run-gui
+    COMMAND $<TARGET_FILE:mira-gui>
+    DEPENDS mira-gui
+    USES_TERMINAL
+    COMMENT "Launching mira-gui")
+endif()
