@@ -6,6 +6,8 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
+
+#include "../ui/Notify.h"
 #include <QPushButton>
 #include <QScrollArea>
 #include <QVBoxLayout>
@@ -153,7 +155,8 @@ void OverridesEditor::ResetField(size_t index) {
       this, game_id_, {GameConfigEdit{field.entry.key, field.entry.type, std::string(), true}},
       [this](PatchGameConfigResult result) {
         if (!result.ok) {
-          QMessageBox::warning(this, "Reset failed", QString::fromStdString(result.error));
+          notify::Failed(this, "Could not reset this override.",
+                         QString::fromStdString(result.error));
           return;
         }
         Reload();

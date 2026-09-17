@@ -6,6 +6,8 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
+
+#include "../ui/Notify.h"
 #include <QPushButton>
 #include <QVBoxLayout>
 
@@ -73,7 +75,7 @@ RunInPrefixDialog::RunInPrefixDialog(std::string game_id, const GameDetail& game
 void RunInPrefixDialog::Run() {
   const std::string exe = exe_->currentText().toStdString();
   if (exe.empty()) {
-    QMessageBox::warning(this, "Run", "Pick an executable to run.");
+    mira_gui::notify::Info(this, "Run in prefix", "Pick an executable to run.");
     return;
   }
 
@@ -87,7 +89,7 @@ void RunInPrefixDialog::Run() {
                                   setEnabled(true);
                                   run_->setText("Run");
                                   if (!result.ok) {
-                                    QMessageBox::warning(this, "Run failed",
+                                    mira_gui::notify::Failed(this, "Could not run that.",
                                                          QString::fromStdString(result.error));
                                     return;
                                   }

@@ -11,6 +11,8 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
+
+#include "../ui/Notify.h"
 #include <QPushButton>
 #include <QScrollArea>
 #include <QStringList>
@@ -94,7 +96,8 @@ void SettingsDialog::LoadFrontendPrefs() {
 void SettingsDialog::Load() {
   mira_gui::MiradClient::GetConfigSchemaAsync(this, [this](mira_gui::ConfigSchemaResult schema) {
     if (!schema.ok) {
-      QMessageBox::warning(this, "Failed to load settings", QString::fromStdString(schema.error));
+      mira_gui::notify::Failed(this, "Could not load the settings schema.",
+                               QString::fromStdString(schema.error));
       reject();
       return;
     }
@@ -114,7 +117,8 @@ void SettingsDialog::Load() {
 
     mira_gui::MiradClient::GetConfigAsync(this, [this](mira_gui::ConfigResult config) {
       if (!config.ok) {
-        QMessageBox::warning(this, "Failed to load settings", QString::fromStdString(config.error));
+        mira_gui::notify::Failed(this, "Could not load the current settings.",
+                                 QString::fromStdString(config.error));
         reject();
         return;
       }
@@ -194,6 +198,12 @@ void SettingsDialog::BuildRows() {
         field.line = new QLineEdit(row_widget);
         if (field.entry.type == "an array of strings") {
           field.line->setPlaceholderText("comma-separated");
+        }
+        if (mira_gui::settings::IsSecretKey(field.entry.key)) {
+          // PasswordEchoOnEdit, not Password: the value has to be checkable
+          // against what the site shows, and a key you can never read back
+          // is a key you re-paste every time you doubt it.
+          field.line->setEchoMode(QLineEdit::PasswordEchoOnEdit);
         }
         row_layout->addWidget(field.line, /*stretch=*/1);
 
@@ -283,7 +293,8 @@ void SettingsDialog::ResetField(size_t index) {
   mira_gui::MiradClient::ResetConfigKeyAsync(
       this, fields_[index].entry.key, [this, index](mira_gui::PatchConfigResult result) {
         if (!result.ok) {
-          QMessageBox::warning(this, "Reset failed", QString::fromStdString(result.error));
+          mira_gui::notify::Failed(this, "Could not reset that setting.",
+                                   QString::fromStdString(result.error));
           return;
         }
         Field& field = fields_[index];
@@ -321,7 +332,8 @@ void SettingsDialog::Save() {
   mira_gui::MiradClient::PatchConfigAsync(this, edits, [this](mira_gui::PatchConfigResult result) {
     setEnabled(true);
     if (!result.ok) {
-      QMessageBox::warning(this, "Save failed", QString::fromStdString(result.error));
+      mira_gui::notify::Failed(this, "Could not save the settings.",
+                               QString::fromStdString(result.error));
       return;
     }
     accept();

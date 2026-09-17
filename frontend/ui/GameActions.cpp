@@ -1,7 +1,6 @@
 #include "GameActions.h"
 
 #include <QDesktopServices>
-#include <QMessageBox>
 #include <QUrl>
 #include <QWidget>
 
@@ -10,23 +9,32 @@
 #include "../client/MiradClient.h"
 #include "../dialogs/DeleteGameDialog.h"
 #include "../dialogs/RunInPrefixDialog.h"
+#include "Notify.h"
 
 namespace mira_gui::actions {
 
-void Launch(QWidget* parent, const std::string& id, std::function<void()> on_launched) {
+void Launch(QWidget* parent, const std::string& id, std::function<void(bool tracked)> on_launched) {
   MiradClient::LaunchGameAsync(parent, id, [parent, on_launched](LaunchResult result) {
     if (!result.ok) {
-      QMessageBox::warning(parent, "Launch failed", QString::fromStdString(result.error));
+      notify::Failed(parent, "Could not launch the game.", QString::fromStdString(result.error));
       return;
     }
-    if (on_launched) on_launched();
+    if (!result.tracked) {
+      // Worth saying out loud: the game will not appear under "Playing now"
+      // and Stop will not be offered, and both of those look like bugs
+      // unless the reason is on screen.
+      notify::Toast(parent, notify::Level::Info,
+                    "Handed to Steam. Mira does not track Steam-launched sessions — "
+                    "Steam keeps its own playtime.");
+    }
+    if (on_launched) on_launched(result.tracked);
   });
 }
 
 void Stop(QWidget* parent, const std::string& id) {
   MiradClient::StopGameAsync(parent, id, [parent](StopResult result) {
     if (!result.ok) {
-      QMessageBox::warning(parent, "Stop failed", QString::fromStdString(result.error));
+      notify::Failed(parent, "Could not stop the game.", QString::fromStdString(result.error));
     }
   });
 }
@@ -49,9 +57,8 @@ void Delete(QWidget* parent, const std::string& id, const QString& name,
         parent, id, choice.delete_files, choice.delete_prefix,
         [parent, name, on_deleted](DeleteResult result) {
           if (!result.ok) {
-            QMessageBox::warning(parent, "Remove failed",
-                                 QString("Failed to remove \"%1\": %2")
-                                     .arg(name, QString::fromStdString(result.error)));
+            notify::Failed(parent, QString("Could not remove \"%1\".").arg(name),
+                           QString::fromStdString(result.error));
             return;
           }
           if (on_deleted) on_deleted();
@@ -62,7 +69,8 @@ void Delete(QWidget* parent, const std::string& id, const QString& name,
 void RunInPrefix(QWidget* parent, const std::string& id) {
   MiradClient::GetGameAsync(parent, id, [parent, id](GameDetailResult result) {
     if (!result.ok) {
-      QMessageBox::warning(parent, "Run failed", QString::fromStdString(result.error));
+      notify::Failed(parent, "Could not open this game's prefix.",
+                     QString::fromStdString(result.error));
       return;
     }
     RunInPrefixDialog dialog(id, result.game, parent);
@@ -73,10 +81,10 @@ void RunInPrefix(QWidget* parent, const std::string& id) {
 void FinishInstall(QWidget* parent, const std::string& id, std::function<void()> on_finished) {
   MiradClient::FinishInstallAsync(parent, id, [parent, on_finished](FinishInstallResult result) {
     if (!result.ok) {
-      QMessageBox::warning(parent, "Could not mark as installed",
-                           QString("%1\n\nSet the game's executable to whatever the installer "
-                                   "produced first, then try again.")
-                               .arg(QString::fromStdString(result.error)));
+      notify::FailedWithHint(parent, "Could not mark this game as installed.",
+                             QString::fromStdString(result.error),
+                             "Set the game's executable to whatever the installer produced "
+                             "first, then try again.");
       return;
     }
     if (on_finished) on_finished();
@@ -86,9 +94,9 @@ void FinishInstall(QWidget* parent, const std::string& id, std::function<void()>
 void OpenInstallFolder(QWidget* parent, const std::string& id) {
   MiradClient::GetGameAsync(parent, id, [parent](GameDetailResult result) {
     if (!result.ok || result.game.install_path.empty()) {
-      QMessageBox::warning(parent, "Open folder failed",
-                           result.ok ? QString("This game has no install path.")
-                                     : QString::fromStdString(result.error));
+      notify::Failed(parent, "Could not open the install folder.",
+                     result.ok ? QString("This game has no install path.")
+                               : QString::fromStdString(result.error));
       return;
     }
     QDesktopServices::openUrl(QUrl::fromLocalFile(QString::fromStdString(result.game.install_path)));

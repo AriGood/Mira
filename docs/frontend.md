@@ -163,6 +163,8 @@ Everything `api.md` marks implemented has a path through the UI:
 | `DELETE /v1/games/{id}` | `DeleteGameDialog`, including `delete_files`/`delete_prefix` |
 | `GET`/`PATCH /v1/games/{id}/config` | `OverridesEditor` |
 | `POST /v1/games/{id}/launch`, `/stop` | Play/Stop, tile double-click, context menu |
+| `GET /v1/games/{id}/artwork` | `ui/ArtworkStore` — grid tiles and the details panel |
+| `POST /v1/games/{id}/metadata/refresh` | *Refresh metadata & cover art* in the tile context menu |
 | `POST /v1/games/{id}/run` | *Run in prefix…* (`RunInPrefixDialog`) |
 | `POST /v1/games/{id}/finish-install` | *Mark as installed* |
 | `POST /v1/library/scan` | on startup, and *View → Refresh library* |
@@ -175,6 +177,7 @@ Everything `api.md` marks implemented has a path through the UI:
 | `GET /v1/events` | `EventStream` |
 
 Events handled: `game.added`, `game.updated`, `game.removed`, `game.state`,
+`game.launched`, `game.metadata_ready`/`.metadata_failed`,
 `runners.download.started`/`.finished`/`.failed`.
 
 Two notes on shapes that are easy to get wrong:
@@ -182,18 +185,80 @@ Two notes on shapes that are easy to get wrong:
 - `game.state` carries only `id`/`state` and a few launch-specific fields —
   not `play_seconds` or `last_played_at`. An `exited` is a signal to
   re-fetch, not something to patch a row from.
-- `GET /v1/runners` reports the same build once per search path it is found
-  under, and on a typical Arch/Steam setup `~/.steam/steam` is a symlink to
-  `~/.local/share/Steam`. Two entries sharing a `reference` are the same
-  runner by definition, so the client collapses them
-  (`DedupeRunnersByReference`) rather than offering a choice that isn't one.
+- **A Steam-launched game never emits `game.state` at all.** Under the
+  default `steam.launch_mode: "steam"`, mirad hands the game to
+  `steam://rungameid/<appid>` and never spawns it, so `POST .../launch`
+  answers `{"status": "launched_via_steam"}` and publishes `game.launched`
+  instead. Marking such a game as running pins it under "Playing now"
+  forever, because nothing will ever say it stopped — hence
+  `LaunchResult::tracked`, and hence `game.launched` clearing the id rather
+  than being ignored.
+- `GET /v1/runners` used to report the same build once per search path it
+  was found under, which a symlinked Steam directory makes the normal case.
+  The frontend collapsed those itself for a while; it no longer does, and
+  should not — `runner::DeduplicateBuilds` handles it in the daemon, where
+  every other API client gets the fix too. See `docs/api.md`.
+
+## Telling the user things
+
+Three shapes, and `ui/Notify` owns the first two so that two screens cannot
+disagree about what a failure looks like:
+
+| shape | when | where |
+|---|---|---|
+| **popup** | what you just asked for did not happen, or Mira needs an answer first | `notify::Failed`, `FailedWithHint`, `Info`, `Confirm` |
+| **toast** | something finished on the daemon's schedule, not yours | `notify::Toast` |
+| **inline status** | a dialog reporting on an operation it owns and can say "still going" about | the dialog's own label — see `RunnerDialog` |
+
+The split follows the API. Anything that returns **202** (`/runners/download`,
+`/games/{id}/metadata/refresh`, `/games/{id}/tricks`) finishes minutes later
+and reports through an SSE event, by which time the user has moved on — a
+modal for that is an ambush. Anything answering the request in front of you
+gets a popup.
+
+Toasts stack bottom-right of the window, dismiss themselves (longer for an
+error than for a success), and dismiss on click. They attach to the
+top-level window rather than to the widget that raised them, so a toast
+survives the dialog that started the work.
+
+Every popup goes through one helper that sets `Qt::PlainText`. mirad's error
+messages quote paths and command fragments, and rich text would silently eat
+anything that looked like a tag.
+
+Failure popups show mirad's own message verbatim under a sentence naming
+what failed. The daemon explains its refusals better than a rewrite would.
 
 ## Cover art
 
-There is none from the backend yet. `ui/CoverArt` generates a placeholder
-from a hue derived from the game's **id** — stable across restarts, renames
-and machines, so a tile can be learned by sight. When real artwork lands
-this becomes the fallback for games that have none.
+Real artwork comes from `GET /v1/games/{id}/artwork`, which serves whatever
+image the metadata fetcher cached (Steam's CDN for a Steam-owned game,
+SteamGridDB otherwise — see `docs/api.md`). `ui/ArtworkStore` owns the whole
+story and hands out a pixmap that is never empty:
+
+- **404 is the normal answer**, not an error. Most games have no artwork
+  cached, and one message per game on a fresh library would be unusable.
+  `ui/CoverArt` generates the placeholder for those, from a hue derived from
+  the game's **id** — stable across restarts, renames and machines, so a
+  tile can be learned by sight.
+- **Ask once per game.** An id that has answered either way is not asked
+  again until `game.metadata_ready` or an explicit refresh invalidates it.
+  Without that rule an empty library becomes a request loop, because every
+  repaint asks for a cover.
+- **Four requests in flight, maximum.** Each one is a thread and a socket
+  (`client/Async.h`), and artwork is per game, so a 500-game library would
+  otherwise open 500 of each the moment the window appears.
+- **Keep the original, scale on demand.** The zoom slider changes the tile
+  size continuously; re-decoding a JPEG per step would be visible and
+  re-fetching it absurd. A rename drops the rendered copies (the
+  placeholder's initials changed) but not the fetched image.
+
+The grid and the details panel share one store, so a cover is fetched,
+decoded and cached once for both.
+
+There is no `has_artwork` on a game summary, so "does this game have
+artwork" can only be answered by asking for it. That is the reason for the
+ask-once and in-flight rules above; a flag on `GET /v1/games` would remove
+the need for both.
 
 ## Tests
 
@@ -224,7 +289,21 @@ is visible rather than assumed.
 
 ## Not built yet
 
-- Real cover art (waiting on the backend).
+Everything here exists in the API and has no path through the UI:
+
+- **`GET /v1/games/{id}/metadata`** — the store info behind the artwork:
+  description, genres, categories, release date, developers/publishers,
+  price, metacritic, a Steam review summary, and a ProtonDB tier. Only the
+  cover image is used today. The ProtonDB tier in particular belongs on a
+  Linux launcher's game page.
+- **`POST /v1/games/{id}/tricks`** — winetricks verbs. No catalog endpoint
+  exists, so this wants a free-text verb field (plus, perhaps, a short list
+  of common ones) shaped like `RunInPrefixDialog`, and it 404s for a native
+  game or a prefix that was never provisioned, so the menu entry should be
+  disabled with the reason rather than hidden.
+- **`tricks.started`/`.finished`/`.failed`** — unhandled. They are the only
+  report a verb ever makes, since the endpoint returns 202.
+
 - `DaemonSupervisor` — starting and supervising `mirad` from the frontend.
   `architecture.md` describes the design; today `mira-gui` assumes the
   daemon is already running and reports it unreachable if not.

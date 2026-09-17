@@ -19,6 +19,11 @@ namespace mira_gui::settings {
 // mark a string as "this is a runner reference", so it is named here.
 bool IsRunnerKey(const std::string& key);
 
+// True for a schema key whose value is a secret. The schema has no way to
+// say so, and a key rendered into a plain text box is a key on screen for
+// anyone standing behind you.
+bool IsSecretKey(const std::string& key);
+
 // Which group a dotted schema key is shown under. Everything currently in
 // src/config/Schema.cpp is named explicitly; a key added later without a
 // matching entry still lands somewhere sensible via a dotted-prefix guess,

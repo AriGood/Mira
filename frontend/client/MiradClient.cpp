@@ -61,7 +61,12 @@ DeleteResult DeleteGameSync(const std::string& id, bool delete_files, bool delet
 
 LaunchResult LaunchGameSync(const std::string& id) {
   const transport::Reply reply = transport::Post("/v1/games/" + id + "/launch");
-  return {reply.ok, reply.error};
+  // "launched_via_steam" is mirad saying it handed the game to the Steam
+  // client and is not watching the process (docs/api.md). Any other success
+  // body means ProcessSupervisor has it and game.state events will follow.
+  const bool tracked =
+      !reply.body.is_object() || reply.body.value("status", std::string()) != "launched_via_steam";
+  return {reply.ok, reply.error, tracked};
 }
 
 StopResult StopGameSync(const std::string& id) {
@@ -216,7 +221,6 @@ RunnersResult GetRunnersSync() {
     runner.reference = entry.value("reference", std::string());
     result.runners.push_back(std::move(runner));
   }
-  result.runners = mapping::DedupeRunnersByReference(std::move(result.runners));
   return result;
 }
 
@@ -299,6 +303,28 @@ PatchConfigResult SaveFrontendPrefsSync(const FrontendPrefs& prefs) {
   // while a window is closing.
   const transport::Reply reply = transport::Patch("/v1/config", json{{"frontend", table}},
                                                   {.read_timeout = std::chrono::seconds(2)});
+  return {reply.ok, reply.error};
+}
+
+ArtworkResult GetArtworkSync(const std::string& id) {
+  ArtworkResult result;
+  const transport::Blob blob = transport::GetBinary("/v1/games/" + id + "/artwork");
+  if (blob.status == 404) {
+    result.missing = true;
+    return result;
+  }
+  if (!blob.ok) {
+    result.error = blob.error;
+    return result;
+  }
+  result.ok = true;
+  result.bytes = blob.bytes;
+  result.content_type = blob.content_type;
+  return result;
+}
+
+MetadataRefreshResult RefreshMetadataSync(const std::string& id) {
+  const transport::Reply reply = transport::Post("/v1/games/" + id + "/metadata/refresh");
   return {reply.ok, reply.error};
 }
 
@@ -461,6 +487,16 @@ PatchConfigResult MiradClient::SaveFrontendPrefsBlocking(const FrontendPrefs& pr
   return SaveFrontendPrefsSync(prefs);
 }
 
+void MiradClient::GetArtworkAsync(QObject* context, const std::string& id,
+                                  std::function<void(ArtworkResult)> callback) {
+  async::Run(context, [id] { return GetArtworkSync(id); }, std::move(callback));
+}
+
+void MiradClient::RefreshMetadataAsync(QObject* context, const std::string& id,
+                                       std::function<void(MetadataRefreshResult)> callback) {
+  async::Run(context, [id] { return RefreshMetadataSync(id); }, std::move(callback));
+}
+
 void MiradClient::GetRunnerCatalogAsync(QObject* context, const std::string& kind,
                                         std::function<void(RunnerCatalogResult)> callback) {
   async::Run(context, [kind] { return GetRunnerCatalogSync(kind); }, std::move(callback));
@@ -518,6 +554,16 @@ std::string MiradClient::ParseRemovedId(const std::string& data) {
   const json entry = json::parse(data, nullptr, false);
   if (entry.is_discarded() || !entry.is_object()) return {};
   return entry.value("id", std::string());
+}
+
+bool MiradClient::ParseMetadataEvent(const std::string& data, MetadataEvent* out) {
+  const json payload = json::parse(data, nullptr, false);
+  if (!payload.is_object()) return false;
+  const std::string id = payload.value("id", std::string());
+  if (id.empty()) return false;
+  out->id = id;
+  out->error = payload.value("error", std::string());
+  return true;
 }
 
 bool MiradClient::ParseRunnerDownload(const std::string& event_type, const std::string& data,

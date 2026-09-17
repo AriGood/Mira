@@ -128,17 +128,6 @@ json TypedValueFromText(const std::string& type, const std::string& value) {
   return value;
 }
 
-std::vector<RunnerInfo> DedupeRunnersByReference(std::vector<RunnerInfo> runners) {
-  std::set<std::string> seen;
-  std::vector<RunnerInfo> unique;
-  unique.reserve(runners.size());
-  for (RunnerInfo& runner : runners) {
-    if (!seen.insert(runner.reference).second) continue;
-    unique.push_back(std::move(runner));
-  }
-  return unique;
-}
-
 void AssignDottedKey(json& document, const std::string& dotted_key, const json& value) {
   json* cursor = &document;
   size_t start = 0;

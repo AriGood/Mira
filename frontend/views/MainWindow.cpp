@@ -363,6 +363,18 @@ void MainWindow::HandleGameEvent(const std::string& type, const std::string& dat
     return;
   }
 
+  if (type == "game.launched") {
+    // The untracked counterpart to game.state: mirad handed this one to
+    // Steam. Clearing rather than ignoring, because the launch may have come
+    // from somewhere else (the CLI, another window) that did mark it.
+    const std::string id = mira_gui::MiradClient::ParseRemovedId(data);
+    if (!id.empty()) {
+      running_ids_.erase(id);
+      RefreshGames();
+    }
+    return;
+  }
+
   mira_gui::GameSummary game;
   if (mira_gui::MiradClient::ParseGameSummary(data, &game)) UpsertRow(game);
 }
@@ -372,11 +384,15 @@ void MainWindow::DeleteGame(const std::string& id, const QString& name) {
 }
 
 void MainWindow::LaunchGame(const std::string& id) {
-  mira_gui::actions::Launch(this, id, [this, id] {
+  mira_gui::actions::Launch(this, id, [this, id](bool tracked) {
     // Not waiting for the game.state "running" event to confirm this: it's
     // on its way regardless, so marking it now avoids a window where a
     // second click could fire another launch before the event arrives.
-    running_ids_.insert(id);
+    //
+    // Unless it isn't on its way. A Steam-launched game is never tracked, so
+    // marking it running here would leave it running forever — there is no
+    // exit event to clear it.
+    if (tracked) running_ids_.insert(id);
     RefreshGames();
   });
 }

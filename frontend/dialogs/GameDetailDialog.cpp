@@ -13,6 +13,8 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
+
+#include "../ui/Notify.h"
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QScrollArea>
@@ -158,7 +160,7 @@ void GameDetailDialog::Load() {
   });
   mira_gui::MiradClient::GetGameAsync(this, id_, [this](mira_gui::GameDetailResult result) {
     if (!result.ok) {
-      QMessageBox::warning(this, "Failed to load game",
+      mira_gui::notify::Failed(this, "Could not load this game.",
                             QString::fromStdString(result.error));
       reject();
       return;
@@ -299,7 +301,8 @@ void GameDetailDialog::Save() {
   mira_gui::MiradClient::PatchGameAsync(this, id_, patch, [this, override_edits](mira_gui::PatchGameResult result) {
     if (!result.ok) {
       setEnabled(true);
-      QMessageBox::warning(this, "Save failed", QString::fromStdString(result.error));
+      mira_gui::notify::Failed(this, "Could not save this game.",
+                               QString::fromStdString(result.error));
       return;
     }
     if (override_edits.empty()) {
@@ -311,7 +314,7 @@ void GameDetailDialog::Save() {
         this, id_, override_edits, [this](mira_gui::PatchGameConfigResult override_result) {
           setEnabled(true);
           if (!override_result.ok) {
-            QMessageBox::warning(this, "Save failed (overrides)",
+            mira_gui::notify::Failed(this, "Could not save this game's overrides.",
                                   QString::fromStdString(override_result.error));
             return;
           }

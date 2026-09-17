@@ -19,7 +19,11 @@ namespace mira_gui::actions {
 
 // POST /v1/games/{id}/launch. `on_launched` runs only on success, on the
 // main thread — a failed launch reports itself and does nothing else.
-void Launch(QWidget* parent, const std::string& id, std::function<void()> on_launched);
+// `on_launched(tracked)` runs only on success. `tracked` is false when
+// mirad handed the game to Steam rather than spawning it (see LaunchResult):
+// no game.state event is coming for that one, so a caller must not record it
+// as running.
+void Launch(QWidget* parent, const std::string& id, std::function<void(bool tracked)> on_launched);
 
 // POST /v1/games/{id}/stop. Nothing to do on success: the `game.state` event
 // that follows is what actually updates the view.

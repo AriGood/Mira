@@ -12,6 +12,7 @@
 
 #include "../client/EventStream.h"
 #include "../client/Types.h"
+#include "../ui/ArtworkStore.h"
 #include "../ui/Shortcuts.h"
 
 class QLabel;
@@ -62,8 +63,12 @@ private:
   void SavePrefs();
   void closeEvent(QCloseEvent* event) override;
 
-  void RefreshHealth();
-  void RescanAndRefreshGames();
+  // `force_scan` separates the two callers: startup, which honours the
+  // scan_on_startup preference, and the Refresh command, which does not.
+  // Asking for a refresh and getting no scan is the preference answering a
+  // question nobody asked it.
+  void RefreshHealth(bool force_scan = false);
+  void RescanAndRefreshGames(bool force_scan);
   void RefreshGames();
   void SetHealthy(bool healthy, const QString& tooltip);
 
@@ -92,6 +97,8 @@ private:
   void OpenRunners();
   void ImportSteamLibrary();
   void OpenClassicView();
+  void RefreshMetadata(const std::string& id);
+  void UpdateTileCover(const QString& id);
 
   void HandleGameEvent(const std::string& type, const std::string& data);
 
@@ -110,6 +117,10 @@ private:
 
   std::vector<mira_gui::GameSummary> games_;
   std::set<std::string> running_ids_;
+  // Games the user explicitly asked to refresh, so that a metadata failure
+  // for one of them is worth a toast and the dozens from an automatic scan
+  // are not.
+  std::set<std::string> awaiting_metadata_;
   std::string selected_id_;
   // The tile width Ctrl+0 returns to, and the one a frontend.toml with
   // no tile_width starts at.
@@ -120,7 +131,7 @@ private:
   bool scan_on_startup_ = true;
   // Keyed by "<id>@<tile width>" — a generated cover is cheap but not free,
   // and ApplyFilter() rebuilds every visible tile on each keystroke.
-  QHash<QString, QPixmap> cover_cache_;
+  mira_gui::ArtworkStore* artwork_ = nullptr;
   mira_gui::shortcuts::Common common_;
 
   mira_gui::EventStream event_stream_;

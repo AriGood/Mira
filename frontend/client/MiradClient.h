@@ -111,6 +111,16 @@ public:
   // unreachable daemon cannot turn quitting into a hang.
   static PatchConfigResult SaveFrontendPrefsBlocking(const FrontendPrefs& prefs);
 
+  // GET /v1/games/{id}/artwork. Binary, not JSON, and a 404 is the ordinary
+  // answer for a game nothing has been fetched for yet — see ArtworkResult.
+  static void GetArtworkAsync(QObject* context, const std::string& id,
+                              std::function<void(ArtworkResult)> callback);
+
+  // POST /v1/games/{id}/metadata/refresh. Returns 202 immediately; watch for
+  // game.metadata_ready/.metadata_failed.
+  static void RefreshMetadataAsync(QObject* context, const std::string& id,
+                                   std::function<void(MetadataRefreshResult)> callback);
+
   // GET /v1/runners. Freshly discovered on every call — no caching needed on
   // this side either.
   static void ListRunnersAsync(QObject* context, std::function<void(RunnersResult)> callback);
@@ -176,6 +186,11 @@ public:
 
   // Parses `game.removed`'s payload (`{"id": "..."}`, Server.cpp).
   static std::string ParseRemovedId(const std::string& data);
+
+  // Parses a `game.metadata_ready`/`.metadata_failed` payload. `state` is
+  // the event type, which the payload does not repeat; false if `data` is
+  // not a JSON object with an id.
+  static bool ParseMetadataEvent(const std::string& data, MetadataEvent* out);
 
   // Parses a `runners.download.started`/`.finished`/`.failed` payload.
   // `state` comes from the event type, which the payload itself doesn't

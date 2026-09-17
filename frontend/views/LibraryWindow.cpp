@@ -12,7 +12,6 @@
 #include <QCloseEvent>
 #include <QComboBox>
 #include <QMenuBar>
-#include <QMessageBox>
 #include <QPushButton>
 #include <QSlider>
 #include <QSplitter>
@@ -30,6 +29,7 @@
 #include "../ui/GameDetailsPanel.h"
 #include "../ui/GameTileDelegate.h"
 #include "../ui/LibrarySort.h"
+#include "../ui/Notify.h"
 #include "../ui/Shortcuts.h"
 #include "MainWindow.h"
 
@@ -59,7 +59,12 @@ LibraryWindow::LibraryWindow(QWidget* parent) : QMainWindow(parent) {
   setWindowTitle("Mira");
   resize(1180, 720);
 
+  // Before the panel and the grid, because both ask it for covers.
+  artwork_ = new mira_gui::ArtworkStore(this);
+  connect(artwork_, &mira_gui::ArtworkStore::CoverChanged, this, &LibraryWindow::UpdateTileCover);
+
   details_ = new mira_gui::GameDetailsPanel(this);
+  details_->SetArtworkStore(artwork_);
   connect(details_, &mira_gui::GameDetailsPanel::PlayRequested, this,
           [this](const QString& id) { LaunchGame(id.toStdString()); });
   connect(details_, &mira_gui::GameDetailsPanel::StopRequested, this,
@@ -95,7 +100,7 @@ LibraryWindow::LibraryWindow(QWidget* parent) : QMainWindow(parent) {
   BuildMenus();
 
   LoadPrefs();
-  RefreshHealth();
+  RefreshHealth(/*force_scan=*/false);
 
   event_stream_.Start(this,
                       [this](std::string type, std::string data) { HandleGameEvent(type, data); });
@@ -110,7 +115,10 @@ void LibraryWindow::BuildMenus() {
   file_menu->addAction(common_.quit);
 
   auto* view_menu = menuBar()->addMenu("&View");
-  QAction* refresh = view_menu->addAction("&Refresh library", this, &LibraryWindow::RefreshHealth);
+  // Always scans, whatever scan_on_startup says: the preference is about
+  // opening the window, not about this command.
+  QAction* refresh = view_menu->addAction("&Refresh library", this,
+                                          [this] { RefreshHealth(/*force_scan=*/true); });
   // F5 is the platform's own Refresh; Ctrl+R is the one every browser
   // taught, and a second binding costs nothing.
   refresh->setShortcuts({QKeySequence(QKeySequence::Refresh), QKeySequence(Qt::CTRL | Qt::Key_R)});
@@ -310,12 +318,15 @@ void LibraryWindow::OpenRunners() {
 void LibraryWindow::ImportSteamLibrary() {
   mira_gui::MiradClient::ScanSteamAsync(this, [this](mira_gui::SteamScanResult result) {
     if (!result.ok) {
-      QMessageBox::warning(this, "Steam import failed", QString::fromStdString(result.error));
+      mira_gui::notify::Failed(this, "Could not import from Steam.",
+                               QString::fromStdString(result.error));
       return;
     }
-    QMessageBox::information(
-        this, "Steam import",
-        QString("Added %1 game(s), updated %2.").arg(result.added).arg(result.updated));
+    // A toast, not a popup: the import already happened, there is nothing to
+    // decide, and the result is visible in the grid behind it either way.
+    mira_gui::notify::Toast(
+        this, result.added > 0 ? mira_gui::notify::Level::Success : mira_gui::notify::Level::Info,
+        QString("Steam import: %1 added, %2 updated.").arg(result.added).arg(result.updated));
     RefreshGames();
   });
 }
@@ -451,23 +462,46 @@ QSize LibraryWindow::TileSize() const {
 void LibraryWindow::SetTileWidth(int width) {
   if (width == tile_width_) return;
   tile_width_ = width;
-  cover_cache_.clear();
   delegate_->SetTileSize(TileSize());
   grid_->setGridSize(TileSize());
   ApplyFilter();
 }
 
 QPixmap LibraryWindow::CoverFor(const mira_gui::GameSummary& game) {
-  const QString key = QString("%1@%2").arg(QString::fromStdString(game.id)).arg(tile_width_);
-  auto cached = cover_cache_.constFind(key);
-  if (cached != cover_cache_.constEnd()) return *cached;
+  return artwork_->Cover(game, TileSize(), devicePixelRatioF());
+}
 
-  const QSize tile = TileSize();
-  const QPixmap cover = mira_gui::PlaceholderCover(
-      QString::fromStdString(game.name), QString::fromStdString(game.id),
-      QSize(tile.width() - 10, tile.height() - 10), devicePixelRatioF());
-  cover_cache_.insert(key, cover);
-  return cover;
+void LibraryWindow::UpdateTileCover(const QString& id) {
+  // One item, not a rebuild: artwork arrives one game at a time, and
+  // ApplyFilter would drop the selection and scroll position on each.
+  for (int row = 0; row < grid_->count(); ++row) {
+    QListWidgetItem* item = grid_->item(row);
+    if (item->data(mira_gui::GameTileDelegate::IdRole).toString() != id) continue;
+    const mira_gui::GameSummary* game = FindGame(id.toStdString());
+    if (game == nullptr) return;
+    item->setData(Qt::DecorationRole, CoverFor(*game));
+    // The panel draws the same game at a different size, so it needs the
+    // same nudge — it has no way to notice the store changed under it.
+    if (selected_id_ == game->id) details_->RefreshCover(*game);
+    return;
+  }
+}
+
+void LibraryWindow::RefreshMetadata(const std::string& id) {
+  mira_gui::MiradClient::RefreshMetadataAsync(
+      this, id, [this, id](mira_gui::MetadataRefreshResult result) {
+        if (!result.ok) {
+          mira_gui::notify::Failed(this, "Could not refresh metadata.",
+                                   QString::fromStdString(result.error));
+          return;
+        }
+        // 202: the fetch runs on the daemon and reports back as an event.
+        // Remembered so that its failure is worth a toast — see
+        // HandleGameEvent, where an unasked-for failure is not.
+        awaiting_metadata_.insert(id);
+        mira_gui::notify::Toast(this, mira_gui::notify::Level::Info,
+                                "Fetching metadata and cover art…");
+      });
 }
 
 void LibraryWindow::SetHealthy(bool healthy, const QString& tooltip) {
@@ -481,14 +515,14 @@ void LibraryWindow::SetHealthy(bool healthy, const QString& tooltip) {
   }
 }
 
-void LibraryWindow::RefreshHealth() {
+void LibraryWindow::RefreshHealth(bool force_scan) {
   health_badge_->setText("● checking…");
   health_badge_->setStyleSheet("font-size: 11px; color: #757575;");
 
-  mira_gui::MiradClient::CheckHealthAsync(this, [this](mira_gui::HealthStatus status) {
+  mira_gui::MiradClient::CheckHealthAsync(this, [this, force_scan](mira_gui::HealthStatus status) {
     SetHealthy(status.reachable, QString::fromStdString(status.detail));
     if (status.reachable) {
-      RescanAndRefreshGames();
+      RescanAndRefreshGames(force_scan);
     } else {
       games_.clear();
       ApplyFilter();
@@ -496,8 +530,8 @@ void LibraryWindow::RefreshHealth() {
   });
 }
 
-void LibraryWindow::RescanAndRefreshGames() {
-  if (!scan_on_startup_) {
+void LibraryWindow::RescanAndRefreshGames(bool force_scan) {
+  if (!force_scan && !scan_on_startup_) {
     // The daemon's own watcher keeps the library current while it runs
     // (library::Watcher), so skipping the startup scan costs nothing except
     // on a library that changed while mirad was stopped.
@@ -602,13 +636,10 @@ const mira_gui::GameSummary* LibraryWindow::FindGame(const std::string& id) cons
 }
 
 void LibraryWindow::UpsertGame(const mira_gui::GameSummary& game) {
-  // A rename changes the cover's initials, so every cached tile for this id
-  // is stale — not just the one at the current tile size, or moving the zoom
-  // slider afterwards would bring the old initials back.
-  const QString prefix = QString::fromStdString(game.id) + "@";
-  for (auto it = cover_cache_.begin(); it != cover_cache_.end();) {
-    it = it.key().startsWith(prefix) ? cover_cache_.erase(it) : std::next(it);
-  }
+  // A rename changes the placeholder's initials, so every rendered tile for
+  // this id is stale — the fetched artwork behind it is not, which is why
+  // this drops the rendering and not the image.
+  artwork_->InvalidateRendering(game.id);
 
   for (mira_gui::GameSummary& existing : games_) {
     if (existing.id == game.id) {
@@ -675,6 +706,7 @@ void LibraryWindow::ShowContextMenu(const QPoint& pos) {
                                  ? "Flip this game to ready once its executable points at the "
                                    "installed program"
                                  : "Only applies to a game that still needs installing");
+  QAction* refresh_metadata = menu.addAction("Refresh metadata && cover art");
   menu.addSeparator();
   QAction* remove = menu.addAction("Remove from library…");
 
@@ -689,6 +721,8 @@ void LibraryWindow::ShowContextMenu(const QPoint& pos) {
     mira_gui::actions::RunInPrefix(this, id);
   } else if (chosen == finish_install) {
     mira_gui::actions::FinishInstall(this, id, [this] { RefreshGames(); });
+  } else if (chosen == refresh_metadata) {
+    RefreshMetadata(id);
   } else if (chosen == remove) {
     mira_gui::actions::Delete(this, id, name, [this] { RefreshGames(); });
   }
@@ -703,8 +737,11 @@ void LibraryWindow::ToggleRunning(const std::string& id) {
 }
 
 void LibraryWindow::LaunchGame(const std::string& id) {
-  mira_gui::actions::Launch(this, id, [this, id] {
-    running_ids_.insert(id);
+  mira_gui::actions::Launch(this, id, [this, id](bool tracked) {
+    // Only a tracked launch gets a "Playing now" tile. A Steam-launched game
+    // never emits game.state, so marking it running here would pin it under
+    // that filter with no event able to release it.
+    if (tracked) running_ids_.insert(id);
     RefreshGames();
   });
 }
@@ -748,6 +785,43 @@ void LibraryWindow::HandleGameEvent(const std::string& type, const std::string& 
     // An exit changes play_seconds/last_played_at, which `game.state` does
     // not carry (docs/api.md) — hence a re-fetch rather than a local patch.
     RefreshGames();
+    return;
+  }
+
+  if (type == "game.metadata_ready" || type == "game.metadata_failed") {
+    mira_gui::MetadataEvent event;
+    if (!mira_gui::MiradClient::ParseMetadataEvent(data, &event)) return;
+    if (type == "game.metadata_ready") {
+      // Only the artwork is refetched here. The rest of the metadata is not
+      // part of the game record (docs/api.md keeps it out of games.toml), so
+      // nothing in the library view changes when it lands.
+      artwork_->Invalidate(event.id);
+      return;
+    }
+    // A failure is reported only for a game the user asked about. On a fresh
+    // scan mirad fetches for every new game at once, and most of those
+    // failures are "this isn't on Steam and there's no SteamGridDB key" —
+    // one toast per game would bury the window.
+    if (awaiting_metadata_.erase(event.id) > 0) {
+      mira_gui::notify::Toast(this, mira_gui::notify::Level::Warning,
+                              QString("No metadata found: %1")
+                                  .arg(event.error.empty()
+                                           ? QString("nothing matched this game")
+                                           : QString::fromStdString(event.error)));
+    }
+    return;
+  }
+
+  if (type == "game.launched") {
+    // The untracked counterpart to game.state (docs/api.md): mirad handed
+    // this one to Steam and is not watching it. Clearing rather than
+    // ignoring, because the launch may have come from elsewhere — the CLI,
+    // the other window — that did mark it running.
+    const std::string id = mira_gui::MiradClient::ParseRemovedId(data);
+    if (!id.empty()) {
+      running_ids_.erase(id);
+      RefreshGames();
+    }
     return;
   }
 

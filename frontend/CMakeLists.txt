@@ -42,6 +42,8 @@ qt_add_executable(mira-gui
   client/Types.h
 
   # ui/ — presentation shared by more than one view or dialog.
+  ui/ArtworkStore.cpp
+  ui/ArtworkStore.h
   ui/CoverArt.cpp
   ui/CoverArt.h
   ui/GameActions.cpp
@@ -53,6 +55,8 @@ qt_add_executable(mira-gui
   ui/LibrarySort.h
   ui/GameTileDelegate.cpp
   ui/GameTileDelegate.h
+  ui/Notify.cpp
+  ui/Notify.h
   ui/Shortcuts.cpp
   ui/Shortcuts.h
 

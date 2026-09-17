@@ -8,6 +8,7 @@
 #include <QVBoxLayout>
 
 #include "../client/MiradClient.h"
+#include "ArtworkStore.h"
 #include "CoverArt.h"
 #include "GamePresentation.h"
 
@@ -114,14 +115,22 @@ void GameDetailsPanel::Clear() {
   stack_->setCurrentIndex(0);
 }
 
+void GameDetailsPanel::SetArtworkStore(ArtworkStore* store) { artwork_ = store; }
+
+void GameDetailsPanel::RefreshCover(const GameSummary& game) {
+  cover_->setPixmap(artwork_ != nullptr
+                        ? artwork_->Cover(game, kCoverSize, devicePixelRatioF())
+                        : PlaceholderCover(QString::fromStdString(game.name),
+                                           QString::fromStdString(game.id), kCoverSize,
+                                           devicePixelRatioF()));
+}
+
 void GameDetailsPanel::ShowGame(const GameSummary& game, bool running) {
   game_id_ = game.id;
   running_ = running;
   stack_->setCurrentIndex(1);
 
-  cover_->setPixmap(PlaceholderCover(QString::fromStdString(game.name),
-                                     QString::fromStdString(game.id), kCoverSize,
-                                     devicePixelRatioF()));
+  RefreshCover(game);
   name_->setText(QString::fromStdString(game.name));
 
   status_->setText(running ? "Playing now" : StatusLabel(game.status));
