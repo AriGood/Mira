@@ -101,11 +101,13 @@ touches `overrides` (see `.../config` below — a game's own fields and its
 overrides of unrelated global settings are different concerns and don't
 share a request body). Publishes `game.updated`. 404 if the id is unknown.
 
-### `DELETE /v1/games/{id}[?delete_data=true]` — implemented
-Forgets the game. Never touches its files on disk. Publishes `game.removed`.
-`delete_data` is accepted but not yet wired to anything — deleting a
-runner's data directory is runner-specific and the runner layer doesn't
-exist yet, so today the parameter is a no-op.
+### `DELETE /v1/games/{id}[?delete_files=true][?delete_prefix=true]` — implemented
+Forgets the game. By default never touches disk. `delete_files=true` also
+removes `install_path` (the game's own folder); `delete_prefix=true` also
+removes `data_dir` (its Wine/Proton prefix, if any). Both are restricted to
+paths that actually resolve inside a configured `library_roots`/
+`prefix_root` — never wherever a hand-edited `games.toml` happens to say.
+Publishes `game.removed`.
 
 ### `GET /v1/games/{id}/config` — implemented
 Every schema key resolved through `default -> settings.toml -> this game's
@@ -125,11 +127,43 @@ Rejects (with nothing applied) if a key isn't overridable — some settings,
 like `library_roots`, describe the daemon rather than a game, see
 `config::Resolver::IsOverridable` — or if a value fails schema validation.
 
-### `POST /v1/games/{id}/launch` — planned
-### `POST /v1/games/{id}/stop` — planned
-### `POST /v1/games/{id}/resetup` — planned
-Re-runs detection and provisioning from scratch — the escape hatch for when
-auto-setup guessed badly wrong.
+### `POST /v1/games/{id}/launch` — implemented
+Resolves `runner_ref` (defaulting to `native:native`) and execs the game,
+wrapped by `command_wrappers` in order (first entry outermost), tracked by
+`proc::ProcessSupervisor` for crash detection and playtime. 404 if unknown,
+409 if `needs_install` or not `ready`.
+
+A Steam-sourced game (`runner_ref` starting `steam:`) is a special case:
+if the effective `steam.launch_mode` (global default, overridable per game
+via `.../config`) is `"steam"` — the default — this instead fires
+`steam steam://rungameid/<appid>` and returns immediately. Mira didn't
+spawn that process, so it's never tracked by ProcessSupervisor; Steam's own
+accounting is the source of truth for playtime on these games. Set
+`steam.launch_mode` to `"direct"` (globally or per game) to have Mira exec
+it itself instead, through the same Proton build and prefix Steam already
+set up — normal tracking applies, but `exe_path` has to be set manually
+first (see `POST /v1/steam/scan` below for why Mira can't determine it on
+its own).
+
+### `POST /v1/games/{id}/stop` — implemented
+Sends SIGTERM to the whole process group, escalating to SIGKILL after
+`launch.stop_timeout_s` if it's still running. 409 if not running.
+
+### `POST /v1/games/{id}/run` — implemented
+Body: `{"exe_path": "...", "args": "..."}`. Runs that exe inside this
+game's own prefix — normal ProcessSupervisor tracking, same as `/launch`,
+but the exe/args come from the request instead of the stored game.
+Provisions a prefix on demand if there isn't a usable one yet (a
+`needs_install` game never gets one from Scanner, since it never
+auto-provisions an installer). This is how a `needs_install` game's
+installer actually gets run, and doubles as the general "run something in
+this prefix" escape hatch short of a full winetricks-equivalent (out of
+scope; see `docs/architecture.md`).
+
+### `POST /v1/games/{id}/finish-install` — implemented
+The other half of the `needs_install` escape hatch: after running the
+installer via `/run` and `PATCH`ing `exe_path` to whatever it actually
+produced, this flips status to `ready`. 409 if `exe_path` is still empty.
 
 ---
 
@@ -170,9 +204,56 @@ call (no caching, no refresh endpoint needed as a result):
 ```
 `reference` is what a game's `runner_ref` field and `default_runner.*`
 settings use. `native` never appears here — it has no concept of "builds".
+`steam` (see below) never appears here either — its "build" is whatever
+Steam itself set a given prefix up with, resolved per-game, not a
+general-purpose installed build the registry tracks.
+
+### `GET /v1/runners/catalog?kind=proton|wine` — implemented
+What's *available to install*, not what's installed (that's `/v1/runners`
+above) — lists releases from the source configured in
+`runner_sources.proton_ge.*`/`runner_sources.wine_ge.*`, newest first, live
+against the GitHub API (so this one has real network latency, unlike
+everything else in this file):
+```json
+[{ "tag": "GE-Proton11-7", "asset_name": "GE-Proton11-7-x86_64.tar.gz",
+   "size_bytes": 563784602, "published_at": "2026-09-16T02:28:16Z", "has_checksum": true }]
+```
+
+### `POST /v1/runners/download` — implemented
+Body: `{"kind": "proton"|"wine", "tag": "..."}` (a tag from the catalog
+above). Downloads and installs it into `runner_search_paths[0]` /
+`wine_search_paths[0]`, verifying its checksum first if the release
+shipped one — a mismatch discards the download rather than installing it.
+Runs detached (a build can be 500+ MB; no job queue yet, see
+`docs/architecture.md`) and returns `202` immediately. Progress is on the
+event stream: `runners.download.started` / `.finished` / `.failed`.
 
 ### `GET /v1/runners/{kind}/schema` — planned
 ### `POST /v1/runners/refresh` — planned (not needed today; see above)
+
+---
+
+## Steam
+
+Detected Steam games are ordinary entries in `games.toml`/`GET /v1/games`
+(`runner_ref` starting `"steam:<appid>"`) — every other games endpoint
+already works on one unmodified. This section only covers what's actually
+Steam-specific.
+
+### `POST /v1/steam/scan` — implemented
+Detects installed Steam apps (reading Steam's own `libraryfolders.vdf`/
+`appmanifest_*.acf`/`compatdata/<id>/config_info` files directly, not
+asking a possibly-not-running Steam client) and upserts them:
+```json
+{ "added": 2, "updated": 0 }
+```
+Idempotent — rescanning updates Steam-owned fields (`name`, `install_path`,
+`data_dir`) without touching anything the user configured (`exe_path`,
+`args`, `env`, overrides). `exe_path` is never set by this scan: Steam
+resolves the real launch command from its own `appinfo` cache, which isn't
+readable from disk, so it's only known if set manually — relevant only to
+`steam.launch_mode: "direct"` (see `/launch` above), since the default
+`"steam"` mode doesn't need it at all.
 
 ---
 
@@ -191,14 +272,23 @@ since that id — the buffer holds the last 500 events, enough to survive a
 frontend restart, but **not** a daemon restart (events are in-memory only;
 `docs/architecture.md` explains why that trade-off is deliberate).
 
-Published today: `game.updated`, `game.removed`, `game.added` (fires the
-moment a new folder is auto-configured, carrying the full detected
-configuration plus `open_config: <bool>` from the `open_config_on_add`
-setting, so the frontend knows whether to raise its config menu
-immediately). Planned as the rest of the backend lands: `scan.started`,
-`scan.finished`, `setup.progress`, `setup.finished`, `setup.failed`,
-`game.state` (`launching | running | exited`), `runners.updated`,
-`config.changed`.
+Published today:
+- `game.added` — fires the moment a new folder is auto-configured,
+  carrying the full detected configuration plus `open_config: <bool>` from
+  the `open_config_on_add` setting, so the frontend knows whether to raise
+  its config menu immediately.
+- `game.updated`, `game.removed`.
+- `game.state` — `{"id": ..., "state": "running" | "exited" | "crashed"}`,
+  from `proc::ProcessSupervisor` (a Steam game launched via
+  `steam.launch_mode: "steam"` never emits this — Mira isn't tracking its
+  process; see `/launch` above).
+- `game.launched` — `{"id": ..., "via": "steam"}`, the untracked
+  counterpart to `game.state` for that same case.
+- `runners.download.started` / `.finished` / `.failed` — see
+  `POST /v1/runners/download` above.
+
+Planned as the rest of the backend lands: `scan.started`, `scan.finished`,
+`setup.progress`, `setup.finished`, `setup.failed`, `config.changed`.
 
 `mira watch` (`src/cli/main.cpp`) is the reference client — its whole
 implementation is a streaming `Get` split on blank lines, worth reading
