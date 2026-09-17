@@ -28,6 +28,7 @@ struct GameSummary {
   std::string platform;
   std::string runner_ref;
   std::string last_error;
+  std::string install_path;
   bool reviewed = false;
   double confidence = 0.0;
   std::optional<std::int64_t> last_played_at;

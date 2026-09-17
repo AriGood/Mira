@@ -17,6 +17,7 @@ GameSummary ToGameSummary(const json& entry) {
   game.platform = entry.value("platform", std::string());
   game.runner_ref = entry.value("runner_ref", std::string());
   game.last_error = entry.value("last_error", std::string());
+  game.install_path = entry.value("install_path", std::string());
   game.reviewed = entry.value("reviewed", false);
   game.confidence = entry.value("confidence", 0.0);
   if (entry.contains("last_played_at") && entry["last_played_at"].is_number()) {
