@@ -1,4 +1,5 @@
 #include <doctest.h>
+#include <signal.h>
 #include <sys/wait.h>
 
 #include <algorithm>
@@ -160,4 +161,83 @@ TEST_CASE("ProcessSupervisor::Stop refuses a not-yet-confirmed TrackSteamLaunch 
   const auto stopped = supervisor.Stop("never-shows-up");
   REQUIRE_FALSE(stopped.has_value());
   CHECK(stopped.error().code == "not_yet_confirmed");
+}
+
+// The Proton/Wine path is why Stop() can't rely on the process group alone:
+// umu-run, wineserver, each winedevice and the game .exe all call
+// setsid()/setpgid() during startup, so the group mirad created ends up with
+// one member while the game itself runs outside it. Measured against a real
+// launch before this was fixed: 1 of 16 processes signalled, the game left
+// running and orphaned while mirad reported it exited. FindPrefixProcesses
+// is the replacement handle — the prefix every process in the tree
+// inherits — so these cover what it must and must not match.
+
+TEST_CASE("FindPrefixProcesses finds a process that left its process group") {
+  const fs::path prefix = TempDir("proc-prefix-escaped");
+
+  // setsid() is exactly what wineserver does, and the reason the group is
+  // empty by the time anyone asks. The env var is the only thing left
+  // tying this process to the game.
+  Command command;
+  command.argv = {"sh", "-c", "setsid sleep 30 & sleep 30"};
+  command.env["WINEPREFIX"] = prefix.string();
+  auto pid = runner::SpawnDetached(command);
+  REQUIRE(pid.has_value());
+
+  CHECK(WaitFor([&] { return proc::FindPrefixProcesses(prefix.string()).size() >= 2; },
+                std::chrono::seconds(5)));
+
+  for (pid_t found : proc::FindPrefixProcesses(prefix.string())) ::kill(found, SIGKILL);
+  ::waitpid(*pid, nullptr, 0);
+  CHECK(WaitFor([&] { return proc::FindPrefixProcesses(prefix.string()).empty(); },
+                std::chrono::seconds(5)));
+}
+
+TEST_CASE("FindPrefixProcesses does not match a game whose prefix is a string prefix") {
+  // "…/animal" must not stop "…/animal-well". A substring search over
+  // /proc/<pid>/environ would, which is why the match is per entry with an
+  // explicit separator check.
+  const fs::path base = TempDir("proc-prefix-neighbour");
+  const fs::path narrow = base / "animal";
+  const fs::path wide = base / "animal-well";
+  fs::create_directories(narrow);
+  fs::create_directories(wide);
+
+  Command command;
+  command.argv = {"sh", "-c", "sleep 30"};
+  command.env["WINEPREFIX"] = wide.string();
+  auto pid = runner::SpawnDetached(command);
+  REQUIRE(pid.has_value());
+
+  CHECK(WaitFor([&] { return !proc::FindPrefixProcesses(wide.string()).empty(); },
+                std::chrono::seconds(5)));
+  CHECK(proc::FindPrefixProcesses(narrow.string()).empty());
+
+  ::kill(-*pid, SIGKILL);
+  ::kill(*pid, SIGKILL);
+  ::waitpid(*pid, nullptr, 0);
+}
+
+TEST_CASE("FindPrefixProcesses matches umu's rewritten WINEPREFIX and an empty one matches nothing") {
+  // umu rewrites WINEPREFIX to "<data_dir>/pfx/" before the game runs, so
+  // the separator case is the normal case, not an edge one.
+  const fs::path data_dir = TempDir("proc-prefix-pfx");
+  const fs::path pfx = data_dir / "pfx";
+  fs::create_directories(pfx);
+
+  Command command;
+  command.argv = {"sh", "-c", "sleep 30"};
+  command.env["WINEPREFIX"] = pfx.string() + "/";
+  auto pid = runner::SpawnDetached(command);
+  REQUIRE(pid.has_value());
+
+  CHECK(WaitFor([&] { return !proc::FindPrefixProcesses(data_dir.string()).empty(); },
+                std::chrono::seconds(5)));
+  // A game with no prefix at all (a native one) must never sweep up every
+  // process on the machine.
+  CHECK(proc::FindPrefixProcesses("").empty());
+
+  ::kill(-*pid, SIGKILL);
+  ::kill(*pid, SIGKILL);
+  ::waitpid(*pid, nullptr, 0);
 }

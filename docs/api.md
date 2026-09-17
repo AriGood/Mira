@@ -182,8 +182,20 @@ has to be set manually first (see `POST /v1/steam/scan` below for why
 Mira can't determine it on its own).
 
 ### `POST /v1/games/{id}/stop` — implemented
-Sends SIGTERM to the whole process group, escalating to SIGKILL after
-`launch.stop_timeout_s` if it's still running. 409 if not running.
+Sends SIGTERM to the game's process group **and** to every process running
+inside its prefix, escalating to SIGKILL after `launch.stop_timeout_s` if
+anything is still alive. 409 if not running.
+
+The prefix half is not belt-and-braces: on the Proton/Wine path the process
+group is nearly empty by the time a game is on screen. umu-run, wineserver,
+each winedevice and the game `.exe` itself call `setsid()`/`setpgid()`
+during startup, so signalling the group mirad created reaches the launcher
+and nothing else — measured against a real launch, 1 of 16 processes. What
+every one of them does still share is the `WINEPREFIX` /
+`STEAM_COMPAT_DATA_PATH` pointing at that game's `data_dir`, so that's the
+handle `proc::ProcessSupervisor` uses instead (the same
+identify-by-inherited-environment trick `steam.track_process` uses for an
+appid). A game with no prefix — a native one — is signalled by group alone.
 
 ### `POST /v1/games/{id}/run` — implemented
 Body: `{"exe_path": "...", "args": "..."}`. Runs that exe inside this

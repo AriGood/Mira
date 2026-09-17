@@ -16,6 +16,15 @@
 
 namespace mira::proc {
 
+// Every pid under this UID running inside one game's Wine prefix, found by
+// the WINEPREFIX/STEAM_COMPAT_DATA_PATH every process in the tree inherits.
+//
+// Exposed (rather than kept private to Stop) because the prefix-collision
+// rule is the subtle part -- a game whose data_dir is a string prefix of
+// another's must not match its neighbour -- and that deserves a test.
+std::set<pid_t> FindPrefixProcesses(const std::string& data_dir);
+
+
 // Tracks the games currently running. One watcher thread per running game,
 // which is fine at a launcher's scale (usually one) and — unlike a single
 // blanket waitpid(-1) reaper — cannot steal the exit status of the
@@ -76,6 +85,9 @@ private:
 
   mutable std::mutex mutex_;
   std::map<std::string, pid_t> running_;
+  // game id -> data_dir, so Stop() can find a Proton/Wine tree that has
+  // already left the process group mirad launched it in.
+  std::map<std::string, std::string> prefixes_;
   std::map<std::string, std::int64_t> kill_deadlines_;  // game id -> when to SIGKILL
   std::set<std::string> stop_requested_;  // Stop() was called; the exit isn't a crash
   std::map<std::string, std::thread> watchers_;
