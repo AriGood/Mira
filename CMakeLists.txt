@@ -90,6 +90,10 @@ install(FILES packaging/mirad.service
         DESTINATION ${CMAKE_INSTALL_LIBDIR}/systemd/user)
 install(FILES packaging/mira.desktop
         DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
+foreach(icon_size IN ITEMS 16 32 48 64 128 256)
+  install(FILES packaging/icons/hicolor/${icon_size}x${icon_size}/apps/mira.png
+          DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/${icon_size}x${icon_size}/apps)
+endforeach()
 
 option(MIRA_BUILD_FRONTEND "Build the Qt frontend skeleton if Qt6 is available" ON)
 if(MIRA_BUILD_FRONTEND)

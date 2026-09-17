@@ -3,6 +3,6 @@ Type=Application
 Name=Mira
 Comment=Launch and manage native and Windows games
 Exec=mira-gui
-Icon=applications-games
+Icon=mira
 Categories=Game;
 Terminal=false

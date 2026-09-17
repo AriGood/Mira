@@ -80,6 +80,12 @@ while `mirad` is running and it shows up in `mira list` on its own, no
 `scan` needed — that's `library::Watcher`, not a poll (see
 `docs/architecture.md`).
 
+or use
+```sh
+build/frontend/mira-gui
+```
+to launch the frontend
+
 `docs/architecture.md` documents the three supported ways to actually run
 `mirad` day-to-day (a systemd user service, spawned and supervised by the
 frontend, or one-shot with nothing persistent) — running it directly is the

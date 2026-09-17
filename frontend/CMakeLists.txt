@@ -29,6 +29,23 @@ qt_add_executable(mira-gui
   SettingsDialog.h
 )
 
+# The placeholder app icon, embedded so mira-gui has a window/taskbar icon
+# regardless of whether it's installed (packaging/mira.desktop's Icon=mira
+# is the separate, install-time path via the hicolor theme — see the root
+# CMakeLists.txt's install() rules for that copy).
+set(MIRA_ICON_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../packaging/icons/hicolor")
+qt_add_resources(mira-gui "icons"
+  PREFIX "/icons"
+  BASE "${MIRA_ICON_DIR}"
+  FILES
+    "${MIRA_ICON_DIR}/16x16/apps/mira.png"
+    "${MIRA_ICON_DIR}/32x32/apps/mira.png"
+    "${MIRA_ICON_DIR}/48x48/apps/mira.png"
+    "${MIRA_ICON_DIR}/64x64/apps/mira.png"
+    "${MIRA_ICON_DIR}/128x128/apps/mira.png"
+    "${MIRA_ICON_DIR}/256x256/apps/mira.png"
+)
+
 # mira_third_party is header-only (httplib.h, json.hpp) and carries no
 # backend code, so linking it does not violate the "never link mira_core"
 # rule in docs/architecture.md — it's the same REST-client toolkit `mira`

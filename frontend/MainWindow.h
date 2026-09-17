@@ -7,6 +7,7 @@
 
 #include "MiradClient.h"
 
+class QComboBox;
 class QLabel;
 class QPushButton;
 class QTableWidget;
@@ -37,10 +38,13 @@ private:
   void PopulateRow(int row, const mira_gui::GameSummary& game);
   void UpsertRow(const mira_gui::GameSummary& game);
   void RemoveRow(const std::string& id);
+  std::string CurrentStatusFilter() const;
 
   QLabel* health_badge_;
+  QComboBox* status_filter_;
   QPushButton* settings_button_;
   QPushButton* refresh_button_;
   QTableWidget* games_table_;
+  QLabel* connection_footer_;
   mira_gui::EventStream event_stream_;
 };

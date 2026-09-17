@@ -11,12 +11,13 @@
 namespace mira_gui {
 
 // A soft color per lifecycle state (docs/api.md: setting_up | ready | broken
-// | missing) so status reads at a glance without a legend.
+// | missing | needs_install) so status reads at a glance without a legend.
 inline QColor StatusColor(const std::string& status) {
   if (status == "ready") return QColor("#2e7d32");
   if (status == "setting_up") return QColor("#1565c0");
   if (status == "broken") return QColor("#c62828");
   if (status == "missing") return QColor("#757575");
+  if (status == "needs_install") return QColor("#ef6c00");
   return QColor("#424242");
 }
 

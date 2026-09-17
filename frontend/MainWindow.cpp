@@ -6,6 +6,8 @@
 #include "SettingsDialog.h"
 
 #include <QAbstractItemView>
+#include <QComboBox>
+#include <QDateTime>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
@@ -15,6 +17,43 @@
 #include <QTableWidgetItem>
 #include <QVBoxLayout>
 #include <QWidget>
+
+namespace {
+
+// A table cell that sorts on a stashed numeric value instead of its display
+// text — needed for Confidence ("70%" vs "100%" sorts wrong as text),
+// Last Played (a formatted date), and Playtime ("1h 5m" vs "45m").
+class NumericTableWidgetItem : public QTableWidgetItem {
+public:
+  NumericTableWidgetItem(const QString& text, double sort_value)
+      : QTableWidgetItem(text), sort_value_(sort_value) {}
+
+  bool operator<(const QTableWidgetItem& other) const override {
+    if (const auto* numeric = dynamic_cast<const NumericTableWidgetItem*>(&other)) {
+      return sort_value_ < numeric->sort_value_;
+    }
+    return QTableWidgetItem::operator<(other);
+  }
+
+private:
+  double sort_value_;
+};
+
+QString FormatLastPlayed(const std::optional<std::int64_t>& last_played_at) {
+  if (!last_played_at) return "Never";
+  return QDateTime::fromSecsSinceEpoch(*last_played_at).toString("yyyy-MM-dd HH:mm");
+}
+
+QString FormatPlaytime(std::int64_t play_seconds) {
+  if (play_seconds <= 0) return "—";
+  const std::int64_t hours = play_seconds / 3600;
+  const std::int64_t minutes = (play_seconds % 3600) / 60;
+  if (hours > 0) return QString("%1h %2m").arg(hours).arg(minutes);
+  if (minutes > 0) return QString("%1m").arg(minutes);
+  return "<1m";
+}
+
+}  // namespace
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   setWindowTitle("Mira");
@@ -33,6 +72,16 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   health_badge_->setStyleSheet("font-size: 11px; color: #757575;");
   health_badge_->setText("● checking…");
 
+  status_filter_ = new QComboBox(central);
+  status_filter_->addItem("All statuses", "");
+  status_filter_->addItem("Ready", "ready");
+  status_filter_->addItem("Setting up", "setting_up");
+  status_filter_->addItem("Needs install", "needs_install");
+  status_filter_->addItem("Broken", "broken");
+  status_filter_->addItem("Missing", "missing");
+  connect(status_filter_, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+          [this] { RefreshGames(); });
+
   settings_button_ = new QPushButton("Settings", central);
   settings_button_->setMaximumWidth(72);
   connect(settings_button_, &QPushButton::clicked, this, &MainWindow::OpenSettings);
@@ -45,25 +94,33 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   header_row->addWidget(title_label);
   header_row->addStretch(1);
   header_row->addWidget(health_badge_);
+  header_row->addWidget(status_filter_);
   header_row->addWidget(settings_button_);
   header_row->addWidget(refresh_button_);
   layout->addLayout(header_row);
 
-  games_table_ = new QTableWidget(0, 5, central);
-  games_table_->setHorizontalHeaderLabels({"Name", "Status", "Platform", "Confidence", ""});
+  games_table_ = new QTableWidget(0, 8, central);
+  games_table_->setHorizontalHeaderLabels(
+      {"Name", "Status", "Platform", "Runner", "Confidence", "Last Played", "Playtime", ""});
   games_table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
   games_table_->setSelectionBehavior(QAbstractItemView::SelectRows);
   games_table_->setSelectionMode(QAbstractItemView::SingleSelection);
   games_table_->setAlternatingRowColors(true);
+  games_table_->setSortingEnabled(true);
   games_table_->verticalHeader()->setVisible(false);
   games_table_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
-  games_table_->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
-  games_table_->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
-  games_table_->horizontalHeader()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
-  games_table_->horizontalHeader()->setSectionResizeMode(4, QHeaderView::ResizeToContents);
+  for (int column = 1; column <= 7; ++column) {
+    games_table_->horizontalHeader()->setSectionResizeMode(column, QHeaderView::ResizeToContents);
+  }
   games_table_->setShowGrid(false);
   connect(games_table_, &QTableWidget::cellDoubleClicked, this, &MainWindow::OpenGameDetail);
   layout->addWidget(games_table_, /*stretch=*/1);
+
+  connection_footer_ = new QLabel(central);
+  connection_footer_->setStyleSheet("font-size: 10px; color: #9e9e9e;");
+  connection_footer_->setText(
+      QString("Connected via %1").arg(QString::fromStdString(mira_gui::MiradClient::ResolveSocketPath())));
+  layout->addWidget(connection_footer_);
 
   setCentralWidget(central);
 
@@ -104,21 +161,33 @@ void MainWindow::RescanAndRefreshGames() {
   mira_gui::MiradClient::ScanLibraryAsync(this, [this](mira_gui::ScanResult) { RefreshGames(); });
 }
 
-void MainWindow::RefreshGames() {
-  mira_gui::MiradClient::ListGamesAsync(this, [this](mira_gui::GamesResult result) {
-    if (!result.ok) {
-      health_badge_->setToolTip(
-          QString("mirad is reachable, but GET /v1/games failed: %1")
-              .arg(QString::fromStdString(result.error)));
-      games_table_->setRowCount(0);
-      return;
-    }
+std::string MainWindow::CurrentStatusFilter() const {
+  return status_filter_->currentData().toString().toStdString();
+}
 
-    games_table_->setRowCount(static_cast<int>(result.games.size()));
-    for (int row = 0; row < static_cast<int>(result.games.size()); ++row) {
-      PopulateRow(row, result.games[row]);
-    }
-  });
+void MainWindow::RefreshGames() {
+  mira_gui::MiradClient::ListGamesAsync(
+      this,
+      [this](mira_gui::GamesResult result) {
+        if (!result.ok) {
+          health_badge_->setToolTip(
+              QString("mirad is reachable, but GET /v1/games failed: %1")
+                  .arg(QString::fromStdString(result.error)));
+          games_table_->setRowCount(0);
+          return;
+        }
+
+        // Disabled for the bulk repopulate below: with sorting live, each
+        // setItem() call would re-sort the table mid-loop, so row indices
+        // would stop matching what PopulateRow was just given.
+        games_table_->setSortingEnabled(false);
+        games_table_->setRowCount(static_cast<int>(result.games.size()));
+        for (int row = 0; row < static_cast<int>(result.games.size()); ++row) {
+          PopulateRow(row, result.games[row]);
+        }
+        games_table_->setSortingEnabled(true);
+      },
+      CurrentStatusFilter());
 }
 
 int MainWindow::FindRow(const std::string& id) const {
@@ -132,27 +201,53 @@ int MainWindow::FindRow(const std::string& id) const {
 void MainWindow::PopulateRow(int row, const mira_gui::GameSummary& game) {
   auto* name_item = new QTableWidgetItem(QString::fromStdString(game.name));
   name_item->setData(Qt::UserRole, QString::fromStdString(game.id));
+
   auto* status_item = new QTableWidgetItem(QString::fromStdString(game.status));
   status_item->setForeground(mira_gui::StatusColor(game.status));
+  if (!game.last_error.empty()) status_item->setToolTip(QString::fromStdString(game.last_error));
+
   auto* platform_item = new QTableWidgetItem(QString::fromStdString(game.platform));
-  auto* review_item =
-      new QTableWidgetItem(mira_gui::ConfidenceText(game.reviewed, game.confidence));
-  review_item->setForeground(mira_gui::ConfidenceColor(game.reviewed, game.confidence));
+
+  auto* runner_item = new QTableWidgetItem(
+      game.runner_ref.empty() ? "Auto" : QString::fromStdString(game.runner_ref));
+
+  auto* confidence_item = new NumericTableWidgetItem(
+      mira_gui::ConfidenceText(game.reviewed, game.confidence), game.confidence);
+  confidence_item->setForeground(mira_gui::ConfidenceColor(game.reviewed, game.confidence));
+
+  auto* last_played_item = new NumericTableWidgetItem(
+      FormatLastPlayed(game.last_played_at), static_cast<double>(game.last_played_at.value_or(-1)));
+
+  auto* playtime_item =
+      new NumericTableWidgetItem(FormatPlaytime(game.play_seconds), static_cast<double>(game.play_seconds));
 
   games_table_->setItem(row, 0, name_item);
   games_table_->setItem(row, 1, status_item);
   games_table_->setItem(row, 2, platform_item);
-  games_table_->setItem(row, 3, review_item);
+  games_table_->setItem(row, 3, runner_item);
+  games_table_->setItem(row, 4, confidence_item);
+  games_table_->setItem(row, 5, last_played_item);
+  games_table_->setItem(row, 6, playtime_item);
 
   auto* delete_button = new QPushButton("Delete", games_table_);
   const std::string id = game.id;
   const QString name = QString::fromStdString(game.name);
   connect(delete_button, &QPushButton::clicked, this, [this, id, name] { DeleteGame(id, name); });
-  games_table_->setCellWidget(row, 4, delete_button);
+  games_table_->setCellWidget(row, 7, delete_button);
 }
 
 void MainWindow::UpsertRow(const mira_gui::GameSummary& game) {
+  const std::string filter = CurrentStatusFilter();
   int row = FindRow(game.id);
+
+  if (!filter.empty() && filter != game.status) {
+    // No longer matches the active filter (or never did) — drop it from
+    // view rather than showing a row that contradicts the filter, but
+    // without touching the daemon's own record.
+    if (row >= 0) games_table_->removeRow(row);
+    return;
+  }
+
   if (row < 0) {
     row = games_table_->rowCount();
     games_table_->insertRow(row);
