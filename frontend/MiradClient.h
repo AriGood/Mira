@@ -40,7 +40,28 @@ struct GamesResult {
   std::vector<GameSummary> games;
 };
 
+// docs/api.md's `game.state` event, trimmed to what a row's Launch/Stop
+// button needs — see ParseGameState.
+struct GameStateEvent {
+  std::string id;
+  std::string state;  // "running" | "exited" | "crashed"
+};
+
 struct DeleteResult {
+  bool ok = false;
+  std::string error;
+};
+
+// POST /v1/games/{id}/launch and /stop both return just ok/error — the
+// actual outcome (running, exited, crashed) arrives later as a `game.state`
+// SSE event (docs/api.md), since launch returns as soon as the process
+// exists, not when it finishes.
+struct LaunchResult {
+  bool ok = false;
+  std::string error;
+};
+
+struct StopResult {
   bool ok = false;
   std::string error;
 };
@@ -242,6 +263,17 @@ public:
   static void DeleteGameAsync(QObject* context, const std::string& id,
                               std::function<void(DeleteResult)> callback);
 
+  // POST /v1/games/{id}/launch. Returns once the process exists, not once
+  // it exits — 409 if the game isn't `ready` (message explains why, e.g.
+  // needs_install) or 400 if the runner reference doesn't resolve.
+  static void LaunchGameAsync(QObject* context, const std::string& id,
+                              std::function<void(LaunchResult)> callback);
+
+  // POST /v1/games/{id}/stop. SIGTERMs the game's process group; 409 if it
+  // isn't currently running.
+  static void StopGameAsync(QObject* context, const std::string& id,
+                            std::function<void(StopResult)> callback);
+
   // POST /v1/library/scan. Runs synchronously on mirad's side (docs/api.md
   // notes there's no job queue yet), so this still goes through the async
   // worker-thread dance to keep the UI thread free while it waits.
@@ -261,6 +293,14 @@ public:
   // see AutoSetup.cpp and Server.cpp) into the same summary GET /v1/games
   // returns. Returns false if `data` isn't a JSON object.
   static bool ParseGameSummary(const std::string& data, GameSummary* out);
+
+  // Parses a `game.state` event's payload (`{"id", "state": "running" |
+  // "exited" | "crashed", ...}`, docs/api.md) down to just id/state — enough
+  // to know which row's Launch/Stop button to flip. Unlike game.added/
+  // updated, this carries no other game fields (not even play_seconds), so
+  // a "exited"/"crashed" state is a signal to re-fetch, not something to
+  // patch a row from directly.
+  static bool ParseGameState(const std::string& data, GameStateEvent* out);
 
   // Parses `game.removed`'s payload (`{"id": "..."}`, Server.cpp) down to
   // just the id.

@@ -49,6 +49,7 @@ QString CategoryFor(const std::string& key) {
       {"default_runner.native", "Runners"}, {"runner_search_paths", "Runners"},
       {"wine_search_paths", "Runners"},    {"socket_path", "Advanced"},
       {"log.level", "Advanced"},           {"events.sse_keepalive_s", "Advanced"},
+      {"library.remove_missing", "Library"},
   };
   if (const auto it = kOverrides.find(key); it != kOverrides.end()) return it->second;
 
@@ -59,6 +60,9 @@ QString CategoryFor(const std::string& key) {
   if (prefix == "scan") return "Scanning";
   if (prefix == "default_runner") return "Runners";
   if (prefix == "log" || prefix == "events") return "Advanced";
+  if (prefix == "launch") return "Launching";
+  if (prefix == "desktop_entries") return "Desktop Entries";
+  if (prefix == "library") return "Library";
 
   QString label = QString::fromStdString(prefix).replace('_', ' ');
   if (!label.isEmpty()) label[0] = label[0].toUpper();
@@ -68,8 +72,9 @@ QString CategoryFor(const std::string& key) {
 // Categories appear in this order when present; anything else (a future,
 // unmapped prefix) is appended alphabetically after — see CategoryFor.
 const QStringList& CategoryOrder() {
-  static const QStringList order = {"Library", "Runners", "Detection", "Scanning", "Advanced",
-                                     "General"};
+  static const QStringList order = {"Library",    "Runners",         "Launching",
+                                     "Detection",  "Scanning",        "Desktop Entries",
+                                     "Advanced",   "General"};
   return order;
 }
 }  // namespace

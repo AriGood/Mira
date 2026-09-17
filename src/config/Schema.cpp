@@ -85,6 +85,13 @@ Schema::Schema() {
        "Ask the frontend to open its configuration menu when a game is added, so the "
        "auto-detected settings can be reviewed."},
 
+      {"library.remove_missing", Type::Bool, false, Tier::Basic,
+       "When a previously-detected game's folder disappears, forget it entirely instead of "
+       "just marking it missing. Off by default: missing keeps the game's configuration, "
+       "overrides, and playtime around in case a drive or network share is just temporarily "
+       "offline. Never touches the game's files themselves either way — same as "
+       "DELETE /v1/games/{id}."},
+
       {"default_runner.windows", Type::String, "auto", Tier::Basic,
        "Runner for Windows games as \"kind:name\" (e.g. \"proton:GE-Proton11-7\", "
        "\"wine:system\"; \"latest\" as the name picks the newest installed build), or "

@@ -229,11 +229,39 @@ void MainWindow::PopulateRow(int row, const mira_gui::GameSummary& game) {
   games_table_->setItem(row, 5, last_played_item);
   games_table_->setItem(row, 6, playtime_item);
 
-  auto* delete_button = new QPushButton("Delete", games_table_);
+  auto* actions_widget = new QWidget(games_table_);
+  auto* actions_layout = new QHBoxLayout(actions_widget);
+  actions_layout->setContentsMargins(0, 0, 0, 0);
+  actions_layout->setSpacing(4);
+
   const std::string id = game.id;
   const QString name = QString::fromStdString(game.name);
+  const bool running = running_ids_.contains(id);
+
+  auto* launch_button = new QPushButton(running ? "Stop" : "Launch", games_table_);
+  // Mirrors POST /v1/games/{id}/launch's own guard (docs/api.md: 409
+  // needs_install/not_ready) so a doomed request never leaves this process
+  // — the button is simply disabled instead of round-tripping to find out.
+  const bool can_launch = game.status == "ready";
+  launch_button->setEnabled(running || can_launch);
+  if (!running && !can_launch) {
+    launch_button->setToolTip(
+        QString("Not launchable while %1").arg(QString::fromStdString(game.status)));
+  }
+  connect(launch_button, &QPushButton::clicked, this, [this, id, running] {
+    if (running) {
+      StopGame(id);
+    } else {
+      LaunchGame(id);
+    }
+  });
+  actions_layout->addWidget(launch_button);
+
+  auto* delete_button = new QPushButton("Delete", games_table_);
   connect(delete_button, &QPushButton::clicked, this, [this, id, name] { DeleteGame(id, name); });
-  games_table_->setCellWidget(row, 7, delete_button);
+  actions_layout->addWidget(delete_button);
+
+  games_table_->setCellWidget(row, 7, actions_widget);
 }
 
 void MainWindow::UpsertRow(const mira_gui::GameSummary& game) {
@@ -267,6 +295,22 @@ void MainWindow::HandleGameEvent(const std::string& type, const std::string& dat
     return;
   }
 
+  if (type == "game.state") {
+    mira_gui::GameStateEvent state;
+    if (!mira_gui::MiradClient::ParseGameState(data, &state)) return;
+    if (state.state == "running") {
+      running_ids_.insert(state.id);
+    } else {
+      // exited/crashed — this event carries only the session's own delta
+      // (played_seconds, exit_code, ...), not the row's actual totals, so a
+      // full relist is what picks up the new play_seconds/last_played_at/
+      // last_error rather than trying to patch them from here.
+      running_ids_.erase(state.id);
+    }
+    RefreshGames();
+    return;
+  }
+
   mira_gui::GameSummary game;
   if (mira_gui::MiradClient::ParseGameSummary(data, &game)) UpsertRow(game);
 }
@@ -286,6 +330,29 @@ void MainWindow::DeleteGame(const std::string& id, const QString& name) {
       return;
     }
     RefreshGames();
+  });
+}
+
+void MainWindow::LaunchGame(const std::string& id) {
+  mira_gui::MiradClient::LaunchGameAsync(this, id, [this, id](mira_gui::LaunchResult result) {
+    if (!result.ok) {
+      QMessageBox::warning(this, "Launch failed", QString::fromStdString(result.error));
+      return;
+    }
+    // Not waiting for the game.state "running" event to confirm this: it's
+    // on its way regardless, so marking it now avoids a window where a
+    // second click could fire another launch before the event arrives.
+    running_ids_.insert(id);
+    RefreshGames();
+  });
+}
+
+void MainWindow::StopGame(const std::string& id) {
+  mira_gui::MiradClient::StopGameAsync(this, id, [this](mira_gui::StopResult result) {
+    if (!result.ok) QMessageBox::warning(this, "Stop failed", QString::fromStdString(result.error));
+    // Left in running_ids_ either way — Stop only sends SIGTERM and returns;
+    // the real state change arrives later as game.state "exited"/"crashed"
+    // (docs/api.md), same as with a game that quits on its own.
   });
 }
 

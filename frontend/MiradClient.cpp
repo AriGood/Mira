@@ -156,6 +156,44 @@ DeleteResult DeleteGameSync(const std::string& id) {
   return result;
 }
 
+LaunchResult LaunchGameSync(const std::string& id) {
+  LaunchResult result;
+  const std::string socket_path = MiradClient::ResolveSocketPath();
+
+  httplib::Client client(socket_path, 80);
+  client.set_address_family(AF_UNIX);
+  client.set_connection_timeout(std::chrono::seconds(2));
+
+  auto res = client.Post("/v1/games/" + id + "/launch");
+  if (res && res->status >= 200 && res->status < 300) {
+    result.ok = true;
+    return result;
+  }
+
+  result.ok = false;
+  result.error = DescribeError(res, socket_path);
+  return result;
+}
+
+StopResult StopGameSync(const std::string& id) {
+  StopResult result;
+  const std::string socket_path = MiradClient::ResolveSocketPath();
+
+  httplib::Client client(socket_path, 80);
+  client.set_address_family(AF_UNIX);
+  client.set_connection_timeout(std::chrono::seconds(2));
+
+  auto res = client.Post("/v1/games/" + id + "/stop");
+  if (res && res->status >= 200 && res->status < 300) {
+    result.ok = true;
+    return result;
+  }
+
+  result.ok = false;
+  result.error = DescribeError(res, socket_path);
+  return result;
+}
+
 ScanResult ScanLibrarySync() {
   ScanResult result;
   const std::string socket_path = MiradClient::ResolveSocketPath();
@@ -578,11 +616,39 @@ void MiradClient::DeleteGameAsync(QObject* context, const std::string& id,
   }).detach();
 }
 
+void MiradClient::LaunchGameAsync(QObject* context, const std::string& id,
+                                  std::function<void(LaunchResult)> callback) {
+  std::thread([context, id, callback = std::move(callback)]() {
+    LaunchResult result = LaunchGameSync(id);
+    QMetaObject::invokeMethod(
+        context, [callback, result = std::move(result)]() mutable { callback(std::move(result)); },
+        Qt::QueuedConnection);
+  }).detach();
+}
+
+void MiradClient::StopGameAsync(QObject* context, const std::string& id,
+                                std::function<void(StopResult)> callback) {
+  std::thread([context, id, callback = std::move(callback)]() {
+    StopResult result = StopGameSync(id);
+    QMetaObject::invokeMethod(
+        context, [callback, result = std::move(result)]() mutable { callback(std::move(result)); },
+        Qt::QueuedConnection);
+  }).detach();
+}
+
 bool MiradClient::ParseGameSummary(const std::string& data, GameSummary* out) {
   const json entry = json::parse(data, nullptr, false);
   if (entry.is_discarded() || !entry.is_object()) return false;
   *out = ParseGameSummaryJson(entry);
   return true;
+}
+
+bool MiradClient::ParseGameState(const std::string& data, GameStateEvent* out) {
+  const json entry = json::parse(data, nullptr, false);
+  if (entry.is_discarded() || !entry.is_object()) return false;
+  out->id = entry.value("id", std::string());
+  out->state = entry.value("state", std::string());
+  return !out->id.empty();
 }
 
 std::string MiradClient::ParseRemovedId(const std::string& data) {

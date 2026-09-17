@@ -125,8 +125,31 @@ Rejects (with nothing applied) if a key isn't overridable — some settings,
 like `library_roots`, describe the daemon rather than a game, see
 `config::Resolver::IsOverridable` — or if a value fails schema validation.
 
-### `POST /v1/games/{id}/launch` — planned
-### `POST /v1/games/{id}/stop` — planned
+### `POST /v1/games/{id}/launch` — implemented
+Resolves the game's runner (`runner_ref`, or `native:native` if unset),
+builds its launch command, applies `command_wrappers`, and hands it to
+`proc::ProcessSupervisor`. Returns as soon as the process exists — not when
+it exits — with `{"status": "running"}`. 409 `needs_install` if the game's
+status is `needs_install` (message is the game's `last_error`, i.e. which
+candidate looked like an installer); 409 `not_ready` for any other non-
+`ready` status; 400 if the runner reference doesn't resolve or the runner
+can't build a command. Publishes `game.state` (`{"id", "state": "running",
+"pid"}`) once launched, and stamps `last_played_at` immediately — before the
+game even finishes loading — so a daemon crash mid-session doesn't lose it.
+
+### `POST /v1/games/{id}/stop` — implemented
+SIGTERMs the running game's whole process group (a real launch is a chain —
+umu/proton/wine wrapping the game — so a lone SIGTERM to the immediate child
+would leave the rest running). Returns immediately with
+`{"status": "stopping"}`; if the game hasn't exited within
+`launch.stop_timeout_s`, it's escalated to SIGKILL. 409 `not_running` if the
+game isn't currently running. `play_seconds` is checkpointed to disk every
+60 seconds while running (not only at exit) so a mid-session crash loses at
+most a minute of playtime, and is finalized — along with `last_error` set to
+a crash/non-zero-exit reason, or cleared on a clean exit — when the process
+is reaped. Publishes `game.state` (`{"id", "state": "exited"|"crashed",
+"exit_code", "signal", "played_seconds", "error"}`) either way.
+
 ### `POST /v1/games/{id}/resetup` — planned
 Re-runs detection and provisioning from scratch — the escape hatch for when
 auto-setup guessed badly wrong.
@@ -195,10 +218,13 @@ Published today: `game.updated`, `game.removed`, `game.added` (fires the
 moment a new folder is auto-configured, carrying the full detected
 configuration plus `open_config: <bool>` from the `open_config_on_add`
 setting, so the frontend knows whether to raise its config menu
-immediately). Planned as the rest of the backend lands: `scan.started`,
-`scan.finished`, `setup.progress`, `setup.finished`, `setup.failed`,
-`game.state` (`launching | running | exited`), `runners.updated`,
-`config.changed`.
+immediately), `game.state` (`running` on launch, `exited`/`crashed` when the
+process is reaped — see `POST /v1/games/{id}/launch`/`stop` above; note this
+carries only `id`/`state`/a few launch-specific fields, not the full record,
+so a frontend wanting updated `play_seconds`/`last_played_at` after a
+`game.state` still needs a follow-up `GET`). Planned as the rest of the
+backend lands: `scan.started`, `scan.finished`, `setup.progress`,
+`setup.finished`, `setup.failed`, `runners.updated`, `config.changed`.
 
 `mira watch` (`src/cli/main.cpp`) is the reference client — its whole
 implementation is a streaming `Get` split on blank lines, worth reading
