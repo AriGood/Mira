@@ -187,7 +187,8 @@ void Watcher::HandleInotify() {
         pending_.erase(path.string());  // no point finishing a debounce for a path that's gone
         // A deletion needs no debounce — rescan this root now so a removed
         // game is marked missing promptly.
-        scanner.ScanRoot(root_it->second);
+        const ScanSummary summary = scanner.ScanRoot(root_it->second);
+        for (const model::Game& game : summary.added_games) metadata_fetches_.Enqueue(config_, events_, game);
       }
     }
   }
@@ -224,12 +225,14 @@ void Watcher::HandleDebounceTick() {
           log::Error("failed to extract {}: {}", path, extracted.error().message);
           continue;
         }
-        scanner.ScanRoot(entry.root);
+        const ScanSummary summary = scanner.ScanRoot(entry.root);
+        for (const model::Game& game : summary.added_games) metadata_fetches_.Enqueue(config_, events_, game);
         continue;
       }
 
       log::Info("{} settled, scanning {}", path, entry.root.string());
-      scanner.ScanRoot(entry.root);
+      const ScanSummary summary = scanner.ScanRoot(entry.root);
+      for (const model::Game& game : summary.added_games) metadata_fetches_.Enqueue(config_, events_, game);
     }
   }
   RearmTimer();

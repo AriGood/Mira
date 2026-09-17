@@ -1,9 +1,11 @@
 #pragma once
 
 #include <filesystem>
+#include <vector>
 
 #include "api/EventBus.h"
 #include "config/Config.h"
+#include "model/Types.h"
 #include "store/GameStore.h"
 
 namespace mira::library {
@@ -12,6 +14,11 @@ struct ScanSummary {
   int added = 0;    // new games detected and auto-configured
   int missing = 0;  // previously-known games whose folder is now gone
   int restored = 0; // a previously-missing game's folder reappeared
+
+  // The games behind `added`, for callers that want to react per-game (e.g.
+  // triggering a metadata fetch) — deliberately not done inside Scanner
+  // itself; see the comment on metadata::FetchAsync's call sites for why.
+  std::vector<model::Game> added_games;
 };
 
 // Walks every enabled library root one level deep — each immediate

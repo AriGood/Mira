@@ -1,6 +1,7 @@
 #include "library/Scanner.h"
 
 #include <algorithm>
+#include <iterator>
 
 #include "core/Log.h"
 #include "core/Strings.h"
@@ -75,10 +76,11 @@ Scanner::Scanner(config::Config& config, store::GameStore& games, api::EventBus&
 ScanSummary Scanner::ScanAll() {
   ScanSummary total;
   for (const fs::path& root : config_.GetPathArray("library_roots")) {
-    const ScanSummary partial = ScanRoot(root);
+    ScanSummary partial = ScanRoot(root);
     total.added += partial.added;
     total.missing += partial.missing;
     total.restored += partial.restored;
+    std::ranges::move(partial.added_games, std::back_inserter(total.added_games));
   }
   return total;
 }
@@ -141,6 +143,7 @@ ScanSummary Scanner::ScanRoot(const fs::path& root) {
     const Detector::Result detected = detector.Detect(dir);
     const model::Game game = auto_setup.CreateGame(dir, detected);
     ++summary.added;
+    summary.added_games.push_back(game);
     log::Info("detected new game: {}", install_path);
 
     // With auto_setup off, a game is still detected and stored (so it shows
