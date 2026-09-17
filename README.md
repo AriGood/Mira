@@ -1,8 +1,11 @@
 # Mira
 
-A Linux game launcher for native games and Windows games run through
-Wine/Proton. Drop a game folder into a watched directory and Mira detects
-it, works out how to run it, and sets it up — no manual "add game" wizard.
+A self-hosted Linux game launcher: one library for native games and
+Windows games run through Wine/Proton, with Steam games folded in
+alongside everything else.
+
+Drop a game folder into a watched directory and Mira detects it, works out
+how to run it, and sets it up — no manual "add game" wizard.
 
 This repository is the **backend** (`mirad`), a **CLI** (`mira`), and a
 **Qt frontend** (`mira-gui`). See
@@ -14,112 +17,43 @@ socket, and neither can do anything `mirad` doesn't expose through
 
 **Status:** early, but the core loop works end to end: detection, Wine/Proton
 prefix provisioning, launching, crash/playtime tracking, Steam game
-detection and launching, and desktop-menu integration are all built and
-tested. See `docs/architecture.md` for what's still planned (runner-version
-downloading is in progress; winetricks-equivalent tooling is deliberately
-deferred).
+detection and process tracking, desktop-menu integration, cover-art/store
+metadata fetching, winetricks, and runner (Proton/Wine build) downloading
+are all built and tested. See `docs/architecture.md` for what's still
+planned.
 
 ## Building
-
-Everything is header-only except the C++ standard library itself — no
-package manager step, no network access needed to build.
 
 ```sh
 git clone <this repo>
 cd mira
-cmake --preset dev          # or: release
+cmake --preset dev
 cmake --build build/dev
 ```
 
-Requirements: a C++23 compiler (developed against Clang 22; GCC 13+ should
-work), CMake ≥ 3.20, Ninja. Qt6 (≥ 6.5, `Widgets`) is optional — if it isn't
-found, `mira-gui` is silently skipped and `mirad`/`mira` build exactly the
-same either way. Nothing else is required; `third_party/` vendors
-[cpp-httplib](https://github.com/yhirose/cpp-httplib),
-[nlohmann/json](https://github.com/nlohmann/json),
-[toml++](https://github.com/marzer/tomlplusplus), and
-[doctest](https://github.com/doctest/doctest) as single headers.
-
-Binaries land in `build/dev/`: `mirad`, `mira`, `mira_tests`, and
-`frontend/mira-gui` if Qt6 was found.
-
-### Presets
-
-| Preset    | What it's for |
-|-----------|----------------|
-| `dev`     | debug build, `-Werror` on |
-| `release` | optimized, `RelWithDebInfo` |
-| `asan`    | AddressSanitizer + UBSan |
-| `tsan`    | ThreadSanitizer — the one that matters most here; the daemon is multi-threaded and shares state (settings, the game store, the event bus) across those threads |
-
-```sh
-cmake --preset tsan && cmake --build build/tsan
-```
-
-### Building just the frontend
-
-`frontend/` also configures standalone, for frontend-only iteration without
-touching the backend build at all:
-
-```sh
-cmake -S frontend -B frontend/build
-cmake --build frontend/build
-```
+Needs a C++23 compiler, CMake ≥ 3.20, Ninja, and optionally Qt6 (≥ 6.5,
+`Widgets`) for `mira-gui`. Nothing else — dependencies are vendored,
+header-only. Binaries land in `build/dev/`. Other presets (`release`,
+`asan`, `tsan`), the frontend-only build (`cmake -S frontend -B
+frontend/build`), and the AppImage/`run-gui` targets are in
+`CMakeLists.txt`/`CMakePresets.json`.
 
 ## Running it
 
 ```sh
-build/dev/mirad
+build/dev/mirad &
+build/dev/mira status
+build/dev/mira list
+build/dev/mira watch
 ```
 
-runs the daemon in the foreground, logging to stderr, listening on
-`$XDG_RUNTIME_DIR/mira/mirad.sock`. Stop it with Ctrl-C.
-
-In another terminal:
+or `build/frontend/mira-gui`. `docs/cli.md` covers every `mira` command;
+`docs/architecture.md` covers the three ways to actually run `mirad`
+(foreground, systemd, frontend-supervised) and the systemd path:
 
 ```sh
-build/dev/mira status                        # is it reachable?
-build/dev/mira config list                    # every setting, with docs
-build/dev/mira config get scan.debounce_ms
-build/dev/mira config set scan.debounce_ms 5000
-build/dev/mira scan                           # scan every library root now
-build/dev/mira list                           # games in the library
-build/dev/mira watch                          # tail the live event stream
+systemctl --user enable --now mirad.service
 ```
-
-Every command is documented in [`docs/cli.md`](docs/cli.md). Drop a game
-folder into any of your configured `library_roots` (`~/Games` by default)
-while `mirad` is running and it shows up in `mira list` on its own, no
-`scan` needed — that's `library::Watcher`, not a poll (see
-`docs/architecture.md`).
-
-or use
-```sh
-build/frontend/mira-gui
-```
-to launch the frontend
-
-`docs/architecture.md` documents the three supported ways to actually run
-`mirad` day-to-day (a systemd user service, spawned and supervised by the
-frontend, or one-shot with nothing persistent) — running it directly is the
-right way to run it while developing, not the recommended end-user path.
-
-### Running the frontend
-
-`mira-gui` opens on a cover-art library grid: one click selects a game and
-shows its details, a second launches it, right-click opens its menu. The
-older table view — every field of every game at once, which is what you want
-when auditing a fresh scan — is still there as `mira-gui --classic`, or via
-the grid's View menu. To build and launch the frontend in one step during
-development:
-
-```sh
-cmake --build build/dev --target run-gui
-```
-
-This is a plain convenience target (build `mira-gui`, then exec it) and
-isn't part of the install story. It only exists if Qt6 was found at
-configure time — see the "Building" section above.
 
 ### Building an AppImage
 

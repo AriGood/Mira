@@ -86,6 +86,12 @@ Schema::Schema() {
        "Ask the frontend to open its configuration menu when a game is added, so the "
        "auto-detected settings can be reviewed."},
 
+      {"scan.tag_by_root", Type::Bool, true, Tier::Basic,
+       "Automatically tag each newly-detected game with the name of the library root folder "
+       "it was found in (e.g. a game under ~/Games Mira gets tagged \"Games Mira\") -- useful "
+       "for filtering multiple game folders (GET /v1/games?tag=...) with several "
+       "library_roots configured. Only applied at detection time, not retroactively."},
+
       {"library.remove_missing", Type::Bool, false, Tier::Basic,
        "When a previously-detected game's folder disappears, forget it entirely instead of "
        "just marking it missing. Off by default: missing keeps the game's configuration, "
@@ -133,6 +139,19 @@ Schema::Schema() {
        "whole process group is signalled, since a real launch is umu -> proton -> wine -> "
        "the game.",
        Range(0, 600)},
+
+      {"launch.pre_script", Type::String, "", Tier::Advanced,
+       "Shell command run (via sh -c) before POST /v1/games/{id}/launch actually starts the "
+       "game -- e.g. mounting a network drive a game needs, setting a CPU governor. Runs "
+       "synchronously; a non-zero exit aborts the launch with the script's own output as the "
+       "error. Empty disables it. Overridable per game (PATCH .../config)."},
+
+      {"launch.post_script", Type::String, "", Tier::Advanced,
+       "Shell command run once the game process exits (any reason: clean exit, crash, or "
+       "stop), the mirror of launch.pre_script -- e.g. reverting a CPU governor change. Runs "
+       "in the background; its own exit code is only logged, never affects the recorded "
+       "playtime/crash state. Not run for a Steam game launched via steam.launch_mode "
+       "\"steam\" -- Mira never owns that process (see docs/api.md's Steam section)."},
 
       {"desktop_entries.enabled", Type::Bool, true, Tier::Basic,
        "Add each ready game to your application menu as a .desktop entry, so it can be "
@@ -228,13 +247,22 @@ Schema::Schema() {
       {"steam.launch_mode", Type::String, "steam", Tier::Advanced,
        "How launching a Steam game works. \"steam\" fires "
        "steam://rungameid/<appid> and lets the Steam client launch it — full "
-       "achievements/overlay support, but Mira can't track its process "
-       "(Steam already accounts for playtime, read from its own files "
-       "instead). \"direct\" has Mira exec the game itself, through the same "
-       "Proton build and prefix Steam already set up, with normal Mira "
-       "process tracking (stop/crash/playtime) — override per game via "
-       "games.toml overrides if one game needs the other mode.",
+       "achievements/overlay support; Mira didn't spawn the process, so it "
+       "falls back to steam.track_process (below) rather than normal exit-"
+       "code/signal tracking. \"direct\" has Mira exec the game itself, "
+       "through the same Proton build and prefix Steam already set up, with "
+       "normal Mira process tracking (stop/crash/playtime) — override per "
+       "game via games.toml overrides if one game needs the other mode.",
        OneOf({"steam", "direct"})},
+
+      {"steam.track_process", Type::Bool, true, Tier::Advanced,
+       "For steam.launch_mode \"steam\": poll /proc for the actual game "
+       "process (matched by the SteamAppId/SteamGameId environment variable "
+       "Steam itself sets — the same one the Steamworks API reads) so Mira "
+       "still shows the game as running and records playtime, even though "
+       "it didn't spawn the process. No crash/exit-code detection either "
+       "way — that's Steam's own client's job. Off disables the /proc scan "
+       "entirely; launching still works, Mira just won't show it running."},
 
       {"runner_sources.proton_ge.repo", Type::String, std::string(runner_sources::kProtonGERepo),
        Tier::Advanced, "GitHub \"owner/repo\" Proton-GE builds are downloaded from."},

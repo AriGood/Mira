@@ -1,0 +1,23 @@
+pkgbase = mira
+	pkgdesc = Linux game launcher for native games and Windows games via Wine/Proton
+	pkgver = 0.4.0
+	pkgrel = 1
+	url = https://github.com/AriGood/Mira
+	arch = x86_64
+	license = GPL3
+	makedepends = cmake
+	makedepends = ninja
+	makedepends = clang
+	depends = gcc-libs
+	depends = curl
+	depends = qt6-base
+	optdepends = wine: run Windows games without Proton
+	optdepends = umu-launcher: Proton support (AUR)
+	optdepends = winetricks: install DLL/redistributable fixes into a game prefix
+	optdepends = unzip: auto-extract .zip archives dropped into a library root
+	optdepends = unrar: auto-extract .rar archives dropped into a library root
+	optdepends = p7zip: auto-extract .7z archives dropped into a library root
+	source = mira-0.4.0.tar.gz::https://github.com/AriGood/Mira/archive/refs/tags/v0.4.0.tar.gz
+	sha256sums = SKIP
+
+pkgname = mira

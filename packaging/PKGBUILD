@@ -1,0 +1,39 @@
+# Maintainer: arigood99 <arigood99@gmail.com>
+pkgname=mira
+pkgver=0.4.0
+pkgrel=1
+pkgdesc="Linux game launcher for native games and Windows games via Wine/Proton"
+arch=('x86_64')
+url="https://github.com/AriGood/Mira"
+license=('GPL3')
+depends=('gcc-libs' 'curl' 'qt6-base')
+makedepends=('cmake' 'ninja' 'clang')
+optdepends=('wine: run Windows games without Proton'
+           'umu-launcher: Proton support (AUR)'
+           'winetricks: install DLL/redistributable fixes into a game prefix'
+           'unzip: auto-extract .zip archives dropped into a library root'
+           'unrar: auto-extract .rar archives dropped into a library root'
+           'p7zip: auto-extract .7z archives dropped into a library root')
+backup=()
+source=("$pkgname-$pkgver.tar.gz::https://github.com/AriGood/Mira/archive/refs/tags/v$pkgver.tar.gz")
+# SKIP: the repo is private right now, so this can't be fetched anonymously
+# to compute a real checksum. Run `updpkgsums` once it's public and before
+# any real AUR submission -- AUR requires a real sum here, not SKIP.
+sha256sums=('SKIP')
+
+build() {
+  # GitHub's archive directory name varies by endpoint (Mira-<version> vs.
+  # AriGood-Mira-<commit sha>, confirmed by testing both) -- there's exactly
+  # one directory extracted here regardless of what it's named.
+  cd "$srcdir"/*/
+  cmake -B build -S . \
+    -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+    -DCMAKE_INSTALL_PREFIX=/usr \
+    -GNinja
+  cmake --build build
+}
+
+package() {
+  cd "$srcdir"/*/
+  DESTDIR="$pkgdir" cmake --install build
+}

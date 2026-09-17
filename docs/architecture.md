@@ -501,12 +501,14 @@ impossible instead of just unlikely.
 
 Recorded here so intent isn't lost between sessions:
 
-- **Winetricks integration** — a `winetricks_verbs` list in a game's
-  `runner_config` (already a free-form JSON blob in the schema) run against
-  a fresh prefix before it's marked `ready`, with a `winetricks_defaults`
-  setting seeding sane baseline verbs (corefonts, vcrun, DXVK) for every new
-  prefix. `prefix/IPrefixProvider` (template-clone vs. plain init) is the
-  other still-open piece of provisioning.
+- **Curated `winetricks_defaults` run automatically at first provision.**
+  On-demand winetricks (`POST /v1/games/{id}/tricks`, `runner/Winetricks.h`
+  — see `docs/api.md`) is built: one verb, run against an already-set-up
+  prefix, on request. Still open is a `winetricks_defaults` setting seeding
+  sane baseline verbs (corefonts, vcrun, DXVK) automatically into every new
+  prefix before it's marked `ready`, without a request per verb.
+  `prefix/IPrefixProvider` (template-clone vs. plain init) is the other
+  still-open piece of provisioning.
 - **Exe-location enrichment for a Steam title's real launch command.**
   Steam Integration (`src/steam/`) reads `appmanifest_<id>.acf` and
   `compatdata/<id>/config_info` directly — enough to detect the app, find
@@ -521,10 +523,6 @@ Recorded here so intent isn't lost between sessions:
   public query API is a candidate second source; strictly best-effort on
   top of the offline heuristic detector either way, never a requirement —
   the zero-config test must keep passing with the network disabled.
-- **`DELETE /v1/runners/{reference}`**, to remove an installed build.
-  Downloading and listing (`GET /v1/runners/catalog`,
-  `POST /v1/runners/download` — see `docs/api.md`) are built; nothing
-  removes one yet, short of deleting its directory by hand.
 - **`mirad --scan-once`** for the run-once-and-never-again persona described
   above.
 - **`DaemonSupervisor` in `mira-gui`** for path 2 above.

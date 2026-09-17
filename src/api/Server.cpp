@@ -69,6 +69,15 @@ model::Game ParseGamePatch(const model::Game& base, const json& patch) {
   if (patch.contains("runner_config") && patch["runner_config"].is_object()) {
     game.runner_config.merge_patch(patch["runner_config"]);
   }
+  // Replaced wholesale, not merged -- a plain list has no natural per-entry
+  // merge semantics the way the env map's null-removes-a-key convention
+  // does, so the client sends the full set it wants ({"tags": []} clears).
+  if (patch.contains("tags") && patch["tags"].is_array()) {
+    game.tags.clear();
+    for (const auto& tag : patch["tags"]) {
+      if (tag.is_string()) game.tags.push_back(tag.get<std::string>());
+    }
+  }
   // "env": null clears every entry; "env": {"K": null} removes just K
   // (same null-removes convention as ApplyOverridesPatch below) — merge-only
   // with no way to shrink the map left no way to actually unset a variable
@@ -248,13 +257,24 @@ void Server::RegisterRoutes() {
 
   // --- games ----------------------------------------------------------------
 
+  // "hidden" isn't a separate field — it's a tag (see model::Game::tags),
+  // and the one tag this endpoint treats specially: a hidden game is left
+  // out of the default/untagged list, same as it'd be hidden in a launcher
+  // UI, without a whole extra field+schema entry for one boolean. Pass
+  // ?tag=hidden explicitly to list exactly the hidden ones.
   http_->Get("/v1/games", [this](const Request& req, Response& res) {
     std::vector<model::Game> all = games_.All();
     json out = json::array();
     const auto status_filter = req.params.find("status");
+    const auto tag_filter = req.params.find("tag");
     for (const model::Game& game : all) {
       if (status_filter != req.params.end() &&
           status_filter->second != model::ToString(game.status)) {
+        continue;
+      }
+      if (tag_filter != req.params.end()) {
+        if (!std::ranges::contains(game.tags, tag_filter->second)) continue;
+      } else if (std::ranges::contains(game.tags, std::string("hidden"))) {
         continue;
       }
       out.push_back(model::ToJson(game));
@@ -380,14 +400,27 @@ void Server::RegisterRoutes() {
                                   model::ToString(game->status)));
     }
 
+    const config::Resolver resolver(config_, game->overrides);
+    const std::string pre_script = resolver.GetString("launch.pre_script");
+    const std::string post_script = resolver.GetString("launch.post_script");
+    if (!pre_script.empty()) {
+      Command script;
+      script.argv = {"sh", "-c", pre_script};
+      const Result<runner::ExecResult> ran = runner::RunAndWait(script);
+      if (!ran || ran->exit_code != 0) {
+        return SendError(res, 409, "pre_launch_failed",
+                         !ran ? ran.error().message
+                             : std::format("launch.pre_script exited {}: {}", ran->exit_code, ran->output));
+      }
+    }
+
     // A Steam-sourced game defaults to asking the Steam client to launch it
     // (steam://rungameid/<appid>) rather than Mira execing it directly: full
     // achievements/overlay support, and Steam's own accounting is what
     // GET /v1/games/{id} reads back for it (see steam.launch_mode's doc).
-    // Mira can't track a process it didn't spawn, so this path never
-    // touches ProcessSupervisor — deliberately, not a gap to fill in later.
+    // Mira didn't spawn this process, so it can't waitpid() it — that's what
+    // steam.track_process (a /proc scan, see ProcessSupervisor) is for.
     if (game->runner_ref.starts_with("steam:")) {
-      const config::Resolver resolver(config_, game->overrides);
       if (resolver.GetString("steam.launch_mode") == "steam") {
         const std::string appid = game->runner_ref.substr(std::string_view("steam:").size());
         Command command;
@@ -398,6 +431,11 @@ void Server::RegisterRoutes() {
         [[maybe_unused]] auto _ =
             games_.Update(game->id, [](model::Game& g) { g.last_played_at = model::NowSeconds(); });
         events_.Publish("game.launched", {{"id", game->id}, {"via", "steam"}});
+        if (resolver.GetBool("steam.track_process")) {
+          if (auto tracked = supervisor_.TrackSteamLaunch(*game, appid, post_script); !tracked) {
+            log::Warn("couldn't start tracking {}: {}", game->id, tracked.error().message);
+          }
+        }
         return SendJson(res, {{"status", "launched_via_steam"}});
       }
     }
@@ -411,7 +449,7 @@ void Server::RegisterRoutes() {
 
     ApplyCommandWrappers(*command, config_.GetStringArray("command_wrappers"));
 
-    if (auto launched = supervisor_.Launch(*game, *command); !launched) {
+    if (auto launched = supervisor_.Launch(*game, *command, post_script); !launched) {
       return SendError(res, 409, launched.error().code, launched.error().message);
     }
     SendJson(res, {{"status", "running"}});
@@ -644,6 +682,56 @@ void Server::RegisterRoutes() {
     }).detach();
 
     SendJson(res, {{"status", "downloading"}, {"tag", tag}}, 202);
+  });
+
+  // What game.runner_config accepts for one kind — see IRunner::SettingsSchema
+  // for why this exists (a frontend renders runner_config generically instead
+  // of hardcoding per-runner knowledge; a custom runner with different knobs
+  // needs no frontend change). Empty array for a kind with no fields, which
+  // is every kind but proton today.
+  http_->Get(R"(/v1/runners/([^/]+)/schema)", [this](const Request& req, Response& res) {
+    const runner::RunnerRegistry registry(config_);
+    const runner::IRunner* found = registry.FindByKind(req.matches[1]);
+    if (!found) return SendError(res, 404, "unknown_runner_kind", "no runner of that kind");
+    SendJson(res, found->SettingsSchema());
+  });
+
+  // Removes an installed build's directory — the other half of
+  // GET /v1/runners/catalog + POST /v1/runners/download; discovery
+  // (GET /v1/runners) picks it back up on the next call, no separate
+  // bookkeeping to update. Only ever deletes a path that both resolves to
+  // this exact build (via the same RunnerRegistry::Resolve every launch
+  // uses) and really sits inside a configured search path — same
+  // containment check DELETE /v1/games/{id} uses for install_path/data_dir,
+  // so "wine:system" (the real system wine binary, found on PATH, not under
+  // any search path) is rejected rather than deleted. A kind with no
+  // concept of separate builds (native, steam) 400s.
+  http_->Delete(R"(/v1/runners/([^:]+):(.+))", [this](const Request& req, Response& res) {
+    const std::string kind = req.matches[1];
+    const std::string name = req.matches[2];
+    if (name == "auto" || name == "latest") {
+      return SendError(res, 400, "invalid_reference", "name a concrete build, not \"auto\"/\"latest\"");
+    }
+
+    const runner::RunnerRegistry registry(config_);
+    auto resolved = registry.Resolve(kind + ":" + name);
+    if (!resolved) return SendError(res, 404, resolved.error().code, resolved.error().message);
+    if (!resolved->build) {
+      return SendError(res, 400, "not_a_build", std::format("\"{}\" has no separate installed builds", kind));
+    }
+
+    // Proton's build->path is already the build's own root directory; Wine's
+    // is the wine binary inside it (<root>/bin/wine — see WineRunner.cpp),
+    // so the actual directory to remove is two levels up.
+    const std::filesystem::path build_path(resolved->build->path);
+    const std::filesystem::path target = kind == "wine" ? build_path.parent_path().parent_path() : build_path;
+    const std::vector<std::filesystem::path> roots = kind == "wine" ? config_.GetPathArray("wine_search_paths")
+                                                                    : config_.GetPathArray("runner_search_paths");
+    if (auto deleted = DeleteUnderRoot(target.string(), roots); !deleted) {
+      return SendError(res, 400, deleted.error().code, deleted.error().message);
+    }
+    events_.Publish("runners.removed", {{"kind", kind}, {"name", name}});
+    SendJson(res, json::object());
   });
 
   // --- events (SSE) -----------------------------------------------------

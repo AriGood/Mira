@@ -23,6 +23,11 @@ public:
 
   std::vector<model::RunnerBuild> DiscoverAll() const;
 
+  // Looks up a runner by kind alone, with no build resolution — for
+  // anything that only needs the runner itself (e.g. its SettingsSchema()),
+  // not a "kind:name" reference. nullptr if no runner of that kind exists.
+  const IRunner* FindByKind(const std::string& kind) const;
+
   struct Resolved {
     const IRunner* runner;
     std::optional<model::RunnerBuild> build;  // unset for a runner with no builds (native)

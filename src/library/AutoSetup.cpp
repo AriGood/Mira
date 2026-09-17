@@ -22,6 +22,16 @@ model::Game AutoSetup::CreateGame(const fs::path& install_path, const Detector::
   game.updated_at = game.created_at;
   game.data_dir = (config_.GetPath("prefix_root") / game.id).string();
 
+  // install_path's parent is which library root this came from (see the
+  // field's own comment in model/Types.h) -- the root's own leaf folder
+  // name doubles as a natural, human-readable tag for it, letting multiple
+  // library_roots stay filterable (GET /v1/games?tag=...) without the user
+  // tagging anything by hand.
+  if (config_.GetBool("scan.tag_by_root")) {
+    const std::string root_name = install_path.parent_path().filename().string();
+    if (!root_name.empty()) game.tags.push_back(root_name);
+  }
+
   if (detected.candidates.empty()) {
     game.status = model::GameStatus::Broken;
     game.platform = model::Platform::Unknown;

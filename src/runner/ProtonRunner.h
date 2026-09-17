@@ -21,6 +21,7 @@ public:
                          const std::optional<model::RunnerBuild>& build) const override;
   Result<Command> BuildCommand(const model::Game& game,
                                const std::optional<model::RunnerBuild>& build) const override;
+  nlohmann::json SettingsSchema() const override;
 };
 
 }  // namespace mira::runner

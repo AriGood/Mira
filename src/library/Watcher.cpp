@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstring>
+#include <vector>
 
 #include "core/Log.h"
 #include "library/ArchiveExtractor.h"
@@ -39,6 +40,29 @@ std::uintmax_t TotalSize(const fs::path& dir) {
     if (entry.is_regular_file(size_ec)) total += entry.file_size(size_ec);
   }
   return total;
+}
+
+// True if `path` resolves inside any of `roots`. Nothing stops a user from
+// pointing library_roots at (or inside) a configured runner_search_paths/
+// wine_search_paths entry — an unusual config, but not one this project
+// validates against elsewhere either — so without this check, a Proton/Wine
+// build POST /v1/runners/download is actively downloading and extracting
+// (runner/Downloader.cpp, its own separate tar) would also look like a new
+// game folder or a droppable archive to this watcher, racing Downloader's
+// own tar on the same file and getting misdetected as a "game" in the
+// library besides. Same containment check DELETE /v1/games/{id} and
+// DELETE /v1/runners/{reference} use in Server.cpp, applied read-only here.
+bool IsUnderAnyRoot(const fs::path& path, const std::vector<fs::path>& roots) {
+  std::error_code ec;
+  const fs::path resolved = fs::weakly_canonical(path, ec);
+  if (ec) return false;
+  return std::ranges::any_of(roots, [&](const fs::path& root) {
+    std::error_code root_ec;
+    const fs::path canon_root = fs::weakly_canonical(root, root_ec);
+    if (root_ec) return false;
+    const auto [root_end, nothing] = std::mismatch(canon_root.begin(), canon_root.end(), resolved.begin());
+    return root_end == canon_root.end();
+  });
 }
 
 }  // namespace
@@ -163,6 +187,15 @@ void Watcher::HandleInotify() {
   alignas(inotify_event) char buffer[4096];
   library::Scanner scanner(config_, games_, events_);
 
+  // Computed once per call, not per event: a runner build being downloaded
+  // (runner/Downloader.cpp) into runner_search_paths/wine_search_paths must
+  // never also be treated as a new game folder or a droppable archive here
+  // — see IsUnderAnyRoot's comment for why this matters even though the
+  // defaults never overlap.
+  std::vector<fs::path> runner_roots;
+  for (const fs::path& p : config_.GetPathArray("runner_search_paths")) runner_roots.push_back(p);
+  for (const fs::path& p : config_.GetPathArray("wine_search_paths")) runner_roots.push_back(p);
+
   while (true) {
     const ssize_t n = ::read(inotify_fd_, buffer, sizeof(buffer));
     if (n <= 0) break;  // EAGAIN (nothing more queued) or an error either way
@@ -177,6 +210,7 @@ void Watcher::HandleInotify() {
       const fs::path path = root_it->second / event->name;
 
       if (event->mask & (IN_CREATE | IN_MOVED_TO)) {
+        if (IsUnderAnyRoot(path, runner_roots)) continue;
         std::error_code ec;
         if (fs::is_directory(path, ec)) {
           ScheduleCheck(root_it->second, path, /*is_archive=*/false);
