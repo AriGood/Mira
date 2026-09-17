@@ -156,6 +156,13 @@ Schema::Schema() {
       {"scan.max_depth", Type::Int, 4, Tier::Advanced,
        "How deep to search inside a game folder for executables.", Range(1, 16)},
 
+      {"scan.auto_extract_archives", Type::Bool, false, Tier::Basic,
+       "Extract a .zip/.rar/.tar(.gz/.xz/.bz2)/.7z dropped directly into a library root, "
+       "into a same-named folder, then delete the archive — so an archived game drop "
+       "behaves like an already-extracted one. Off by default: silently deleting an "
+       "archive is a real action to opt into, not assume. Extracting a .rar or .7z needs "
+       "unrar/p7zip installed; a missing tool is reported, not silently skipped."},
+
       {"scan.periodic_interval_s", Type::Int, 0, Tier::Expert,
        "Seconds between full rescans. 0 disables them, which is the default: inotify is "
        "authoritative and a timer would cost idle wakeups for nothing.",

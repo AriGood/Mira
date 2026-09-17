@@ -11,6 +11,7 @@
 #include <cstring>
 
 #include "core/Log.h"
+#include "library/ArchiveExtractor.h"
 #include "library/Scanner.h"
 
 namespace mira::library {
@@ -85,12 +86,14 @@ void Watcher::RearmTimer() {
   timerfd_settime(timer_fd_, 0, &spec, nullptr);
 }
 
-void Watcher::ScheduleCheck(const fs::path& root, const fs::path& dir) {
+void Watcher::ScheduleCheck(const fs::path& root, const fs::path& path, bool is_archive) {
+  std::error_code ec;
   Pending entry;
   entry.root = root;
-  entry.last_size = TotalSize(dir);
+  entry.is_archive = is_archive;
+  entry.last_size = is_archive ? fs::file_size(path, ec) : TotalSize(path);
   entry.stable_since_ms = NowMs();
-  pending_[dir.string()] = entry;
+  pending_[path.string()] = entry;
   RearmTimer();
 }
 
@@ -175,7 +178,11 @@ void Watcher::HandleInotify() {
 
       if (event->mask & (IN_CREATE | IN_MOVED_TO)) {
         std::error_code ec;
-        if (fs::is_directory(path, ec)) ScheduleCheck(root_it->second, path);
+        if (fs::is_directory(path, ec)) {
+          ScheduleCheck(root_it->second, path, /*is_archive=*/false);
+        } else if (config_.GetBool("scan.auto_extract_archives") && LooksLikeArchive(path)) {
+          ScheduleCheck(root_it->second, path, /*is_archive=*/true);
+        }
       } else if (event->mask & (IN_DELETE | IN_MOVED_FROM)) {
         pending_.erase(path.string());  // no point finishing a debounce for a path that's gone
         // A deletion needs no debounce — rescan this root now so a removed
@@ -193,7 +200,8 @@ void Watcher::HandleDebounceTick() {
   std::vector<std::string> settled;
 
   for (auto& [path, entry] : pending_) {
-    const std::uintmax_t current_size = TotalSize(path);
+    std::error_code ec;
+    const std::uintmax_t current_size = entry.is_archive ? fs::file_size(path, ec) : TotalSize(path);
     if (current_size != entry.last_size) {
       entry.last_size = current_size;
       entry.stable_since_ms = now;
@@ -205,10 +213,23 @@ void Watcher::HandleDebounceTick() {
   if (!settled.empty()) {
     library::Scanner scanner(config_, games_, events_);
     for (const std::string& path : settled) {
-      const fs::path root = pending_.at(path).root;
+      const Pending entry = pending_.at(path);
       pending_.erase(path);
-      log::Info("{} settled, scanning {}", path, root.string());
-      scanner.ScanRoot(root);
+
+      if (entry.is_archive) {
+        const fs::path archive(path);
+        const fs::path dest = entry.root / library::StemWithoutArchiveExtension(archive);
+        log::Info("{} settled, extracting into {}", path, dest.string());
+        if (auto extracted = library::ExtractAndRemove(archive, dest); !extracted) {
+          log::Error("failed to extract {}: {}", path, extracted.error().message);
+          continue;
+        }
+        scanner.ScanRoot(entry.root);
+        continue;
+      }
+
+      log::Info("{} settled, scanning {}", path, entry.root.string());
+      scanner.ScanRoot(entry.root);
     }
   }
   RearmTimer();
