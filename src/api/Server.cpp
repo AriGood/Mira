@@ -231,6 +231,10 @@ void Server::RegisterRoutes() {
           {"tier", config::ToString(entry.tier)},
           {"doc", entry.doc},
       });
+      // Present only when there's a shape to describe.
+      if (!entry.constraint.one_of.empty()) entries.back()["one_of"] = entry.constraint.one_of;
+      if (entry.constraint.minimum) entries.back()["minimum"] = *entry.constraint.minimum;
+      if (entry.constraint.maximum) entries.back()["maximum"] = *entry.constraint.maximum;
     }
     SendJson(res, std::move(entries));
   });
@@ -430,16 +434,20 @@ void Server::RegisterRoutes() {
         }
         [[maybe_unused]] auto _ =
             games_.Update(game->id, [](model::Game& g) { g.last_played_at = model::NowSeconds(); });
-        events_.Publish("game.launched", {{"id", game->id}, {"via", "steam"}});
+        // Whether game.state events are coming for this launch — on the
+        // event too, for a client that launched from elsewhere (the CLI).
+        const bool track = resolver.GetBool("steam.track_process");
+        events_.Publish("game.launched",
+                        {{"id", game->id}, {"via", "steam"}, {"tracked", track}});
         events_.PublishNotification(model::NotifyLevel::Info,
                                     "Handed to Steam. Mira does not track Steam-launched sessions — "
                                     "Steam keeps its own playtime.");
-        if (resolver.GetBool("steam.track_process")) {
-          if (auto tracked = supervisor_.TrackSteamLaunch(*game, appid, post_script); !tracked) {
-            log::Warn("couldn't start tracking {}: {}", game->id, tracked.error().message);
+        if (track) {
+          if (auto started = supervisor_.TrackSteamLaunch(*game, appid, post_script); !started) {
+            log::Warn("couldn't start tracking {}: {}", game->id, started.error().message);
           }
         }
-        return SendJson(res, {{"status", "launched_via_steam"}});
+        return SendJson(res, {{"status", "launched_via_steam"}, {"tracked", track}});
       }
     }
 
@@ -455,7 +463,7 @@ void Server::RegisterRoutes() {
     if (auto launched = supervisor_.Launch(*game, *command, post_script); !launched) {
       return SendError(res, 409, launched.error().code, launched.error().message);
     }
-    SendJson(res, {{"status", "running"}});
+    SendJson(res, {{"status", "running"}, {"tracked", true}});  // always true: Mira spawned it
   });
 
   http_->Post(R"(/v1/games/([^/]+)/stop)", [this](const Request& req, Response& res) {

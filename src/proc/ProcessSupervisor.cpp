@@ -74,6 +74,15 @@ std::set<pid_t> FindSteamProcesses(const std::string& appid) {
   return found;
 }
 
+// Signals a game's process group plus every process sharing its prefix.
+void SignalGame(pid_t pid, const std::string& data_dir, int signal_number) {
+  if (pid > 0) {
+    ::kill(-pid, signal_number);
+    ::kill(pid, signal_number);
+  }
+  for (pid_t found : FindPrefixProcesses(data_dir)) ::kill(found, signal_number);
+}
+
 bool AnyAlive(const std::set<pid_t>& pids) {
   for (pid_t pid : pids) {
     if (::kill(pid, 0) == 0) return true;
@@ -82,6 +91,56 @@ bool AnyAlive(const std::set<pid_t>& pids) {
 }
 
 }  // namespace
+
+// Every pid whose WINEPREFIX/STEAM_COMPAT_DATA_PATH points at data_dir.
+//
+// The process group alone isn't enough: on Proton/Wine, setsid()/setpgid()
+// during startup leaves the group with just umu-run by the time a game is
+// on screen. Measured against a real launch: signalling the group reached
+// 1 of 16 processes.
+std::set<pid_t> FindPrefixProcesses(const std::string& data_dir) {
+  std::set<pid_t> found;
+  if (data_dir.empty()) return found;
+
+  // Entry-by-entry, not substring: "…/prefix/animal" must not match
+  // "…/prefix/animal-well". umu rewrites WINEPREFIX to "<data_dir>/pfx/".
+  const auto matches = [&data_dir](std::string_view value) {
+    if (value == data_dir) return true;
+    return value.size() > data_dir.size() && value.starts_with(data_dir) &&
+           value[data_dir.size()] == '/';
+  };
+
+  DIR* proc_dir = ::opendir("/proc");
+  if (!proc_dir) return found;
+  while (const dirent* entry = ::readdir(proc_dir)) {
+    const std::string name = entry->d_name;
+    if (name.empty() || !std::isdigit(static_cast<unsigned char>(name[0]))) continue;
+
+    std::ifstream environ_file("/proc/" + name + "/environ", std::ios::binary);
+    if (!environ_file) continue;  // gone, or not our own process
+    const std::string environ((std::istreambuf_iterator<char>(environ_file)),
+                              std::istreambuf_iterator<char>());
+
+    for (std::size_t start = 0; start < environ.size();) {
+      const std::size_t end = environ.find('\0', start);
+      const std::string_view item(environ.data() + start,
+                                  (end == std::string::npos ? environ.size() : end) - start);
+      start = (end == std::string::npos) ? environ.size() : end + 1;
+
+      const std::size_t equals = item.find('=');
+      if (equals == std::string_view::npos) continue;
+      const std::string_view key = item.substr(0, equals);
+      if (key != "WINEPREFIX" && key != "STEAM_COMPAT_DATA_PATH") continue;
+      if (matches(item.substr(equals + 1))) {
+        found.insert(std::atoi(name.c_str()));
+        break;
+      }
+    }
+  }
+  ::closedir(proc_dir);
+  return found;
+}
+
 
 ProcessSupervisor::ProcessSupervisor(store::GameStore& games, api::EventBus& events,
                                      std::int64_t stop_timeout_s)
@@ -117,6 +176,7 @@ Result<void> ProcessSupervisor::Launch(const model::Game& game, const Command& c
   {
     std::lock_guard lock(mutex_);
     running_[game.id] = *pid;
+    prefixes_[game.id] = game.data_dir;  // for Stop(), see FindPrefixProcesses
     // A previous watcher for this id has already finished by now (it erases
     // itself from running_ before exiting), but its thread object can still
     // be sitting here unjoined.
@@ -144,6 +204,7 @@ Result<void> ProcessSupervisor::Launch(const model::Game& game, const Command& c
 
 Result<void> ProcessSupervisor::Stop(const std::string& game_id) {
   pid_t pid = 0;
+  std::string data_dir;
   {
     std::lock_guard lock(mutex_);
     const auto it = running_.find(game_id);
@@ -151,6 +212,9 @@ Result<void> ProcessSupervisor::Stop(const std::string& game_id) {
       return Err("not_running", std::format("\"{}\" is not running", game_id));
     }
     pid = it->second;
+    if (const auto prefix = prefixes_.find(game_id); prefix != prefixes_.end()) {
+      data_dir = prefix->second;
+    }
   }
   // 0 is TrackSteamLaunch's "reserved, not confirmed yet" sentinel — kill(0,
   // ...)/kill(-0, ...) both mean "signal every process in the caller's own
@@ -160,9 +224,12 @@ Result<void> ProcessSupervisor::Stop(const std::string& game_id) {
               std::format("\"{}\" was launched but its process isn't confirmed yet — try again shortly",
                           game_id));
   }
-  // Negative pid signals the whole process group — see the setpgid note in
-  // runner::SpawnDetached.
-  if (::kill(-pid, SIGTERM) != 0 && ::kill(pid, SIGTERM) != 0) {
+  // Group (see runner::SpawnDetached's setpgid note) plus the prefix — see
+  // FindPrefixProcesses for why the group alone usually isn't enough.
+  const std::set<pid_t> in_prefix = FindPrefixProcesses(data_dir);
+  const bool group_signalled = ::kill(-pid, SIGTERM) == 0 || ::kill(pid, SIGTERM) == 0;
+  for (pid_t found : in_prefix) ::kill(found, SIGTERM);
+  if (!group_signalled && in_prefix.empty()) {
     return Err("stop_failed", std::format("could not signal pid {}", pid));
   }
   {
@@ -193,8 +260,8 @@ void ProcessSupervisor::Watch(std::string game_id, pid_t pid, std::int64_t start
       const auto deadline = kill_deadlines_.find(game_id);
       if (deadline != kill_deadlines_.end() && model::NowSeconds() >= deadline->second) {
         log::Warn("{} ignored SIGTERM; sending SIGKILL", game_id);
-        ::kill(-pid, SIGKILL);
-        ::kill(pid, SIGKILL);
+        const auto prefix = prefixes_.find(game_id);
+        SignalGame(pid, prefix == prefixes_.end() ? std::string() : prefix->second, SIGKILL);
         kill_deadlines_.erase(deadline);
       }
     }
@@ -240,6 +307,7 @@ void ProcessSupervisor::Watch(std::string game_id, pid_t pid, std::int64_t start
   {
     std::lock_guard lock(mutex_);
     running_.erase(game_id);
+    prefixes_.erase(game_id);
     kill_deadlines_.erase(game_id);
     stop_requested_.erase(game_id);
   }
@@ -307,6 +375,7 @@ void ProcessSupervisor::WatchSteam(std::string game_id, std::string appid, std::
                kSteamDetectTimeout.count());
       std::lock_guard lock(mutex_);
       running_.erase(game_id);
+      prefixes_.erase(game_id);
       return;
     }
     std::this_thread::sleep_for(kPollInterval);
@@ -349,6 +418,7 @@ void ProcessSupervisor::WatchSteam(std::string game_id, std::string appid, std::
   {
     std::lock_guard lock(mutex_);
     running_.erase(game_id);
+    prefixes_.erase(game_id);
     kill_deadlines_.erase(game_id);
     stop_requested_.erase(game_id);
   }
