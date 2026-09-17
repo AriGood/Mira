@@ -14,6 +14,13 @@ model::Event EventBus::Publish(std::string type, nlohmann::json payload) {
   return event;
 }
 
+model::Event EventBus::PublishNotification(model::NotifyLevel level, std::string message,
+                                           nlohmann::json extra) {
+  extra["level"] = model::ToString(level);
+  extra["message"] = std::move(message);
+  return Publish("notification", std::move(extra));
+}
+
 std::optional<model::Event> EventBus::WaitNext(std::int64_t after_id, const std::atomic<bool>& stop,
                                                 std::chrono::milliseconds timeout) {
   std::unique_lock lock(mutex_);

@@ -16,16 +16,12 @@
 
 namespace mira::proc {
 
-// Tracks the games currently running. One watcher thread per running game,
-// which is fine at a launcher's scale (usually one) and — unlike a single
-// blanket waitpid(-1) reaper — cannot steal the exit status of the
-// provisioning children runner::RunAndWait waits on itself.
+// Tracks the games currently running. One watcher thread per running game —
+// fine at launcher scale, and unlike a blanket waitpid(-1) reaper it can't
+// steal the exit status of runner::RunAndWait's own provisioning children.
 //
-// The watcher polls with WNOHANG rather than blocking in waitpid() so daemon
-// shutdown doesn't have to wait for the player to quit their game. That tick
-// only runs while a game is actually running, never at rest — the same
-// exemption as the SSE liveness check and the scan debounce timer (see
-// docs/architecture.md, Idle cost).
+// Polls with WNOHANG (not a blocking waitpid()) so shutdown doesn't wait on
+// the player quitting; only ticks while a game is actually running.
 class ProcessSupervisor {
 public:
   ProcessSupervisor(store::GameStore& games, api::EventBus& events,
@@ -40,21 +36,13 @@ public:
   // playtime is finalized in the store.
   Result<void> Launch(const model::Game& game, const Command& command, std::string post_script = "");
 
-  // For a game Mira didn't spawn itself -- Steam's own client did, via
-  // steam://rungameid/<appid> (steam.launch_mode "steam"). Mira can't
-  // waitpid() a process it isn't the parent of, so instead this polls /proc
-  // for a process carrying SteamAppId=<appid> or SteamGameId=<appid> in its
-  // environment -- the same variable the Steamworks API itself reads
-  // (confirmed against a real Proton install's protonfixes/fix.py), not one
-  // specific pid, since the actual game process sits under a
-  // steam -> reaper -> pressure-vessel -> proton chain that varies by title.
-  // Reports running/exited the same way Launch() does, minus a real exit
-  // code/signal (not obtainable for a non-child process -- Steam's own
-  // client already has that; this exists only so Mira's own state is
-  // accurate). Gives up quietly, no error, if nothing matching ever shows up
-  // within a startup window -- Steam itself may still be launching, or the
-  // player cancelled it, and there is no caller left waiting on this by the
-  // time it would find out either way.
+  // For a game Steam's own client launched (steam.launch_mode "steam"), which
+  // Mira can't waitpid() on. Polls /proc for SteamAppId=<appid> or
+  // SteamGameId=<appid> in a process's environment, since the actual game
+  // sits under a steam -> reaper -> pressure-vessel -> proton chain with no
+  // fixed pid. Reports running/exited like Launch(), minus a real exit
+  // code/signal. Gives up quietly if nothing matches within a startup
+  // window — Steam may still be launching, or the player cancelled.
   Result<void> TrackSteamLaunch(const model::Game& game, const std::string& appid,
                                 std::string post_script = "");
 

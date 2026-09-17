@@ -1,16 +1,8 @@
 #pragma once
 
-// Curated lists of executable-name glob patterns for the detector. Edit this
-// file to add or fix an entry — it's just data, included by Schema.cpp,
-// which only wires these in as the default for a normal, still user-editable
-// setting (detect.deny_name_patterns / detect.installer_name_patterns in
-// settings.toml — nobody needs to touch this file or rebuild just to
-// override the list for themselves).
-//
-// Grounded in real prior art where possible, not guessed: *crashhandler*
-// exists because UnityCrashHandler*.exe getting auto-picked over the real
-// game exe is a documented, still-open Lutris bug
-// (github.com/lutris/lutris/issues/6881).
+// Curated executable-name glob patterns for the detector; just data, wired
+// in by Schema.cpp as defaults for detect.deny_name_patterns /
+// detect.installer_name_patterns (settings.toml), which stay user-editable.
 
 #include <array>
 #include <string_view>
@@ -28,7 +20,8 @@ inline constexpr std::array kDeny = {
     "gfwlivesetup*", "xnafx*", "*prereqsetup*", "*prerequisites*",
     // Unreal Engine helpers
     "*crashreport*", "*cefsubprocess*", "*crashpad*",
-    // Unity helpers — see the Lutris issue cited above
+    // Unity helper — UnityCrashHandler*.exe getting auto-picked over the
+    // real game exe (github.com/lutris/lutris/issues/6881)
     "*crashhandler*",
     // other common crash reporters (BugTrap/BugSplat, and legacy Dr. Watson)
     "*bugsplat*", "bssndrpt*", "crashsender*", "drwtsn32*",

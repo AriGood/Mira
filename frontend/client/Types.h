@@ -99,6 +99,14 @@ struct MetadataEvent {
   std::string error;
 };
 
+// A `notification` event — mirad's own decision that this is worth telling
+// the user about; the UI just renders it (see MiradClient::ParseNotification
+// and mira_gui::notify::Toast).
+struct NotificationEvent {
+  std::string level;  // "info" | "success" | "warning" | "error"
+  std::string message;
+};
+
 struct StopResult {
   bool ok = false;
   std::string error;

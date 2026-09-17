@@ -26,6 +26,11 @@ std::string_view ToString(GameStatus status);
 Platform PlatformFromString(std::string_view text);
 GameStatus GameStatusFromString(std::string_view text);
 
+// Severity of a `notification` event (EventBus::PublishNotification) — the
+// frontend maps this straight onto its toast/system-notification styling.
+enum class NotifyLevel { Info, Success, Warning, Error };
+std::string_view ToString(NotifyLevel level);
+
 // One executable the detector found, offered to the frontend as an
 // alternative to the one it chose. Identified by rel_path, not a numeric id —
 // there is no database assigning one.

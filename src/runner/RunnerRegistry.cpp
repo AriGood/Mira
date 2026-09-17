@@ -52,20 +52,12 @@ RunnerRegistry::RunnerRegistry(config::Config& config) : config_(config) {
   runners_[steam->kind()] = std::move(steam);
 }
 
-// One build, discovered once.
-//
-// A runner is searched for under several roots, and on a normal Arch/Steam
-// setup two of them are the same directory: `~/.steam/steam` is a symlink to
-// `~/.local/share/Steam`, which `libraryfolders.vdf` also lists. The same
-// Proton build is then found twice, with identical kind/name/version and
-// only `path` differing — and since a game refers to a runner by
-// `kind:name` (model::RunnerBuild::Reference, docs/api.md), those two
-// entries are the same runner by definition. Every picker built from
-// GET /v1/runners offered the same build twice as a result.
-//
-// Resolved paths first, because that is the actual cause; then references,
-// because two builds sharing one are indistinguishable to any client and
-// offering a choice between them is offering a choice that isn't one.
+// One build, discovered once. On a normal Arch/Steam setup `~/.steam/steam`
+// symlinks to `~/.local/share/Steam`, which `libraryfolders.vdf` also lists,
+// so the same Proton build gets found twice under different `path`s but the
+// same `kind:name` reference. Dedupe on resolved path first (the actual
+// cause), then on reference (two builds sharing one are indistinguishable
+// to any client).
 std::vector<model::RunnerBuild> DeduplicateBuilds(std::vector<model::RunnerBuild> builds) {
   std::vector<model::RunnerBuild> unique;
   std::set<std::string> seen_paths;

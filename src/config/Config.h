@@ -12,17 +12,13 @@
 
 namespace mira::config {
 
-// The on-disk settings.toml, kept merged with the schema defaults so every
-// declared key always resolves. In memory everything is JSON (the same
-// representation used over the API); only Load()/Save() speak TOML, via
-// core/TomlJson. Unknown backend keys are preserved across writes, so a newer
-// frontend/daemon's settings survive an older one rather than being dropped.
+// The on-disk settings.toml, merged with schema defaults so every declared
+// key always resolves. In memory everything is JSON; only Load()/Save()
+// speak TOML (via core/TomlJson). Unknown keys are preserved across writes.
 //
-// The frontend's own settings live in a sibling file, frontend.toml, kept
-// deliberately separate from settings.toml: the daemon owns and validates
-// every key in settings.toml against the schema, while frontend.toml is
-// opaque, stored and returned verbatim, so the frontend can evolve its own
-// settings shape without ever touching the backend's schema.
+// frontend.toml is a separate, opaque sibling file: the daemon validates
+// settings.toml against the schema, but stores/returns frontend.toml
+// verbatim so the frontend can evolve its own settings shape freely.
 class Config {
 public:
   explicit Config(std::filesystem::path file);

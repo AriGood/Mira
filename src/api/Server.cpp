@@ -431,6 +431,9 @@ void Server::RegisterRoutes() {
         [[maybe_unused]] auto _ =
             games_.Update(game->id, [](model::Game& g) { g.last_played_at = model::NowSeconds(); });
         events_.Publish("game.launched", {{"id", game->id}, {"via", "steam"}});
+        events_.PublishNotification(model::NotifyLevel::Info,
+                                    "Handed to Steam. Mira does not track Steam-launched sessions — "
+                                    "Steam keeps its own playtime.");
         if (resolver.GetBool("steam.track_process")) {
           if (auto tracked = supervisor_.TrackSteamLaunch(*game, appid, post_script); !tracked) {
             log::Warn("couldn't start tracking {}: {}", game->id, tracked.error().message);
@@ -652,7 +655,11 @@ void Server::RegisterRoutes() {
   http_->Post(R"(/v1/games/([^/]+)/metadata/refresh)", [this](const Request& req, Response& res) {
     auto game = games_.Find(req.matches[1]);
     if (!game) return SendError(res, 404, "game_not_found", "no such game");
-    metadata_fetches_.Enqueue(config_, events_, *game, /*force=*/true);
+    // ?announce=1 marks this as user-initiated, so FetchQueue reports its
+    // outcome as a notification — a bulk refresh (many games at once)
+    // leaves it off and reports its own summary instead.
+    const bool announce = req.get_param_value("announce") == "1";
+    metadata_fetches_.Enqueue(config_, events_, *game, /*force=*/true, announce);
     SendJson(res, {{"status", "fetching"}}, 202);
   });
 
@@ -729,16 +736,12 @@ void Server::RegisterRoutes() {
     SendJson(res, found->SettingsSchema());
   });
 
-  // Removes an installed build's directory — the other half of
-  // GET /v1/runners/catalog + POST /v1/runners/download; discovery
-  // (GET /v1/runners) picks it back up on the next call, no separate
-  // bookkeeping to update. Only ever deletes a path that both resolves to
-  // this exact build (via the same RunnerRegistry::Resolve every launch
-  // uses) and really sits inside a configured search path — same
-  // containment check DELETE /v1/games/{id} uses for install_path/data_dir,
-  // so "wine:system" (the real system wine binary, found on PATH, not under
-  // any search path) is rejected rather than deleted. A kind with no
-  // concept of separate builds (native, steam) 400s.
+  // Removes an installed build's directory (the other half of
+  // GET /v1/runners/catalog + POST /v1/runners/download). Only deletes a
+  // path that resolves to this exact build and sits inside a configured
+  // search path — same containment check as DELETE /v1/games/{id} — so
+  // "wine:system" (the real system wine, found on PATH) is rejected, not
+  // deleted. A kind with no separate builds (native, steam) 400s.
   http_->Delete(R"(/v1/runners/([^:]+):(.+))", [this](const Request& req, Response& res) {
     const std::string kind = req.matches[1];
     const std::string name = req.matches[2];

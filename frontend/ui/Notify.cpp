@@ -269,6 +269,13 @@ bool Confirm(QWidget* parent, const QString& title, const QString& question, con
   return box.clickedButton() == go;
 }
 
+Level LevelFromString(const QString& text) {
+  if (text == "success") return Level::Success;
+  if (text == "warning") return Level::Warning;
+  if (text == "error") return Level::Error;
+  return Level::Info;
+}
+
 void SetDelivery(Delivery delivery) { g_delivery = delivery; }
 
 void SetTimeoutSeconds(int seconds) {

@@ -27,6 +27,16 @@ std::string_view ToString(GameStatus status) {
   return "broken";
 }
 
+std::string_view ToString(NotifyLevel level) {
+  switch (level) {
+    case NotifyLevel::Success: return "success";
+    case NotifyLevel::Warning: return "warning";
+    case NotifyLevel::Error:   return "error";
+    case NotifyLevel::Info:    break;
+  }
+  return "info";
+}
+
 Platform PlatformFromString(std::string_view text) {
   if (text == "windows") return Platform::Windows;
   if (text == "native") return Platform::Native;

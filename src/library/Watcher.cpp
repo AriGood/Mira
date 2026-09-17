@@ -42,16 +42,12 @@ std::uintmax_t TotalSize(const fs::path& dir) {
   return total;
 }
 
-// True if `path` resolves inside any of `roots`. Nothing stops a user from
-// pointing library_roots at (or inside) a configured runner_search_paths/
-// wine_search_paths entry — an unusual config, but not one this project
-// validates against elsewhere either — so without this check, a Proton/Wine
-// build POST /v1/runners/download is actively downloading and extracting
-// (runner/Downloader.cpp, its own separate tar) would also look like a new
-// game folder or a droppable archive to this watcher, racing Downloader's
-// own tar on the same file and getting misdetected as a "game" in the
-// library besides. Same containment check DELETE /v1/games/{id} and
-// DELETE /v1/runners/{reference} use in Server.cpp, applied read-only here.
+// True if `path` resolves inside any of `roots`. Guards against a
+// library_roots entry pointing at (or inside) a runner_search_paths/
+// wine_search_paths dir, where a Proton/Wine build mid-download
+// (runner/Downloader.cpp) would otherwise race this watcher and get
+// misdetected as a new game folder. Same check Server.cpp's delete
+// endpoints use, applied read-only here.
 bool IsUnderAnyRoot(const fs::path& path, const std::vector<fs::path>& roots) {
   std::error_code ec;
   const fs::path resolved = fs::weakly_canonical(path, ec);

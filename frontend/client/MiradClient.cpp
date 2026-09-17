@@ -329,8 +329,9 @@ ArtworkResult GetArtworkSync(const std::string& id) {
   return result;
 }
 
-MetadataRefreshResult RefreshMetadataSync(const std::string& id) {
-  const transport::Reply reply = transport::Post("/v1/games/" + id + "/metadata/refresh");
+MetadataRefreshResult RefreshMetadataSync(const std::string& id, bool announce) {
+  const transport::Reply reply =
+      transport::Post("/v1/games/" + id + "/metadata/refresh?announce=" + (announce ? "1" : "0"));
   return {reply.ok, reply.error};
 }
 
@@ -498,9 +499,9 @@ void MiradClient::GetArtworkAsync(QObject* context, const std::string& id,
   async::Run(context, [id] { return GetArtworkSync(id); }, std::move(callback));
 }
 
-void MiradClient::RefreshMetadataAsync(QObject* context, const std::string& id,
+void MiradClient::RefreshMetadataAsync(QObject* context, const std::string& id, bool announce,
                                        std::function<void(MetadataRefreshResult)> callback) {
-  async::Run(context, [id] { return RefreshMetadataSync(id); }, std::move(callback));
+  async::Run(context, [id, announce] { return RefreshMetadataSync(id, announce); }, std::move(callback));
 }
 
 void MiradClient::GetRunnerCatalogAsync(QObject* context, const std::string& kind,
@@ -577,6 +578,15 @@ bool MiradClient::ParseMetadataEvent(const std::string& data, MetadataEvent* out
   out->id = id;
   out->code = payload.value("code", std::string());
   out->error = payload.value("error", std::string());
+  return true;
+}
+
+bool MiradClient::ParseNotification(const std::string& data, NotificationEvent* out) {
+  const json payload = json::parse(data, nullptr, false);
+  if (payload.is_discarded() || !payload.is_object()) return false;
+  out->message = payload.value("message", std::string());
+  if (out->message.empty()) return false;
+  out->level = payload.value("level", std::string("info"));
   return true;
 }
 
