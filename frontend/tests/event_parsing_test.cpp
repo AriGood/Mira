@@ -29,6 +29,16 @@ TEST_CASE("ParseGameSummary rejects anything that isn't a JSON object") {
   CHECK_FALSE(MiradClient::ParseGameSummary("42", &game));
 }
 
+TEST_CASE("ParseGameSummary rejects a payload from a different event") {
+  // The real case: runners.download.started shares the event stream with
+  // game.added, and without an id check its payload parsed into a game with
+  // every field empty — one blank tile in the library per runner download.
+  GameSummary game;
+  CHECK_FALSE(MiradClient::ParseGameSummary(R"({"kind": "proton", "tag": "GE-Proton11-7"})", &game));
+  CHECK_FALSE(MiradClient::ParseGameSummary(R"({"id": ""})", &game));
+  CHECK_FALSE(MiradClient::ParseGameSummary(R"({"id": 42})", &game));
+}
+
 TEST_CASE("ParseGameState reads the launch/exit signal") {
   GameStateEvent state;
   REQUIRE(MiradClient::ParseGameState(R"({"id": "x", "state": "running", "pid": 1234})", &state));

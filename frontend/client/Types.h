@@ -349,6 +349,9 @@ struct FrontendPrefs {
   // is the slowest thing about startup and the daemon's own watcher
   // (library::Watcher) already keeps the library current while it runs.
   std::optional<bool> scan_on_startup;
+  // "auto" | "system" | "in_app" — where a toast goes. See notify::Delivery
+  // for what each one means and why "auto" is not just a hedge.
+  std::optional<std::string> notifications;
 };
 
 struct FrontendPrefsResult {

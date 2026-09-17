@@ -79,6 +79,8 @@ private:
   // entry describes them and the daemon has no opinion about them.
   QCheckBox* scan_on_startup_ = nullptr;
   bool scan_on_startup_original_ = true;
+  QComboBox* notifications_ = nullptr;
+  QString notifications_original_;
   std::vector<Field> fields_;
   std::vector<CategoryGroup> groups_;
   QPushButton* save_button_ = nullptr;

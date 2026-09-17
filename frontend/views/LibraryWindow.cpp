@@ -253,6 +253,11 @@ void LibraryWindow::LoadPrefs() {
       splitter_->setSizes({*prefs.sidebar_width, middle, *prefs.details_width});
     }
     if (prefs.scan_on_startup) scan_on_startup_ = *prefs.scan_on_startup;
+    if (prefs.notifications) {
+      notifications_ = *prefs.notifications;
+      mira_gui::notify::SetDelivery(
+          mira_gui::notify::DeliveryFromString(QString::fromStdString(notifications_)));
+    }
     if (prefs.sort_descending) {
       sort_descending_ = *prefs.sort_descending;
       sort_direction_->setArrowType(sort_descending_ ? Qt::DownArrow : Qt::UpArrow);
@@ -284,6 +289,10 @@ void LibraryWindow::SavePrefs() {
   prefs.sort_by = sort_key_;
   prefs.sort_descending = sort_descending_;
   prefs.scan_on_startup = scan_on_startup_;
+  // Read back from notify rather than from the member, so a change made in
+  // the settings dialog survives closing the window that did not make it.
+  prefs.notifications =
+      mira_gui::notify::DeliveryToString(mira_gui::notify::CurrentDelivery()).toStdString();
   const QList<int> sizes = splitter_->sizes();
   if (sizes.size() == 3) {
     prefs.sidebar_width = sizes[0];
@@ -824,6 +833,13 @@ void LibraryWindow::HandleGameEvent(const std::string& type, const std::string& 
     }
     return;
   }
+
+  // Explicitly the two event types that carry a game record, rather than
+  // "anything left over". mirad publishes runners.download.* and tricks.*
+  // on the same stream, and treating an unrecognised payload as a game was
+  // how a runner download added a blank tile to the library — and how a
+  // tricks event would have blanked a real one, since it carries an id.
+  if (type != "game.added" && type != "game.updated") return;
 
   mira_gui::GameSummary game;
   if (mira_gui::MiradClient::ParseGameSummary(data, &game)) UpsertGame(game);

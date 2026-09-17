@@ -173,7 +173,9 @@ public:
 
   // Parses a `game.added`/`game.updated` payload (Server.cpp publishes the
   // full model::ToJson(game) record for both) into the same summary
-  // GET /v1/games returns. False if `data` isn't a JSON object.
+  // GET /v1/games returns. False unless `data` is a JSON object carrying a
+  // non-empty string id — callers dispatch on the event type first, and this
+  // is the second line of defence behind that.
   static bool ParseGameSummary(const std::string& data, GameSummary* out);
 
   // Parses a `game.state` payload (`{"id", "state": "running" | "exited" |

@@ -13,6 +13,7 @@
 #include <QMessageBox>
 
 #include "../ui/Notify.h"
+#include "../ui/SystemNotifier.h"
 #include <QPushButton>
 #include <QScrollArea>
 #include <QStringList>
@@ -73,6 +74,20 @@ void SettingsDialog::BuildInterfaceGroup() {
       "while it runs, so this only matters for changes made while it was stopped.");
   form->addRow("Scan the library on startup", scan_on_startup_);
 
+  notifications_ = new QComboBox(box);
+  notifications_->addItem("When Mira isn't focused", "auto");
+  notifications_->addItem("Always as a desktop notification", "system");
+  notifications_->addItem("Always inside the window", "in_app");
+  notifications_->setToolTip(
+      mira_gui::notify::system_notifier::Available()
+          ? "Background results — a runner finishing downloading, metadata arriving — can go to "
+            "the desktop's notification service instead of a card inside the window. A desktop "
+            "notification survives Mira being minimised and lands in the shell's notification "
+            "history."
+          : "No desktop notification service is running, so everything is shown inside the "
+            "window whatever this says.");
+  form->addRow("Show background results", notifications_);
+
   auto* note = new QLabel(
       "Stored in frontend.toml, beside settings.toml — the daemon keeps it verbatim and never "
       "interprets it. Everything below is a backend setting.",
@@ -86,10 +101,23 @@ void SettingsDialog::BuildInterfaceGroup() {
 }
 
 void SettingsDialog::LoadFrontendPrefs() {
+  // Seeded from what the process is already using, so the row is correct
+  // even before (or without) the round trip below.
+  notifications_original_ =
+      mira_gui::notify::DeliveryToString(mira_gui::notify::CurrentDelivery());
+  notifications_->setCurrentIndex(notifications_->findData(notifications_original_));
+
   mira_gui::MiradClient::GetFrontendPrefsAsync(this, [this](mira_gui::FrontendPrefsResult result) {
-    if (!result.ok || !result.prefs.scan_on_startup) return;  // the default is already shown
-    scan_on_startup_original_ = *result.prefs.scan_on_startup;
-    scan_on_startup_->setChecked(scan_on_startup_original_);
+    if (!result.ok) return;  // the defaults are already shown
+    if (result.prefs.scan_on_startup) {
+      scan_on_startup_original_ = *result.prefs.scan_on_startup;
+      scan_on_startup_->setChecked(scan_on_startup_original_);
+    }
+    if (result.prefs.notifications) {
+      notifications_original_ = QString::fromStdString(*result.prefs.notifications);
+      const int index = notifications_->findData(notifications_original_);
+      if (index >= 0) notifications_->setCurrentIndex(index);
+    }
   });
 }
 
@@ -308,10 +336,17 @@ void SettingsDialog::Save() {
   // file behind a different key — and unconditionally skipped when
   // unchanged, so opening and saving this dialog never rewrites
   // frontend.toml for nothing.
-  if (scan_on_startup_->isChecked() != scan_on_startup_original_) {
+  const QString notifications = notifications_->currentData().toString();
+  if (scan_on_startup_->isChecked() != scan_on_startup_original_ ||
+      notifications != notifications_original_) {
     mira_gui::FrontendPrefs prefs;
     prefs.scan_on_startup = scan_on_startup_->isChecked();
+    prefs.notifications = notifications.toStdString();
     scan_on_startup_original_ = *prefs.scan_on_startup;
+    notifications_original_ = notifications;
+    // Applied to the running process as well as saved: the next toast
+    // should obey the row that was just changed, not wait for a restart.
+    mira_gui::notify::SetDelivery(mira_gui::notify::DeliveryFromString(notifications));
     mira_gui::MiradClient::SaveFrontendPrefsAsync(this, prefs, [](mira_gui::PatchConfigResult) {});
   }
 

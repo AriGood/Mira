@@ -1,5 +1,7 @@
 #include "Notify.h"
 
+#include "SystemNotifier.h"
+
 #include <QEvent>
 #include <QFont>
 #include <QFontMetrics>
@@ -55,6 +57,11 @@ constexpr int kTextWidth = kCardWidth - 2 * kCardPadding;
 constexpr int kFontPixelSize = 12;
 constexpr int kMaxVisible = 4;
 constexpr const char* kHostName = "mira_toast_host";
+
+// Process-wide, set once from frontend.toml at startup. A per-window
+// setting would let two windows of the same application disagree about
+// whether the desktop should be told things.
+Delivery g_delivery = Delivery::Auto;
 
 // One card. Click anywhere on it to dismiss.
 //
@@ -261,7 +268,39 @@ bool Confirm(QWidget* parent, const QString& title, const QString& question, con
   return box.clickedButton() == go;
 }
 
+void SetDelivery(Delivery delivery) { g_delivery = delivery; }
+
+Delivery CurrentDelivery() { return g_delivery; }
+
+QString DeliveryToString(Delivery delivery) {
+  switch (delivery) {
+    case Delivery::System: return "system";
+    case Delivery::InApp: return "in_app";
+    case Delivery::Auto: break;
+  }
+  return "auto";
+}
+
+Delivery DeliveryFromString(const QString& text) {
+  if (text == "system") return Delivery::System;
+  if (text == "in_app") return Delivery::InApp;
+  return Delivery::Auto;
+}
+
 void Toast(QWidget* parent, Level level, const QString& text) {
+  const QWidget* window = parent != nullptr ? parent->window() : nullptr;
+  // isActiveWindow() rather than isVisible(): a window can be fully mapped
+  // and still be behind three others, or on another virtual desktop, and in
+  // both cases a card drawn inside it is a message nobody receives.
+  const bool unattended = window == nullptr || !window->isActiveWindow();
+
+  const bool use_system = g_delivery == Delivery::System ||
+                          (g_delivery == Delivery::Auto && unattended);
+  if (use_system && system_notifier::Send(level, text)) return;
+
+  // Falls through to the card whenever the system route was not taken or
+  // did not work, so choosing "system" on a desktop with no notification
+  // service loses nothing.
   if (ToastHost* host = HostFor(parent)) host->Add(level, text);
 }
 

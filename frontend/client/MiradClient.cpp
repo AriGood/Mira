@@ -284,6 +284,7 @@ FrontendPrefsResult GetFrontendPrefsSync() {
   read_string("sort_by", result.prefs.sort_by);
   read_bool("sort_descending", result.prefs.sort_descending);
   read_bool("scan_on_startup", result.prefs.scan_on_startup);
+  read_string("notifications", result.prefs.notifications);
   return result;
 }
 
@@ -298,6 +299,7 @@ PatchConfigResult SaveFrontendPrefsSync(const FrontendPrefs& prefs) {
   if (prefs.sort_by) table["sort_by"] = *prefs.sort_by;
   if (prefs.sort_descending) table["sort_descending"] = *prefs.sort_descending;
   if (prefs.scan_on_startup) table["scan_on_startup"] = *prefs.scan_on_startup;
+  if (prefs.notifications) table["notifications"] = *prefs.notifications;
 
   // Short, because SaveFrontendPrefsBlocking runs this on the UI thread
   // while a window is closing.
@@ -538,6 +540,13 @@ void MiradClient::PatchGameConfigAsync(QObject* context, const std::string& id,
 bool MiradClient::ParseGameSummary(const std::string& data, GameSummary* out) {
   const json entry = json::parse(data, nullptr, false);
   if (entry.is_discarded() || !entry.is_object()) return false;
+  // An id is what makes this a game record. Without this check any JSON
+  // object at all parsed as a game with every field empty — a
+  // runners.download.started payload did exactly that, and the library grew
+  // a blank tile every time a runner was downloaded.
+  if (!entry.contains("id") || !entry["id"].is_string() || entry["id"].get<std::string>().empty()) {
+    return false;
+  }
   *out = mapping::ToGameSummary(entry);
   return true;
 }

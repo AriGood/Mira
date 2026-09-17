@@ -52,6 +52,28 @@ bool Confirm(QWidget* parent, const QString& title, const QString& question,
 
 // --- Toasts ----------------------------------------------------------------
 
+// Where a toast is shown.
+//
+// `Auto` sends it to the desktop's notification service when Mira's window
+// is not the active one and draws the in-window card when it is. That is
+// the split that matters: a background job finishing while you are looking
+// at something else is exactly what the system tray is for, and a system
+// popup for something that just happened in the window under your cursor is
+// noise the desktop then keeps a record of.
+enum class Delivery { Auto, System, InApp };
+
+// Read from frontend.toml at startup — see LibraryWindow::LoadPrefs. Falls
+// back to the in-window card whenever the system route is unavailable or
+// the call fails, so this is a preference and never a way to lose a
+// message.
+void SetDelivery(Delivery delivery);
+Delivery CurrentDelivery();
+
+// The frontend.toml spelling of a Delivery, and back. An unknown string
+// reads as Auto rather than as an error — the file is hand-editable.
+QString DeliveryToString(Delivery delivery);
+Delivery DeliveryFromString(const QString& text);
+
 // A transient card stacked in the bottom-right of `parent`'s window. It
 // dismisses itself, and a click dismisses it early.
 //

@@ -375,6 +375,13 @@ void MainWindow::HandleGameEvent(const std::string& type, const std::string& dat
     return;
   }
 
+  // Explicitly the two event types that carry a game record, rather than
+  // "anything left over". mirad publishes runners.download.* and tricks.*
+  // on the same stream, and treating an unrecognised payload as a game was
+  // how a runner download added a blank tile to the library — and how a
+  // tricks event would have blanked a real one, since it carries an id.
+  if (type != "game.added" && type != "game.updated") return;
+
   mira_gui::GameSummary game;
   if (mira_gui::MiradClient::ParseGameSummary(data, &game)) UpsertRow(game);
 }

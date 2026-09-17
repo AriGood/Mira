@@ -1,4 +1,5 @@
 #include <QApplication>
+#include <QGuiApplication>
 #include <QIcon>
 #include <QStringList>
 
@@ -9,6 +10,11 @@ int main(int argc, char** argv) {
   QApplication app(argc, argv);
   QApplication::setApplicationName("Mira");
   QApplication::setOrganizationName("mira");
+  // Matches packaging/mira.desktop, which is how a Wayland compositor and
+  // the notification service both work out which application this is — it
+  // is what puts Mira's own name and icon on a desktop notification rather
+  // than a generic one.
+  QGuiApplication::setDesktopFileName("mira");
 
   QIcon icon;
   for (int size : {16, 32, 48, 64, 128, 256}) {

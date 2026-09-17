@@ -127,10 +127,11 @@ This matters more than it looks:
   | `library_filter` | which sidebar filter was selected |
   | `sort_by`, `sort_descending` | grid order — see `ui/LibrarySort` |
   | `scan_on_startup` | whether opening the frontend runs `POST /v1/library/scan` |
+  | `notifications` | `auto` / `system` / `in_app` — see "Telling the user things" |
 
-  Only `scan_on_startup` gets a row in the settings screen, in an
-  "Interface (this frontend only)" group above the schema-driven ones. The
-  rest are implicit UI state: they are saved by using the window, not by
+  `scan_on_startup` and `notifications` get rows in the settings screen, in
+  an "Interface (this frontend only)" group above the schema-driven ones.
+  The rest are implicit UI state: they are saved by using the window, not by
   filling in a form.
 
 A window size is not something mirad should have an opinion about, so it
@@ -180,6 +181,15 @@ Events handled: `game.added`, `game.updated`, `game.removed`, `game.state`,
 `game.launched`, `game.metadata_ready`/`.metadata_failed`,
 `runners.download.started`/`.finished`/`.failed`.
 
+**Dispatch on the event type, always.** Only `game.added` and `game.updated`
+carry a game record, and the library views check for exactly those two
+rather than treating whatever is left over as a game. They did not, once:
+a `runners.download.started` payload is a JSON object, so it parsed into a
+game with every field empty and the library grew a blank tile on every
+runner download. `ParseGameSummary` now also requires a non-empty string
+`id`, as a second line of defence — a `tricks.*` payload does carry one, and
+would have blanked a real row rather than adding a fake one.
+
 Two notes on shapes that are easy to get wrong:
 
 - `game.state` carries only `id`/`state` and a few launch-specific fields —
@@ -216,10 +226,36 @@ and reports through an SSE event, by which time the user has moved on — a
 modal for that is an ambush. Anything answering the request in front of you
 gets a popup.
 
-Toasts stack bottom-right of the window, dismiss themselves (longer for an
-error than for a success), and dismiss on click. They attach to the
-top-level window rather than to the widget that raised them, so a toast
-survives the dialog that started the work.
+A toast goes to one of two places, and `notifications` in `frontend.toml`
+decides which:
+
+| value | behaviour |
+|---|---|
+| `auto` (default) | the desktop's notification service when Mira's window is not the active one, an in-window card when it is |
+| `system` | always the desktop's service |
+| `in_app` | always the in-window card |
+
+`auto` is the one that matters. A background job finishing while you are
+looking at something else is exactly what the desktop's notification area
+is for — it survives Mira being minimised, lands in the shell's history
+(Plasma's, on KDE) and obeys Do Not Disturb. A system popup for something
+that just happened in the window under your cursor is noise the desktop
+then keeps a record of.
+
+The system route is `org.freedesktop.Notifications` over the session bus
+(`ui/SystemNotifier`), with a `desktop-entry` hint of `mira` so the shell
+shows Mira's own name and icon and lists it in per-application notification
+settings. `QGuiApplication::setDesktopFileName("mira")` backs that up for
+the compositor. Urgency maps to the level: an error is `critical`, which
+most shells do not dismiss on a timeout.
+
+Any failure falls back to the in-window card, so choosing `system` on a
+desktop with no notification service loses nothing.
+
+In-window cards stack bottom-right, dismiss themselves (longer for an error
+than for a success), and dismiss on click. They attach to the top-level
+window rather than to the widget that raised them, so a card survives the
+dialog that started the work.
 
 Every popup goes through one helper that sets `Qt::PlainText`. mirad's error
 messages quote paths and command fragments, and rich text would silently eat

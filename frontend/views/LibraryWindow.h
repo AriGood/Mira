@@ -129,6 +129,7 @@ private:
   std::string sort_key_ = "name";
   bool sort_descending_ = false;
   bool scan_on_startup_ = true;
+  std::string notifications_ = "auto";
   // Keyed by "<id>@<tile width>" — a generated cover is cheap but not free,
   // and ApplyFilter() rebuilds every visible tile on each keystroke.
   mira_gui::ArtworkStore* artwork_ = nullptr;
