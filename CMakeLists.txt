@@ -111,4 +111,9 @@ if(TARGET mira-gui)
     DEPENDS mira-gui
     USES_TERMINAL
     COMMENT "Launching mira-gui")
+
+  # `cmake --build <preset> --target appimage` -> build/<preset>/Mira-x86_64.AppImage.
+  # Needs mira-gui built (it's the whole point of bundling), so this lives
+  # inside the same guard as run-gui above rather than being unconditional.
+  include(cmake/AppImage.cmake)
 endif()

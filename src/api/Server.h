@@ -6,7 +6,9 @@
 
 #include "api/EventBus.h"
 #include "config/Config.h"
+#include "core/BackgroundQueue.h"
 #include "core/Result.h"
+#include "metadata/FetchQueue.h"
 #include "proc/ProcessSupervisor.h"
 #include "store/GameStore.h"
 
@@ -44,6 +46,8 @@ private:
   EventBus& events_;
   std::unique_ptr<httplib::Server> http_;
   proc::ProcessSupervisor supervisor_;
+  metadata::FetchQueue metadata_fetches_;
+  BackgroundQueue tricks_queue_;
   std::atomic<bool> stopping_{false};  // checked by open SSE connections; see EventBus::WaitNext
 };
 

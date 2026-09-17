@@ -117,6 +117,21 @@ This is a plain convenience target (build `mira-gui`, then exec it) and
 isn't part of the install story. It only exists if Qt6 was found at
 configure time — see the "Building" section above.
 
+### Building an AppImage
+
+```sh
+cmake --build build/dev --target appimage
+```
+
+Produces `build/dev/Mira-x86_64.AppImage`, bundling `mirad`, `mira`, and
+`mira-gui` — the non-Arch install path the AUR `PKGBUILD` doesn't cover.
+Needs Qt6 (same as `run-gui` above) and `curl` on `PATH`; the packaging
+tools themselves (`linuxdeploy`, `linuxdeploy-plugin-qt`) are downloaded
+into `build/dev/appimage-tools/` on first use and cached there — nothing
+is installed system-wide. See `cmake/AppImage.cmake` for the two real
+environment-specific workarounds it applies (a filtered Qt plugins
+directory, and `NO_STRIP=1`) and why they're there.
+
 ## Where things live
 
 All user data — settings and the game library — lives in one directory,

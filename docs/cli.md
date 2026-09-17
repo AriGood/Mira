@@ -113,6 +113,16 @@ as ordinary games (`GET /v1/games`, `mira list`, `mira show` all work on
 one with no special-casing). Prints `added: N  updated: N`. Idempotent:
 rerunning it never duplicates an already-detected app.
 
+## `mira metadata <id> [--refresh]`
+`GET /v1/games/{id}/metadata` — prints the cached cover-art/store-info JSON
+(description, genres, release date, developers/publishers, price, Steam
+review summary, ProtonDB tier — see `docs/api.md`'s Metadata section for
+which fields come from where). `--refresh` instead calls `POST
+.../metadata/refresh` and returns immediately; watch `mira watch` for
+`game.metadata_ready`/`.metadata_failed`. Cover art itself has no CLI
+command — it's a binary image, only reachable via `GET
+/v1/games/{id}/artwork` directly.
+
 ## `mira runners`
 `GET /v1/runners` — every installed Proton/Wine build, one per line:
 ```
@@ -139,6 +149,15 @@ first). Runs detached; the command returns immediately and says to watch
   one-line doc. This is the whole settings reference; there's no need to
   cross-reference `docs/api.md`'s schema section by hand.
 - `reset [key]` — `POST /v1/config/reset`, one key or everything.
+
+`get`/`set` work on frontend settings too, unvalidated: `mira config set
+frontend.theme dark` / `mira config get frontend.theme` reach into the
+opaque `frontend` table `GET`/`PATCH /v1/config` already carry (see
+`docs/api.md`'s Settings section) and land in `frontend.toml`, not
+`settings.toml` — arbitrary nesting works the same way `--override` does
+(`frontend.window.width 1200`). `list` won't show these keys, since it only
+enumerates the schema-registered ones — the frontend's settings shape is
+its own, not backend-validated.
 
 ## `mira watch`
 Tails `GET /v1/events` (SSE) forever, printing each event as it arrives.

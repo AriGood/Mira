@@ -157,13 +157,26 @@ Provisions a prefix on demand if there isn't a usable one yet (a
 `needs_install` game never gets one from Scanner, since it never
 auto-provisions an installer). This is how a `needs_install` game's
 installer actually gets run, and doubles as the general "run something in
-this prefix" escape hatch short of a full winetricks-equivalent (out of
-scope; see `docs/architecture.md`).
+this prefix" escape hatch — for a known package/DLL fix rather than an
+arbitrary exe, `/tricks` below is the better fit.
 
 ### `POST /v1/games/{id}/finish-install` — implemented
 The other half of the `needs_install` escape hatch: after running the
 installer via `/run` and `PATCH`ing `exe_path` to whatever it actually
 produced, this flips status to `ready`. 409 if `exe_path` is still empty.
+
+### `POST /v1/games/{id}/tricks` — implemented
+Body: `{"verb": "corefonts"}`. Runs `winetricks --unattended <verb>`
+against this game's own Wine/Proton prefix — the real `winetricks` tool
+shelled out to, not reimplemented (its value is hundreds of crowdsourced,
+constantly-updated verb definitions, not the script itself; see
+`docs/architecture.md`, Replaceability). 404s with a specific error if the
+game has no prefix yet, the prefix was never provisioned, the runner isn't
+Wine/Proton-based (native games, or a Steam game that turned out to be
+native), or `winetricks` itself isn't on `PATH`. Runs in the background
+(a verb can mean downloading and installing a real redistributable —
+minutes, not request-scale) and returns `202` immediately;
+`tricks.started` / `.finished` / `.failed` on the event stream track it.
 
 ---
 
@@ -254,6 +267,54 @@ resolves the real launch command from its own `appinfo` cache, which isn't
 readable from disk, so it's only known if set manually — relevant only to
 `steam.launch_mode: "direct"` (see `/launch` above), since the default
 `"steam"` mode doesn't need it at all.
+
+---
+
+## Metadata
+
+Cover art and store info, fetched from public web APIs and cached on disk
+next to `settings.toml` (`metadata/<id>.json`, `artwork/<id>/cover.*`) —
+never written into `games.toml`, since none of it is user-editable state and
+it can always be re-fetched. Two sources, picked by whether a game is
+Steam-owned (`runner_ref` starting `"steam:"`):
+
+- **Steam-owned**: Steam's own public store API (`store.steampowered.com`)
+  for description, genres, categories, release date, developers/publishers,
+  price, metacritic score, website; Steam's public review-summary endpoint
+  for the aggregate score; [ProtonDB](https://www.protondb.com)'s
+  compatibility tier; cover art from Steam's own CDN. None of these need a
+  key.
+- **Everything else**: [SteamGridDB](https://www.steamgriddb.com), matched
+  by name search, for cover art only — there is no equivalent free metadata
+  source for a non-Steam game. Needs `steamgriddb.api_key` set; silently
+  skipped without one.
+
+Fetched automatically the moment a game is first detected (`POST
+/v1/library/scan`, the inotify watcher, and `POST /v1/steam/scan` all
+trigger it for newly-added games only — never re-fetched on every rescan of
+an already-known game) via a small in-process queue that bounds every
+outstanding fetch to the daemon's own lifetime, so a slow or unreachable
+source never blocks a scan. Controlled by `metadata.enabled` (default on).
+
+### `GET /v1/games/{id}/metadata` — implemented
+The cached JSON verbatim, `{"source": "steam"|"steamgriddb", "fetched_at":
+..., "steam": {...}, "steam_reviews": {...}, "protondb": {...}, "artwork":
+{...}}` — every top-level key besides `source`/`fetched_at`/`artwork` is
+present only if that source actually returned something. `404` means either
+"never fetched" or "fetched, found nothing" — `POST .../metadata/refresh`
+below disambiguates by trying again.
+
+### `GET /v1/games/{id}/artwork` — implemented
+The cached cover image itself (`image/jpeg` or `image/png`, whatever the
+source sent), read straight off disk. `404` if nothing's cached yet.
+
+### `POST /v1/games/{id}/metadata/refresh` — implemented
+Re-runs the fetch for one game on demand — a `steamgriddb.api_key` was just
+set, or the first automatic attempt failed transiently. Bypasses
+`metadata.enabled` (an explicit request should work even with automatic
+fetching off). Runs in the background the same way the automatic fetch
+does; returns `202` immediately. `game.metadata_ready`/`.metadata_failed` on
+the event stream say when it's done.
 
 ---
 
