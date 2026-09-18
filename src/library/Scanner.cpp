@@ -107,7 +107,16 @@ ScanSummary Scanner::ScanRoot(const fs::path& root) {
 
     std::error_code eq;
     if (fs::equivalent(dir, prefix_root, eq) || (!eq && dir == prefix_root)) continue;
-    if (LooksLikeWinePrefix(dir)) continue;
+
+    const std::string install_path = dir.string();
+    auto existing = games_.FindByInstallPath(install_path);
+
+    // A combined install+prefix layout (Lutris colocates a Wine prefix
+    // inside the game's own folder) legitimately looks like a Wine prefix
+    // too — only exclude that shape from *new* detection, never from a
+    // folder that's already a known game, or every scan would flip it to
+    // Missing.
+    if (!existing && LooksLikeWinePrefix(dir)) continue;
 
     const std::string basename = dir.filename().string();
     const bool ignored = std::ranges::any_of(detector_settings.ignore_globs, [&](const std::string& glob) {
@@ -115,10 +124,9 @@ ScanSummary Scanner::ScanRoot(const fs::path& root) {
     });
     if (ignored) continue;
 
-    const std::string install_path = dir.string();
     seen_install_paths.push_back(install_path);
 
-    if (auto existing = games_.FindByInstallPath(install_path)) {
+    if (existing) {
       if (existing->status == model::GameStatus::Missing) {
         auto result = games_.Update(existing->id, [](model::Game& game) {
           game.status = RestoredStatus(game);
