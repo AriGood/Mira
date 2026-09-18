@@ -138,6 +138,20 @@ void ApplyCommandWrappers(Command& command, const std::vector<std::string>& wrap
   }
 }
 
+// Same check GET /v1/games/{id}/artwork's default "cover" slot uses to
+// decide between serving a file and 404ing — reused here so "missing
+// artwork" means the same thing to both endpoints.
+bool HasCachedArtwork(const config::Config& config, const std::string& id) {
+  const std::filesystem::path metadata_file = metadata::MetadataFile(config, id);
+  std::ifstream meta_in(metadata_file);
+  if (!meta_in) return false;
+  const json info = json::parse(meta_in, nullptr, false);
+  if (info.is_discarded() || !info.contains("artwork")) return false;
+  const std::filesystem::path file =
+      metadata::ArtworkDir(config, id) / info["artwork"].value("file", std::string());
+  return std::ifstream(file, std::ios::binary).good();
+}
+
 void SyncDesktopEntries(config::Config& config, store::GameStore& games) {
   if (auto synced = desktop::DesktopEntries(config).Sync(games.All()); !synced) {
     log::Warn("could not update application menu entries: {}", synced.error().message);
@@ -666,6 +680,20 @@ void Server::RegisterRoutes() {
     if (!game) return SendError(res, 404, "game_not_found", "no such game");
     metadata_fetches_.Enqueue(config_, events_, *game, /*force=*/true);
     SendJson(res, {{"status", "fetching"}}, 202);
+  });
+
+  // Bulk version of the above: enqueues a fetch for every game with no
+  // cached cover art yet, in one request — a caller wanting to backfill the
+  // whole library used to have to loop over it and fire one POST
+  // .../metadata/refresh per game itself.
+  http_->Post("/v1/games/metadata/refresh-missing", [this](const Request&, Response& res) {
+    std::size_t count = 0;
+    for (const model::Game& game : games_.All()) {
+      if (HasCachedArtwork(config_, game.id)) continue;
+      metadata_fetches_.Enqueue(config_, events_, game, /*force=*/true);
+      ++count;
+    }
+    SendJson(res, {{"status", "fetching"}, {"count", count}}, 202);
   });
 
   // --- runners --------------------------------------------------------------

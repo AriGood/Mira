@@ -534,26 +534,30 @@ void LibraryWindow::ShowSteamGridDbNotice(bool asked_for) {
 }
 
 void LibraryWindow::FetchMissingArtwork() {
-  // Over the whole library, not the current filter: "fetch what's missing"
-  // means the library, and a sidebar filter is about what you are looking
-  // at right now.
-  std::vector<std::string> missing;
-  for (const mira_gui::GameSummary& game : games_) {
-    if (!artwork_->HasArtwork(game.id)) missing.push_back(game.id);
-  }
-
-  if (missing.empty()) {
-    mira_gui::notify::Toast(this, mira_gui::notify::Level::Success,
-                            "Every game already has cover art.");
-    return;
-  }
-
-  for (const std::string& id : missing) RefreshMetadata(id, /*announce=*/false);
-  // One toast for the batch. Per-game would be one notification per game,
-  // which on a fresh library is the whole library.
-  mira_gui::notify::Toast(
-      this, mira_gui::notify::Level::Info,
-      QString("Fetching cover art for %1 game(s)… they appear as they arrive.").arg(missing.size()));
+  // One request for the whole library — mirad decides which games have no
+  // cached cover art (docs/api.md), instead of this looping over every game
+  // and firing one POST .../metadata/refresh each. Over the whole library,
+  // not the current filter: "fetch what's missing" means the library, and a
+  // sidebar filter is about what you are looking at right now.
+  mira_gui::MiradClient::RefreshMissingArtworkAsync(
+      this, [this](mira_gui::RefreshMissingArtworkResult result) {
+        if (!result.ok) {
+          mira_gui::notify::Failed(this, "Could not fetch missing cover art.",
+                                   QString::fromStdString(result.error));
+          return;
+        }
+        if (result.count == 0) {
+          mira_gui::notify::Toast(this, mira_gui::notify::Level::Success,
+                                  "Every game already has cover art.");
+          return;
+        }
+        // One toast for the batch. Per-game would be one notification per
+        // game, which on a fresh library is the whole library.
+        mira_gui::notify::Toast(
+            this, mira_gui::notify::Level::Info,
+            QString("Fetching cover art for %1 game(s)… they appear as they arrive.")
+                .arg(result.count));
+      });
 }
 
 void LibraryWindow::RefreshMetadata(const std::string& id, bool announce) {

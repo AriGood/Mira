@@ -429,6 +429,14 @@ the event stream say when it's done. A failure carries both `code` and
 specially is `no_steamgriddb_key`, which is not a transient failure and is
 fixed by setting a config key rather than by retrying.
 
+### `POST /v1/games/metadata/refresh-missing` — implemented
+Bulk version of the above: enqueues a fetch for every game with no cached
+cover art yet (same check `GET /v1/games/{id}/artwork`'s default `cover`
+slot uses), in one request. Returns `202` immediately with
+`{"status": "fetching", "count": <n>}` — `count` is how many fetches were
+enqueued. Each one's outcome still arrives individually as
+`game.metadata_ready`/`.metadata_failed`, same as a single refresh.
+
 ---
 
 ## Events

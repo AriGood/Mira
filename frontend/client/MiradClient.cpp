@@ -337,6 +337,18 @@ MetadataRefreshResult RefreshMetadataSync(const std::string& id) {
   return {reply.ok, reply.error};
 }
 
+RefreshMissingArtworkResult RefreshMissingArtworkSync() {
+  RefreshMissingArtworkResult result;
+  const transport::Reply reply = transport::Post("/v1/games/metadata/refresh-missing");
+  if (!reply.ok) {
+    result.error = reply.error;
+    return result;
+  }
+  result.ok = true;
+  result.count = reply.body.value("count", 0);
+  return result;
+}
+
 RunnerCatalogResult GetRunnerCatalogSync(const std::string& kind) {
   RunnerCatalogResult result;
   // The only call in this client that leaves the machine (GitHub releases),
@@ -504,6 +516,11 @@ void MiradClient::GetArtworkAsync(QObject* context, const std::string& id,
 void MiradClient::RefreshMetadataAsync(QObject* context, const std::string& id,
                                        std::function<void(MetadataRefreshResult)> callback) {
   async::Run(context, [id] { return RefreshMetadataSync(id); }, std::move(callback));
+}
+
+void MiradClient::RefreshMissingArtworkAsync(QObject* context,
+                                             std::function<void(RefreshMissingArtworkResult)> callback) {
+  async::Run(context, [] { return RefreshMissingArtworkSync(); }, std::move(callback));
 }
 
 void MiradClient::GetRunnerCatalogAsync(QObject* context, const std::string& kind,
