@@ -47,10 +47,15 @@ the backend stores but never interprets (see `docs/architecture.md`).
 ### `GET /v1/config/schema` — implemented
 Every setting's type, default, tier (`basic | advanced | expert` — a
 frontend should show `basic` and fold the rest behind a disclosure, never
-omit them), and one-line doc string.
+omit them), one-line doc string, and `category` (a UI grouping label, e.g.
+"Library", "Runners" — always present, guessed from the key's dotted prefix
+when nothing more specific applies).
 
 A setting with a describable shape also carries it: `one_of` (an enum's
-array) or `minimum`/`maximum`. Absent, not empty, when it doesn't apply.
+array) or `minimum`/`maximum`. `is_secret` and `is_runner_ref` are booleans,
+present only when true — a settings screen should mask a secret's value and
+offer a runner picker (`GET /v1/runners`) for a runner_ref instead of a
+plain text box. All four are absent, not empty/false, when they don't apply.
 
 The tier is a judgement about the user, not about the value's complexity:
 `basic` means someone who just wants their games to work may have to change
@@ -238,11 +243,15 @@ needs; see `docs/architecture.md` if that stops being true.
 
 ### `POST /v1/library/scan` — implemented
 Walks every enabled library root immediately: detects new game folders,
-auto-configures and stores them (publishing `game.added` for each), and
-marks previously-known games whose folder disappeared as `missing`. Runs
-synchronously and returns a summary rather than a job id — there is no
-worker/job queue yet, and a scan of a normal-sized library finishes well
-within one HTTP request:
+auto-configures and stores them (publishing `game.added` for each); marks
+previously-known games whose folder disappeared as `missing`, or removes
+them outright if `library.remove_missing` is on; and restores one marked
+`missing` whose folder reappeared. Every one of those publishes
+`game.updated`/`game.added`/`game.removed` as it happens, so a caller can
+rely on the event stream alone to stay in sync rather than re-fetching
+`GET /v1/games` after every scan. Runs synchronously and returns a summary
+rather than a job id — there is no worker/job queue yet, and a scan of a
+normal-sized library finishes well within one HTTP request:
 ```json
 { "added": 1, "missing": 0, "restored": 0 }
 ```
@@ -433,6 +442,14 @@ game would be noise. `no_steamgriddb_key` is never wrapped in a
 signal, since a caller decides for itself whether to interrupt with a
 dialog or just note it.
 
+### `POST /v1/games/metadata/refresh-missing` — implemented
+Bulk version of the above: enqueues a fetch for every game with no cached
+cover art yet (same check `GET /v1/games/{id}/artwork`'s default `cover`
+slot uses), in one request. Returns `202` immediately with
+`{"status": "fetching", "count": <n>}` — `count` is how many fetches were
+enqueued. Each one's outcome still arrives individually as
+`game.metadata_ready`/`.metadata_failed`, same as a single refresh.
+
 ---
 
 ## Events
@@ -456,10 +473,14 @@ Published today:
   the `open_config_on_add` setting, so the frontend knows whether to raise
   its config menu immediately.
 - `game.updated`, `game.removed`.
-- `game.state` — `{"id": ..., "state": "running" | "exited" | "crashed"}`,
-  from `proc::ProcessSupervisor` (a Steam game launched via
+- `game.state` — the full updated game record (same shape as
+  `GET /v1/games/{id}`) plus `"state": "running" | "exited" | "crashed"`,
+  and, for `exited`/`crashed`, this session's own `exit_code`/`signal`/
+  `played_seconds`/`error` alongside the record's own totals — from
+  `proc::ProcessSupervisor` (a Steam game launched via
   `steam.launch_mode: "steam"` never emits this — Mira isn't tracking its
-  process; see `/launch` above).
+  process; see `/launch` above). Carrying the full record means a listener
+  can patch the one row directly instead of re-fetching `GET /v1/games`.
 - `game.launched` — `{"id": ..., "via": "steam"}`, the untracked
   counterpart to `game.state` for that same case.
 - `runners.download.started` / `.finished` / `.failed` — see

@@ -128,6 +128,10 @@ ScanSummary Scanner::ScanRoot(const fs::path& root) {
           log::Error("failed to restore {}: {}", existing->id, result.error().message);
         } else {
           existing = *result;
+          // Same reasoning as game.removed below: a listener that already
+          // has this game (now Missing) needs to hear about it coming back,
+          // without waiting on a caller to relist the whole library.
+          events_.Publish("game.updated", model::ToJson(*existing));
         }
         ++summary.restored;
       }
@@ -185,7 +189,13 @@ ScanSummary Scanner::ScanRoot(const fs::path& root) {
 
     if (game.status == model::GameStatus::Missing) continue;
     auto result = games_.Update(game.id, [](model::Game& g) { g.status = model::GameStatus::Missing; });
-    if (!result) log::Error("failed to mark {} missing: {}", game.id, result.error().message);
+    if (!result) {
+      log::Error("failed to mark {} missing: {}", game.id, result.error().message);
+    } else {
+      // Same reasoning as the restore/remove-missing cases above: a listener
+      // needs to hear about this without a caller having to relist.
+      events_.Publish("game.updated", model::ToJson(*result));
+    }
     ++summary.missing;
     log::Info("game folder disappeared, marking missing: {}", game.install_path);
   }

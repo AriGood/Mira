@@ -195,7 +195,13 @@ void MainWindow::RefreshHealth() {
 }
 
 void MainWindow::RescanAndRefreshGames() {
-  mira_gui::MiradClient::ScanLibraryAsync(this, [this](mira_gui::ScanResult) { RefreshGames(); });
+  if (!loaded_) {
+    // First load: a scan only reports changes, not what already existed.
+    mira_gui::MiradClient::ScanLibraryAsync(this, [this](mira_gui::ScanResult) { RefreshGames(); });
+    return;
+  }
+  // Kept in sync since by game.added/.updated/.removed events.
+  mira_gui::MiradClient::ScanLibraryAsync(this, [](mira_gui::ScanResult) {});
 }
 
 std::string MainWindow::CurrentStatusFilter() const {
@@ -222,6 +228,7 @@ void MainWindow::RefreshGames() {
           PopulateRow(row, result.games[row]);
         }
         games_table_->setSortingEnabled(true);
+        loaded_ = true;
       },
       CurrentStatusFilter());
 }
@@ -356,13 +363,15 @@ void MainWindow::HandleGameEvent(const std::string& type, const std::string& dat
     if (state.state == "running") {
       running_ids_.insert(state.id);
     } else {
-      // exited/crashed — this event carries only the session's own delta
-      // (played_seconds, exit_code, ...), not the row's actual totals, so a
-      // full relist is what picks up the new play_seconds/last_played_at/
-      // last_error rather than trying to patch them from here.
       running_ids_.erase(state.id);
     }
-    RefreshGames();
+    // Carries the full record now, so patch the row instead of relisting.
+    mira_gui::GameSummary game;
+    if (mira_gui::MiradClient::ParseGameSummary(data, &game)) {
+      UpsertRow(game);
+    } else {
+      RefreshGames();
+    }
     return;
   }
 

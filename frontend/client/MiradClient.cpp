@@ -176,6 +176,9 @@ ConfigSchemaResult GetConfigSchemaSync() {
     e.type = entry.value("type", std::string());
     e.tier = entry.value("tier", std::string());
     e.doc = entry.value("doc", std::string());
+    e.category = entry.value("category", std::string());
+    e.is_secret = entry.value("is_secret", false);
+    e.is_runner_ref = entry.value("is_runner_ref", false);
     if (entry.contains("default")) e.default_display = mapping::ToDisplayString(entry["default"]);
     if (entry.contains("one_of") && entry["one_of"].is_array()) {
       for (const json& option : entry["one_of"]) {
@@ -361,6 +364,18 @@ MetadataRefreshResult RefreshMetadataSync(const std::string& id, bool announce) 
   return {reply.ok, reply.error};
 }
 
+RefreshMissingArtworkResult RefreshMissingArtworkSync() {
+  RefreshMissingArtworkResult result;
+  const transport::Reply reply = transport::Post("/v1/games/metadata/refresh-missing");
+  if (!reply.ok) {
+    result.error = reply.error;
+    return result;
+  }
+  result.ok = true;
+  result.count = reply.body.value("count", 0);
+  return result;
+}
+
 RunnerCatalogResult GetRunnerCatalogSync(const std::string& kind) {
   RunnerCatalogResult result;
   // The only call in this client that leaves the machine (GitHub releases),
@@ -529,6 +544,11 @@ void MiradClient::GetArtworkAsync(QObject* context, const std::string& id,
 void MiradClient::RefreshMetadataAsync(QObject* context, const std::string& id, bool announce,
                                        std::function<void(MetadataRefreshResult)> callback) {
   async::Run(context, [id, announce] { return RefreshMetadataSync(id, announce); }, std::move(callback));
+}
+
+void MiradClient::RefreshMissingArtworkAsync(QObject* context,
+                                             std::function<void(RefreshMissingArtworkResult)> callback) {
+  async::Run(context, [] { return RefreshMissingArtworkSync(); }, std::move(callback));
 }
 
 void MiradClient::GetRunnerCatalogAsync(QObject* context, const std::string& kind,

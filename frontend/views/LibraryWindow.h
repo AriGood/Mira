@@ -167,6 +167,8 @@ private:
 
   std::vector<mira_gui::GameSummary> games_;
   std::set<std::string> running_ids_;
+  // Whether RefreshGames() has ever completed successfully.
+  bool loaded_ = false;
   // Games the user explicitly asked to refresh, so that a metadata failure
   // for one of them is worth a toast and the dozens from an automatic scan
   // are not.

@@ -126,6 +126,10 @@ public:
   static void RefreshMetadataAsync(QObject* context, const std::string& id, bool announce,
                                    std::function<void(MetadataRefreshResult)> callback);
 
+  // POST /v1/games/metadata/refresh-missing. Bulk version of the above.
+  static void RefreshMissingArtworkAsync(QObject* context,
+                                         std::function<void(RefreshMissingArtworkResult)> callback);
+
   // GET /v1/runners. Freshly discovered on every call — no caching needed on
   // this side either.
   static void ListRunnersAsync(QObject* context, std::function<void(RunnersResult)> callback);

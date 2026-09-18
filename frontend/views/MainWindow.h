@@ -55,5 +55,7 @@ private:
   // (docs/api.md: a game's persisted status is never "running"). Consulted
   // by PopulateRow to decide each row's Launch/Stop button.
   std::set<std::string> running_ids_;
+  // Whether RefreshGames() has ever completed successfully.
+  bool loaded_ = false;
   mira_gui::EventStream event_stream_;
 };

@@ -164,7 +164,9 @@ void SettingsPanel::Load() {
 
 void SettingsPanel::BuildRows() {
   std::map<QString, std::vector<size_t>> buckets;
-  for (size_t i = 0; i < fields_.size(); ++i) buckets[mira_gui::settings::CategoryFor(fields_[i].entry.key)].push_back(i);
+  for (size_t i = 0; i < fields_.size(); ++i) {
+    buckets[QString::fromStdString(fields_[i].entry.category)].push_back(i);
+  }
 
   QStringList ordered_categories;
   for (const QString& category : mira_gui::settings::CategoryOrder()) {
@@ -210,7 +212,7 @@ void SettingsPanel::BuildRows() {
                                    .arg(*field.entry.maximum));
         row_layout->addWidget(field.spin, /*stretch=*/1);
         row_layout->addStretch(1);
-      } else if (mira_gui::settings::IsRunnerKey(field.entry.key)) {
+      } else if (field.entry.is_runner_ref) {
         field.combo = new QComboBox(row_widget);
         field.combo->setEditable(true);
         field.combo->setInsertPolicy(QComboBox::NoInsert);
@@ -232,7 +234,7 @@ void SettingsPanel::BuildRows() {
         if (field.entry.type == "an array of strings") {
           field.line->setPlaceholderText("comma-separated");
         }
-        if (mira_gui::settings::IsSecretKey(field.entry.key)) {
+        if (field.entry.is_secret) {
           field.line->setEchoMode(QLineEdit::PasswordEchoOnEdit);
         }
         row_layout->addWidget(field.line, /*stretch=*/1);
@@ -261,7 +263,7 @@ void SettingsPanel::BuildRows() {
 
 void SettingsPanel::PopulateRunnerCombos(const mira_gui::RunnersResult& result) {
   for (Field& field : fields_) {
-    if (!field.combo || !mira_gui::settings::IsRunnerKey(field.entry.key)) continue;
+    if (!field.combo || !field.entry.is_runner_ref) continue;
 
     const QString current = field.combo->currentText();
     field.combo->blockSignals(true);
