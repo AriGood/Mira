@@ -1,8 +1,10 @@
 #include <QApplication>
 #include <QGuiApplication>
 #include <QIcon>
+#include <QMessageBox>
 #include <QStringList>
 
+#include "ui/DaemonSupervisor.h"
 #include "ui/SystemNotifier.h"
 #include "ui/Tray.h"
 #include "views/LibraryWindow.h"
@@ -39,12 +41,24 @@ int main(int argc, char** argv) {
   // parsing it this way leaves Qt's own arguments (-style, -platform) alone.
   const bool classic = QApplication::arguments().contains("--classic");
 
-  QMainWindow* window = classic ? static_cast<QMainWindow*>(new MainWindow())
-                                : static_cast<QMainWindow*>(new LibraryWindow());
-  window->setAttribute(Qt::WA_DeleteOnClose);
-  // A no-op on a desktop with no tray (Tray.cpp) — window->close() then
-  // means exactly what it always did.
-  mira_gui::tray::Attach(window);
-  window->show();
+  // docs/architecture.md's "frontend-managed" daemon path: start mirad
+  // ourselves if nothing is already listening, so the AppImage works as one
+  // self-contained app with no systemd unit required.
+  auto* supervisor = new mira_gui::DaemonSupervisor(&app);
+  QObject::connect(supervisor, &mira_gui::DaemonSupervisor::Ready, &app, [classic] {
+    QMainWindow* window = classic ? static_cast<QMainWindow*>(new MainWindow())
+                                  : static_cast<QMainWindow*>(new LibraryWindow());
+    window->setAttribute(Qt::WA_DeleteOnClose);
+    // A no-op on a desktop with no tray (Tray.cpp) — window->close() then
+    // means exactly what it always did.
+    mira_gui::tray::Attach(window);
+    window->show();
+  });
+  QObject::connect(supervisor, &mira_gui::DaemonSupervisor::Failed, &app, [](QString error) {
+    QMessageBox::critical(nullptr, "Mira", "Could not start mirad: " + error);
+    QApplication::quit();
+  });
+  supervisor->EnsureRunning();
+
   return QApplication::exec();
 }
