@@ -163,6 +163,9 @@ ConfigSchemaResult GetConfigSchemaSync() {
     e.type = entry.value("type", std::string());
     e.tier = entry.value("tier", std::string());
     e.doc = entry.value("doc", std::string());
+    e.category = entry.value("category", std::string());
+    e.is_secret = entry.value("is_secret", false);
+    e.is_runner_ref = entry.value("is_runner_ref", false);
     if (entry.contains("default")) e.default_display = mapping::ToDisplayString(entry["default"]);
     result.entries.push_back(std::move(e));
   }

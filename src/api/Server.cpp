@@ -230,11 +230,14 @@ void Server::RegisterRoutes() {
           {"default", entry.default_value},
           {"tier", config::ToString(entry.tier)},
           {"doc", entry.doc},
+          {"category", entry.category},
       });
       // Present only when there's a shape to describe.
       if (!entry.constraint.one_of.empty()) entries.back()["one_of"] = entry.constraint.one_of;
       if (entry.constraint.minimum) entries.back()["minimum"] = *entry.constraint.minimum;
       if (entry.constraint.maximum) entries.back()["maximum"] = *entry.constraint.maximum;
+      if (entry.is_secret) entries.back()["is_secret"] = true;
+      if (entry.is_runner_ref) entries.back()["is_runner_ref"] = true;
     }
     SendJson(res, std::move(entries));
   });

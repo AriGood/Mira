@@ -47,10 +47,15 @@ the backend stores but never interprets (see `docs/architecture.md`).
 ### `GET /v1/config/schema` — implemented
 Every setting's type, default, tier (`basic | advanced | expert` — a
 frontend should show `basic` and fold the rest behind a disclosure, never
-omit them), and one-line doc string.
+omit them), one-line doc string, and `category` (a UI grouping label, e.g.
+"Library", "Runners" — always present, guessed from the key's dotted prefix
+when nothing more specific applies).
 
 A setting with a describable shape also carries it: `one_of` (an enum's
-array) or `minimum`/`maximum`. Absent, not empty, when it doesn't apply.
+array) or `minimum`/`maximum`. `is_secret` and `is_runner_ref` are booleans,
+present only when true — a settings screen should mask a secret's value and
+offer a runner picker (`GET /v1/runners`) for a runner_ref instead of a
+plain text box. All four are absent, not empty/false, when they don't apply.
 
 The tier is a judgement about the user, not about the value's complexity:
 `basic` means someone who just wants their games to work may have to change

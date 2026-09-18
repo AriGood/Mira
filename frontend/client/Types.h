@@ -185,6 +185,9 @@ struct ConfigSchemaEntry {
   std::string tier;
   std::string doc;
   std::string default_display;
+  std::string category;        // UI grouping; always present
+  bool is_secret = false;      // mask this value's field
+  bool is_runner_ref = false;  // offer a runner picker (GET /v1/runners) instead of free text
 };
 
 struct ConfigSchemaResult {

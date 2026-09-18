@@ -24,16 +24,12 @@ class QVBoxLayout;
 // (docs/api.md: "a frontend generating a settings UI from this should show
 // basic by default and fold the rest behind a disclosure, never omit them").
 //
-// Two deliberate exceptions to "no hardcoded setting names":
-// - "default_runner.windows" gets a runner-picker combo instead of a plain
-//   text box (see kRunnerKeys and BuildRows) — GET /v1/runners exists
-//   precisely to make a runner reference pickable instead of hand-typed.
-// - Rows are grouped into named sections (Library, Runners, Detection, ...)
-//   for readability; the grouping itself is a small key->category table
-//   (CategoryFor, SettingsDialog.cpp) rather than derived from the schema,
-//   since the schema has no category concept. A schema key missing from
-//   that table still appears — grouped by guessing from its dotted prefix,
-//   or under "General" — so a brand-new setting is never silently dropped.
+// Every field also carries its own category/is_secret/is_runner_ref straight
+// from the schema (ConfigSchemaEntry, GET /v1/config/schema) — a runner
+// reference gets a picker combo instead of a plain text box (see BuildRows),
+// a secret gets a masked field, and rows are grouped into named sections
+// (Library, Runners, Detection, ...) by entry.category. SettingsCategories.h
+// only keeps the display *order* those sections appear in.
 class SettingsDialog : public QDialog {
   Q_OBJECT
 
