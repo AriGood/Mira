@@ -383,8 +383,7 @@ struct FinishInstallResult {
 //
 // Deliberately not settings.toml: every key there has to be declared in
 // src/config/Schema.cpp and means something to the daemon, whereas none of
-// this does. A window size is not a setting mirad should have an opinion
-// about, and putting it there would make the schema answer for it.
+// this does.
 //
 // Every field is optional because the file is allowed to be absent, partial
 // or hand-edited — an unset field means "use the built-in default", not

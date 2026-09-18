@@ -16,14 +16,8 @@ namespace mira_gui::async {
 //
 // The delivery target is qApp, deliberately, and not the context object
 // itself. QMetaObject::invokeMethod dereferences its context argument on the
-// *calling* thread — it has to, to read that object's thread affinity — so
-// handing it a QObject* the main thread may already have deleted is a
-// use-after-free before the queued call is ever posted. That is not
-// hypothetical: it segfaulted mira-gui inside QObject::thread() whenever a
-// window went away while a request or an SSE event was in flight. qApp
-// outlives every window, so posting there is always safe, and `guard` is
-// then tested on the main thread — the same thread that destroys widgets —
-// so it cannot go stale between the check and the call.
+// *calling* thread, so handing it a QObject* the main thread may already have
+// deleted is a use-after-free before the queued call is ever posted.
 template <typename Fn>
 void Deliver(const QPointer<QObject>& guard, Fn fn) {
   QObject* app = QCoreApplication::instance();

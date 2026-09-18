@@ -16,9 +16,8 @@
 namespace mira_gui::shortcuts {
 namespace {
 
-// Spelled out rather than QKeySequence::Quit, which is bound on X11 but not
-// on every platform Qt supports. This is the one key a user reaches for
-// without looking, so it does not get to depend on the platform table.
+// Spelled out rather than QKeySequence::Quit, which isn't bound on every
+// platform Qt supports, and this key shouldn't depend on the platform table.
 const QKeySequence kQuit(Qt::CTRL | Qt::Key_Q);
 
 QList<Entry> CommonEntries() {
@@ -46,12 +45,9 @@ Common Install(QMainWindow* window, const QList<Entry>& window_specific) {
   common.quit->setShortcut(kQuit);
   common.quit->setMenuRole(QAction::QuitRole);
   // tray::RequestQuit(), not closeAllWindows() directly: with a tray icon
-  // attached, a window's own closeEvent hides it rather than closing it
-  // (see Tray.cpp) unless it already knows this is a real quit. Every
-  // window still gets its closeEvent either way, and LibraryWindow saves
-  // its layout in that handler — a quit that skipped it would drop the
-  // saved prefs silently, which is the kind of loss nobody thinks to
-  // report as a bug.
+  // attached, a window's closeEvent hides it instead of closing it unless
+  // it already knows this is a real quit. Every window still gets its
+  // closeEvent either way, so LibraryWindow's saved layout isn't skipped.
   QObject::connect(common.quit, &QAction::triggered, window, [] { tray::RequestQuit(); });
 
   common.close_window = new QAction("&Close window", window);
@@ -77,8 +73,8 @@ void ShowReference(QWidget* parent, const QList<Entry>& window_specific) {
   auto* form = new QFormLayout();
   form->setHorizontalSpacing(28);
 
-  // This window's own keys first: they are what the reader came for. The
-  // three that work everywhere go last, under a rule.
+  // This window's own keys first — what the reader came for. The three
+  // that work everywhere go last, under a rule.
   AddRows(form, &dialog, window_specific);
   if (!window_specific.isEmpty()) {
     auto* rule = new QFrame(&dialog);

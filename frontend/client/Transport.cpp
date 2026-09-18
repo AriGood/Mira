@@ -19,9 +19,8 @@ httplib::Client MakeClient(const Options& options) {
 }
 
 // An httplib::Result carries its own error when the request never got a
-// response at all (socket unreachable); when it did, mirad's error body is
-// the {"error": {"code", "message"}} envelope every failure uses
-// (docs/api.md), and the message inside it is the useful half.
+// response at all; when it did, mirad's error body is the
+// {"error": {"code", "message"}} envelope every failure uses.
 Reply Finish(const httplib::Result& res) {
   Reply reply;
   if (res && res->status >= 200 && res->status < 300) {

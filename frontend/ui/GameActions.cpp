@@ -20,8 +20,7 @@ void Launch(QWidget* parent, const std::string& id, std::function<void(bool trac
       return;
     }
     // Untracked (handed to Steam) is worth a toast, but mirad already sends
-    // one as a `notification` event alongside game.launched — see
-    // LibraryWindow/MainWindow::HandleGameEvent.
+    // one as a `notification` event alongside game.launched.
     if (on_launched) on_launched(result.tracked);
   });
 }
@@ -36,10 +35,9 @@ void Stop(QWidget* parent, const std::string& id) {
 
 void Delete(QWidget* parent, const std::string& id, const QString& name,
             std::function<void()> on_deleted) {
-  // The paths have to come from GET /v1/games/{id}: the list endpoint's
-  // summary carries neither install_path nor data_dir, and a prompt offering
-  // to delete a directory it can't name is not one anyone can answer. A
-  // failed fetch still offers the plain remove, with both options disabled.
+  // Paths come from a detail fetch — the list summary carries neither
+  // install_path nor data_dir. A failed fetch still offers the plain
+  // remove, with both options disabled.
   MiradClient::GetGameAsync(parent, id, [parent, id, name, on_deleted](GameDetailResult detail) {
     const QString install_path =
         detail.ok ? QString::fromStdString(detail.game.install_path) : QString();

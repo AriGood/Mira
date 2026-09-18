@@ -123,7 +123,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 void MainWindow::closeEvent(QCloseEvent* event) {
   // Only when main.cpp made this the primary window (--classic) — opened
   // as a secondary window from the grid's Tools menu, it closes for real
-  // either way, since nothing would bring it back (see Tray.h's IsManaged).
+  // either way, since nothing would bring it back.
   if (mira_gui::tray::IsManaged(this) && !mira_gui::tray::Quitting()) {
     event->ignore();
     hide();
@@ -150,9 +150,8 @@ void MainWindow::BuildShortcuts() {
   };
 
   window_action({QKeySequence(QKeySequence::Refresh), QKeySequence(Qt::CTRL | Qt::Key_R)}, [this] {
-    // Through the button so its disabled-while-checking state still holds:
-    // a key that could fire a second health check mid-flight would be the
-    // one way to get two of them running at once.
+    // Through the button so its disabled-while-checking state still holds,
+    // else this key could fire a second health check mid-flight.
     if (refresh_button_->isEnabled()) RefreshHealth();
   });
   window_action({QKeySequence(Qt::CTRL | Qt::Key_Comma)}, [this] { OpenSettings(); });
@@ -220,8 +219,8 @@ void MainWindow::RefreshGames() {
         }
 
         // Disabled for the bulk repopulate below: with sorting live, each
-        // setItem() call would re-sort the table mid-loop, so row indices
-        // would stop matching what PopulateRow was just given.
+        // setItem() call would re-sort mid-loop, so row indices would stop
+        // matching what PopulateRow was just given.
         games_table_->setSortingEnabled(false);
         games_table_->setRowCount(static_cast<int>(result.games.size()));
         for (int row = 0; row < static_cast<int>(result.games.size()); ++row) {
@@ -237,8 +236,7 @@ int MainWindow::FindRow(const std::string& id) const {
   const QString target = QString::fromStdString(id);
   for (int row = 0; row < games_table_->rowCount(); ++row) {
     // A freshly inserted row has no items until PopulateRow fills it, so
-    // this can legitimately be null — dereferencing it unconditionally
-    // turns any such moment into a crash.
+    // this can legitimately be null.
     const QTableWidgetItem* item = games_table_->item(row, 0);
     if (item != nullptr && item->data(Qt::UserRole).toString() == target) return row;
   }
@@ -281,9 +279,9 @@ void MainWindow::PopulateRow(int row, const mira_gui::GameSummary& game) {
   const bool running = running_ids_.contains(id);
 
   auto* launch_button = new QPushButton(running ? "Stop" : "Launch", games_table_);
-  // Mirrors POST /v1/games/{id}/launch's own guard (docs/api.md: 409
-  // needs_install/not_ready) so a doomed request never leaves this process
-  // — the button is simply disabled instead of round-tripping to find out.
+  // Mirrors the launch endpoint's own guard so a doomed request never
+  // leaves this process — the button is disabled instead of round-tripping
+  // to find out.
   const bool can_launch = game.status == "ready";
   launch_button->setEnabled(running || can_launch);
   if (!running && !can_launch) {
@@ -311,9 +309,8 @@ void MainWindow::UpsertRow(const mira_gui::GameSummary& game) {
   int row = FindRow(game.id);
 
   if (!filter.empty() && filter != game.status) {
-    // No longer matches the active filter (or never did) — drop it from
-    // view rather than showing a row that contradicts the filter, but
-    // without touching the daemon's own record.
+    // No longer matches the active filter — drop it from view without
+    // touching the daemon's own record.
     if (row >= 0) games_table_->removeRow(row);
     return;
   }
@@ -324,12 +321,9 @@ void MainWindow::UpsertRow(const mira_gui::GameSummary& game) {
   }
 
   // Sorting off for the same reason RefreshGames turns it off: Qt re-sorts
-  // on any change to the sort column, so PopulateRow's very first setItem()
-  // can move this row, and every column after it — plus the actions cell —
-  // would then be written into whatever row slid into this index. That hands
-  // one game another's status and playtime, and puts its Delete button on
-  // the wrong row, which is a good deal worse than a cosmetic glitch.
-  // Re-enabling sorts again, so a rename still lands in its new position.
+  // on any change to the sort column, so PopulateRow's first setItem() could
+  // move this row while the rest of its columns are still being written.
+  // Re-enabled after, so a rename still lands in its new position.
   const bool sorting = games_table_->isSortingEnabled();
   games_table_->setSortingEnabled(false);
   PopulateRow(row, game);
@@ -377,11 +371,8 @@ void MainWindow::HandleGameEvent(const std::string& type, const std::string& dat
 
   if (type == "game.launched") {
     // mirad hands a Steam game to steam://rungameid and says whether it is
-    // watching the process. Tracked: leave it alone, real game.state events
-    // are on their way once the /proc scan finds it. Untracked: clear it,
-    // because nothing will ever say it stopped — and clear rather than
-    // ignore, since the launch may have come from the CLI or the other
-    // window, which did mark it running.
+    // watching the process. Tracked: leave it alone, game.state is coming.
+    // Untracked: clear it, since nothing will ever say it stopped.
     mira_gui::GameLaunchedEvent launched;
     if (mira_gui::MiradClient::ParseGameLaunched(data, &launched) && !launched.tracked) {
       running_ids_.erase(launched.id);
@@ -390,11 +381,8 @@ void MainWindow::HandleGameEvent(const std::string& type, const std::string& dat
     return;
   }
 
-  // Explicitly the two event types that carry a game record, rather than
-  // "anything left over". mirad publishes runners.download.* and tricks.*
-  // on the same stream, and treating an unrecognised payload as a game was
-  // how a runner download added a blank tile to the library — and how a
-  // tricks event would have blanked a real one, since it carries an id.
+  // Explicitly the two event types that carry a game record, not "anything
+  // left over" — mirad also publishes runners.download.* and tricks.* here.
   if (type != "game.added" && type != "game.updated") return;
 
   mira_gui::GameSummary game;
@@ -407,13 +395,9 @@ void MainWindow::DeleteGame(const std::string& id, const QString& name) {
 
 void MainWindow::LaunchGame(const std::string& id) {
   mira_gui::actions::Launch(this, id, [this, id](bool tracked) {
-    // Not waiting for the game.state "running" event to confirm this: it's
-    // on its way regardless, so marking it now avoids a window where a
-    // second click could fire another launch before the event arrives.
-    //
-    // Unless it isn't on its way. A Steam-launched game is never tracked, so
-    // marking it running here would leave it running forever — there is no
-    // exit event to clear it.
+    // Only a tracked launch gets marked running. A Steam-launched game
+    // never emits game.state, so marking it here would leave it running
+    // forever with no exit event to clear it.
     if (tracked) running_ids_.insert(id);
     RefreshGames();
   });
@@ -421,8 +405,7 @@ void MainWindow::LaunchGame(const std::string& id) {
 
 void MainWindow::StopGame(const std::string& id) {
   // Left in running_ids_ either way — Stop only sends SIGTERM and returns;
-  // the real state change arrives later as game.state "exited"/"crashed"
-  // (docs/api.md), same as with a game that quits on its own.
+  // the real state change arrives later as game.state "exited"/"crashed".
   mira_gui::actions::Stop(this, id);
 }
 

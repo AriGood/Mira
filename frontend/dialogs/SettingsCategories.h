@@ -4,7 +4,7 @@
 #include <QStringList>
 
 // Display-only ordering for SettingsDialog's category groups. The
-// categories/secrets/runner-refs themselves come from GET /v1/config/schema.
+// categories/secrets/runner-refs themselves come from the config schema.
 namespace mira_gui::settings {
 
 // Categories appear in this order when present; anything else (a future,

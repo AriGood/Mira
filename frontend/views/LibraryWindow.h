@@ -33,23 +33,17 @@ class GameTileDelegate;
 class SettingsPanel;
 }
 
-// The primary library view: a cover-art grid, a details panel, and a custom
-// top bar (filters, sort, search, tile size, settings, window controls) in
-// place of a native titlebar — inspired by Lutris. Frameless, so it owns its
-// own move/resize/minimize/maximize/close (see the RootWidget/eventFilter in
-// the .cpp); there is no OS decoration to fall back on.
+// Primary library view: cover-art grid, details panel, custom top bar in
+// place of a native titlebar. Frameless, so it owns its own
+// move/resize/minimize/maximize/close.
 //
-// Deliberately a peer of MainWindow rather than a replacement. MainWindow
-// (the table view) stays reachable from the View menu and from `mira-gui
-// --classic`: it shows every field at once and is still the better tool for
-// auditing a freshly scanned library, which is exactly what a cover grid is
-// bad at. Both are thin clients over the same MiradClient calls, so neither
-// can drift into holding state the other doesn't have.
+// Peer of MainWindow, not a replacement — MainWindow (table view) stays
+// reachable from the View menu and `mira-gui --classic` for auditing a
+// freshly scanned library. Both are thin clients over the same MiradClient
+// calls.
 //
-// Selection model, matching Playnite: one click selects a tile and fills the
-// details panel, a second (double) click launches, right-click opens the
-// per-game menu. Launching on the first click would make a misclick start a
-// game, so the details panel is always the first thing a click produces.
+// Selection model: one click selects a tile and fills the details panel, a
+// second (double) click launches, right-click opens the per-game menu.
 class LibraryWindow : public QMainWindow {
   Q_OBJECT
 
@@ -63,10 +57,9 @@ private:
   void BuildMenus();
   void BuildShortcuts();
 
-  // The frontend's own state (size, tile size, which filter) round-trips
-  // through frontend.toml, not settings.toml — see FrontendPrefs. Applied
-  // after the window is already up, so a slow or absent daemon costs a
-  // visible resize rather than a blank window.
+  // Frontend's own state (size, tile size, which filter) round-trips through
+  // frontend.toml, not settings.toml. Applied after the window is already
+  // up, so a slow or absent daemon costs a visible resize, not a blank window.
   void LoadPrefs();
   void SavePrefs();
   void closeEvent(QCloseEvent* event) override;
@@ -75,18 +68,14 @@ private:
   void ToggleMaximize();
 
   // `force_scan` separates the two callers: startup, which honours the
-  // scan_on_startup preference, and the Refresh command, which does not.
-  // Asking for a refresh and getting no scan is the preference answering a
-  // question nobody asked it.
+  // scan_on_startup preference, and Refresh, which does not.
   void RefreshHealth(bool force_scan = false);
   void RescanAndRefreshGames(bool force_scan);
   void RefreshGames();
 
   // games_ is the whole library as last fetched; the grid is a filtered
-  // projection of it. Filtering client-side (rather than re-fetching with
-  // ?status=) is what lets the search box feel instant and lets "Playing
-  // now" and "Never played" be filters at all — neither is a server-side
-  // query.
+  // projection of it. Filtering client-side keeps the search box instant and
+  // lets "Playing now"/"Never played" be filters at all.
   void ApplyFilter();
   bool MatchesFilter(const mira_gui::GameSummary& game) const;
   QString CurrentFilterKey() const;
@@ -169,9 +158,8 @@ private:
   std::set<std::string> running_ids_;
   // Whether RefreshGames() has ever completed successfully.
   bool loaded_ = false;
-  // Games the user explicitly asked to refresh, so that a metadata failure
-  // for one of them is worth a toast and the dozens from an automatic scan
-  // are not.
+  // Games the user explicitly asked to refresh — a metadata failure for one
+  // of these is worth a toast; the dozens from an automatic scan are not.
   std::set<std::string> awaiting_metadata_;
   bool steamgriddb_notice_shown_ = false;
   std::string selected_id_;

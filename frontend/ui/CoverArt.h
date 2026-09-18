@@ -7,16 +7,10 @@
 
 namespace mira_gui {
 
-// Placeholder cover art.
-//
-// The backend has no artwork of its own yet (it's a planned change — see
-// docs/api.md), but a grid of identical grey rectangles is unusable, so
-// every game gets a generated cover instead of a blank one. It is derived
-// from the game's id, which means it is stable across restarts, across
-// renames, and across every machine showing the same library — a user
-// learns "the teal one with WS" as that game's tile and it stays that way.
-// When real artwork lands, this stays as the fallback for games that have
-// none.
+// Placeholder cover art, for a game with no fetched artwork — a grid of
+// identical grey rectangles is unusable. Derived from the game's id, so it
+// stays stable across restarts, renames, and every machine showing the
+// same library.
 
 QColor PlaceholderBase(const QString& seed);
 

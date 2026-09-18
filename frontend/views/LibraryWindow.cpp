@@ -45,8 +45,8 @@
 
 namespace {
 
-// The top bar's filter picker. The status keys match docs/api.md's `status`
-// values exactly; "all", "running" and "never" are frontend-only groupings.
+// The top bar's filter picker. Status keys match mirad's `status` values;
+// "all", "running" and "never" are frontend-only groupings.
 struct FilterEntry {
   const char* label;
   const char* key;
@@ -61,9 +61,8 @@ const FilterEntry kFilters[] = {
     {"Broken", "broken"},
     {"Missing", "missing"},
     {"Never played", "never"},
-    // Every entry above excludes a hidden-tagged game (see MatchesFilter);
-    // this is the only one that shows them, and only them — the point of
-    // "hidden" (docs/api.md) is staying out of the way until asked for.
+    // Every entry above excludes a hidden-tagged game; this is the only one
+    // that shows them, and only them.
     {"Hidden", "hidden"},
 };
 
@@ -71,8 +70,8 @@ bool HasTag(const mira_gui::GameSummary& game, const std::string& tag) {
   return std::find(game.tags.begin(), game.tags.end(), tag) != game.tags.end();
 }
 
-// The desktop's own gear when the icon theme has one, and the ⚙ glyph drawn
-// into a pixmap when it doesn't — an icon-less QToolButton is a blank square.
+// The desktop's own gear when the icon theme has one, else the ⚙ glyph
+// drawn into a pixmap — an icon-less QToolButton is a blank square.
 QIcon SettingsIcon() {
   for (const char* name : {"preferences-system", "settings-configure", "gtk-preferences"}) {
     QIcon themed = QIcon::fromTheme(name);
@@ -98,11 +97,9 @@ Qt::Edges EdgesAt(const QSize& size, const QPoint& pos) {
 }
 
 // The frameless window's own background: a thin margin around the real
-// content, and the only thing left to grab for an edge resize now that the
-// OS titlebar (and its resize handles) are gone. QWindow::startSystemResize
-// hands the drag to the compositor, which is what makes this work correctly
-// under Wayland — a plain "move the window by the mouse delta" approach does
-// not, since a client cannot reposition itself there without the compositor.
+// content, the only thing left to grab for an edge resize with no OS
+// titlebar. QWindow::startSystemResize hands the drag to the compositor,
+// which is what makes this work under Wayland.
 class RootWidget : public QWidget {
 public:
   explicit RootWidget(QMainWindow* window) : window_(window) { setMouseTracking(true); }
@@ -151,8 +148,8 @@ private:
 LibraryWindow::LibraryWindow(QWidget* parent) : QMainWindow(parent) {
   setWindowTitle("Mira");
   resize(1180, 720);
-  // A custom top bar takes over move/resize/minimize/maximize/close (see
-  // RootWidget and eventFilter below) — there is no OS decoration left.
+  // Custom top bar takes over move/resize/minimize/maximize/close — no OS
+  // decoration left.
   setWindowFlags(Qt::Window | Qt::FramelessWindowHint);
 
   // Before the panel and the grid, because both ask it for covers.
@@ -183,8 +180,7 @@ LibraryWindow::LibraryWindow(QWidget* parent) : QMainWindow(parent) {
   splitter_->setChildrenCollapsible(false);
 
   // page 1 (settings) is built lazily by OpenSettings and covers this
-  // entire slot — there is no left sidebar left to keep visible next to it,
-  // and the right one goes with it.
+  // entire slot, sidebar included.
   content_stack_ = new QStackedWidget(this);
   content_stack_->addWidget(splitter_);
 
@@ -193,11 +189,8 @@ LibraryWindow::LibraryWindow(QWidget* parent) : QMainWindow(parent) {
   layout->setContentsMargins(kResizeMargin, kResizeMargin, kResizeMargin, kResizeMargin);
   layout->setSpacing(0);
   QWidget* top_bar = BuildTopBar();
-  // Qt has a widget with no cursor of its own show its parent's — without
-  // an explicit one here, a resize cursor RootWidget set while the mouse
-  // was over its edge margin (see EdgesAt) would still be showing over the
-  // whole window after the drag ends, since nothing else in the middle of
-  // the window ever moves the mouse over RootWidget again to reset it.
+  // Without an explicit cursor here, a resize cursor RootWidget set at its
+  // edge margin would keep showing over the whole window after the drag ends.
   top_bar->setCursor(Qt::ArrowCursor);
   layout->addWidget(top_bar);
   content_stack_->setCursor(Qt::ArrowCursor);
@@ -226,9 +219,9 @@ void LibraryWindow::BuildMenus() {
   auto* menu = new QMenu(menu_button_);
   menu_button_->setMenu(menu);
 
-  // The actions themselves come from BuildShortcuts, which already added
-  // them to the window. Listing one in a menu is what makes its key
-  // discoverable — Qt draws the sequence next to the label.
+  // Actions come from BuildShortcuts, already added to the window. Listing
+  // one in a menu makes its key discoverable — Qt draws the sequence next
+  // to the label.
   auto* file_menu = menu->addMenu("&File");
   file_menu->addAction(common_.close_window);
   file_menu->addAction(common_.quit);
@@ -285,10 +278,9 @@ void LibraryWindow::BuildShortcuts() {
     addAction(action);
   };
 
-  // Scoped to the grid, not to the window: Delete and Enter still have to
-  // mean what they mean inside the search box, and WidgetWithChildrenShortcut
-  // is what keeps a keystroke aimed at a text field from reaching the
-  // library instead.
+  // Scoped to the grid, not the window: Delete and Enter still have to mean
+  // what they mean inside the search box. WidgetWithChildrenShortcut keeps a
+  // keystroke aimed at a text field from reaching the library instead.
   auto grid_action = [this](std::initializer_list<QKeySequence> keys, auto slot) {
     auto* action = new QAction(grid_);
     action->setShortcuts(QList<QKeySequence>(keys));
@@ -303,9 +295,7 @@ void LibraryWindow::BuildShortcuts() {
   });
 
   // One key, three jobs, in the order a user expects to undo them: leave
-  // settings if that is what's covering the screen, then the search that
-  // narrowed the library, and only an already-empty box means Escape was
-  // aimed at the selection.
+  // settings first, then clear the search, then clear the selection.
   window_action({QKeySequence(Qt::Key_Escape)}, [this] {
     if (SettingsOpen()) {
       RequestCloseSettings();
@@ -334,9 +324,7 @@ void LibraryWindow::BuildShortcuts() {
   }
 
   // A dedicated toggle for Hidden, on top of whatever Ctrl+9 already gives
-  // it as the last row above — "filter to them" reads as a single memorable
-  // key, and toggling back to All on a second press means it never strands
-  // the grid on a filter with nothing else reachable from it.
+  // it. Toggles back to All on a second press so it never strands the grid.
   window_action({QKeySequence(Qt::CTRL | Qt::Key_H)}, [this] {
     const int hidden_row = FilterRow("hidden");
     if (hidden_row < 0) return;
@@ -348,9 +336,8 @@ void LibraryWindow::BuildShortcuts() {
   grid_action({QKeySequence(Qt::Key_Return), QKeySequence(Qt::Key_Enter)}, [this] {
     const mira_gui::GameSummary* game = FindGame(selected_id_);
     if (game == nullptr) return;
-    // The same rule the context menu's Play entry enforces: a game that is
-    // not ready has nothing to launch, and Enter does not get to be the one
-    // path that ignores that.
+    // Same rule as the context menu's Play entry: a game that isn't ready
+    // has nothing to launch.
     if (!running_ids_.contains(game->id) && game->status != "ready") return;
     ToggleRunning(std::string(game->id));
   });
@@ -382,9 +369,8 @@ void LibraryWindow::LoadPrefs() {
       resize(*prefs.window_width, *prefs.window_height);
     }
     if (prefs.tile_width) {
-      // Through the slider so the clamp to its range and SetTileWidth's
-      // cache invalidation both apply — a hand-edited frontend.toml must
-      // not be able to ask for a 4000px tile.
+      // Through the slider so its range clamp and SetTileWidth's cache
+      // invalidation both apply.
       zoom_->setValue(*prefs.tile_width);
     }
     if (prefs.details_width) {
@@ -435,14 +421,9 @@ void LibraryWindow::SavePrefs() {
   prefs.notification_timeout_s = mira_gui::notify::CurrentTimeoutSeconds();
   const QList<int> sizes = splitter_->sizes();
   if (sizes.size() == 2) prefs.details_width = sizes[1];
-  // Blocking, not fire-and-forget. The async form hands the request to a
-  // detached thread (async::Run), and this is the one call site where the
-  // process may exit before that thread reaches the socket — closeEvent on
-  // the last window is immediately followed by exec() returning. The race
-  // is normally won, and every attempt to lose it here did win, but
-  // "usually saves your layout" is not what a Quit key should promise. A
-  // failure is still not worth reporting: the cost is a remembered layout,
-  // not data.
+  // Blocking, not fire-and-forget: the async form's detached thread might
+  // not reach the socket before the process exits on the last window's
+  // close. Failure isn't reported — the cost is a remembered layout, not data.
   mira_gui::MiradClient::SaveFrontendPrefsBlocking(prefs);
 }
 
@@ -464,9 +445,8 @@ void LibraryWindow::changeEvent(QEvent* event) {
 }
 
 bool LibraryWindow::eventFilter(QObject* watched, QEvent* event) {
-  // Only the top bar's own empty background reaches here — a click on any
-  // of its child controls (search, combos, buttons…) goes to that child
-  // instead and never becomes an event on top_bar_ itself.
+  // Only the top bar's own empty background reaches here — a click on a
+  // child control goes to that child instead.
   if (watched == top_bar_) {
     if (event->type() == QEvent::MouseButtonPress) {
       auto* mouse = static_cast<QMouseEvent*>(event);
@@ -483,9 +463,8 @@ bool LibraryWindow::eventFilter(QObject* watched, QEvent* event) {
 }
 
 void LibraryWindow::closeEvent(QCloseEvent* event) {
-  // Only for the window Attach() actually made the tray's — a secondary
-  // window opened from this one's own Tools menu closes for real either
-  // way, since nothing would bring it back (see Tray.h's IsManaged).
+  // Only for the window Attach() made the tray's — a secondary window
+  // closes for real either way, since nothing would bring it back.
   if (mira_gui::tray::IsManaged(this) && !mira_gui::tray::Quitting()) {
     SavePrefs();
     event->ignore();
@@ -598,9 +577,8 @@ QWidget* LibraryWindow::BuildTopBar() {
   connect(zoom_, &QSlider::valueChanged, this, &LibraryWindow::SetTileWidth);
   layout->addWidget(zoom_);
 
-  // Gear <-> Back/Save, swapped by OpenSettings/CloseSettings. Deliberately
-  // two sibling widgets rather than a QStackedWidget: a stack is as wide as
-  // its widest page, which stretched the gear to the width of Back+Save.
+  // Gear <-> Back/Save, swapped by OpenSettings/CloseSettings. Two sibling
+  // widgets, not a QStackedWidget — a stack is as wide as its widest page.
   settings_button_ = new QToolButton(top_bar_);
   settings_button_->setIcon(SettingsIcon());
   settings_button_->setToolTip("Settings");
@@ -667,12 +645,9 @@ QWidget* LibraryWindow::BuildGrid() {
   grid_->setMouseTracking(true);
   grid_->setFrameShape(QFrame::NoFrame);
   grid_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-  // Default QListView scrolling moves one item per wheel tick, which for a
-  // 250px-tall tile is a visible jump rather than a scroll. Per-pixel is a
-  // plain wheel/trackpad smoothing; deliberately not also grabbing a
-  // QScroller drag gesture here — that reinterprets a short left-button
-  // drag as a scroll, which would fight single-click-select on a grid whose
-  // whole point is being clicked.
+  // Default QListView scrolling moves one item per wheel tick, a visible
+  // jump for a 250px tile. Per-pixel smooths it; not also grabbing a
+  // QScroller drag gesture, which would fight single-click-select.
   grid_->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
   grid_->setContextMenuPolicy(Qt::CustomContextMenu);
   connect(grid_, &QListWidget::itemSelectionChanged, this, &LibraryWindow::SelectionChanged);
@@ -692,8 +667,7 @@ QWidget* LibraryWindow::BuildGrid() {
 }
 
 QSize LibraryWindow::TileSize() const {
-  // 2:3 portrait, the cover ratio Playnite (and every store front that feeds
-  // it) uses, plus room for the title band drawn over the bottom.
+  // 2:3 portrait cover ratio, plus room for the title band over the bottom.
   return QSize(tile_width_, tile_width_ * 3 / 2);
 }
 
@@ -735,9 +709,7 @@ void LibraryWindow::UpdateTileCover(const QString& id) {
 }
 
 void LibraryWindow::ShowSteamGridDbNotice(bool asked_for) {
-  // Once per session, however many games report it. A library of fifty
-  // non-Steam games produces fifty of these events on one scan, and they
-  // all have the same single answer.
+  // Once per session, however many games report it.
   if (steamgriddb_notice_shown_) return;
   steamgriddb_notice_shown_ = true;
 
@@ -774,8 +746,7 @@ void LibraryWindow::FetchMissingArtwork() {
                                   "Every game already has cover art.");
           return;
         }
-        // One toast for the batch. Per-game would be one notification per
-        // game, which on a fresh library is the whole library.
+        // One toast for the batch, not one notification per game.
         mira_gui::notify::Toast(
             this, mira_gui::notify::Level::Info,
             QString("Fetching cover art for %1 game(s)… they appear as they arrive.")
@@ -793,9 +764,8 @@ void LibraryWindow::RefreshMetadata(const std::string& id, bool announce) {
           }
           return;
         }
-        // 202: the fetch runs on the daemon and reports back as an event.
-        // Remembered so ShowSteamGridDbNotice knows this game was asked
-        // about, not just swept up in a background scan.
+        // 202: fetch runs on the daemon, reports back as an event. Remembered
+        // so ShowSteamGridDbNotice knows this game was asked about.
         awaiting_metadata_.insert(id);
       });
 }
@@ -815,9 +785,9 @@ void LibraryWindow::RefreshHealth(bool force_scan) {
 
 void LibraryWindow::RescanAndRefreshGames(bool force_scan) {
   if (!force_scan && !scan_on_startup_) {
-    // The daemon's own watcher keeps the library current while it runs
-    // (library::Watcher), so skipping the startup scan costs nothing except
-    // on a library that changed while mirad was stopped.
+    // mirad's own watcher keeps the library current while it runs, so
+    // skipping the startup scan costs nothing except a library that
+    // changed while mirad was stopped.
     RefreshGames();
     return;
   }
@@ -831,10 +801,9 @@ void LibraryWindow::RescanAndRefreshGames(bool force_scan) {
 }
 
 void LibraryWindow::RefreshGames() {
-  // Two fetches: mirad leaves hidden-tagged games out of the bare list
-  // (docs/api.md) — ?tag=hidden is the only call that returns them. Both
-  // land in games_ up front so Ctrl+H is a client-side filter switch, not
-  // a round trip.
+  // Two fetches: mirad leaves hidden-tagged games out of the bare list;
+  // ?tag=hidden is the only call that returns them. Both land in games_ up
+  // front so Ctrl+H is a client-side filter switch, not a round trip.
   mira_gui::MiradClient::ListGamesAsync(this, [this](mira_gui::GamesResult visible) {
     if (!visible.ok) {
       mira_gui::notify::Failed(this, "Could not list games.",
@@ -892,9 +861,8 @@ bool LibraryWindow::MatchesFilter(const mira_gui::GameSummary& game) const {
 void LibraryWindow::ApplyFilter() {
   const std::string previously_selected = selected_id_;
 
-  // Sorted here rather than at fetch time so a sort change costs a rebuild
-  // of the tiles and not a round trip — and so an event that patches one
-  // game into games_ lands in the right place without re-fetching either.
+  // Sorted here, not at fetch time, so a sort change costs a tile rebuild,
+  // not a round trip.
   mira_gui::SortGames(games_, sort_key_, sort_descending_);
 
   grid_->blockSignals(true);
@@ -923,8 +891,7 @@ void LibraryWindow::ApplyFilter() {
   if (to_select != nullptr) {
     grid_->setCurrentItem(to_select);
   } else if (!previously_selected.empty()) {
-    // The selected game was filtered away (or removed) — the panel would
-    // otherwise keep showing a game that isn't on screen any more.
+    // Selected game was filtered away or removed — don't keep showing it.
     selected_id_.clear();
     details_->Clear();
   }
@@ -949,9 +916,8 @@ const mira_gui::GameSummary* LibraryWindow::FindGame(const std::string& id) cons
 }
 
 void LibraryWindow::UpsertGame(const mira_gui::GameSummary& game) {
-  // A rename changes the placeholder's initials, so every rendered tile for
-  // this id is stale — the fetched artwork behind it is not, which is why
-  // this drops the rendering and not the image.
+  // A rename changes the placeholder's initials, so the rendered tile is
+  // stale even though the fetched artwork behind it isn't.
   artwork_->InvalidateRendering(game.id);
 
   for (mira_gui::GameSummary& existing : games_) {
@@ -1024,10 +990,9 @@ void LibraryWindow::ShowContextMenu(const QPoint& pos) {
   QAction* details = menu.addAction("Details && settings…");
   QAction* folder = menu.addAction("Open install folder");
   menu.addSeparator();
-  // Both halves of the needs_install escape hatch (docs/api.md): run the
-  // installer inside this game's prefix, then say it worked. Offered for
-  // every game, since running something in a prefix is useful beyond
-  // installing, but only a needs_install game can be "marked installed".
+  // Both halves of the needs_install escape hatch: run the installer inside
+  // this game's prefix, then say it worked. "Run in prefix" is offered for
+  // every game; only needs_install can be "marked installed".
   QAction* run_in_prefix = menu.addAction("Run in prefix…");
   QAction* finish_install = menu.addAction("Mark as installed");
   finish_install->setEnabled(status == "needs_install");
@@ -1112,8 +1077,8 @@ void LibraryWindow::ToggleRunning(const std::string& id) {
 void LibraryWindow::LaunchGame(const std::string& id) {
   mira_gui::actions::Launch(this, id, [this, id](bool tracked) {
     // Only a tracked launch gets a "Playing now" tile. A Steam-launched game
-    // never emits game.state, so marking it running here would pin it under
-    // that filter with no event able to release it.
+    // never emits game.state, so marking it running here would pin it with
+    // no event to release it.
     if (tracked) running_ids_.insert(id);
     RefreshGames();
   });
@@ -1171,8 +1136,7 @@ bool LibraryWindow::SettingsOpen() const {
 void LibraryWindow::SetSettingsChromeVisible(bool settings_open) {
   settings_button_->setVisible(!settings_open);
   settings_actions_widget_->setVisible(settings_open);
-  // The library controls act on a grid that isn't on screen while settings
-  // covers it, so they read as broken rather than as available.
+  // These act on a grid that isn't on screen while settings covers it.
   for (QWidget* control : {static_cast<QWidget*>(filters_), static_cast<QWidget*>(sort_),
                            static_cast<QWidget*>(sort_direction_), static_cast<QWidget*>(search_),
                            static_cast<QWidget*>(zoom_)}) {
@@ -1213,9 +1177,7 @@ QWidget* LibraryWindow::BuildSettingsPage() {
             }
             mira_gui::notify::Toast(this, mira_gui::notify::Level::Success, "Settings saved.");
             CloseSettings();
-            // Frontend-only prefs (game_settings_in_sidebar) just changed on
-            // the daemon; re-reading them is how this window picks the
-            // change up without a restart.
+            // Picks up a changed game_settings_in_sidebar without a restart.
             LoadPrefs();
           });
   layout->addWidget(settings_panel_, /*stretch=*/1);
@@ -1275,9 +1237,8 @@ QWidget* LibraryWindow::BuildGameEditPage(const std::string& id) {
 }
 
 void LibraryWindow::OpenClassicView() {
-  // A second top-level window rather than a swap: the two views are useful
-  // side by side (audit a row in the table, watch the tile update here),
-  // and both stay live because each holds its own EventStream.
+  // A second top-level window, not a swap: the two views are useful side
+  // by side, and both stay live since each holds its own EventStream.
   auto* classic = new MainWindow();
   classic->setAttribute(Qt::WA_DeleteOnClose);
   classic->setWindowTitle("Mira — classic view");
@@ -1322,35 +1283,29 @@ void LibraryWindow::HandleGameEvent(const std::string& type, const std::string& 
     mira_gui::MetadataEvent event;
     if (!mira_gui::MiradClient::ParseMetadataEvent(data, &event)) return;
     if (type == "game.metadata_ready") {
-      // Only the artwork is refetched here. The rest of the metadata is not
-      // part of the game record (docs/api.md keeps it out of games.toml), so
-      // nothing in the library view changes when it lands.
+      // Only the artwork is refetched here — the rest of the metadata isn't
+      // part of the game record, so nothing else in the library view changes.
       artwork_->Invalidate(event.id);
       return;
     }
-    // The one failure worth interrupting for, because it is the only one
-    // the user can fix and it is never transient: no SteamGridDB key means
-    // every non-Steam game in the library will keep its placeholder
-    // forever, and nothing else on screen says why.
+    // The one failure worth interrupting for: it's fixable and never
+    // transient — no SteamGridDB key means every non-Steam game keeps its
+    // placeholder forever.
     if (event.code == "no_steamgriddb_key") {
       ShowSteamGridDbNotice(awaiting_metadata_.erase(event.id) > 0);
       return;
     }
 
     // Everything else mirad already reports as a `notification` event when
-    // the fetch was announced (see FetchQueue::Enqueue) — nothing more to
-    // do with this one.
+    // the fetch was announced.
     awaiting_metadata_.erase(event.id);
     return;
   }
 
   if (type == "game.launched") {
     // mirad hands a Steam game to steam://rungameid and says whether it is
-    // watching the process. Tracked: leave it alone, real game.state events
-    // are on their way once the /proc scan finds it. Untracked: clear it,
-    // because nothing will ever say it stopped — and clear rather than
-    // ignore, since the launch may have come from the CLI or the other
-    // window, which did mark it running.
+    // watching the process. Tracked: leave it alone, game.state is coming.
+    // Untracked: clear it, since nothing will ever say it stopped.
     mira_gui::GameLaunchedEvent launched;
     if (mira_gui::MiradClient::ParseGameLaunched(data, &launched) && !launched.tracked) {
       running_ids_.erase(launched.id);
@@ -1359,11 +1314,8 @@ void LibraryWindow::HandleGameEvent(const std::string& type, const std::string& 
     return;
   }
 
-  // Explicitly the two event types that carry a game record, rather than
-  // "anything left over". mirad publishes runners.download.* and tricks.*
-  // on the same stream, and treating an unrecognised payload as a game was
-  // how a runner download added a blank tile to the library — and how a
-  // tricks event would have blanked a real one, since it carries an id.
+  // Explicitly the two event types that carry a game record, not "anything
+  // left over" — mirad also publishes runners.download.* and tricks.* here.
   if (type != "game.added" && type != "game.updated") return;
 
   mira_gui::GameSummary game;

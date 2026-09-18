@@ -10,11 +10,7 @@
 //
 // Every endpoint in MiradClient used to open its own httplib::Client, repeat
 // the same address family and timeouts, then repeat the same "2xx, or else
-// unwrap the {"error": {...}} envelope" check. That boilerplate was the only
-// thing those fifteen functions had in common, and also the only thing that
-// ever had to change in all of them at once — the socket override, a timeout,
-// the shape of an error body. So it lives here exactly once, and each
-// endpoint is left with only the part that is actually about that endpoint.
+// unwrap the {"error": {...}} envelope" check.
 namespace mira_gui::transport {
 
 struct Reply {
@@ -26,8 +22,7 @@ struct Reply {
 struct Options {
   // Left unset, httplib's own default applies. Set it for an endpoint that
   // does real work while the request is open — POST /v1/library/scan walks
-  // every library root synchronously, since there is no job queue yet
-  // (docs/architecture.md).
+  // every library root synchronously.
   std::optional<std::chrono::seconds> read_timeout;
 };
 
@@ -36,9 +31,7 @@ struct Options {
 // and `MIRA_SOCKET=/path/to.sock mira-gui` unambiguously talk to each other
 // regardless of what else is running. Without it, mirrors core/Paths.h's
 // DefaultSocket(): $XDG_RUNTIME_DIR/mira/mirad.sock, falling back to
-// /tmp/mira if XDG_RUNTIME_DIR is unset. Does not yet honor a socket_path
-// override from settings.toml — that would need a GET /v1/config round trip
-// through a socket that hasn't been resolved yet.
+// /tmp/mira if XDG_RUNTIME_DIR is unset.
 std::string SocketPath();
 
 Reply Get(const std::string& path, const Options& options = {});

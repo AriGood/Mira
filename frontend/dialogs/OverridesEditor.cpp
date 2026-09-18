@@ -102,10 +102,9 @@ void OverridesEditor::BuildRows(const ConfigSchemaResult& schema) {
 }
 
 void OverridesEditor::ApplyValues(const GameConfigResult& config) {
-  // BuildRows makes one row per schema key, since only this (per-game, not
-  // the schema itself) response says which are overridable — library_roots
-  // and friends (config::Resolver::kDaemonOnlyKeys) describe the daemon, not
-  // this game, and are hidden here rather than never built.
+  // BuildRows makes one row per schema key, since only this per-game
+  // response says which are overridable — daemon-only keys are hidden here
+  // rather than never built.
   for (const GameConfigEntry& entry : config.entries) {
     const auto it = std::ranges::find(fields_, entry.key,
                                       [](const Field& f) { return f.entry.key; });

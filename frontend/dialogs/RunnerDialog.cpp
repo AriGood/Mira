@@ -43,10 +43,9 @@ RunnerDialog::RunnerDialog(QWidget* parent) : QDialog(parent) {
   auto* kind_label = new QLabel("Runner kind", this);
   header->addWidget(kind_label);
   kind_ = new QComboBox(this);
-  // Only the two kinds with a download source behind them
-  // (runner_sources.proton_ge / .wine_ge). `native` has no builds, and
-  // `steam` resolves its build per-game from Steam's own prefix — neither
-  // is something this dialog can install.
+  // Only the two kinds with a download source behind them. `native` has no
+  // builds, and `steam` resolves its build per-game from Steam's own
+  // prefix — neither is installable here.
   kind_->addItem("Proton", "proton");
   kind_->addItem("Wine", "wine");
   connect(kind_, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this] {
@@ -213,7 +212,6 @@ void RunnerDialog::HandleEvent(const std::string& type, const std::string& data)
     return;
   }
   SetStatus(QString("Installed %1.").arg(tag));
-  // The new build is only discoverable once it's on disk, and GET /v1/runners
-  // re-discovers on every call, so this is all it takes to show it.
+  // Discoverable once on disk, and the list call re-discovers every time.
   RefreshInstalled();
 }

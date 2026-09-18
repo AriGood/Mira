@@ -12,22 +12,15 @@
 // (src/cli/main.cpp): plain HTTP over the daemon's Unix domain socket, no
 // dependency on mira_core. See docs/api.md and docs/architecture.md.
 //
-// Every call here is one endpoint and nothing else: the socket, the timeouts
-// and the error envelope live in Transport.h, the JSON conversions in
-// JsonMapping.h, and the thread hop in Async.h. Each method runs on a
-// throwaway worker thread and delivers its result back on the main thread,
-// so the UI thread never blocks on the socket, and is safe to call even if
-// `context` is destroyed before the request finishes — the callback is then
-// dropped instead of invoked. That safety is not free and is not what
-// passing a context object to QMetaObject::invokeMethod buys you; see
-// async::Deliver for why the naive version is a use-after-free.
+// Only endpoints live here. Transport.h owns the socket, the timeouts and
+// the error envelope. JsonMapping.h owns the JSON conversions, and Async.h
+// owns the thread hop. Methods run on a throwaway worker thread and deliver
+// results back on the main thread, so UI never blocks on the socket.
 namespace mira_gui {
 
 class MiradClient {
 public:
-  // The socket every call above goes to — see transport::SocketPath, which
-  // this forwards to. Exposed because the UI shows it (a frontend talking to
-  // a different daemon than you expect should be visible, not guessed at).
+  // The socket every call above goes to. Exposed because the UI shows it.
   static std::string ResolveSocketPath();
 
   // GET /v1/health.
@@ -35,16 +28,14 @@ public:
 
   // GET /v1/games[?status=...][?tag=...]. An empty filter omits that query
   // param entirely. `tag_filter` composes with `status_filter` the way
-  // mirad does (docs/api.md); `?tag=hidden` is the one call that returns a
-  // hidden-tagged game at all — every other call, including the bare one,
-  // leaves them out.
+  // mirad does (docs/api.md); `?tag=hidden` is the only call that returns a
+  // hidden-tagged game at all.
   static void ListGamesAsync(QObject* context, std::function<void(GamesResult)> callback,
                              const std::string& status_filter = std::string(),
                              const std::string& tag_filter = std::string());
 
   // DELETE /v1/games/{id}[?delete_files=true][?delete_prefix=true]. With both
-  // flags false — the default everywhere a caller isn't explicitly asking for
-  // deletion — this only forgets the game and never touches disk.
+  // flags false, this only forgets the game and never touches disk.
   // `delete_files` removes its install_path, `delete_prefix` its data_dir;
   // mirad refuses either if the path isn't really inside a configured
   // library_roots/prefix_root (docs/api.md), so a 400 here is a guard
@@ -63,16 +54,15 @@ public:
   static void StopGameAsync(QObject* context, const std::string& id,
                             std::function<void(StopResult)> callback);
 
-  // POST /v1/library/scan. Runs synchronously on mirad's side (docs/api.md
-  // notes there's no job queue yet), hence its own read timeout.
+  // POST /v1/library/scan. Runs synchronously on mirad's side, hence
+  // its own read timeout.
   static void ScanLibraryAsync(QObject* context, std::function<void(ScanResult)> callback);
 
   // GET /v1/games/{id}, for the detail/edit view.
   static void GetGameAsync(QObject* context, const std::string& id,
                            std::function<void(GameDetailResult)> callback);
 
-  // PATCH /v1/games/{id}. Per docs/api.md, setting any of these fields marks
-  // the game reviewed: true — a correction is the review.
+  // PATCH /v1/games/{id}. Setting any of these fields marks the game as reviewed.
   static void PatchGameAsync(QObject* context, const std::string& id, const GamePatch& patch,
                              std::function<void(PatchGameResult)> callback);
 
@@ -80,12 +70,11 @@ public:
   static void GetConfigSchemaAsync(QObject* context,
                                    std::function<void(ConfigSchemaResult)> callback);
 
-  // GET /v1/config, flattened — see ConfigResult.
+  // GET /v1/config, flattened.
   static void GetConfigAsync(QObject* context, std::function<void(ConfigResult)> callback);
 
-  // PATCH /v1/config. Per docs/api.md, a bad value anywhere in the patch
-  // means nothing in it is applied — callers should only include edits
-  // that actually changed, so one unrelated typo can't block the rest.
+  // PATCH /v1/config. A bad value anywhere in the patch means nothing
+  // in it is applied.
   static void PatchConfigAsync(QObject* context, const std::vector<ConfigEdit>& edits,
                                std::function<void(PatchConfigResult)> callback);
 
@@ -93,9 +82,7 @@ public:
   static void ResetConfigKeyAsync(QObject* context, const std::string& key,
                                   std::function<void(PatchConfigResult)> callback);
 
-  // GET /v1/config, reading only the opaque `frontend` table — see
-  // FrontendPrefs for why the frontend's own state lives there and not in
-  // settings.toml.
+  // GET /v1/config, reading only the opaque `frontend` table.
   static void GetFrontendPrefsAsync(QObject* context,
                                     std::function<void(FrontendPrefsResult)> callback);
 
@@ -130,8 +117,7 @@ public:
   static void RefreshMissingArtworkAsync(QObject* context,
                                          std::function<void(RefreshMissingArtworkResult)> callback);
 
-  // GET /v1/runners. Freshly discovered on every call — no caching needed on
-  // this side either.
+  // GET /v1/runners.
   static void ListRunnersAsync(QObject* context, std::function<void(RunnersResult)> callback);
 
   // GET /v1/runners/catalog?kind=proton|wine — what is available to
@@ -142,7 +128,7 @@ public:
 
   // POST /v1/runners/download. Returns 202 as soon as the download starts;
   // the outcome arrives as a runners.download.finished/.failed event, since
-  // a build can be 500+ MB and there is no job queue yet (docs/api.md).
+  // a build can be 500+ MB.
   static void DownloadRunnerAsync(QObject* context, const std::string& kind,
                                   const std::string& tag,
                                   std::function<void(RunnerDownloadResult)> callback);
