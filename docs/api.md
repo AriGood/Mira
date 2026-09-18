@@ -243,11 +243,15 @@ needs; see `docs/architecture.md` if that stops being true.
 
 ### `POST /v1/library/scan` — implemented
 Walks every enabled library root immediately: detects new game folders,
-auto-configures and stores them (publishing `game.added` for each), and
-marks previously-known games whose folder disappeared as `missing`. Runs
-synchronously and returns a summary rather than a job id — there is no
-worker/job queue yet, and a scan of a normal-sized library finishes well
-within one HTTP request:
+auto-configures and stores them (publishing `game.added` for each); marks
+previously-known games whose folder disappeared as `missing`, or removes
+them outright if `library.remove_missing` is on; and restores one marked
+`missing` whose folder reappeared. Every one of those publishes
+`game.updated`/`game.added`/`game.removed` as it happens, so a caller can
+rely on the event stream alone to stay in sync rather than re-fetching
+`GET /v1/games` after every scan. Runs synchronously and returns a summary
+rather than a job id — there is no worker/job queue yet, and a scan of a
+normal-sized library finishes well within one HTTP request:
 ```json
 { "added": 1, "missing": 0, "restored": 0 }
 ```

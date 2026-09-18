@@ -121,6 +121,12 @@ private:
 
   std::vector<mira_gui::GameSummary> games_;
   std::set<std::string> running_ids_;
+  // Whether RefreshGames() has ever completed successfully. A scan only
+  // reports what changed (and, since Scanner's own game.added/.updated/
+  // .removed events, keeps this in sync incrementally) — it says nothing
+  // about a game that was already known and unchanged, so the very first
+  // load still needs a real listing; every one after that doesn't.
+  bool loaded_ = false;
   // Games the user explicitly asked to refresh, so that a metadata failure
   // for one of them is worth a toast and the dozens from an automatic scan
   // are not.

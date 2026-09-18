@@ -195,7 +195,17 @@ void MainWindow::RefreshHealth() {
 }
 
 void MainWindow::RescanAndRefreshGames() {
-  mira_gui::MiradClient::ScanLibraryAsync(this, [this](mira_gui::ScanResult) { RefreshGames(); });
+  if (!loaded_) {
+    // First load: a scan only reports what changed, not what already
+    // existed, so a real listing is the only way to see the latter.
+    mira_gui::MiradClient::ScanLibraryAsync(this, [this](mira_gui::ScanResult) { RefreshGames(); });
+    return;
+  }
+  // Already loaded once, and kept in sync since by game.added/.updated/
+  // .removed events — Scanner now publishes one for every change a scan
+  // itself makes (added/restored/missing), so there's nothing left for a
+  // relist to pick up that these events won't have already applied.
+  mira_gui::MiradClient::ScanLibraryAsync(this, [](mira_gui::ScanResult) {});
 }
 
 std::string MainWindow::CurrentStatusFilter() const {
@@ -223,6 +233,7 @@ void MainWindow::RefreshGames() {
           PopulateRow(row, result.games[row]);
         }
         games_table_->setSortingEnabled(true);
+        loaded_ = true;
       },
       CurrentStatusFilter());
 }

@@ -615,7 +615,18 @@ void LibraryWindow::RescanAndRefreshGames(bool force_scan) {
     RefreshGames();
     return;
   }
-  mira_gui::MiradClient::ScanLibraryAsync(this, [this](mira_gui::ScanResult) { RefreshGames(); });
+  if (!loaded_) {
+    // First load: a scan only reports what changed, not what already
+    // existed, so a real listing is the only way to see the latter.
+    mira_gui::MiradClient::ScanLibraryAsync(this, [this](mira_gui::ScanResult) { RefreshGames(); });
+    return;
+  }
+  // Already loaded once, and kept in sync since by game.added/.updated/
+  // .removed events — Scanner now publishes one for every change a scan
+  // itself makes (added/restored/missing), the same way library::Watcher's
+  // own detections always have — so there's nothing left for a relist to
+  // pick up that these events won't have already applied.
+  mira_gui::MiradClient::ScanLibraryAsync(this, [](mira_gui::ScanResult) {});
 }
 
 void LibraryWindow::RefreshGames() {
@@ -630,6 +641,7 @@ void LibraryWindow::RefreshGames() {
       return;
     }
     games_ = std::move(result.games);
+    loaded_ = true;
     ApplyFilter();
   });
 }
