@@ -1,5 +1,7 @@
 #include "Shortcuts.h"
 
+#include "Tray.h"
+
 #include <QAction>
 #include <QApplication>
 #include <QDialog>
@@ -43,12 +45,14 @@ Common Install(QMainWindow* window, const QList<Entry>& window_specific) {
   common.quit = new QAction("&Quit", window);
   common.quit->setShortcut(kQuit);
   common.quit->setMenuRole(QAction::QuitRole);
-  // closeAllWindows(), not quit(): every window still gets its closeEvent,
-  // and LibraryWindow saves its layout in that handler. A quit that skipped
-  // it would drop the saved prefs silently, which is the kind of loss
-  // nobody thinks to report as a bug.
-  QObject::connect(common.quit, &QAction::triggered, window,
-                   [] { QApplication::closeAllWindows(); });
+  // tray::RequestQuit(), not closeAllWindows() directly: with a tray icon
+  // attached, a window's own closeEvent hides it rather than closing it
+  // (see Tray.cpp) unless it already knows this is a real quit. Every
+  // window still gets its closeEvent either way, and LibraryWindow saves
+  // its layout in that handler — a quit that skipped it would drop the
+  // saved prefs silently, which is the kind of loss nobody thinks to
+  // report as a bug.
+  QObject::connect(common.quit, &QAction::triggered, window, [] { tray::RequestQuit(); });
 
   common.close_window = new QAction("&Close window", window);
   common.close_window->setShortcut(QKeySequence::Close);

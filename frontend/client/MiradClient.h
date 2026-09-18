@@ -33,10 +33,14 @@ public:
   // GET /v1/health.
   static void CheckHealthAsync(QObject* context, std::function<void(HealthStatus)> callback);
 
-  // GET /v1/games[?status=...]. An empty `status_filter` omits the query
-  // param entirely (every status).
+  // GET /v1/games[?status=...][?tag=...]. An empty filter omits that query
+  // param entirely. `tag_filter` composes with `status_filter` the way
+  // mirad does (docs/api.md); `?tag=hidden` is the one call that returns a
+  // hidden-tagged game at all — every other call, including the bare one,
+  // leaves them out.
   static void ListGamesAsync(QObject* context, std::function<void(GamesResult)> callback,
-                             const std::string& status_filter = std::string());
+                             const std::string& status_filter = std::string(),
+                             const std::string& tag_filter = std::string());
 
   // DELETE /v1/games/{id}[?delete_files=true][?delete_prefix=true]. With both
   // flags false — the default everywhere a caller isn't explicitly asking for
@@ -190,6 +194,11 @@ public:
   // "exited"/"crashed" state is a signal to re-fetch, not something to patch
   // a row from directly.
   static bool ParseGameState(const std::string& data, GameStateEvent* out);
+
+  // Parses `game.launched`. `tracked` defaults to false when the payload
+  // omits it: an older daemon published this event only for the case where
+  // nothing was watching, so that is what its silence meant.
+  static bool ParseGameLaunched(const std::string& data, GameLaunchedEvent* out);
 
   // Parses `game.removed`'s payload (`{"id": "..."}`, Server.cpp).
   static std::string ParseRemovedId(const std::string& data);

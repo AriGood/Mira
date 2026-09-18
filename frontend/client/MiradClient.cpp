@@ -26,10 +26,18 @@ HealthStatus GetHealthSync() {
   return status;
 }
 
-GamesResult GetGamesSync(const std::string& status_filter) {
+GamesResult GetGamesSync(const std::string& status_filter, const std::string& tag_filter) {
   GamesResult result;
-  const transport::Reply reply = transport::Get(
-      status_filter.empty() ? "/v1/games" : "/v1/games?status=" + status_filter);
+  std::string path = "/v1/games";
+  std::string separator = "?";
+  if (!status_filter.empty()) {
+    path += separator + "status=" + status_filter;
+    separator = "&";
+  }
+  if (!tag_filter.empty()) {
+    path += separator + "tag=" + tag_filter;
+  }
+  const transport::Reply reply = transport::Get(path);
   if (!reply.ok) {
     result.error = reply.error;
     return result;
@@ -61,11 +69,15 @@ DeleteResult DeleteGameSync(const std::string& id, bool delete_files, bool delet
 
 LaunchResult LaunchGameSync(const std::string& id) {
   const transport::Reply reply = transport::Post("/v1/games/" + id + "/launch");
-  // "launched_via_steam" is mirad saying it handed the game to the Steam
-  // client and is not watching the process (docs/api.md). Any other success
-  // body means ProcessSupervisor has it and game.state events will follow.
-  const bool tracked =
-      !reply.body.is_object() || reply.body.value("status", std::string()) != "launched_via_steam";
+  // mirad answers `tracked` directly (docs/api.md): whether game.state
+  // events are coming for this launch. Defaulting to true for a body
+  // without it keeps an older daemon behaving as it did — every launch it
+  // reported was tracked except the Steam one, which is what the status
+  // string used to be read for.
+  const bool tracked = !reply.body.is_object() ||
+                       reply.body.value("tracked",
+                                        reply.body.value("status", std::string()) !=
+                                            "launched_via_steam");
   return {reply.ok, reply.error, tracked};
 }
 
@@ -116,6 +128,7 @@ PatchGameResult PatchGameSync(const std::string& id, const GamePatch& patch) {
   if (patch.working_dir) body["working_dir"] = *patch.working_dir;
   if (patch.runner_ref) body["runner_ref"] = *patch.runner_ref;
   if (patch.data_dir) body["data_dir"] = *patch.data_dir;
+  if (patch.tags) body["tags"] = *patch.tags;
 
   // Parsed client-side rather than left for the server to reject: a bad
   // JSON object here is a typing mistake, not something worth a round trip
@@ -167,6 +180,17 @@ ConfigSchemaResult GetConfigSchemaSync() {
     e.is_secret = entry.value("is_secret", false);
     e.is_runner_ref = entry.value("is_runner_ref", false);
     if (entry.contains("default")) e.default_display = mapping::ToDisplayString(entry["default"]);
+    if (entry.contains("one_of") && entry["one_of"].is_array()) {
+      for (const json& option : entry["one_of"]) {
+        if (option.is_string()) e.one_of.push_back(option.get<std::string>());
+      }
+    }
+    if (entry.contains("minimum") && entry["minimum"].is_number()) {
+      e.minimum = entry["minimum"].get<double>();
+    }
+    if (entry.contains("maximum") && entry["maximum"].is_number()) {
+      e.maximum = entry["maximum"].get<double>();
+    }
     result.entries.push_back(std::move(e));
   }
   return result;
@@ -275,7 +299,6 @@ FrontendPrefsResult GetFrontendPrefsSync() {
   read_int("window_width", result.prefs.window_width);
   read_int("window_height", result.prefs.window_height);
   read_int("tile_width", result.prefs.tile_width);
-  read_int("sidebar_width", result.prefs.sidebar_width);
   read_int("details_width", result.prefs.details_width);
   const auto read_string = [&table](const char* key, std::optional<std::string>& out) {
     if (table.contains(key) && table[key].is_string()) out = table[key].get<std::string>();
@@ -289,6 +312,7 @@ FrontendPrefsResult GetFrontendPrefsSync() {
   read_bool("scan_on_startup", result.prefs.scan_on_startup);
   read_string("notifications", result.prefs.notifications);
   read_int("notification_timeout_s", result.prefs.notification_timeout_s);
+  read_bool("game_settings_in_sidebar", result.prefs.game_settings_in_sidebar);
   return result;
 }
 
@@ -297,7 +321,6 @@ PatchConfigResult SaveFrontendPrefsSync(const FrontendPrefs& prefs) {
   if (prefs.window_width) table["window_width"] = *prefs.window_width;
   if (prefs.window_height) table["window_height"] = *prefs.window_height;
   if (prefs.tile_width) table["tile_width"] = *prefs.tile_width;
-  if (prefs.sidebar_width) table["sidebar_width"] = *prefs.sidebar_width;
   if (prefs.details_width) table["details_width"] = *prefs.details_width;
   if (prefs.library_filter) table["library_filter"] = *prefs.library_filter;
   if (prefs.sort_by) table["sort_by"] = *prefs.sort_by;
@@ -306,6 +329,9 @@ PatchConfigResult SaveFrontendPrefsSync(const FrontendPrefs& prefs) {
   if (prefs.notifications) table["notifications"] = *prefs.notifications;
   if (prefs.notification_timeout_s) {
     table["notification_timeout_s"] = *prefs.notification_timeout_s;
+  }
+  if (prefs.game_settings_in_sidebar) {
+    table["game_settings_in_sidebar"] = *prefs.game_settings_in_sidebar;
   }
 
   // Short, because SaveFrontendPrefsBlocking runs this on the UI thread
@@ -434,8 +460,9 @@ void MiradClient::CheckHealthAsync(QObject* context, std::function<void(HealthSt
 }
 
 void MiradClient::ListGamesAsync(QObject* context, std::function<void(GamesResult)> callback,
-                                 const std::string& status_filter) {
-  async::Run(context, [status_filter] { return GetGamesSync(status_filter); }, std::move(callback));
+                                 const std::string& status_filter, const std::string& tag_filter) {
+  async::Run(context, [status_filter, tag_filter] { return GetGamesSync(status_filter, tag_filter); },
+             std::move(callback));
 }
 
 void MiradClient::DeleteGameAsync(QObject* context, const std::string& id, bool delete_files,
@@ -582,6 +609,15 @@ bool MiradClient::ParseGameState(const std::string& data, GameStateEvent* out) {
   out->id = entry.value("id", std::string());
   out->state = entry.value("state", std::string());
   return !out->id.empty();
+}
+
+bool MiradClient::ParseGameLaunched(const std::string& data, GameLaunchedEvent* out) {
+  const json entry = json::parse(data, nullptr, false);
+  if (entry.is_discarded() || !entry.is_object()) return false;
+  out->id = entry.value("id", std::string());
+  if (out->id.empty()) return false;
+  out->tracked = entry.value("tracked", false);
+  return true;
 }
 
 std::string MiradClient::ParseRemovedId(const std::string& data) {

@@ -4,6 +4,7 @@
 #include <QStringList>
 
 #include "ui/SystemNotifier.h"
+#include "ui/Tray.h"
 #include "views/LibraryWindow.h"
 #include "views/MainWindow.h"
 
@@ -41,6 +42,9 @@ int main(int argc, char** argv) {
   QMainWindow* window = classic ? static_cast<QMainWindow*>(new MainWindow())
                                 : static_cast<QMainWindow*>(new LibraryWindow());
   window->setAttribute(Qt::WA_DeleteOnClose);
+  // A no-op on a desktop with no tray (Tray.cpp) — window->close() then
+  // means exactly what it always did.
+  mira_gui::tray::Attach(window);
   window->show();
   return QApplication::exec();
 }

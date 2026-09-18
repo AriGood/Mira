@@ -20,6 +20,9 @@
 #include "../ui/GamePresentation.h"
 #include "../ui/Notify.h"
 #include "../ui/Shortcuts.h"
+#include "../ui/Tray.h"
+
+#include <QCloseEvent>
 
 namespace {
 
@@ -48,6 +51,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   setWindowTitle("Mira");
   resize(1000, 650);
 
+
   auto* central = new QWidget(this);
   auto* layout = new QVBoxLayout(central);
   layout->setContentsMargins(12, 12, 12, 12);
@@ -56,10 +60,6 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   auto* header_row = new QHBoxLayout();
   auto* title_label = new QLabel("Mira", central);
   title_label->setStyleSheet("font-size: 18px; font-weight: 600;");
-
-  health_badge_ = new QLabel(central);
-  health_badge_->setStyleSheet("font-size: 11px; color: #757575;");
-  health_badge_->setText("● checking…");
 
   status_filter_ = new QComboBox(central);
   status_filter_->addItem("All statuses", "");
@@ -82,15 +82,14 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 
   header_row->addWidget(title_label);
   header_row->addStretch(1);
-  header_row->addWidget(health_badge_);
   header_row->addWidget(status_filter_);
   header_row->addWidget(settings_button_);
   header_row->addWidget(refresh_button_);
   layout->addLayout(header_row);
 
-  games_table_ = new QTableWidget(0, 8, central);
+  games_table_ = new QTableWidget(0, 7, central);
   games_table_->setHorizontalHeaderLabels(
-      {"Name", "Status", "Platform", "Runner", "Confidence", "Last Played", "Playtime", ""});
+      {"Name", "Status", "Platform", "Runner", "Last Played", "Playtime", ""});
   games_table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
   games_table_->setSelectionBehavior(QAbstractItemView::SelectRows);
   games_table_->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -98,7 +97,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   games_table_->setSortingEnabled(true);
   games_table_->verticalHeader()->setVisible(false);
   games_table_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
-  for (int column = 1; column <= 7; ++column) {
+  for (int column = 1; column <= 6; ++column) {
     games_table_->horizontalHeader()->setSectionResizeMode(column, QHeaderView::ResizeToContents);
   }
   games_table_->setShowGrid(false);
@@ -119,6 +118,18 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 
   event_stream_.Start(this,
                        [this](std::string type, std::string data) { HandleGameEvent(type, data); });
+}
+
+void MainWindow::closeEvent(QCloseEvent* event) {
+  // Only when main.cpp made this the primary window (--classic) — opened
+  // as a secondary window from the grid's Tools menu, it closes for real
+  // either way, since nothing would bring it back (see Tray.h's IsManaged).
+  if (mira_gui::tray::IsManaged(this) && !mira_gui::tray::Quitting()) {
+    event->ignore();
+    hide();
+    return;
+  }
+  QMainWindow::closeEvent(event);
 }
 
 void MainWindow::BuildShortcuts() {
@@ -168,29 +179,17 @@ void MainWindow::BuildShortcuts() {
   });
 }
 
-void MainWindow::SetHealthy(bool healthy, const QString& tooltip) {
-  health_badge_->setToolTip(tooltip);
-  if (healthy) {
-    health_badge_->setText("● Online");
-    health_badge_->setStyleSheet("font-size: 11px; color: #2e7d32; font-weight: 600;");
-  } else {
-    health_badge_->setText("● Offline");
-    health_badge_->setStyleSheet("font-size: 11px; color: #c62828; font-weight: 600;");
-  }
-}
-
 void MainWindow::RefreshHealth() {
-  health_badge_->setText("● checking…");
-  health_badge_->setStyleSheet("font-size: 11px; color: #757575;");
   refresh_button_->setEnabled(false);
 
   mira_gui::MiradClient::CheckHealthAsync(this, [this](mira_gui::HealthStatus status) {
     refresh_button_->setEnabled(true);
-    SetHealthy(status.reachable, QString::fromStdString(status.detail));
     if (status.reachable) {
       RescanAndRefreshGames();
     } else {
       games_table_->setRowCount(0);
+      mira_gui::notify::Failed(this, "Could not reach mirad.",
+                               QString::fromStdString(status.detail));
     }
   });
 }
@@ -214,9 +213,8 @@ void MainWindow::RefreshGames() {
       this,
       [this](mira_gui::GamesResult result) {
         if (!result.ok) {
-          health_badge_->setToolTip(
-              QString("mirad is reachable, but GET /v1/games failed: %1")
-                  .arg(QString::fromStdString(result.error)));
+          mira_gui::notify::Failed(this, "Could not list games.",
+                                   QString::fromStdString(result.error));
           games_table_->setRowCount(0);
           return;
         }
@@ -260,10 +258,6 @@ void MainWindow::PopulateRow(int row, const mira_gui::GameSummary& game) {
   auto* runner_item = new QTableWidgetItem(
       game.runner_ref.empty() ? "Auto" : QString::fromStdString(game.runner_ref));
 
-  auto* confidence_item = new NumericTableWidgetItem(
-      mira_gui::ConfidenceText(game.reviewed, game.confidence), game.confidence);
-  confidence_item->setForeground(mira_gui::ConfidenceColor(game.reviewed, game.confidence));
-
   auto* last_played_item = new NumericTableWidgetItem(
       mira_gui::FormatLastPlayed(game.last_played_at), static_cast<double>(game.last_played_at.value_or(-1)));
 
@@ -274,9 +268,8 @@ void MainWindow::PopulateRow(int row, const mira_gui::GameSummary& game) {
   games_table_->setItem(row, 1, status_item);
   games_table_->setItem(row, 2, platform_item);
   games_table_->setItem(row, 3, runner_item);
-  games_table_->setItem(row, 4, confidence_item);
-  games_table_->setItem(row, 5, last_played_item);
-  games_table_->setItem(row, 6, playtime_item);
+  games_table_->setItem(row, 4, last_played_item);
+  games_table_->setItem(row, 5, playtime_item);
 
   auto* actions_widget = new QWidget(games_table_);
   auto* actions_layout = new QHBoxLayout(actions_widget);
@@ -310,7 +303,7 @@ void MainWindow::PopulateRow(int row, const mira_gui::GameSummary& game) {
   connect(delete_button, &QPushButton::clicked, this, [this, id, name] { DeleteGame(id, name); });
   actions_layout->addWidget(delete_button);
 
-  games_table_->setCellWidget(row, 7, actions_widget);
+  games_table_->setCellWidget(row, 6, actions_widget);
 }
 
 void MainWindow::UpsertRow(const mira_gui::GameSummary& game) {
@@ -383,12 +376,15 @@ void MainWindow::HandleGameEvent(const std::string& type, const std::string& dat
   }
 
   if (type == "game.launched") {
-    // The untracked counterpart to game.state: mirad handed this one to
-    // Steam. Clearing rather than ignoring, because the launch may have come
-    // from somewhere else (the CLI, another window) that did mark it.
-    const std::string id = mira_gui::MiradClient::ParseRemovedId(data);
-    if (!id.empty()) {
-      running_ids_.erase(id);
+    // mirad hands a Steam game to steam://rungameid and says whether it is
+    // watching the process. Tracked: leave it alone, real game.state events
+    // are on their way once the /proc scan finds it. Untracked: clear it,
+    // because nothing will ever say it stopped — and clear rather than
+    // ignore, since the launch may have come from the CLI or the other
+    // window, which did mark it running.
+    mira_gui::GameLaunchedEvent launched;
+    if (mira_gui::MiradClient::ParseGameLaunched(data, &launched) && !launched.tracked) {
+      running_ids_.erase(launched.id);
       RefreshGames();
     }
     return;

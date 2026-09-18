@@ -97,6 +97,25 @@ fi
   file(CHMOD "${MIRA_QMAKE_WRAPPER}" PERMISSIONS
        OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
 
+  # linuxdeploy-plugin-qt only ever bundles the xcb platform plugin, not
+  # wayland (confirmed by reading its deploy log — no patchelf here to fix
+  # up a manually-added Wayland plugin's rpath either). mira-gui runs fine
+  # through XWayland, so this makes that the deliberate, quiet default
+  # instead of a logged "Could not find the Qt platform plugin wayland".
+  # Overridable by anyone who sets QT_QPA_PLATFORM themselves.
+  #
+  # Written before linuxdeploy runs: it only generates its own AppRun when
+  # none exists yet.
+  set(MIRA_APPRUN "${MIRA_APPIMAGE_TOOLS_DIR}/AppRun")
+  file(WRITE "${MIRA_APPRUN}" "\
+#!/bin/sh
+HERE=\"$(dirname \"$(readlink -f \"$0\")\")\"
+export QT_QPA_PLATFORM=\"\${QT_QPA_PLATFORM:-xcb}\"
+exec \"\$HERE/usr/bin/mira-gui\" \"$@\"
+")
+  file(CHMOD "${MIRA_APPRUN}" PERMISSIONS
+       OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
+
   # Guarded by the same `if(MIRA_QMAKE_EXECUTABLE)` as the wrapper script
   # above: without qmake, MIRA_QT_FILTERED_PLUGINS_DIR/MIRA_QMAKE_WRAPPER
   # are unset, and defining this target anyway would substitute empty
@@ -123,6 +142,9 @@ fi
     COMMAND "${CMAKE_COMMAND}" -E rm -rf "${MIRA_QT_FILTERED_PLUGINS_DIR}"
     COMMAND "${CMAKE_COMMAND}" -E copy_directory "${MIRA_QT_REAL_PLUGINS_DIR}" "${MIRA_QT_FILTERED_PLUGINS_DIR}"
     COMMAND sh -c "rm -f '${MIRA_QT_FILTERED_PLUGINS_DIR}'/imageformats/kimg_*.so"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${MIRA_APPDIR}"
+    COMMAND "${CMAKE_COMMAND}" -E copy "${MIRA_APPRUN}" "${MIRA_APPDIR}/AppRun"
+    COMMAND chmod 755 "${MIRA_APPDIR}/AppRun"
     # NO_STRIP: linuxdeploy bundles its own `strip`, which on at least one
     # real machine (very new binutils/ld defaults, e.g. RELR relative
     # relocations) can't parse some system libraries it's asked to strip

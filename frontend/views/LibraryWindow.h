@@ -17,20 +17,27 @@
 
 class QLabel;
 class QLineEdit;
-class QListWidget;
 class QComboBox;
+class QListWidget;
+class QPushButton;
 class QSlider;
 class QSplitter;
+class QStackedWidget;
+class QAction;
 class QToolButton;
 
 namespace mira_gui {
 class GameDetailsPanel;
+class GameEditForm;
 class GameTileDelegate;
+class SettingsPanel;
 }
 
-// The primary library view: a cover-art grid, a filter sidebar, and a
-// details panel — modelled on Playnite's shelf, which is the interaction
-// most people arriving at a Linux game launcher already know.
+// The primary library view: a cover-art grid, a details panel, and a custom
+// top bar (filters, sort, search, tile size, settings, window controls) in
+// place of a native titlebar — inspired by Lutris. Frameless, so it owns its
+// own move/resize/minimize/maximize/close (see the RootWidget/eventFilter in
+// the .cpp); there is no OS decoration to fall back on.
 //
 // Deliberately a peer of MainWindow rather than a replacement. MainWindow
 // (the table view) stays reachable from the View menu and from `mira-gui
@@ -50,8 +57,9 @@ public:
   explicit LibraryWindow(QWidget* parent = nullptr);
 
 private:
-  QWidget* BuildSidebar();
+  QWidget* BuildTopBar();
   QWidget* BuildGrid();
+  QWidget* BuildSettingsPage();
   void BuildMenus();
   void BuildShortcuts();
 
@@ -62,6 +70,9 @@ private:
   void LoadPrefs();
   void SavePrefs();
   void closeEvent(QCloseEvent* event) override;
+  void changeEvent(QEvent* event) override;
+  bool eventFilter(QObject* watched, QEvent* event) override;
+  void ToggleMaximize();
 
   // `force_scan` separates the two callers: startup, which honours the
   // scan_on_startup preference, and the Refresh command, which does not.
@@ -70,7 +81,6 @@ private:
   void RefreshHealth(bool force_scan = false);
   void RescanAndRefreshGames(bool force_scan);
   void RefreshGames();
-  void SetHealthy(bool healthy, const QString& tooltip);
 
   // games_ is the whole library as last fetched; the grid is a filtered
   // projection of it. Filtering client-side (rather than re-fetching with
@@ -89,11 +99,21 @@ private:
   QSize TileSize() const;
 
   void SelectionChanged();
+  void SelectGridItem(const std::string& id);
   void ShowContextMenu(const QPoint& pos);
   void ToggleRunning(const std::string& id);
+  void ToggleHidden(const std::string& id);
   void LaunchGame(const std::string& id);
   void OpenGameDialog(const std::string& id);
+  QWidget* BuildGameEditPage(const std::string& id);
+  void CloseGameEdit();
   void OpenSettings();
+  void CloseSettings();
+  // Confirms first if settings_panel_ is dirty — the top bar's Back button.
+  void RequestCloseSettings();
+  bool SettingsOpen() const;
+  // Gear <-> Back/Save, and greys out the library controls either way.
+  void SetSettingsChromeVisible(bool settings_open);
   void OpenRunners();
   void ImportSteamLibrary();
   void OpenClassicView();
@@ -105,16 +125,42 @@ private:
   void UpdateTileCover(const QString& id);
 
   void HandleGameEvent(const std::string& type, const std::string& data);
+  int FilterRow(const QString& key) const;
 
+  QWidget* top_bar_ = nullptr;
+  QToolButton* menu_button_ = nullptr;
   QLineEdit* search_ = nullptr;
-  QListWidget* filters_ = nullptr;
+  QComboBox* filters_ = nullptr;
   QListWidget* grid_ = nullptr;
   mira_gui::GameTileDelegate* delegate_ = nullptr;
   QSlider* zoom_ = nullptr;
   QComboBox* sort_ = nullptr;
   QToolButton* sort_direction_ = nullptr;
+  // The gear and the Back/Save pair are siblings, one shown at a time — see
+  // SetSettingsChromeVisible.
+  QToolButton* settings_button_ = nullptr;
+  QWidget* settings_actions_widget_ = nullptr;
+  QPushButton* settings_back_button_ = nullptr;
+  QPushButton* settings_save_button_ = nullptr;
+  QToolButton* minimize_button_ = nullptr;
+  QToolButton* maximize_button_ = nullptr;
+  QToolButton* close_button_ = nullptr;
+
   QSplitter* splitter_ = nullptr;
-  QLabel* health_badge_ = nullptr;
+  // Swaps the whole splitter (grid + sidebar) out for settings, full-screen
+  // — there's no left sidebar left to keep visible next to it.
+  QStackedWidget* content_stack_ = nullptr;
+  // Rebuilt on every OpenSettings() so it starts synced to what's actually
+  // saved, not stale edits left over from a discarded previous open.
+  QWidget* settings_page_ = nullptr;
+  mira_gui::SettingsPanel* settings_panel_ = nullptr;
+  // The splitter's right slot: page 0 is details_, page 1 is a game's
+  // editable form taking over that space (game_settings_in_sidebar pref).
+  QStackedWidget* sidebar_stack_ = nullptr;
+  QWidget* game_edit_page_ = nullptr;
+  mira_gui::GameEditForm* game_edit_form_ = nullptr;
+  bool game_settings_in_sidebar_ = true;
+  bool restoring_selection_ = false;  // re-entrancy guard for SelectGridItem's own selection change
   QLabel* footer_ = nullptr;
   QLabel* empty_hint_ = nullptr;
   mira_gui::GameDetailsPanel* details_ = nullptr;

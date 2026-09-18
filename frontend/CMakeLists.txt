@@ -61,6 +61,12 @@ qt_add_executable(mira-gui
   ui/SystemNotifier.h
   ui/Shortcuts.cpp
   ui/Shortcuts.h
+  ui/Tray.cpp
+  ui/Tray.h
+  ui/SettingsPanel.cpp
+  ui/SettingsPanel.h
+  ui/GameEditForm.cpp
+  ui/GameEditForm.h
 
   # views/ — the two top-level library windows.
   views/LibraryWindow.cpp

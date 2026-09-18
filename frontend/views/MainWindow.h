@@ -9,6 +9,7 @@
 #include "../client/EventStream.h"
 #include "../client/Types.h"
 
+class QCloseEvent;
 class QComboBox;
 class QLabel;
 class QPushButton;
@@ -24,6 +25,7 @@ public:
   explicit MainWindow(QWidget* parent = nullptr);
 
 private:
+  void closeEvent(QCloseEvent* event) override;
   void BuildShortcuts();
   void RefreshHealth();
   void RescanAndRefreshGames();
@@ -33,7 +35,6 @@ private:
   void StopGame(const std::string& id);
   void OpenGameDetail(int row, int column);
   void OpenSettings();
-  void SetHealthy(bool healthy, const QString& tooltip);
 
   // Applies one event from event_stream_ directly to the table (docs/api.md:
   // game.added/game.updated carry the full record, game.removed just the
@@ -45,7 +46,6 @@ private:
   void RemoveRow(const std::string& id);
   std::string CurrentStatusFilter() const;
 
-  QLabel* health_badge_;
   QComboBox* status_filter_;
   QPushButton* settings_button_;
   QPushButton* refresh_button_;

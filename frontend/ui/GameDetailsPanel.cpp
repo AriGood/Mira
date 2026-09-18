@@ -92,13 +92,11 @@ GameDetailsPanel::GameDetailsPanel(QWidget* parent) : QWidget(parent) {
   form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
   platform_ = ValueLabel(panel);
   runner_ = ValueLabel(panel);
-  confidence_ = ValueLabel(panel);
   last_played_ = ValueLabel(panel);
   playtime_ = ValueLabel(panel);
   path_ = ValueLabel(panel);
   form->addRow("Platform", platform_);
   form->addRow("Runner", runner_);
-  form->addRow("Confidence", confidence_);
   form->addRow("Last played", last_played_);
   form->addRow("Playtime", playtime_);
   form->addRow("Install path", path_);
@@ -143,12 +141,15 @@ void GameDetailsPanel::ShowGame(const GameSummary& game, bool running) {
   RefreshCover(game);
   name_->setText(QString::fromStdString(game.name));
 
+  // "Ready" is the common case and says nothing worth a line of its own —
+  // only a state that needs attention (or Playing) earns one.
+  const bool can_launch = game.status == "ready";
+  status_->setVisible(running || !can_launch);
   status_->setText(running ? "Playing now" : StatusLabel(game.status));
   status_->setStyleSheet(QString("font-size: 11px; font-weight: 600; color: %1;")
                              .arg(running ? QString("#43a047") : StatusColor(game.status).name()));
 
   play_->setText(running ? "Stop" : "Play");
-  const bool can_launch = game.status == "ready";
   play_->setEnabled(running || can_launch);
   play_->setToolTip(running || can_launch
                         ? QString()
@@ -157,7 +158,6 @@ void GameDetailsPanel::ShowGame(const GameSummary& game, bool running) {
   platform_->setText(QString::fromStdString(game.platform));
   runner_->setText(game.runner_ref.empty() ? "Auto (use default runner)"
                                            : QString::fromStdString(game.runner_ref));
-  confidence_->setText(ConfidenceText(game.reviewed, game.confidence));
   last_played_->setText(FormatLastPlayed(game.last_played_at));
   playtime_->setText(FormatPlaytime(game.play_seconds));
 

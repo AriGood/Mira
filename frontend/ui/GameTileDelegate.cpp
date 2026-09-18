@@ -37,7 +37,7 @@ void GameTileDelegate::paint(QPainter* painter, const QStyleOptionViewItem& opti
   const bool hovered = option.state & QStyle::State_MouseOver;
 
   QPainterPath path;
-  path.addRoundedRect(rect, 8, 8);
+  path.addRect(rect);
 
   painter->save();
   painter->setRenderHint(QPainter::Antialiasing);
@@ -51,9 +51,12 @@ void GameTileDelegate::paint(QPainter* painter, const QStyleOptionViewItem& opti
   }
 
   // The scrim exists so a light cover can't swallow the title — it is drawn
-  // regardless of how dark the artwork underneath happens to be.
+  // regardless of how dark the artwork underneath happens to be. +1 on the
+  // top edge: QRect::bottom() is rect's last pixel, so without it the scrim
+  // (and the title sitting on it) fell one pixel short of the tile's actual
+  // bottom edge.
   const int scrim_height = qMin(rect.height(), kScrimHeight);
-  const QRect scrim(rect.left(), rect.bottom() - scrim_height, rect.width(), scrim_height);
+  const QRect scrim(rect.left(), rect.bottom() - scrim_height + 1, rect.width(), scrim_height);
   QLinearGradient gradient(scrim.bottomLeft(), scrim.topLeft());
   gradient.setColorAt(0.0, QColor(0, 0, 0, 225));
   gradient.setColorAt(1.0, QColor(0, 0, 0, 0));
@@ -71,16 +74,20 @@ void GameTileDelegate::paint(QPainter* painter, const QStyleOptionViewItem& opti
   painter->drawText(title_rect, Qt::AlignLeft | Qt::AlignVCenter,
                     QFontMetrics(title_font).elidedText(name, Qt::ElideRight, title_rect.width()));
 
-  QFont status_font = option.font;
-  status_font.setPixelSize(qMax(9, status_font.pixelSize() > 0 ? status_font.pixelSize() - 2 : 10));
-  painter->setFont(status_font);
-  const QRect status_rect(rect.left() + 8, rect.bottom() - 19, rect.width() - 16, 15);
-  painter->setPen(Qt::NoPen);
-  painter->setBrush(StatusColor(status).lighter(160));
-  painter->drawEllipse(QPoint(status_rect.left() + 3, status_rect.center().y()), 3, 3);
-  painter->setPen(QColor(255, 255, 255, 170));
-  painter->drawText(status_rect.adjusted(12, 0, 0, 0), Qt::AlignLeft | Qt::AlignVCenter,
-                    running ? QString("Playing") : StatusLabel(status));
+  // "Ready" is the common case and says nothing worth a line of its own on
+  // every tile — only a state that needs attention (or Playing) earns one.
+  if (running || status != "ready") {
+    QFont status_font = option.font;
+    status_font.setPixelSize(qMax(9, status_font.pixelSize() > 0 ? status_font.pixelSize() - 2 : 10));
+    painter->setFont(status_font);
+    const QRect status_rect(rect.left() + 8, rect.bottom() - 19, rect.width() - 16, 15);
+    painter->setPen(Qt::NoPen);
+    painter->setBrush(StatusColor(status).lighter(160));
+    painter->drawEllipse(QPoint(status_rect.left() + 3, status_rect.center().y()), 3, 3);
+    painter->setPen(QColor(255, 255, 255, 170));
+    painter->drawText(status_rect.adjusted(12, 0, 0, 0), Qt::AlignLeft | Qt::AlignVCenter,
+                      running ? QString("Playing") : StatusLabel(status));
+  }
 
   // Border last, so selection reads on top of the artwork.
   painter->setBrush(Qt::NoBrush);

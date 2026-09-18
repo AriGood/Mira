@@ -33,6 +33,10 @@ struct GameSummary {
   double confidence = 0.0;
   std::optional<std::int64_t> last_played_at;
   std::int64_t play_seconds = 0;
+  // Free-form, user-assigned (docs/api.md). "hidden" is the one convention
+  // the frontend treats specially: excluded from the library by default,
+  // shown only by the Hidden filter (Ctrl+H).
+  std::vector<std::string> tags;
 };
 
 struct GamesResult {
@@ -57,16 +61,30 @@ struct DeleteResult {
 // crashed) arrives later as a `game.state` SSE event (docs/api.md), since
 // launch returns as soon as the process exists, not when it finishes.
 //
-// `tracked` is false for the one case where no such event is ever coming:
-// a Steam-sourced game under `steam.launch_mode: "steam"`, which mirad
-// hands to `steam://rungameid/<appid>` and never spawns itself. It answers
-// `{"status": "launched_via_steam"}` and publishes `game.launched` instead.
-// A caller that assumes tracking here marks the game as playing forever,
-// because nothing will ever say it stopped.
+// `tracked` is mirad's own answer to "are game.state events coming for this
+// launch" (docs/api.md), not something inferred here. It is false only for
+// a Steam-sourced game under `steam.launch_mode: "steam"` *with*
+// `steam.track_process` off — mirad handed it to
+// `steam://rungameid/<appid>` and is watching nothing. With track_process
+// on (the default) mirad polls /proc for it and real game.state events do
+// arrive, a few seconds later than a normal launch.
+//
+// A caller that assumes tracking when there is none marks the game as
+// playing forever, because nothing will ever say it stopped; a caller that
+// assumes none when there is marks it stopped while it runs.
 struct LaunchResult {
   bool ok = false;
   std::string error;
   bool tracked = true;
+};
+
+// `game.launched` — the event mirad publishes for a Steam launch, carrying
+// the same `tracked` the launch reply does. Needed as an event and not just
+// a reply because the launch may have come from somewhere else entirely
+// (the CLI, the other window), and then this is all a client ever sees.
+struct GameLaunchedEvent {
+  std::string id;
+  bool tracked = false;
 };
 
 // GET /v1/games/{id}/artwork — the cached cover image itself, as bytes.
@@ -160,6 +178,7 @@ struct GameDetail {
   std::string runner_config_json;
   std::string env_json;
   std::vector<Candidate> candidates;
+  std::vector<std::string> tags;
 };
 
 struct GameDetailResult {
@@ -180,6 +199,9 @@ struct GamePatch {
   // Raw JSON text (must parse to an object) — see GameDetail's comment.
   std::optional<std::string> runner_config_json;
   std::optional<std::string> env_json;
+  // Replaces the whole set (docs/api.md) — there's no per-entry merge for a
+  // plain list the way env's null-removes-a-key convention gives it one.
+  std::optional<std::vector<std::string>> tags;
 };
 
 struct PatchGameResult {
@@ -201,6 +223,16 @@ struct ConfigSchemaEntry {
   std::string tier;
   std::string doc;
   std::string default_display;
+
+  // What the daemon will accept, when that has a shape worth rendering
+  // (docs/api.md). Both are absent unless they apply, so a non-empty
+  // `one_of` means "this is an enum, offer exactly these" and a set
+  // `minimum` means "this is bounded, clamp the spin box to it". Without
+  // them every setting is a free-text box and the rules only surface as a
+  // rejection after saving.
+  std::vector<std::string> one_of;
+  std::optional<double> minimum;
+  std::optional<double> maximum;
   std::string category;        // UI grouping; always present
   bool is_secret = false;      // mask this value's field
   bool is_runner_ref = false;  // offer a runner picker (GET /v1/runners) instead of free text
@@ -361,8 +393,7 @@ struct FrontendPrefs {
   std::optional<int> window_width;
   std::optional<int> window_height;
   std::optional<int> tile_width;
-  std::optional<std::string> library_filter;  // a sidebar filter key
-  std::optional<int> sidebar_width;
+  std::optional<std::string> library_filter;  // a filter key
   std::optional<int> details_width;
   std::optional<std::string> sort_by;  // "name" | "last_played" | "playtime" | "status"
   std::optional<bool> sort_descending;
@@ -377,6 +408,9 @@ struct FrontendPrefs {
   // Seconds a notification stays up; 0 means until dismissed, which is the
   // default. See notify::SetTimeoutSeconds.
   std::optional<int> notification_timeout_s;
+  // On (default): "Details & settings" edits a game inline in the right
+  // panel instead of opening a dialog.
+  std::optional<bool> game_settings_in_sidebar;
 };
 
 struct FrontendPrefsResult {

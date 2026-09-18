@@ -54,7 +54,6 @@ private:
   QLabel* status_ = nullptr;
   QLabel* platform_ = nullptr;
   QLabel* runner_ = nullptr;
-  QLabel* confidence_ = nullptr;
   QLabel* last_played_ = nullptr;
   QLabel* playtime_ = nullptr;
   QLabel* path_ = nullptr;
