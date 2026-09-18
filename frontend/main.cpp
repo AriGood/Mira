@@ -9,6 +9,7 @@
 
 #include "ui/DaemonSupervisor.h"
 #include "ui/SystemNotifier.h"
+#include "ui/Theme.h"
 #include "ui/Tray.h"
 #include "views/LibraryWindow.h"
 #include "views/MainWindow.h"
@@ -42,6 +43,11 @@ int main(int argc, char** argv) {
     icon.addFile(QString(":/icons/%1x%1/apps/mira.png").arg(size), QSize(size, size));
   }
   QApplication::setWindowIcon(icon);
+
+  // Before any window exists, so nothing is ever painted unthemed. "auto"
+  // follows the desktop's light/dark preference; LibraryWindow re-applies
+  // whatever frontend.toml remembers once the daemon answers (LoadPrefs).
+  mira_gui::theme::Apply("auto");
 
   // LibraryWindow (the cover grid) is primary; MainWindow (the table) is
   // kept as a fallback for auditing a fresh scan. `--classic` starts
