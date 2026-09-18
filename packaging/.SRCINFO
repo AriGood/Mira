@@ -1,6 +1,6 @@
-pkgbase = mira
+pkgbase = mira-launcher
 	pkgdesc = Linux game launcher for native games and Windows games via Wine/Proton
-	pkgver = 0.4.0
+	pkgver = 0.5.0
 	pkgrel = 1
 	url = https://github.com/AriGood/Mira
 	arch = x86_64
@@ -17,7 +17,7 @@ pkgbase = mira
 	optdepends = unzip: auto-extract .zip archives dropped into a library root
 	optdepends = unrar: auto-extract .rar archives dropped into a library root
 	optdepends = p7zip: auto-extract .7z archives dropped into a library root
-	source = mira-0.4.0.tar.gz::https://github.com/AriGood/Mira/archive/refs/tags/v0.4.0.tar.gz
-	sha256sums = SKIP
+	source = mira-0.5.0.tar.gz::https://github.com/AriGood/Mira/archive/refs/tags/v0.5.0.tar.gz
+	sha256sums = 02902552b2ab98f851a609aad88d0e12a4b0cc003dd7baa2ff48d0e89a35dd48
 
-pkgname = mira
+pkgname = mira-launcher

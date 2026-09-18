@@ -84,22 +84,12 @@ std::string ContentTypeFor(const fs::path& file) {
   return "image/jpeg";
 }
 
-// Downloads `url` into this game's artwork dir under `slot` (fails closed
-// on any non-2xx via curl -f, so a 404 never gets saved as if it were art),
-// recording it into `info[slot == "cover" ? "artwork" : slot]` if it
-// succeeds -- "artwork" rather than "cover" for the cover slot specifically
-// is legacy naming kept for wire compatibility with what
-// GET /v1/games/{id}/metadata already documented before "hero" existed.
-// Extension is taken from the url itself, since that's the only place
-// either source says what format it sent. Returns whether the download
-// actually landed, so a caller re-picking a slot (SelectArtwork below) can
-// tell a bad pick from a good one instead of silently keeping stale info.
-//
-// Deliberately sends no credentials. Both sources put their images on a
-// plain public CDN, and SteamGridDB's rejects an Authorization header for
-// its own API with a 401 — so passing the key along, which is the obvious
-// thing to do when the search that produced the url needed it, is what
-// stopped every non-Steam game from ever getting a cover.
+// Downloads `url` into this game's artwork dir under `slot` (curl -f, so a
+// 404 never gets saved as art), recording it into
+// `info[slot == "cover" ? "artwork" : slot]` on success — "artwork" is
+// legacy naming for the cover slot, kept for API wire compatibility.
+// Sends no credentials: both sources use a plain public CDN, and
+// SteamGridDB's own API 401s if its key is passed to it here.
 bool FetchArtworkInto(const config::Config& config, const std::string& url, const std::string& game_id,
                       std::string_view source, std::string_view slot, json& info) {
   std::string ext = fs::path(std::string(url)).extension().string();

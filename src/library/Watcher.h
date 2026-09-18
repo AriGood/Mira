@@ -10,24 +10,16 @@
 
 namespace mira::library {
 
-// Watches every enabled library root for new game folders and rescans
-// automatically — this is what makes "drop a folder in and it's picked up"
-// true without running `mira scan` by hand.
+// Watches every enabled library root and rescans automatically — "drop a
+// folder in and it's picked up" without running `mira scan` by hand.
 //
-// One inotify watch per root, non-recursive (so watch count stays O(number
-// of roots), never O(library size) — see docs/architecture.md on why
-// recursive watching is the usual way this kind of daemon gets expensive).
-// A brand-new directory is not scanned the instant it appears: it might
-// still be mid-copy, so it enters a debounce set and is only scanned once
-// its total size has been unchanged for `scan.debounce_ms`. The whole loop
-// blocks in epoll_wait with no timeout while nothing is pending — the only
-// time it wakes on a timer is while a directory is actively being watched
-// for size stability, never at rest (see EventBus::WaitNext for the same
-// pattern applied to SSE connections).
+// One inotify watch per root, non-recursive. A new directory is debounced
+// (rescanned once its size is unchanged for `scan.debounce_ms`) rather than
+// scanned mid-copy. epoll_wait blocks with no timeout except while a
+// directory is being watched for size stability.
 //
-// Runs on its own thread (Run() blocks); Stop() is safe to call from any
-// other thread and unblocks it promptly via an eventfd rather than a signal
-// or a polled flag.
+// Runs on its own thread (Run() blocks); Stop() unblocks it via an eventfd,
+// safe to call from any other thread.
 class Watcher {
 public:
   Watcher(config::Config& config, store::GameStore& games, api::EventBus& events);

@@ -422,7 +422,7 @@ never fetches an address the API handed it. `202`, then
 `game.artwork_selected`/`.artwork_select_failed` on the event stream.
 `400` for a missing `?type=` or bad body; `404` if the game doesn't exist.
 
-### `POST /v1/games/{id}/metadata/refresh` — implemented
+### `POST /v1/games/{id}/metadata/refresh?announce=` — implemented
 Re-runs the fetch for one game on demand — a `steamgriddb.api_key` was just
 set, or the first automatic attempt failed transiently. Bypasses
 `metadata.enabled` (an explicit request should work even with automatic
@@ -432,6 +432,15 @@ the event stream say when it's done. A failure carries both `code` and
 `error` — match on the code, not the message. The one worth handling
 specially is `no_steamgriddb_key`, which is not a transient failure and is
 fixed by setting a config key rather than by retrying.
+
+`?announce=1` marks this as user-initiated: mirad also publishes a
+`notification` event (below) reporting the outcome, so a caller doesn't
+have to build its own message from `game.metadata_failed`. Omit it (or
+`announce=0`) for a background/bulk refresh, where one notification per
+game would be noise. `no_steamgriddb_key` is never wrapped in a
+`notification` this way — its `game.metadata_failed` event is the only
+signal, since a caller decides for itself whether to interrupt with a
+dialog or just note it.
 
 ### `POST /v1/games/metadata/refresh-missing` — implemented
 Bulk version of the above: enqueues a fetch for every game with no cached

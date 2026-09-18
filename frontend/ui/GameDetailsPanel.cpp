@@ -122,7 +122,6 @@ GameDetailsPanel::GameDetailsPanel(QWidget* parent) : QWidget(parent) {
 
 void GameDetailsPanel::Clear() {
   game_id_.clear();
-  path_id_.clear();
   stack_->setCurrentIndex(0);
 }
 
@@ -165,24 +164,8 @@ void GameDetailsPanel::ShowGame(const GameSummary& game, bool running) {
   error_->setVisible(!game.last_error.empty());
   error_->setText(QString::fromStdString(game.last_error));
 
-  // GET /v1/games (GameSummary) carries no install_path — it's a detail-only
-  // field, so the panel fills it in a beat later. Skipped when the panel is
-  // merely being redrawn for the same game (every keystroke in the search box
-  // rebuilds the grid and reselects), so typing doesn't flicker the path or
-  // fire a request per character. The id check inside the callback is the
-  // other half: it keeps a slow response for a previous selection from
-  // overwriting the path of the game now on screen.
-  if (path_id_ == game.id) return;
-  path_id_ = game.id;
-  path_->setText("…");
-  path_->setToolTip(QString());
-  const std::string id = game.id;
-  MiradClient::GetGameAsync(this, id, [this, id](GameDetailResult result) {
-    if (game_id_ != id) return;
-    path_->setText(result.ok ? QString::fromStdString(result.game.install_path)
-                             : QString("(unavailable)"));
-    path_->setToolTip(path_->text());
-  });
+  path_->setText(QString::fromStdString(game.install_path));
+  path_->setToolTip(path_->text());
 }
 
 }  // namespace mira_gui

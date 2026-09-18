@@ -19,14 +19,9 @@ void Launch(QWidget* parent, const std::string& id, std::function<void(bool trac
       notify::Failed(parent, "Could not launch the game.", QString::fromStdString(result.error));
       return;
     }
-    if (!result.tracked) {
-      // Worth saying out loud: the game will not appear under "Playing now"
-      // and Stop will not be offered, and both of those look like bugs
-      // unless the reason is on screen.
-      notify::Toast(parent, notify::Level::Info,
-                    "Handed to Steam. Mira does not track Steam-launched sessions — "
-                    "Steam keeps its own playtime.");
-    }
+    // Untracked (handed to Steam) is worth a toast, but mirad already sends
+    // one as a `notification` event alongside game.launched — see
+    // LibraryWindow/MainWindow::HandleGameEvent.
     if (on_launched) on_launched(result.tracked);
   });
 }

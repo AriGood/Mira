@@ -558,7 +558,7 @@ void LibraryWindow::FetchMissingArtwork() {
 
 void LibraryWindow::RefreshMetadata(const std::string& id, bool announce) {
   mira_gui::MiradClient::RefreshMetadataAsync(
-      this, id, [this, id, announce](mira_gui::MetadataRefreshResult result) {
+      this, id, announce, [this, id, announce](mira_gui::MetadataRefreshResult result) {
         if (!result.ok) {
           if (announce) {
             mira_gui::notify::Failed(this, "Could not refresh metadata.",
@@ -567,13 +567,9 @@ void LibraryWindow::RefreshMetadata(const std::string& id, bool announce) {
           return;
         }
         // 202: the fetch runs on the daemon and reports back as an event.
-        // Remembered so that its failure is worth a toast — see
-        // HandleGameEvent, where an unasked-for failure is not.
+        // Remembered so ShowSteamGridDbNotice knows this game was asked
+        // about, not just swept up in a background scan.
         awaiting_metadata_.insert(id);
-        if (announce) {
-          mira_gui::notify::Toast(this, mira_gui::notify::Level::Info,
-                                  "Fetching metadata and cover art…");
-        }
       });
 }
 
@@ -848,6 +844,15 @@ void LibraryWindow::OpenClassicView() {
 }
 
 void LibraryWindow::HandleGameEvent(const std::string& type, const std::string& data) {
+  if (type == "notification") {
+    mira_gui::NotificationEvent event;
+    if (mira_gui::MiradClient::ParseNotification(data, &event)) {
+      mira_gui::notify::Toast(this, mira_gui::notify::LevelFromString(QString::fromStdString(event.level)),
+                              QString::fromStdString(event.message));
+    }
+    return;
+  }
+
   if (type == "game.removed") {
     const std::string id = mira_gui::MiradClient::ParseRemovedId(data);
     if (!id.empty()) RemoveGame(id);
@@ -882,27 +887,19 @@ void LibraryWindow::HandleGameEvent(const std::string& type, const std::string& 
       artwork_->Invalidate(event.id);
       return;
     }
-    const bool asked_for = awaiting_metadata_.erase(event.id) > 0;
-
     // The one failure worth interrupting for, because it is the only one
     // the user can fix and it is never transient: no SteamGridDB key means
     // every non-Steam game in the library will keep its placeholder
     // forever, and nothing else on screen says why.
     if (event.code == "no_steamgriddb_key") {
-      ShowSteamGridDbNotice(asked_for);
+      ShowSteamGridDbNotice(awaiting_metadata_.erase(event.id) > 0);
       return;
     }
 
-    // Everything else is reported only for a game the user asked about. On
-    // a fresh scan mirad fetches for every new game at once, and one toast
-    // per game would bury the window.
-    if (asked_for) {
-      mira_gui::notify::Toast(this, mira_gui::notify::Level::Warning,
-                              QString("No metadata found: %1")
-                                  .arg(event.error.empty()
-                                           ? QString("nothing matched this game")
-                                           : QString::fromStdString(event.error)));
-    }
+    // Everything else mirad already reports as a `notification` event when
+    // the fetch was announced (see FetchQueue::Enqueue) — nothing more to
+    // do with this one.
+    awaiting_metadata_.erase(event.id);
     return;
   }
 

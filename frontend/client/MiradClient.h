@@ -117,8 +117,9 @@ public:
                               std::function<void(ArtworkResult)> callback);
 
   // POST /v1/games/{id}/metadata/refresh. Returns 202 immediately; watch for
-  // game.metadata_ready/.metadata_failed.
-  static void RefreshMetadataAsync(QObject* context, const std::string& id,
+  // game.metadata_ready/.metadata_failed. `announce` marks this as
+  // user-initiated so mirad reports the outcome as a `notification` event.
+  static void RefreshMetadataAsync(QObject* context, const std::string& id, bool announce,
                                    std::function<void(MetadataRefreshResult)> callback);
 
   // POST /v1/games/metadata/refresh-missing. Bulk version of the above.
@@ -197,6 +198,10 @@ public:
   // the event type, which the payload does not repeat; false if `data` is
   // not a JSON object with an id.
   static bool ParseMetadataEvent(const std::string& data, MetadataEvent* out);
+
+  // Parses a `notification` payload (`{"level": "...", "message": "..."}`).
+  // False if `data` is not a JSON object with a message.
+  static bool ParseNotification(const std::string& data, NotificationEvent* out);
 
   // Parses a `runners.download.started`/`.finished`/`.failed` payload.
   // `state` comes from the event type, which the payload itself doesn't

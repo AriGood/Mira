@@ -28,6 +28,7 @@ struct GameSummary {
   std::string platform;
   std::string runner_ref;
   std::string last_error;
+  std::string install_path;
   bool reviewed = false;
   double confidence = 0.0;
   std::optional<std::int64_t> last_played_at;
@@ -104,6 +105,14 @@ struct MetadataEvent {
   // `error` is a sentence written for a human to read.
   std::string code;
   std::string error;
+};
+
+// A `notification` event — mirad's own decision that this is worth telling
+// the user about; the UI just renders it (see MiradClient::ParseNotification
+// and mira_gui::notify::Toast).
+struct NotificationEvent {
+  std::string level;  // "info" | "success" | "warning" | "error"
+  std::string message;
 };
 
 struct StopResult {

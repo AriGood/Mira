@@ -18,6 +18,7 @@
 #include "../dialogs/SettingsDialog.h"
 #include "../ui/GameActions.h"
 #include "../ui/GamePresentation.h"
+#include "../ui/Notify.h"
 #include "../ui/Shortcuts.h"
 
 namespace {
@@ -348,6 +349,15 @@ void MainWindow::RemoveRow(const std::string& id) {
 }
 
 void MainWindow::HandleGameEvent(const std::string& type, const std::string& data) {
+  if (type == "notification") {
+    mira_gui::NotificationEvent event;
+    if (mira_gui::MiradClient::ParseNotification(data, &event)) {
+      mira_gui::notify::Toast(this, mira_gui::notify::LevelFromString(QString::fromStdString(event.level)),
+                              QString::fromStdString(event.message));
+    }
+    return;
+  }
+
   if (type == "game.removed") {
     const std::string id = mira_gui::MiradClient::ParseRemovedId(data);
     if (!id.empty()) RemoveRow(id);
