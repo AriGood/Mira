@@ -94,6 +94,7 @@ private:
   QSize TileSize() const;
 
   void SelectionChanged();
+  void SelectGridItem(const std::string& id);
   void ShowContextMenu(const QPoint& pos);
   void ToggleRunning(const std::string& id);
   void ToggleHidden(const std::string& id);
@@ -116,12 +117,9 @@ private:
   void HandleGameEvent(const std::string& type, const std::string& data);
   int FilterRow(const QString& key) const;
 
-  // Alt held (while not pinned) shows the menu bar; releasing it hides it
-  // again. keyPressEvent/keyReleaseEvent since a lone modifier key has no
-  // QKeySequence to bind as a shortcut.
+  // Alt toggles the menu bar (while not pinned). keyPressEvent since a lone
+  // modifier key has no QKeySequence to bind as a shortcut.
   void keyPressEvent(QKeyEvent* event) override;
-  void keyReleaseEvent(QKeyEvent* event) override;
-  void changeEvent(QEvent* event) override;
   void SetMenuBarPinned(bool pinned);
 
   QLineEdit* search_ = nullptr;
@@ -138,13 +136,18 @@ private:
   // settings taking over just that space — the sidebar and details panel
   // either side of it stay mounted and visible throughout.
   QStackedWidget* middle_stack_ = nullptr;
+  // Rebuilt on every OpenSettings() so it starts synced to what's actually
+  // saved, not stale edits left over from a discarded previous open.
+  QWidget* settings_page_ = nullptr;
   mira_gui::SettingsPanel* settings_panel_ = nullptr;
   // The splitter's right slot: page 0 is details_, page 1 is a game's
   // editable form taking over that space (game_settings_in_sidebar pref).
   QStackedWidget* sidebar_stack_ = nullptr;
   QWidget* game_edit_page_ = nullptr;
+  QWidget* blank_sidebar_page_ = nullptr;  // shown while settings covers the grid
   mira_gui::GameEditForm* game_edit_form_ = nullptr;
   bool game_settings_in_sidebar_ = true;
+  bool restoring_selection_ = false;  // re-entrancy guard for SelectGridItem's own selection change
   QLabel* health_badge_ = nullptr;
   QLabel* footer_ = nullptr;
   QLabel* empty_hint_ = nullptr;

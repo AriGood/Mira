@@ -36,3 +36,13 @@ SettingsDialog::SettingsDialog(QWidget* parent) : QDialog(parent) {
   connect(buttons, &QDialogButtonBox::rejected, this, &SettingsDialog::reject);
   layout->addWidget(buttons);
 }
+
+void SettingsDialog::reject() {
+  if (panel_->IsDirty() &&
+      !mira_gui::notify::Confirm(this, "Discard changes?",
+                                 "Settings changed but not saved. Discard them?", "Discard",
+                                 /*destructive=*/true)) {
+    return;
+  }
+  QDialog::reject();
+}

@@ -39,3 +39,13 @@ GameDetailDialog::GameDetailDialog(std::string id, QWidget* parent) : QDialog(pa
   connect(buttons, &QDialogButtonBox::rejected, this, &GameDetailDialog::reject);
   layout->addWidget(buttons);
 }
+
+void GameDetailDialog::reject() {
+  if (form_->IsDirty() &&
+      !mira_gui::notify::Confirm(this, "Discard changes?",
+                                 "This game's edits aren't saved. Discard them?", "Discard",
+                                 /*destructive=*/true)) {
+    return;
+  }
+  QDialog::reject();
+}

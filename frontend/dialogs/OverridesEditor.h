@@ -42,6 +42,11 @@ public:
   // opened and saved unedited sends no override patch at all.
   std::vector<GameConfigEdit> PendingEdits() const;
 
+  // Call after PendingEdits() was successfully applied — resets the
+  // change-tracking baseline without a re-fetch, so PendingEdits() goes
+  // back to empty.
+  void MarkSaved();
+
 private:
   // One row: an overridable schema key with the widget its type calls for,
   // the layer the shown value came from, and a Clear button that only means

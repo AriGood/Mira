@@ -6,7 +6,6 @@
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
-#include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
@@ -17,6 +16,7 @@
 #include <QPushButton>
 #include <QScrollArea>
 #include <QStringList>
+#include <QTabWidget>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -33,27 +33,32 @@ SettingsPanel::SettingsPanel(QWidget* parent) : QWidget(parent) {
   connect(show_advanced_, &QCheckBox::toggled, this, &SettingsPanel::SetAdvancedVisible);
   layout->addWidget(show_advanced_);
 
-  auto* groups_container = new QWidget(this);
-  groups_layout_ = new QVBoxLayout(groups_container);
-  groups_layout_->setContentsMargins(2, 2, 2, 2);
+  tabs_ = new QTabWidget(this);
+  layout->addWidget(tabs_, /*stretch=*/1);
   BuildInterfaceGroup();
-  groups_layout_->setSpacing(14);
-
-  auto* scroll = new QScrollArea(this);
-  scroll->setWidget(groups_container);
-  scroll->setWidgetResizable(true);
-  scroll->setFrameShape(QFrame::NoFrame);
-  layout->addWidget(scroll, /*stretch=*/1);
 
   setEnabled(false);
   Load();
 }
 
-void SettingsPanel::BuildInterfaceGroup() {
-  auto* box = new QGroupBox("Interface (this frontend only)", this);
-  auto* form = new QFormLayout(box);
-  form->setVerticalSpacing(8);
+QFormLayout* SettingsPanel::AddCategoryTab(const QString& title) {
+  auto* page = new QWidget(this);
+  auto* form = new QFormLayout(page);
+  form->setVerticalSpacing(10);
   form->setHorizontalSpacing(14);
+  form->setRowWrapPolicy(QFormLayout::WrapLongRows);
+
+  auto* scroll = new QScrollArea(this);
+  scroll->setWidget(page);
+  scroll->setWidgetResizable(true);
+  scroll->setFrameShape(QFrame::NoFrame);
+  tabs_->addTab(scroll, title);
+  return form;
+}
+
+void SettingsPanel::BuildInterfaceGroup() {
+  auto* form = AddCategoryTab("Interface");
+  QWidget* box = form->parentWidget();
 
   scan_on_startup_ = new QCheckBox(box);
   scan_on_startup_->setChecked(true);
@@ -84,7 +89,7 @@ void SettingsPanel::BuildInterfaceGroup() {
 
   menu_bar_pinned_ = new QCheckBox(box);
   menu_bar_pinned_->setToolTip(
-      "Keep the File/View/Library/Tools/Help menu bar open instead of holding Alt to show it.");
+      "Keep the File/View/Library/Tools/Help menu bar open instead of toggling it with Alt.");
   form->addRow("Always show the menu bar", menu_bar_pinned_);
 
   game_settings_in_sidebar_ = new QCheckBox(box);
@@ -94,14 +99,11 @@ void SettingsPanel::BuildInterfaceGroup() {
       "separate window.");
   form->addRow("Edit a game in the sidebar", game_settings_in_sidebar_);
 
-  auto* note = new QLabel(
-      "Above: stored in frontend.toml, never interpreted by the daemon. Below: backend settings.",
-      box);
+  auto* note = new QLabel("Stored in frontend.toml, never interpreted by the daemon.", box);
   note->setWordWrap(true);
   note->setStyleSheet("color: #9e9e9e; font-size: 11px;");
   form->addRow(note);
 
-  groups_layout_->addWidget(box);
   LoadFrontendPrefs();
 }
 
@@ -183,12 +185,8 @@ void SettingsPanel::BuildRows() {
 
   for (const QString& category : ordered_categories) {
     CategoryGroup group;
-    group.box = new QGroupBox(category, this);
-    group.form = new QFormLayout();
-    group.form->setVerticalSpacing(10);
-    group.form->setHorizontalSpacing(14);
-    group.form->setRowWrapPolicy(QFormLayout::WrapLongRows);
-    group.box->setLayout(group.form);
+    group.form = AddCategoryTab(category);
+    group.tab_index = tabs_->count() - 1;
 
     for (const size_t i : buckets[category]) {
       Field& field = fields_[i];
@@ -264,10 +262,8 @@ void SettingsPanel::BuildRows() {
       group.form->addRow(label, row_widget);
     }
 
-    groups_layout_->addWidget(group.box);
     groups_.push_back(group);
   }
-  groups_layout_->addStretch(1);
 
   SetAdvancedVisible(show_advanced_->isChecked());
 }
@@ -296,7 +292,7 @@ void SettingsPanel::SetAdvancedVisible(bool show) {
   for (const Field& field : fields_) {
     if (field.entry.tier != "basic") field.owner_form->setRowVisible(field.row_widget, show);
   }
-  for (const CategoryGroup& group : groups_) group.box->setVisible(group.has_basic || show);
+  for (const CategoryGroup& group : groups_) tabs_->setTabVisible(group.tab_index, group.has_basic || show);
 }
 
 std::string SettingsPanel::CurrentText(const Field& field) const {
@@ -341,6 +337,18 @@ void SettingsPanel::ResetField(size_t index) {
         SetFieldText(field, field.entry.default_display);
         field.original = CurrentText(field);
       });
+}
+
+bool SettingsPanel::IsDirty() const {
+  if (scan_on_startup_->isChecked() != scan_on_startup_original_) return true;
+  if (notifications_->currentData().toString() != notifications_original_) return true;
+  if (notification_timeout_->value() != notification_timeout_original_) return true;
+  if (menu_bar_pinned_->isChecked() != menu_bar_pinned_original_) return true;
+  if (game_settings_in_sidebar_->isChecked() != game_settings_in_sidebar_original_) return true;
+  for (const Field& field : fields_) {
+    if (CurrentText(field) != field.original) return true;
+  }
+  return false;
 }
 
 void SettingsPanel::Save() {

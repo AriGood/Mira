@@ -12,11 +12,10 @@ class QCheckBox;
 class QComboBox;
 class QDoubleSpinBox;
 class QFormLayout;
-class QGroupBox;
 class QLineEdit;
 class QPushButton;
 class QSpinBox;
-class QVBoxLayout;
+class QTabWidget;
 
 namespace mira_gui {
 
@@ -35,6 +34,10 @@ public:
   // decides what "done" means (close a dialog, switch back to the grid).
   void Save();
 
+  // True if anything differs from what Load() last fetched or Save() last
+  // confirmed — the signal a caller uses to warn before discarding.
+  bool IsDirty() const;
+
 signals:
   void LoadFailed(QString error);
   void SaveFinished(bool ok, QString error);
@@ -52,7 +55,7 @@ private:
   };
 
   struct CategoryGroup {
-    QGroupBox* box = nullptr;
+    int tab_index = -1;
     QFormLayout* form = nullptr;
     bool has_basic = false;
   };
@@ -61,13 +64,15 @@ private:
   void LoadFrontendPrefs();
   void BuildInterfaceGroup();
   void BuildRows();
+  // Adds a tab (scroll-wrapped) and returns its form layout, ready for rows.
+  QFormLayout* AddCategoryTab(const QString& title);
   void PopulateRunnerCombos(const mira_gui::RunnersResult& result);
   void SetAdvancedVisible(bool show);
   void ResetField(size_t index);
   std::string CurrentText(const Field& field) const;
   void SetFieldText(Field& field, const std::string& text);
 
-  QVBoxLayout* groups_layout_ = nullptr;
+  QTabWidget* tabs_ = nullptr;
   QCheckBox* show_advanced_ = nullptr;
   QCheckBox* scan_on_startup_ = nullptr;
   bool scan_on_startup_original_ = true;

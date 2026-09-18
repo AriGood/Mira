@@ -178,6 +178,8 @@ void GameEditForm::Populate(const mira_gui::GameDetail& game) {
 
   runner_combo_->setEditText(QString::fromStdString(game.runner_ref));
   runner_combo_->lineEdit()->setCursorPosition(0);
+
+  original_patch_ = CurrentPatch();
 }
 
 void GameEditForm::PopulateExeCombo(const std::vector<mira_gui::GameDetail::Candidate>& candidates,
@@ -240,7 +242,7 @@ void GameEditForm::BrowseExecutable() {
   exe_combo_->lineEdit()->setCursorPosition(0);
 }
 
-void GameEditForm::Save() {
+mira_gui::GamePatch GameEditForm::CurrentPatch() const {
   mira_gui::GamePatch patch;
   patch.name = name_edit_->text().toStdString();
   patch.exe_path = exe_combo_->currentText().toStdString();
@@ -251,17 +253,33 @@ void GameEditForm::Save() {
   patch.data_dir = data_dir_edit_->text().toStdString();
   patch.runner_config_json = runner_config_edit_->toPlainText().toStdString();
   patch.env_json = env_edit_->toPlainText().toStdString();
+  return patch;
+}
 
+bool GameEditForm::IsDirty() const {
+  const mira_gui::GamePatch current = CurrentPatch();
+  return current.name != original_patch_.name || current.exe_path != original_patch_.exe_path ||
+         current.args != original_patch_.args ||
+         current.working_dir != original_patch_.working_dir ||
+         current.tags != original_patch_.tags || current.runner_ref != original_patch_.runner_ref ||
+         current.data_dir != original_patch_.data_dir ||
+         current.runner_config_json != original_patch_.runner_config_json ||
+         current.env_json != original_patch_.env_json || !overrides_->PendingEdits().empty();
+}
+
+void GameEditForm::Save() {
+  const mira_gui::GamePatch patch = CurrentPatch();
   const std::vector<mira_gui::GameConfigEdit> override_edits = overrides_->PendingEdits();
 
   setEnabled(false);
   mira_gui::MiradClient::PatchGameAsync(
-      this, id_, patch, [this, override_edits](mira_gui::PatchGameResult result) {
+      this, id_, patch, [this, patch, override_edits](mira_gui::PatchGameResult result) {
         if (!result.ok) {
           setEnabled(true);
           emit SaveFinished(false, QString::fromStdString(result.error));
           return;
         }
+        original_patch_ = patch;
         if (override_edits.empty()) {
           setEnabled(true);
           emit SaveFinished(true, QString());
@@ -274,6 +292,7 @@ void GameEditForm::Save() {
                 emit SaveFinished(false, QString::fromStdString(override_result.error));
                 return;
               }
+              overrides_->MarkSaved();
               emit SaveFinished(true, QString());
             });
       });

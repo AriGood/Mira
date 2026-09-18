@@ -21,6 +21,10 @@ class GameDetailDialog : public QDialog {
 public:
   GameDetailDialog(std::string id, QWidget* parent = nullptr);
 
+  // Warns before discarding unsaved changes — covers Cancel, Esc, and the
+  // titlebar close button, which all route through reject().
+  void reject() override;
+
 private:
   mira_gui::GameEditForm* form_ = nullptr;
   QPushButton* save_button_ = nullptr;

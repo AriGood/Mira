@@ -89,9 +89,12 @@ LibraryWindow::LibraryWindow(QWidget* parent) : QMainWindow(parent) {
   connect(details_, &mira_gui::GameDetailsPanel::MetadataRefreshRequested, this,
           [this](const QString& id) { RefreshMetadata(id.toStdString()); });
 
-  // page 1 (game_edit_page_) is built lazily by OpenGameDialog.
+  // page 1 (game_edit_page_) is built lazily by OpenGameDialog; page 2 is
+  // blank, shown while settings is open (game selection is a grid concept).
   sidebar_stack_ = new QStackedWidget(this);
   sidebar_stack_->addWidget(details_);
+  blank_sidebar_page_ = new QWidget(this);
+  sidebar_stack_->addWidget(blank_sidebar_page_);
 
   // page 1 (settings) is built lazily by OpenSettings. Takes over only
   // this middle slot — sidebar and details stay mounted either side.
@@ -124,8 +127,8 @@ LibraryWindow::LibraryWindow(QWidget* parent) : QMainWindow(parent) {
   // then puts the three window-wide actions into File and Help.
   BuildShortcuts();
   BuildMenus();
-  // Hidden by default — held open with Alt (keyPressEvent/keyReleaseEvent
-  // below) or pinned from the View menu. LoadPrefs() may pin it back on.
+  // Hidden by default — Alt toggles it (keyPressEvent below), or pin it
+  // from the View menu. LoadPrefs() may pin it back on.
   menuBar()->setVisible(menu_bar_pinned_);
 
   LoadPrefs();
@@ -379,42 +382,38 @@ void LibraryWindow::SetMenuBarPinned(bool pinned) {
 
 void LibraryWindow::keyPressEvent(QKeyEvent* event) {
   // isAutoRepeat() excludes the repeat events X11/Wayland send for a held
-  // key — without it every one would re-run this and cost nothing but
-  // clarity, but there's no reason to rely on that when the check is free.
+  // key — a held Alt would otherwise toggle back and forth on its own.
   if (!menu_bar_pinned_ && event->key() == Qt::Key_Alt && !event->isAutoRepeat()) {
-    menuBar()->setVisible(true);
+    menuBar()->setVisible(!menuBar()->isVisible());
     return;
   }
   QMainWindow::keyPressEvent(event);
 }
 
-void LibraryWindow::keyReleaseEvent(QKeyEvent* event) {
-  if (!menu_bar_pinned_ && event->key() == Qt::Key_Alt && !event->isAutoRepeat()) {
-    menuBar()->setVisible(false);
-    return;
-  }
-  QMainWindow::keyReleaseEvent(event);
-}
-
-void LibraryWindow::changeEvent(QEvent* event) {
-  // Alt+Tab away never delivers a KeyRelease to this window, so the hold
-  // would otherwise stay "on" until the next stray Alt press.
-  if (event->type() == QEvent::WindowDeactivate || event->type() == QEvent::ActivationChange) {
-    if (!menu_bar_pinned_ && !isActiveWindow()) menuBar()->setVisible(false);
-  }
-  QMainWindow::changeEvent(event);
-}
-
 void LibraryWindow::closeEvent(QCloseEvent* event) {
-  SavePrefs();
   // Only for the window Attach() actually made the tray's — a secondary
   // window opened from this one's own Tools menu closes for real either
   // way, since nothing would bring it back (see Tray.h's IsManaged).
   if (mira_gui::tray::IsManaged(this) && !mira_gui::tray::Quitting()) {
+    SavePrefs();
     event->ignore();
     hide();
     return;
   }
+
+  const bool settings_dirty = settings_panel_ != nullptr && settings_panel_->IsDirty();
+  const bool game_dirty = game_edit_form_ != nullptr &&
+                          sidebar_stack_->currentWidget() == game_edit_page_ &&
+                          game_edit_form_->IsDirty();
+  if ((settings_dirty || game_dirty) &&
+      !mira_gui::notify::Confirm(this, "Discard changes?",
+                                 "Unsaved changes will be lost. Quit anyway?", "Quit",
+                                 /*destructive=*/true)) {
+    event->ignore();
+    return;
+  }
+
+  SavePrefs();
   QMainWindow::closeEvent(event);
 }
 
@@ -586,6 +585,15 @@ void LibraryWindow::SetTileWidth(int width) {
 
 QPixmap LibraryWindow::CoverFor(const mira_gui::GameSummary& game) {
   return artwork_->Cover(game, TileSize(), devicePixelRatioF());
+}
+
+void LibraryWindow::SelectGridItem(const std::string& id) {
+  for (int row = 0; row < grid_->count(); ++row) {
+    QListWidgetItem* item = grid_->item(row);
+    if (item->data(mira_gui::GameTileDelegate::IdRole).toString().toStdString() != id) continue;
+    grid_->setCurrentItem(item);
+    return;
+  }
 }
 
 void LibraryWindow::UpdateTileCover(const QString& id) {
@@ -853,6 +861,22 @@ void LibraryWindow::RemoveGame(const std::string& id) {
 }
 
 void LibraryWindow::SelectionChanged() {
+  if (middle_stack_->currentWidget() == settings_page_) return;  // sidebar stays blank
+  if (restoring_selection_) return;  // re-entrant call from the revert below
+
+  if (sidebar_stack_->currentWidget() == game_edit_page_) {
+    if (game_edit_form_ != nullptr && game_edit_form_->IsDirty() &&
+        !mira_gui::notify::Confirm(this, "Discard changes?",
+                                   "This game's edits aren't saved. Discard them?", "Discard",
+                                   /*destructive=*/true)) {
+      restoring_selection_ = true;
+      SelectGridItem(game_edit_form_->id());
+      restoring_selection_ = false;
+      return;
+    }
+    sidebar_stack_->setCurrentWidget(details_);
+  }
+
   auto* item = grid_->currentItem();
   const mira_gui::GameSummary* game =
       item != nullptr && item->isSelected()
@@ -1003,12 +1027,26 @@ void LibraryWindow::CloseGameEdit() {
 }
 
 void LibraryWindow::OpenSettings() {
-  if (settings_panel_ == nullptr) middle_stack_->addWidget(BuildSettingsPage());
-  middle_stack_->setCurrentIndex(1);
+  // Fresh instance each time: starts synced to what's actually saved,
+  // not stale edits left in the widgets from a discarded previous open.
+  if (settings_page_ != nullptr) {
+    middle_stack_->removeWidget(settings_page_);
+    settings_page_->deleteLater();
+  }
+  settings_page_ = BuildSettingsPage();
+  middle_stack_->addWidget(settings_page_);
+
+  // Game selection is a grid concept — blank the sidebar while it's covered.
+  grid_->clearSelection();
+  selected_id_.clear();
+  details_->Clear();
+  sidebar_stack_->setCurrentWidget(blank_sidebar_page_);
+  middle_stack_->setCurrentWidget(settings_page_);
 }
 
 void LibraryWindow::CloseSettings() {
   middle_stack_->setCurrentIndex(0);
+  sidebar_stack_->setCurrentWidget(details_);
 }
 
 QWidget* LibraryWindow::BuildSettingsPage() {
@@ -1018,9 +1056,6 @@ QWidget* LibraryWindow::BuildSettingsPage() {
   layout->setSpacing(10);
 
   auto* header = new QHBoxLayout();
-  auto* back = new QPushButton("← Back to library", page);
-  connect(back, &QPushButton::clicked, this, &LibraryWindow::CloseSettings);
-  header->addWidget(back);
   auto* title = new QLabel("Settings", page);
   title->setStyleSheet("font-size: 16px; font-weight: 600;");
   header->addWidget(title);
@@ -1050,6 +1085,21 @@ QWidget* LibraryWindow::BuildSettingsPage() {
           });
   layout->addWidget(settings_panel_, /*stretch=*/1);
 
+  auto* footer = new QHBoxLayout();
+  auto* back = new QPushButton("← Back to library", page);
+  connect(back, &QPushButton::clicked, this, [this] {
+    if (settings_panel_ != nullptr && settings_panel_->IsDirty() &&
+        !mira_gui::notify::Confirm(this, "Discard changes?",
+                                   "Settings changed but not saved. Discard them?", "Discard",
+                                   /*destructive=*/true)) {
+      return;
+    }
+    CloseSettings();
+  });
+  footer->addWidget(back);
+  footer->addStretch(1);
+  layout->addLayout(footer);
+
   return page;
 }
 
@@ -1060,9 +1110,6 @@ QWidget* LibraryWindow::BuildGameEditPage(const std::string& id) {
   layout->setSpacing(10);
 
   auto* header = new QHBoxLayout();
-  auto* back = new QPushButton("← Back", page);
-  connect(back, &QPushButton::clicked, this, &LibraryWindow::CloseGameEdit);
-  header->addWidget(back);
   header->addStretch(1);
   auto* save = new QPushButton("Save", page);
   header->addWidget(save);
@@ -1088,6 +1135,21 @@ QWidget* LibraryWindow::BuildGameEditPage(const std::string& id) {
           });
   scroll->setWidget(game_edit_form_);
   layout->addWidget(scroll, /*stretch=*/1);
+
+  auto* footer = new QHBoxLayout();
+  auto* back = new QPushButton("← Back", page);
+  connect(back, &QPushButton::clicked, this, [this] {
+    if (game_edit_form_ != nullptr && game_edit_form_->IsDirty() &&
+        !mira_gui::notify::Confirm(this, "Discard changes?",
+                                   "This game's edits aren't saved. Discard them?", "Discard",
+                                   /*destructive=*/true)) {
+      return;
+    }
+    CloseGameEdit();
+  });
+  footer->addWidget(back);
+  footer->addStretch(1);
+  layout->addLayout(footer);
 
   return page;
 }

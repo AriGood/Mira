@@ -30,7 +30,13 @@ class GameEditForm : public QWidget {
 public:
   explicit GameEditForm(std::string id, QWidget* parent = nullptr);
 
+  const std::string& id() const { return id_; }
+
   void Save();
+
+  // True once any field differs from what Populate() last loaded or Save()
+  // last confirmed — the signal a caller uses to warn before discarding.
+  bool IsDirty() const;
 
 signals:
   void Loaded(QString name);
@@ -47,9 +53,11 @@ private:
   void OnRunnerComboActivated(int index);
   void BrowseExecutable();
   void SetAdvancedVisible(bool show);
+  mira_gui::GamePatch CurrentPatch() const;
 
   std::string id_;
   std::string install_path_;
+  mira_gui::GamePatch original_patch_;
 
   QLabel* status_label_;
   QLabel* install_path_label_;

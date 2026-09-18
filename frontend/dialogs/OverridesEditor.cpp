@@ -149,6 +149,10 @@ std::vector<GameConfigEdit> OverridesEditor::PendingEdits() const {
   return edits;
 }
 
+void OverridesEditor::MarkSaved() {
+  for (Field& field : fields_) field.original = CurrentText(field);
+}
+
 void OverridesEditor::ResetField(size_t index) {
   const Field& field = fields_[index];
   MiradClient::PatchGameConfigAsync(

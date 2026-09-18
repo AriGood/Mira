@@ -17,6 +17,10 @@ class SettingsDialog : public QDialog {
 public:
   explicit SettingsDialog(QWidget* parent = nullptr);
 
+  // Warns before discarding unsaved changes — covers Cancel, Esc, and the
+  // titlebar close button, which all route through reject().
+  void reject() override;
+
 private:
   mira_gui::SettingsPanel* panel_ = nullptr;
 };
