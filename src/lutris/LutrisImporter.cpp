@@ -185,6 +185,23 @@ Result<LutrisImportSummary> LutrisImporter::Import() {
     const std::string exe_path = exe_abs.filename().string();
     const std::string data_dir_path = prefix.string();
 
+    // Not a layout guess — a safety floor for one specific real shape: an
+    // exe referenced with no subdirectory at all under drive_c (a launcher
+    // script dropped straight at the C: drive root, e.g. a second game
+    // riding along in another game's prefix). That makes install_path the
+    // whole C: drive, shared by every other game in that prefix — Mira's
+    // DELETE /v1/games removes install_path's contents, so handing out a
+    // scope that broad would let deleting this game take the others with
+    // it. A combined install+prefix layout (install_path == prefix itself,
+    // e.g. Batman) is fine and left alone: that prefix belongs to this game
+    // alone.
+    if (install_path == (prefix / "drive_c").string()) {
+      log::Warn("skipping lutris game {}: install path {} is drive_c's own root, not something game-specific",
+               row.name, install_path);
+      ++summary.skipped;
+      continue;
+    }
+
     const auto existing = games_.FindByInstallPath(install_path);
 
     // Preserve anything the user already configured across a re-import —

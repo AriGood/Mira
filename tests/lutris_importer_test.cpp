@@ -109,12 +109,13 @@ TEST_CASE("LutrisImporter keeps a relative exe relative to prefix, per the yaml 
 
   Fixture fx("lutris-relative-exe");
   const fs::path prefix_dir = fx.lutris_dir.parent_path() / "epic-games-store";
-  fs::create_directories(prefix_dir / "drive_c");
+  const fs::path install_dir = prefix_dir / "drive_c" / "Program Files" / "Epic Games" / "Launcher";
+  fs::create_directories(install_dir);
 
   REQUIRE(BuildFixtureDb(fx.lutris_dir / "pga.db", {{"Epic Games Store", "epic-games-store", "wine", "egs-1"}})
              .has_value());
   WriteFile(fx.lutris_dir / "games" / "egs-1.yml", std::format(R"(game:
-  exe: drive_c/EpicGamesLauncher.exe
+  exe: drive_c/Program Files/Epic Games/Launcher/EpicGamesLauncher.exe
   prefix: {}
 )",
                                                                prefix_dir.string()));
@@ -126,7 +127,7 @@ TEST_CASE("LutrisImporter keeps a relative exe relative to prefix, per the yaml 
 
   const auto game = fx.games.Find("epic-games-store");
   REQUIRE(game.has_value());
-  CHECK(game->install_path == (prefix_dir / "drive_c").string());
+  CHECK(game->install_path == install_dir.string());
   CHECK(game->data_dir == prefix_dir.string());
   CHECK(game->exe_path == "EpicGamesLauncher.exe");
 }
@@ -176,4 +177,30 @@ TEST_CASE("LutrisImporter skips non-wine runners and updates known games in plac
   CHECK(second->added == 0);
   CHECK(second->updated == 1);
   CHECK(fx.games.All().size() == 1);
+}
+
+TEST_CASE("LutrisImporter refuses an install_path that's really the whole shared prefix") {
+  if (!runner::FindOnPath("sqlite3")) return;
+
+  Fixture fx("lutris-broad-install-path");
+  const fs::path prefix_dir = fx.lutris_dir.parent_path() / "battlenet";
+  fs::create_directories(prefix_dir / "drive_c");
+
+  REQUIRE(BuildFixtureDb(fx.lutris_dir / "pga.db", {{"Hearthstone", "hearthstone", "wine", "hs-1"}}).has_value());
+  // A launcher script referenced with no subdirectory at all — install_path
+  // would resolve to prefix/drive_c, the whole C: drive shared by every
+  // other game in this prefix (Battle.net, HDT, ...). Must be refused, not
+  // handed out as a deletion scope.
+  WriteFile(fx.lutris_dir / "games" / "hs-1.yml", std::format(R"(game:
+  exe: drive_c/launch-hdt.bat
+  prefix: {}
+)",
+                                                              prefix_dir.string()));
+
+  lutris::LutrisImporter importer(fx.config, fx.games, fx.events);
+  const auto summary = importer.Import();
+  REQUIRE(summary.has_value());
+  CHECK(summary->added == 0);
+  CHECK(summary->skipped == 1);
+  CHECK(fx.games.All().empty());
 }
