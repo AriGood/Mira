@@ -460,10 +460,14 @@ Published today:
   the `open_config_on_add` setting, so the frontend knows whether to raise
   its config menu immediately.
 - `game.updated`, `game.removed`.
-- `game.state` — `{"id": ..., "state": "running" | "exited" | "crashed"}`,
-  from `proc::ProcessSupervisor` (a Steam game launched via
+- `game.state` — the full updated game record (same shape as
+  `GET /v1/games/{id}`) plus `"state": "running" | "exited" | "crashed"`,
+  and, for `exited`/`crashed`, this session's own `exit_code`/`signal`/
+  `played_seconds`/`error` alongside the record's own totals — from
+  `proc::ProcessSupervisor` (a Steam game launched via
   `steam.launch_mode: "steam"` never emits this — Mira isn't tracking its
-  process; see `/launch` above).
+  process; see `/launch` above). Carrying the full record means a listener
+  can patch the one row directly instead of re-fetching `GET /v1/games`.
 - `game.launched` — `{"id": ..., "via": "steam"}`, the untracked
   counterpart to `game.state` for that same case.
 - `runners.download.started` / `.finished` / `.failed` — see

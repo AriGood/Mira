@@ -353,13 +353,18 @@ void MainWindow::HandleGameEvent(const std::string& type, const std::string& dat
     if (state.state == "running") {
       running_ids_.insert(state.id);
     } else {
-      // exited/crashed — this event carries only the session's own delta
-      // (played_seconds, exit_code, ...), not the row's actual totals, so a
-      // full relist is what picks up the new play_seconds/last_played_at/
-      // last_error rather than trying to patch them from here.
       running_ids_.erase(state.id);
     }
-    RefreshGames();
+    // The event now carries the full updated record (play_seconds,
+    // last_played_at, last_error — docs/api.md), so the one row can be
+    // patched directly instead of relisting; only fall back if that parse
+    // somehow fails (an older daemon).
+    mira_gui::GameSummary game;
+    if (mira_gui::MiradClient::ParseGameSummary(data, &game)) {
+      UpsertRow(game);
+    } else {
+      RefreshGames();
+    }
     return;
   }
 

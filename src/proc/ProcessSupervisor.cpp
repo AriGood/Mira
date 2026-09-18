@@ -18,6 +18,8 @@
 namespace mira::proc {
 namespace {
 
+using nlohmann::json;
+
 constexpr auto kPollInterval = std::chrono::milliseconds(1000);
 
 // Playtime is written back as it accrues, not only at exit: if mirad is
@@ -198,7 +200,12 @@ Result<void> ProcessSupervisor::Launch(const model::Game& game, const Command& c
   }
 
   log::Info("launched {} (pid {})", game.id, *pid);
-  events_.Publish("game.state", {{"id", game.id}, {"state", "running"}, {"pid", *pid}});
+  // Full record (see the exit events below for why) so a listener never
+  // has to relist just to pick up last_played_at.
+  json event = stamped ? model::ToJson(*stamped) : json{{"id", game.id}};
+  event["state"] = "running";
+  event["pid"] = *pid;
+  events_.Publish("game.state", std::move(event));
   return {};
 }
 
@@ -336,12 +343,18 @@ void ProcessSupervisor::Watch(std::string game_id, pid_t pid, std::int64_t start
   } else {
     log::Info("{} exited cleanly after {}s", game_id, played);
   }
-  events_.Publish("game.state", {{"id", game_id},
-                                 {"state", crashed ? "crashed" : "exited"},
-                                 {"exit_code", exit_code},
-                                 {"signal", signal_number},
-                                 {"played_seconds", played},
-                                 {"error", error}});
+  // The full updated record rides along on top of the session-only fields
+  // below (exit_code, signal, played_seconds are this session's, not the
+  // row's running totals) so a listener can patch its one row directly —
+  // this used to carry only id/state, forcing a full GET /v1/games relist
+  // just to pick up the new play_seconds/last_played_at/last_error.
+  json event = updated ? model::ToJson(*updated) : json{{"id", game_id}};
+  event["state"] = crashed ? "crashed" : "exited";
+  event["exit_code"] = exit_code;
+  event["signal"] = signal_number;
+  event["played_seconds"] = played;
+  event["error"] = error;
+  events_.Publish("game.state", std::move(event));
 
   RunScript(post_script, game_id, "post");
 }
@@ -401,7 +414,9 @@ void ProcessSupervisor::WatchSteam(std::string game_id, std::string appid, std::
   auto stamped = games_.Update(game_id, [&](model::Game& stored) { stored.last_played_at = started_at; });
   if (!stamped) log::Error("failed to record launch time for {}: {}", game_id, stamped.error().message);
   log::Info("detected {} running (appid {}, {} process(es))", game_id, appid, matched.size());
-  events_.Publish("game.state", {{"id", game_id}, {"state", "running"}});
+  json running_event = stamped ? model::ToJson(*stamped) : json{{"id", game_id}};
+  running_event["state"] = "running";
+  events_.Publish("game.state", std::move(running_event));
 
   // Liveness phase: re-scan every tick rather than just poll the pids
   // already found, since the process tree can reshape early on (pressure-
@@ -457,8 +472,12 @@ void ProcessSupervisor::WatchSteam(std::string game_id, std::string appid, std::
   if (!updated) log::Error("failed to record playtime for {}: {}", game_id, updated.error().message);
 
   log::Info("{} (Steam-launched) exited after {}s", game_id, played);
-  events_.Publish("game.state",
-                 {{"id", game_id}, {"state", "exited"}, {"played_seconds", played}});
+  // Same reasoning as Watch()'s exit event: the full updated record rides
+  // along so a listener can patch its one row instead of relisting.
+  json event = updated ? model::ToJson(*updated) : json{{"id", game_id}};
+  event["state"] = "exited";
+  event["played_seconds"] = played;
+  events_.Publish("game.state", std::move(event));
 
   RunScript(post_script, game_id, "post");
 }

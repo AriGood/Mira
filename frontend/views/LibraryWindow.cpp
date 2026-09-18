@@ -859,9 +859,16 @@ void LibraryWindow::HandleGameEvent(const std::string& type, const std::string& 
     } else {
       running_ids_.erase(state.id);
     }
-    // An exit changes play_seconds/last_played_at, which `game.state` does
-    // not carry (docs/api.md) — hence a re-fetch rather than a local patch.
-    RefreshGames();
+    // An exit/crash carries the full updated record (play_seconds,
+    // last_played_at, last_error — docs/api.md), so the one row can be
+    // patched directly; only fall back to a relist if that parse somehow
+    // fails (an older daemon, or a "running" event, which doesn't bother).
+    mira_gui::GameSummary game;
+    if (mira_gui::MiradClient::ParseGameSummary(data, &game)) {
+      UpsertGame(game);
+    } else {
+      RefreshGames();
+    }
     return;
   }
 
