@@ -57,6 +57,8 @@ qt_add_executable(mira-gui
   ui/LibrarySort.h
   ui/GameTileDelegate.cpp
   ui/GameTileDelegate.h
+  ui/Icons.cpp
+  ui/Icons.h
   ui/Notify.cpp
   ui/Notify.h
   ui/SystemNotifier.cpp

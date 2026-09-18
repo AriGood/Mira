@@ -66,6 +66,13 @@ QWidget#top_bar QToolButton {
   padding: 5px;
 }
 
+/* The button already opens a menu on click; Qt's little corner triangle just
+ * adds noise next to a glyph this small. */
+QWidget#top_bar QToolButton::menu-indicator {
+  image: none;
+  width: 0;
+}
+
 QWidget#top_bar QToolButton:hover {
   background: @surface_alt;
 }
