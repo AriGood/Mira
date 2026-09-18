@@ -534,11 +534,7 @@ void LibraryWindow::ShowSteamGridDbNotice(bool asked_for) {
 }
 
 void LibraryWindow::FetchMissingArtwork() {
-  // One request for the whole library — mirad decides which games have no
-  // cached cover art (docs/api.md), instead of this looping over every game
-  // and firing one POST .../metadata/refresh each. Over the whole library,
-  // not the current filter: "fetch what's missing" means the library, and a
-  // sidebar filter is about what you are looking at right now.
+  // One request for the whole library; mirad decides what's missing.
   mira_gui::MiradClient::RefreshMissingArtworkAsync(
       this, [this](mira_gui::RefreshMissingArtworkResult result) {
         if (!result.ok) {
@@ -616,16 +612,11 @@ void LibraryWindow::RescanAndRefreshGames(bool force_scan) {
     return;
   }
   if (!loaded_) {
-    // First load: a scan only reports what changed, not what already
-    // existed, so a real listing is the only way to see the latter.
+    // First load: a scan only reports changes, not what already existed.
     mira_gui::MiradClient::ScanLibraryAsync(this, [this](mira_gui::ScanResult) { RefreshGames(); });
     return;
   }
-  // Already loaded once, and kept in sync since by game.added/.updated/
-  // .removed events — Scanner now publishes one for every change a scan
-  // itself makes (added/restored/missing), the same way library::Watcher's
-  // own detections always have — so there's nothing left for a relist to
-  // pick up that these events won't have already applied.
+  // Kept in sync since by game.added/.updated/.removed events.
   mira_gui::MiradClient::ScanLibraryAsync(this, [](mira_gui::ScanResult) {});
 }
 
@@ -871,10 +862,7 @@ void LibraryWindow::HandleGameEvent(const std::string& type, const std::string& 
     } else {
       running_ids_.erase(state.id);
     }
-    // An exit/crash carries the full updated record (play_seconds,
-    // last_played_at, last_error — docs/api.md), so the one row can be
-    // patched directly; only fall back to a relist if that parse somehow
-    // fails (an older daemon, or a "running" event, which doesn't bother).
+    // Carries the full record now, so patch the row instead of relisting.
     mira_gui::GameSummary game;
     if (mira_gui::MiradClient::ParseGameSummary(data, &game)) {
       UpsertGame(game);

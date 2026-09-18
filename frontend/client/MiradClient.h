@@ -121,9 +121,7 @@ public:
   static void RefreshMetadataAsync(QObject* context, const std::string& id,
                                    std::function<void(MetadataRefreshResult)> callback);
 
-  // POST /v1/games/metadata/refresh-missing. Returns 202 immediately with a
-  // count of how many fetches were enqueued; watch for
-  // game.metadata_ready/.metadata_failed as usual for each one's outcome.
+  // POST /v1/games/metadata/refresh-missing. Bulk version of the above.
   static void RefreshMissingArtworkAsync(QObject* context,
                                          std::function<void(RefreshMissingArtworkResult)> callback);
 

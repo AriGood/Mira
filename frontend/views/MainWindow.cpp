@@ -196,15 +196,11 @@ void MainWindow::RefreshHealth() {
 
 void MainWindow::RescanAndRefreshGames() {
   if (!loaded_) {
-    // First load: a scan only reports what changed, not what already
-    // existed, so a real listing is the only way to see the latter.
+    // First load: a scan only reports changes, not what already existed.
     mira_gui::MiradClient::ScanLibraryAsync(this, [this](mira_gui::ScanResult) { RefreshGames(); });
     return;
   }
-  // Already loaded once, and kept in sync since by game.added/.updated/
-  // .removed events — Scanner now publishes one for every change a scan
-  // itself makes (added/restored/missing), so there's nothing left for a
-  // relist to pick up that these events won't have already applied.
+  // Kept in sync since by game.added/.updated/.removed events.
   mira_gui::MiradClient::ScanLibraryAsync(this, [](mira_gui::ScanResult) {});
 }
 
@@ -366,10 +362,7 @@ void MainWindow::HandleGameEvent(const std::string& type, const std::string& dat
     } else {
       running_ids_.erase(state.id);
     }
-    // The event now carries the full updated record (play_seconds,
-    // last_played_at, last_error — docs/api.md), so the one row can be
-    // patched directly instead of relisting; only fall back if that parse
-    // somehow fails (an older daemon).
+    // Carries the full record now, so patch the row instead of relisting.
     mira_gui::GameSummary game;
     if (mira_gui::MiradClient::ParseGameSummary(data, &game)) {
       UpsertRow(game);

@@ -50,11 +50,8 @@ private:
 
   std::string id_;
   std::string install_path_;
-  // Snapshot of the game fields as loaded, so Save() can revert them if the
-  // overrides PATCH that follows fails — the two are separate requests (see
-  // Server.cpp's comment on PATCH /v1/games/{id} vs .../config) with no
-  // shared transaction, so a failure partway through would otherwise leave
-  // the game fields saved but its overrides not.
+  // Snapshot as loaded, so Save() can revert the game fields if the
+  // separate overrides PATCH that follows them fails.
   mira_gui::GamePatch original_patch_;
 
   QLabel* status_label_;

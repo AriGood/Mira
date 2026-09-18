@@ -24,12 +24,8 @@ class QVBoxLayout;
 // (docs/api.md: "a frontend generating a settings UI from this should show
 // basic by default and fold the rest behind a disclosure, never omit them").
 //
-// Every field also carries its own category/is_secret/is_runner_ref straight
-// from the schema (ConfigSchemaEntry, GET /v1/config/schema) — a runner
-// reference gets a picker combo instead of a plain text box (see BuildRows),
-// a secret gets a masked field, and rows are grouped into named sections
-// (Library, Runners, Detection, ...) by entry.category. SettingsCategories.h
-// only keeps the display *order* those sections appear in.
+// Each field's category/is_secret/is_runner_ref come from the schema entry
+// itself now — SettingsCategories.h only keeps the display order.
 class SettingsDialog : public QDialog {
   Q_OBJECT
 

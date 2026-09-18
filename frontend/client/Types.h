@@ -89,10 +89,7 @@ struct MetadataRefreshResult {
   std::string error;
 };
 
-// POST /v1/games/metadata/refresh-missing — bulk version of the above: the
-// daemon decides which games have no cached cover art and enqueues a fetch
-// for each in one request, instead of a caller looping over the library
-// itself. `count` is how many were enqueued.
+// POST /v1/games/metadata/refresh-missing. `count` is how many were enqueued.
 struct RefreshMissingArtworkResult {
   bool ok = false;
   std::string error;

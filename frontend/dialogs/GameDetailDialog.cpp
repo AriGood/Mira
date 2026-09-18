@@ -322,10 +322,7 @@ void GameDetailDialog::Save() {
     mira_gui::MiradClient::PatchGameConfigAsync(
         this, id_, override_edits, [this](mira_gui::PatchGameConfigResult override_result) {
           if (!override_result.ok) {
-            // The game-fields PATCH above already landed on the daemon; roll
-            // it back rather than leave the record half-saved (fields
-            // changed, overrides not) — best-effort, its own result isn't
-            // otherwise actionable here.
+            // Roll back the game-fields PATCH that already landed; best-effort.
             mira_gui::MiradClient::PatchGameAsync(this, id_, original_patch_,
                                                   [](mira_gui::PatchGameResult) {});
             setEnabled(true);
