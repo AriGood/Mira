@@ -9,6 +9,20 @@ namespace mira_gui::mapping {
 
 using nlohmann::json;
 
+namespace {
+// A game's tags array (docs/api.md): free-form strings, "hidden" the one
+// the frontend treats specially. Read the same way in every place a game
+// arrives from mirad — GET /v1/games, GET /v1/games/{id}, and the
+// game.added/game.updated SSE payloads all carry it under the same key.
+std::vector<std::string> ReadTags(const json& entry) {
+  std::vector<std::string> tags;
+  for (const json& tag : entry.value("tags", json::array())) {
+    if (tag.is_string()) tags.push_back(tag.get<std::string>());
+  }
+  return tags;
+}
+}  // namespace
+
 GameSummary ToGameSummary(const json& entry) {
   GameSummary game;
   game.id = entry.value("id", std::string());
@@ -24,6 +38,7 @@ GameSummary ToGameSummary(const json& entry) {
     game.last_played_at = entry["last_played_at"].get<std::int64_t>();
   }
   game.play_seconds = entry.value("play_seconds", std::int64_t{0});
+  game.tags = ReadTags(entry);
   return game;
 }
 
@@ -48,6 +63,7 @@ GameDetail ToGameDetail(const json& entry) {
   game.play_seconds = entry.value("play_seconds", std::int64_t{0});
   game.runner_config_json = entry.value("runner_config", json::object()).dump(2);
   game.env_json = entry.value("env", json::object()).dump(2);
+  game.tags = ReadTags(entry);
 
   for (const json& candidate : entry.value("candidates", json::array())) {
     GameDetail::Candidate c;

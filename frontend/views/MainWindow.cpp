@@ -20,6 +20,9 @@
 #include "../ui/GamePresentation.h"
 #include "../ui/Notify.h"
 #include "../ui/Shortcuts.h"
+#include "../ui/Tray.h"
+
+#include <QCloseEvent>
 
 namespace {
 
@@ -47,6 +50,7 @@ private:
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   setWindowTitle("Mira");
   resize(1000, 650);
+
 
   auto* central = new QWidget(this);
   auto* layout = new QVBoxLayout(central);
@@ -119,6 +123,18 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 
   event_stream_.Start(this,
                        [this](std::string type, std::string data) { HandleGameEvent(type, data); });
+}
+
+void MainWindow::closeEvent(QCloseEvent* event) {
+  // Only when main.cpp made this the primary window (--classic) — opened
+  // as a secondary window from the grid's Tools menu, it closes for real
+  // either way, since nothing would bring it back (see Tray.h's IsManaged).
+  if (mira_gui::tray::IsManaged(this) && !mira_gui::tray::Quitting()) {
+    event->ignore();
+    hide();
+    return;
+  }
+  QMainWindow::closeEvent(event);
 }
 
 void MainWindow::BuildShortcuts() {

@@ -59,6 +59,7 @@ private:
   QComboBox* exe_combo_;
   QLineEdit* args_edit_;
   QLineEdit* working_dir_edit_;
+  QLineEdit* tags_edit_;
   QComboBox* runner_combo_;
 
   QCheckBox* show_advanced_;

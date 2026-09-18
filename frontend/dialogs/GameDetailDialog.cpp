@@ -2,6 +2,7 @@
 
 #include "OverridesEditor.h"
 
+#include "../client/JsonMapping.h"
 #include "../ui/GamePresentation.h"
 
 #include <QCheckBox>
@@ -50,6 +51,11 @@ GameDetailDialog::GameDetailDialog(std::string id, QWidget* parent)
   name_edit_ = new QLineEdit(this);
   args_edit_ = new QLineEdit(this);
   working_dir_edit_ = new QLineEdit(this);
+  tags_edit_ = new QLineEdit(this);
+  tags_edit_->setPlaceholderText("comma-separated — e.g. hidden, co-op");
+  tags_edit_->setToolTip(
+      "Free-form labels. \"hidden\" keeps this game out of the library until asked for "
+      "(Ctrl+H, or the Hidden filter).");
 
   // Editable so a path can be typed directly; its dropdown also offers every
   // detected candidate labeled with its score (see PopulateExeCombo).
@@ -96,6 +102,7 @@ GameDetailDialog::GameDetailDialog(std::string id, QWidget* parent)
   form->addRow("Executable:", exe_row);
   form->addRow("Arguments:", args_edit_);
   form->addRow("Working directory:", working_dir_edit_);
+  form->addRow("Tags:", tags_edit_);
   form->addRow("Runner:", runner_row);
   layout->addLayout(form);
   layout->addWidget(last_error_label_);
@@ -201,6 +208,8 @@ void GameDetailDialog::Populate(const mira_gui::GameDetail& game) {
   args_edit_->setCursorPosition(0);
   working_dir_edit_->setText(QString::fromStdString(game.working_dir));
   working_dir_edit_->setCursorPosition(0);
+  tags_edit_->setText(QString::fromStdString(mira_gui::mapping::ToDisplayString(nlohmann::json(game.tags))));
+  tags_edit_->setCursorPosition(0);
   data_dir_edit_->setText(QString::fromStdString(game.data_dir));
   data_dir_edit_->setCursorPosition(0);
   runner_config_edit_->setPlainText(QString::fromStdString(game.runner_config_json));
@@ -290,6 +299,7 @@ void GameDetailDialog::Save() {
   patch.exe_path = exe_combo_->currentText().toStdString();
   patch.args = args_edit_->text().toStdString();
   patch.working_dir = working_dir_edit_->text().toStdString();
+  patch.tags = mira_gui::mapping::SplitCommaSeparated(tags_edit_->text().toStdString());
   patch.runner_ref = runner_combo_->currentText().toStdString();
   patch.data_dir = data_dir_edit_->text().toStdString();
   patch.runner_config_json = runner_config_edit_->toPlainText().toStdString();

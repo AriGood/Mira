@@ -21,6 +21,7 @@ class QListWidget;
 class QComboBox;
 class QSlider;
 class QSplitter;
+class QAction;
 class QToolButton;
 
 namespace mira_gui {
@@ -91,6 +92,7 @@ private:
   void SelectionChanged();
   void ShowContextMenu(const QPoint& pos);
   void ToggleRunning(const std::string& id);
+  void ToggleHidden(const std::string& id);
   void LaunchGame(const std::string& id);
   void OpenGameDialog(const std::string& id);
   void OpenSettings();
@@ -105,6 +107,16 @@ private:
   void UpdateTileCover(const QString& id);
 
   void HandleGameEvent(const std::string& type, const std::string& data);
+  int FilterRow(const QString& key) const;
+
+  // Alt held while toolbar_pinned_ is false shows the toolbar for as long
+  // as it's down; releasing it (or losing focus mid-hold — WindowDeactivate)
+  // hides it again. keyPressEvent/keyReleaseEvent, not a shortcut, because
+  // a lone modifier key press has no QKeySequence to bind.
+  void keyPressEvent(QKeyEvent* event) override;
+  void keyReleaseEvent(QKeyEvent* event) override;
+  void changeEvent(QEvent* event) override;
+  void SetToolbarPinned(bool pinned);
 
   QLineEdit* search_ = nullptr;
   QListWidget* filters_ = nullptr;
@@ -113,6 +125,8 @@ private:
   QSlider* zoom_ = nullptr;
   QComboBox* sort_ = nullptr;
   QToolButton* sort_direction_ = nullptr;
+  QWidget* toolbar_widget_ = nullptr;   // the sort/zoom row, hidden unless pinned or Alt is held
+  QAction* toolbar_pin_action_ = nullptr;
   QSplitter* splitter_ = nullptr;
   QLabel* health_badge_ = nullptr;
   QLabel* footer_ = nullptr;
@@ -135,6 +149,7 @@ private:
   bool sort_descending_ = false;
   bool scan_on_startup_ = true;
   std::string notifications_ = "auto";
+  bool toolbar_pinned_ = false;
   // Keyed by "<id>@<tile width>" — a generated cover is cheap but not free,
   // and ApplyFilter() rebuilds every visible tile on each keystroke.
   mira_gui::ArtworkStore* artwork_ = nullptr;

@@ -1,4 +1,5 @@
 #include "LibraryWindow.h"
+#include <algorithm>
 
 #include <QAbstractItemView>
 #include <QAction>
@@ -6,6 +7,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
+#include <QKeyEvent>
 #include <QListWidget>
 #include <QListWidgetItem>
 #include <QMenu>
@@ -31,6 +33,7 @@
 #include "../ui/LibrarySort.h"
 #include "../ui/Notify.h"
 #include "../ui/Shortcuts.h"
+#include "../ui/Tray.h"
 #include "MainWindow.h"
 
 namespace {
@@ -51,7 +54,15 @@ const FilterEntry kFilters[] = {
     {"Broken", "broken"},
     {"Missing", "missing"},
     {"Never played", "never"},
+    // Every entry above excludes a hidden-tagged game (see MatchesFilter);
+    // this is the only one that shows them, and only them — the point of
+    // "hidden" (docs/api.md) is staying out of the way until asked for.
+    {"Hidden", "hidden"},
 };
+
+bool HasTag(const mira_gui::GameSummary& game, const std::string& tag) {
+  return std::find(game.tags.begin(), game.tags.end(), tag) != game.tags.end();
+}
 
 }  // namespace
 
@@ -124,6 +135,11 @@ void LibraryWindow::BuildMenus() {
   // F5 is the platform's own Refresh; Ctrl+R is the one every browser
   // taught, and a second binding costs nothing.
   refresh->setShortcuts({QKeySequence(QKeySequence::Refresh), QKeySequence(Qt::CTRL | Qt::Key_R)});
+  toolbar_pin_action_ = view_menu->addAction("Show &toolbar", this,
+                                             [this] { SetToolbarPinned(!toolbar_pinned_); });
+  toolbar_pin_action_->setCheckable(true);
+  toolbar_pin_action_->setChecked(toolbar_pinned_);
+  toolbar_pin_action_->setToolTip("Keep the sort/zoom row open instead of holding Alt to show it");
   view_menu->addSeparator();
   view_menu->addAction("Open &classic table view", this, &LibraryWindow::OpenClassicView);
 
@@ -151,7 +167,8 @@ void LibraryWindow::BuildShortcuts() {
       this, {
                 {"Ctrl+F", "Focus the search box"},
                 {"Esc", "Clear the search, then the selection"},
-                {"Ctrl+1…8", "Pick a sidebar filter"},
+                {"Ctrl+1…9", "Pick a sidebar filter"},
+                {"Ctrl+H", "Toggle the Hidden filter"},
                 {"F5, Ctrl+R", "Refresh the library"},
                 {"Enter", "Play the selected game — Stop while it runs"},
                 {"Alt+Enter", "Details & settings"},
@@ -210,6 +227,16 @@ void LibraryWindow::BuildShortcuts() {
     window_action({QKeySequence(Qt::CTRL | static_cast<Qt::Key>(Qt::Key_1 + row))},
                   [this, row] { filters_->setCurrentRow(row); });
   }
+
+  // A dedicated toggle for Hidden, on top of whatever Ctrl+9 already gives
+  // it as the last row above — "filter to them" reads as a single memorable
+  // key, and toggling back to All on a second press means it never strands
+  // the grid on a filter with nothing else reachable from it.
+  window_action({QKeySequence(Qt::CTRL | Qt::Key_H)}, [this] {
+    const int hidden_row = FilterRow("hidden");
+    if (hidden_row < 0) return;
+    filters_->setCurrentRow(CurrentFilterKey() == "hidden" ? FilterRow("all") : hidden_row);
+  });
 
   // Qt::Key_Enter is the keypad one — a separate key from Qt::Key_Return,
   // and binding only Return would leave it dead.
@@ -287,6 +314,7 @@ void LibraryWindow::LoadPrefs() {
         }
       }
     }
+    if (prefs.toolbar_pinned) SetToolbarPinned(*prefs.toolbar_pinned);
   });
 }
 
@@ -304,6 +332,7 @@ void LibraryWindow::SavePrefs() {
   prefs.notifications =
       mira_gui::notify::DeliveryToString(mira_gui::notify::CurrentDelivery()).toStdString();
   prefs.notification_timeout_s = mira_gui::notify::CurrentTimeoutSeconds();
+  prefs.toolbar_pinned = toolbar_pinned_;
   const QList<int> sizes = splitter_->sizes();
   if (sizes.size() == 3) {
     prefs.sidebar_width = sizes[0];
@@ -325,8 +354,52 @@ void LibraryWindow::SavePrefs() {
   mira_gui::MiradClient::SaveFrontendPrefsBlocking(prefs);
 }
 
+void LibraryWindow::SetToolbarPinned(bool pinned) {
+  toolbar_pinned_ = pinned;
+  toolbar_widget_->setVisible(pinned);
+  if (toolbar_pin_action_) toolbar_pin_action_->setChecked(pinned);
+}
+
+void LibraryWindow::keyPressEvent(QKeyEvent* event) {
+  // isAutoRepeat() excludes the repeat events X11/Wayland send for a held
+  // key — without it every one would re-run this and cost nothing but
+  // clarity, but there's no reason to rely on that when the check is free.
+  if (!toolbar_pinned_ && event->key() == Qt::Key_Alt && !event->isAutoRepeat()) {
+    toolbar_widget_->setVisible(true);
+    return;
+  }
+  QMainWindow::keyPressEvent(event);
+}
+
+void LibraryWindow::keyReleaseEvent(QKeyEvent* event) {
+  if (!toolbar_pinned_ && event->key() == Qt::Key_Alt && !event->isAutoRepeat()) {
+    toolbar_widget_->setVisible(false);
+    return;
+  }
+  QMainWindow::keyReleaseEvent(event);
+}
+
+void LibraryWindow::changeEvent(QEvent* event) {
+  // Alt+Tabbing away, or a menu opening, ends the hold without ever
+  // delivering a KeyRelease for it — X11/Wayland deliver the release to
+  // whatever now has focus, not to this window. Left alone, the toolbar
+  // would stay open until the next stray Alt press happened to toggle it.
+  if (event->type() == QEvent::WindowDeactivate || event->type() == QEvent::ActivationChange) {
+    if (!toolbar_pinned_ && !isActiveWindow()) toolbar_widget_->setVisible(false);
+  }
+  QMainWindow::changeEvent(event);
+}
+
 void LibraryWindow::closeEvent(QCloseEvent* event) {
   SavePrefs();
+  // Only for the window Attach() actually made the tray's — a secondary
+  // window opened from this one's own Tools menu closes for real either
+  // way, since nothing would bring it back (see Tray.h's IsManaged).
+  if (mira_gui::tray::IsManaged(this) && !mira_gui::tray::Quitting()) {
+    event->ignore();
+    hide();
+    return;
+  }
   QMainWindow::closeEvent(event);
 }
 
@@ -402,7 +475,9 @@ QWidget* LibraryWindow::BuildGrid() {
   layout->setContentsMargins(6, 10, 6, 6);
   layout->setSpacing(6);
 
-  auto* toolbar = new QHBoxLayout();
+  toolbar_widget_ = new QWidget(container);
+  auto* toolbar = new QHBoxLayout(toolbar_widget_);
+  toolbar->setContentsMargins(0, 0, 0, 0);
   auto* sort_label = new QLabel("Sort by", container);
   sort_label->setStyleSheet("font-size: 11px; color: #9e9e9e;");
   toolbar->addWidget(sort_label);
@@ -439,7 +514,14 @@ QWidget* LibraryWindow::BuildGrid() {
   zoom_->setMaximumWidth(140);
   connect(zoom_, &QSlider::valueChanged, this, &LibraryWindow::SetTileWidth);
   toolbar->addWidget(zoom_);
-  layout->addLayout(toolbar);
+  // Hidden by default (see SetToolbarPinned) — a bare row of a combo box
+  // and a slider read as leftover chrome above a cover grid. Held open
+  // with Alt, or pinned from the View menu for anyone who wants it there
+  // permanently. Everything in it also has a menu or shortcut route:
+  // Ctrl+= / Ctrl+- / Ctrl+0 for zoom (BuildShortcuts), and sort direction
+  // rarely needs changing once set.
+  toolbar_widget_->setVisible(toolbar_pinned_);
+  layout->addWidget(toolbar_widget_);
 
   grid_ = new QListWidget(container);
   grid_->setObjectName("library_grid");
@@ -456,6 +538,13 @@ QWidget* LibraryWindow::BuildGrid() {
   grid_->setMouseTracking(true);
   grid_->setFrameShape(QFrame::NoFrame);
   grid_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+  // Default QListView scrolling moves one item per wheel tick, which for a
+  // 250px-tall tile is a visible jump rather than a scroll. Per-pixel is a
+  // plain wheel/trackpad smoothing; deliberately not also grabbing a
+  // QScroller drag gesture here — that reinterprets a short left-button
+  // drag as a scroll, which would fight single-click-select on a grid whose
+  // whole point is being clicked.
+  grid_->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
   grid_->setContextMenuPolicy(Qt::CustomContextMenu);
   connect(grid_, &QListWidget::itemSelectionChanged, this, &LibraryWindow::SelectionChanged);
   connect(grid_, &QListWidget::customContextMenuRequested, this, &LibraryWindow::ShowContextMenu);
@@ -611,24 +700,45 @@ void LibraryWindow::RescanAndRefreshGames(bool force_scan) {
 }
 
 void LibraryWindow::RefreshGames() {
-  // No ?status= filter: the sidebar filters client-side over the whole
-  // library (see ApplyFilter), so this is the only fetch either way.
-  mira_gui::MiradClient::ListGamesAsync(this, [this](mira_gui::GamesResult result) {
-    if (!result.ok) {
+  // Two fetches, not one: mirad leaves a hidden-tagged game out of the bare
+  // list entirely (docs/api.md) — ?tag=hidden is the only call that
+  // returns it. Fetching both up front, rather than only on demand when
+  // the Hidden filter is picked, keeps games_ the single source of truth
+  // every filter reads from client-side (see ApplyFilter/MatchesFilter),
+  // so Ctrl+H is an instant filter-row switch rather than a round trip.
+  mira_gui::MiradClient::ListGamesAsync(this, [this](mira_gui::GamesResult visible) {
+    if (!visible.ok) {
       health_badge_->setToolTip(QString("mirad is reachable, but GET /v1/games failed: %1")
-                                    .arg(QString::fromStdString(result.error)));
+                                    .arg(QString::fromStdString(visible.error)));
       games_.clear();
       ApplyFilter();
       return;
     }
-    games_ = std::move(result.games);
-    ApplyFilter();
+    mira_gui::MiradClient::ListGamesAsync(
+        this,
+        [this, visible = std::move(visible)](mira_gui::GamesResult hidden) mutable {
+          games_ = std::move(visible.games);
+          // A failed second fetch just means the Hidden filter shows
+          // nothing this round — not worth failing the whole refresh over.
+          if (hidden.ok) {
+            for (mira_gui::GameSummary& game : hidden.games) games_.push_back(std::move(game));
+          }
+          ApplyFilter();
+        },
+        /*status_filter=*/std::string(), /*tag_filter=*/"hidden");
   });
 }
 
 QString LibraryWindow::CurrentFilterKey() const {
   auto* item = filters_->currentItem();
   return item ? item->data(Qt::UserRole).toString() : QString("all");
+}
+
+int LibraryWindow::FilterRow(const QString& key) const {
+  for (int row = 0; row < filters_->count(); ++row) {
+    if (filters_->item(row)->data(Qt::UserRole).toString() == key) return row;
+  }
+  return -1;
 }
 
 bool LibraryWindow::MatchesFilter(const mira_gui::GameSummary& game) const {
@@ -639,6 +749,10 @@ bool LibraryWindow::MatchesFilter(const mira_gui::GameSummary& game) const {
   }
 
   const QString filter = CurrentFilterKey();
+  if (filter == "hidden") return HasTag(game, "hidden");
+  // Every other filter excludes a hidden game — "not displayed by default"
+  // means not in "All games" either, not just off the initial screen.
+  if (HasTag(game, "hidden")) return false;
   if (filter == "all") return true;
   if (filter == "running") return running_ids_.contains(game.id);
   if (filter == "never") return !game.last_played_at.has_value();
@@ -777,6 +891,14 @@ void LibraryWindow::ShowContextMenu(const QPoint& pos) {
                                  : "Only applies to a game that still needs installing");
   QAction* refresh_metadata = menu.addAction("Refresh metadata && cover art");
   menu.addSeparator();
+  const mira_gui::GameSummary* current_game = FindGame(id);
+  const bool hidden = current_game != nullptr && HasTag(*current_game, "hidden");
+  QAction* toggle_hidden = menu.addAction(hidden ? "Unhide" : "Hide");
+  toggle_hidden->setToolTip(hidden
+                                ? "Show this game in the library again"
+                                : "Keep this game out of the library until you ask for it "
+                                  "(Ctrl+H, or the Hidden filter)");
+  menu.addSeparator();
   QAction* remove = menu.addAction("Remove from library…");
 
   QAction* chosen = menu.exec(grid_->viewport()->mapToGlobal(pos));
@@ -792,9 +914,50 @@ void LibraryWindow::ShowContextMenu(const QPoint& pos) {
     mira_gui::actions::FinishInstall(this, id, [this] { RefreshGames(); });
   } else if (chosen == refresh_metadata) {
     RefreshMetadata(id);
+  } else if (chosen == toggle_hidden) {
+    ToggleHidden(id);
   } else if (chosen == remove) {
     mira_gui::actions::Delete(this, id, name, [this] { RefreshGames(); });
   }
+}
+
+void LibraryWindow::ToggleHidden(const std::string& id) {
+  const mira_gui::GameSummary* game = FindGame(id);
+  if (game == nullptr) return;
+
+  std::vector<std::string> tags = game->tags;
+  const bool was_hidden = HasTag(*game, "hidden");
+  if (was_hidden) {
+    tags.erase(std::remove(tags.begin(), tags.end(), "hidden"), tags.end());
+  } else {
+    tags.push_back("hidden");
+  }
+
+  mira_gui::GamePatch patch;
+  patch.tags = tags;
+  mira_gui::MiradClient::PatchGameAsync(this, id, patch, [this, id, tags, was_hidden](mira_gui::PatchGameResult result) {
+    if (!result.ok) {
+      mira_gui::notify::Failed(this, "Could not change this game's visibility.",
+                               QString::fromStdString(result.error));
+      return;
+    }
+    // A game.updated event is also on its way from mirad and would patch
+    // games_ the same way, but not until the round trip completes — moving
+    // the tile immediately is what makes Hide/Unhide feel like a toggle
+    // rather than a request. No re-fetch needed: RefreshGames already
+    // pulls both the visible and the ?tag=hidden half into games_, so
+    // either direction just needs that one entry's tags corrected in
+    // place before ApplyFilter re-sorts it into (or out of) view.
+    for (mira_gui::GameSummary& stored : games_) {
+      if (stored.id == id) {
+        stored.tags = tags;
+        break;
+      }
+    }
+    ApplyFilter();
+    mira_gui::notify::Toast(this, mira_gui::notify::Level::Info,
+                            was_hidden ? "Game unhidden." : "Game hidden.");
+  });
 }
 
 void LibraryWindow::ToggleRunning(const std::string& id) {

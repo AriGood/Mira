@@ -26,10 +26,18 @@ HealthStatus GetHealthSync() {
   return status;
 }
 
-GamesResult GetGamesSync(const std::string& status_filter) {
+GamesResult GetGamesSync(const std::string& status_filter, const std::string& tag_filter) {
   GamesResult result;
-  const transport::Reply reply = transport::Get(
-      status_filter.empty() ? "/v1/games" : "/v1/games?status=" + status_filter);
+  std::string path = "/v1/games";
+  std::string separator = "?";
+  if (!status_filter.empty()) {
+    path += separator + "status=" + status_filter;
+    separator = "&";
+  }
+  if (!tag_filter.empty()) {
+    path += separator + "tag=" + tag_filter;
+  }
+  const transport::Reply reply = transport::Get(path);
   if (!reply.ok) {
     result.error = reply.error;
     return result;
@@ -120,6 +128,7 @@ PatchGameResult PatchGameSync(const std::string& id, const GamePatch& patch) {
   if (patch.working_dir) body["working_dir"] = *patch.working_dir;
   if (patch.runner_ref) body["runner_ref"] = *patch.runner_ref;
   if (patch.data_dir) body["data_dir"] = *patch.data_dir;
+  if (patch.tags) body["tags"] = *patch.tags;
 
   // Parsed client-side rather than left for the server to reject: a bad
   // JSON object here is a typing mistake, not something worth a round trip
@@ -301,6 +310,7 @@ FrontendPrefsResult GetFrontendPrefsSync() {
   read_bool("scan_on_startup", result.prefs.scan_on_startup);
   read_string("notifications", result.prefs.notifications);
   read_int("notification_timeout_s", result.prefs.notification_timeout_s);
+  read_bool("toolbar_pinned", result.prefs.toolbar_pinned);
   return result;
 }
 
@@ -319,6 +329,7 @@ PatchConfigResult SaveFrontendPrefsSync(const FrontendPrefs& prefs) {
   if (prefs.notification_timeout_s) {
     table["notification_timeout_s"] = *prefs.notification_timeout_s;
   }
+  if (prefs.toolbar_pinned) table["toolbar_pinned"] = *prefs.toolbar_pinned;
 
   // Short, because SaveFrontendPrefsBlocking runs this on the UI thread
   // while a window is closing.
@@ -434,8 +445,9 @@ void MiradClient::CheckHealthAsync(QObject* context, std::function<void(HealthSt
 }
 
 void MiradClient::ListGamesAsync(QObject* context, std::function<void(GamesResult)> callback,
-                                 const std::string& status_filter) {
-  async::Run(context, [status_filter] { return GetGamesSync(status_filter); }, std::move(callback));
+                                 const std::string& status_filter, const std::string& tag_filter) {
+  async::Run(context, [status_filter, tag_filter] { return GetGamesSync(status_filter, tag_filter); },
+             std::move(callback));
 }
 
 void MiradClient::DeleteGameAsync(QObject* context, const std::string& id, bool delete_files,

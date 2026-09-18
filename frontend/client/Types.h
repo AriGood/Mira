@@ -33,6 +33,10 @@ struct GameSummary {
   double confidence = 0.0;
   std::optional<std::int64_t> last_played_at;
   std::int64_t play_seconds = 0;
+  // Free-form, user-assigned (docs/api.md). "hidden" is the one convention
+  // the frontend treats specially: excluded from the library by default,
+  // shown only by the Hidden filter (Ctrl+H).
+  std::vector<std::string> tags;
 };
 
 struct GamesResult {
@@ -167,6 +171,7 @@ struct GameDetail {
   std::string runner_config_json;
   std::string env_json;
   std::vector<Candidate> candidates;
+  std::vector<std::string> tags;
 };
 
 struct GameDetailResult {
@@ -187,6 +192,9 @@ struct GamePatch {
   // Raw JSON text (must parse to an object) — see GameDetail's comment.
   std::optional<std::string> runner_config_json;
   std::optional<std::string> env_json;
+  // Replaces the whole set (docs/api.md) — there's no per-entry merge for a
+  // plain list the way env's null-removes-a-key convention gives it one.
+  std::optional<std::vector<std::string>> tags;
 };
 
 struct PatchGameResult {
@@ -391,6 +399,10 @@ struct FrontendPrefs {
   // Seconds a notification stays up; 0 means until dismissed, which is the
   // default. See notify::SetTimeoutSeconds.
   std::optional<int> notification_timeout_s;
+  // The sort/zoom row above the grid. Off by default — see BuildGrid — and
+  // held down with Alt while it's off; this remembers a user who pinned it
+  // open instead.
+  std::optional<bool> toolbar_pinned;
 };
 
 struct FrontendPrefsResult {
