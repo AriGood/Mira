@@ -15,14 +15,13 @@ constexpr char kService[] = "org.freedesktop.Notifications";
 constexpr char kPath[] = "/org/freedesktop/Notifications";
 
 // Matches packaging/mira.desktop's basename. The desktop-entry hint is what
-// lets Plasma show Mira's own name and icon on the notification, and what
-// puts Mira in the per-application notification settings — without it every
-// message arrives from an unnamed application.
+// lets the shell show Mira's own name and icon, and lists it in
+// per-application notification settings.
 constexpr char kDesktopEntry[] = "mira";
 
-// 0 low, 1 normal, 2 critical, per the freedesktop notification spec. A
-// critical notification is not dismissed on a timeout by most shells, which
-// is right for an error and wrong for everything else.
+// 0 low, 1 normal, 2 critical, per the freedesktop notification spec. Most
+// shells don't dismiss critical on a timeout — right for an error, wrong
+// for everything else.
 uchar UrgencyFor(Level level) {
   switch (level) {
     case Level::Error: return 2;
@@ -33,9 +32,8 @@ uchar UrgencyFor(Level level) {
   return 0;
 }
 
-// The spec's expire_timeout: milliseconds, or 0 for "never expire, the
-// user must dismiss it". Which is exactly what CurrentTimeoutSeconds() == 0
-// means, so the two agree without translation.
+// The spec's expire_timeout: milliseconds, or 0 for "never expire", which
+// is exactly what CurrentTimeoutSeconds() == 0 means.
 int ExpireTimeoutMs() { return CurrentTimeoutSeconds() * 1000; }
 
 QDBusInterface& Interface() {
@@ -68,14 +66,12 @@ bool Send(Level level, const QString& text) {
 
   QVariantMap hints;
   hints["urgency"] = QVariant::fromValue(UrgencyFor(level));
-  // Only when the entry is actually installed. Pointing the shell at a
-  // desktop file that isn't there buys nothing and, on a portal-managed
-  // desktop, is the same claim that produces the app-id warning above.
+  // Only when the entry is actually installed — pointing the shell at a
+  // desktop file that isn't there buys nothing.
   if (DesktopEntryInstalled()) hints["desktop-entry"] = QString(kDesktopEntry);
 
-  // The summary is the app, the body is the message. Splitting them the
-  // other way around would put a sentence in bold and leave the body empty,
-  // which is how a notification ends up unreadable at a glance.
+  // Summary is the app, body is the message — the other way round leaves
+  // the body empty and a sentence in bold.
   const QDBusReply<uint> reply =
       Interface().call("Notify", QString("Mira"), 0U, QString(kDesktopEntry), QString("Mira"), text,
                        QStringList(), hints, ExpireTimeoutMs());

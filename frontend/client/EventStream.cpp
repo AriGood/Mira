@@ -44,8 +44,8 @@ SseEvent ParseBlock(const std::string& block) {
 
 EventStream::EventStream() : state_(std::make_shared<State>()) {}
 
-// Tells the background thread to stop. It may not notice immediately — it can
-// be parked inside a Get() waiting for the next event — but it can no longer
+// Tells the background thread to stop. It may not notice immediately (it can
+// be parked inside a Get() waiting for the next event) but it can no longer
 // reach the window that owned it either way (see async::Deliver), so a
 // lingering thread is now just idle, not dangerous.
 EventStream::~EventStream() { state_->stopped.store(true); }
@@ -70,9 +70,8 @@ void EventStream::Start(QObject* context,
           "/v1/events", headers,
           [](const httplib::Response& response) { return response.status == 200; },
           [&](const char* data, size_t length) {
-            // Returning false aborts the Get, which is how a stopped stream
-            // gets out of a connection that is otherwise happy to block for
-            // a year waiting on the next event.
+            // Returning false aborts the Get, giving an exit path to a stopped
+            // stream that would otherwise block for a year waiting on the next event.
             if (state->stopped.load()) return false;
 
             buffer.append(data, length);

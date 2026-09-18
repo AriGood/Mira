@@ -18,11 +18,10 @@ class ArtworkStore;
 // The side panel a selected game fills in: cover, name, status, the
 // play/stop button, and its metadata.
 //
-// Split out of LibraryWindow because it is the one part of that window with
-// state of its own to keep straight — which game it last fetched a path for,
-// so that rebuilding the grid on every keystroke doesn't re-issue the
-// request or flicker the field. It reports what the user asked for and lets
-// the window decide what that means.
+// Split out of LibraryWindow because it holds state of its own — which
+// game it last fetched a path for, so rebuilding the grid on every
+// keystroke doesn't re-issue the request or flicker the field. Reports
+// what the user asked for and lets the window decide what that means.
 class GameDetailsPanel : public QWidget {
   Q_OBJECT
 

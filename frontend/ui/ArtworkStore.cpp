@@ -14,11 +14,9 @@ QString ScaleKey(const QString& id, QSize tile) {
   return QString("%1@%2").arg(id).arg(tile.width());
 }
 
-// Real artwork is whatever aspect ratio the source happened to use — Steam's
-// CDN library capsules are 2:3, SteamGridDB's are not always. The tile is
-// 2:3, so the image is scaled to cover and centre-cropped rather than
-// letterboxed: a band of background around a cover reads as a broken image,
-// while a cropped edge reads as a cover.
+// Real artwork isn't always 2:3 like the tile, so it's scaled to cover and
+// centre-cropped rather than letterboxed — a cropped edge reads as a cover,
+// a background band reads as a broken image.
 QPixmap FitToTile(const QPixmap& source, QSize tile, qreal device_pixel_ratio) {
   const QSize target = tile * device_pixel_ratio;
   const QPixmap filled =
@@ -56,8 +54,7 @@ QPixmap ArtworkStore::Cover(const GameSummary& game, QSize tile, qreal device_pi
   if (const auto art = original_.constFind(id); art != original_.constEnd()) {
     cover = FitToTile(*art, tile, device_pixel_ratio);
   } else {
-    // The placeholder is keyed on the id, not the name, so it survives a
-    // rename and can be learned by sight — see CoverArt.h.
+    // Keyed on the id, not the name, so it survives a rename.
     cover = PlaceholderCover(QString::fromStdString(game.name), id,
                              QSize(tile.width() - 10, tile.height() - 10), device_pixel_ratio);
   }
@@ -78,9 +75,8 @@ void ArtworkStore::Invalidate(const std::string& id) {
 }
 
 void ArtworkStore::InvalidateRendering(const std::string& id) {
-  // Every scaled copy of this game, not just the one at the current tile
-  // size: the zoom slider leaves entries behind at every size it passed
-  // through, and a stale one would come back the moment it returned there.
+  // Every scaled copy, not just the current tile size — the zoom slider
+  // leaves entries behind at every size it passed through.
   const QString prefix = QString::fromStdString(id) + "@";
   for (auto it = scaled_.begin(); it != scaled_.end();) {
     it = it.key().startsWith(prefix) ? scaled_.erase(it) : std::next(it);
@@ -101,18 +97,15 @@ void ArtworkStore::Pump() {
     MiradClient::GetArtworkAsync(this, id.toStdString(), [this, id](ArtworkResult result) {
       --in_flight_;
       queued_.remove(id);
-      // Answered covers all three outcomes on purpose. A 404 means "nothing
-      // cached", and re-asking on every repaint would turn an empty library
-      // into a request loop; an unreachable daemon is no different, because
-      // the reconnect will re-fetch the library and that is when to try
-      // again. Only Invalidate reopens the question.
+      // Answered covers all three outcomes on purpose — re-asking on every
+      // repaint would turn an empty library into a request loop. Only
+      // Invalidate reopens the question.
       answered_.insert(id);
 
       if (result.ok) {
         QPixmap art;
-        // Loaded from bytes rather than a path: the image lives in mirad's
-        // own cache directory, which the frontend has no business knowing
-        // the layout of (docs/api.md serves it for exactly this reason).
+        // Loaded from bytes, not a path — the image lives in mirad's own
+        // cache directory, which the frontend has no business knowing.
         if (art.loadFromData(reinterpret_cast<const uchar*>(result.bytes.data()),
                              static_cast<uint>(result.bytes.size()))) {
           original_.insert(id, art);

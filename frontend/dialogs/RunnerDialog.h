@@ -13,17 +13,13 @@ class QLabel;
 class QPushButton;
 class QTreeWidget;
 
-// Runner management: what's installed (`GET /v1/runners`) and what's
-// available to install (`GET /v1/runners/catalog`), with a Download button
-// for the latter.
+// Runner management: what's installed and what's available to install,
+// with a Download button for the latter.
 //
-// Holds its own EventStream because a download is the one thing in the
-// frontend that finishes on the daemon's schedule rather than the
-// request's: `POST /v1/runners/download` returns 202 as soon as it starts,
-// and the outcome arrives later as `runners.download.finished`/`.failed`
-// (a build can be 500+ MB and there is no job queue yet — docs/api.md). A
-// dialog that closed before then would simply miss it, which is why the
-// list refreshes itself on the event rather than on the reply.
+// Holds its own EventStream because a download finishes on the daemon's
+// schedule, not the request's — the download call returns 202 immediately,
+// and the outcome arrives later as `runners.download.finished`/`.failed`.
+// The list refreshes on that event, not on the reply.
 class RunnerDialog : public QDialog {
   Q_OBJECT
 

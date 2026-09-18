@@ -12,15 +12,10 @@ int main(int argc, char** argv) {
   QApplication app(argc, argv);
   QApplication::setApplicationName("Mira");
   QApplication::setOrganizationName("mira");
-  // Matches packaging/mira.desktop, which is how a Wayland compositor and
-  // the notification service both work out which application this is — it
-  // is what puts Mira's own name and icon on a desktop notification rather
-  // than a generic one.
-  //
-  // Only when that file is actually installed: claiming an app id nothing
-  // can resolve makes xdg-desktop-portal log "Could not register app ID:
-  // App info not found for 'mira'" on every start, which is exactly what
-  // running from a build tree does.
+  // Matches packaging/mira.desktop, which is how the compositor and the
+  // notification service work out which application this is. Only when
+  // that file is actually installed — claiming an unresolvable app id
+  // makes xdg-desktop-portal log a warning on every start.
   if (mira_gui::notify::system_notifier::DesktopEntryInstalled()) {
     QGuiApplication::setDesktopFileName("mira");
   }
@@ -31,19 +26,17 @@ int main(int argc, char** argv) {
   }
   QApplication::setWindowIcon(icon);
 
-  // LibraryWindow (the cover grid) is the primary UI; MainWindow (the table)
-  // is kept as a working fallback rather than deleted — it shows every field
-  // at once, which is what you want when auditing a fresh scan. `--classic`
-  // starts straight in it; the grid's View menu opens it alongside.
-  // Deliberately not QCommandLineParser: one flag doesn't justify it, and
-  // parsing it this way leaves Qt's own arguments (-style, -platform) alone.
+  // LibraryWindow (the cover grid) is primary; MainWindow (the table) is
+  // kept as a fallback for auditing a fresh scan. `--classic` starts
+  // straight in it. Not QCommandLineParser: one flag doesn't justify it,
+  // and this leaves Qt's own arguments (-style, -platform) alone.
   const bool classic = QApplication::arguments().contains("--classic");
 
   QMainWindow* window = classic ? static_cast<QMainWindow*>(new MainWindow())
                                 : static_cast<QMainWindow*>(new LibraryWindow());
   window->setAttribute(Qt::WA_DeleteOnClose);
-  // A no-op on a desktop with no tray (Tray.cpp) — window->close() then
-  // means exactly what it always did.
+  // A no-op on a desktop with no tray — window->close() then means
+  // exactly what it always did.
   mira_gui::tray::Attach(window);
   window->show();
   return QApplication::exec();

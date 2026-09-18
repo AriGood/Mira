@@ -16,8 +16,8 @@ class QPushButton;
 class QTableWidget;
 
 // The frontend's entry point window. Proves mira-gui can reach mirad over
-// its REST API (docs/api.md) without linking mira_core, and shows the game
-// library it returns.
+// its REST API without linking mira_core, and shows the game library it
+// returns.
 class MainWindow : public QMainWindow {
   Q_OBJECT
 
@@ -36,9 +36,9 @@ private:
   void OpenGameDetail(int row, int column);
   void OpenSettings();
 
-  // Applies one event from event_stream_ directly to the table (docs/api.md:
-  // game.added/game.updated carry the full record, game.removed just the
-  // id), instead of re-fetching the whole list on every change.
+  // Applies one event from event_stream_ directly to the table (added/
+  // updated carry the full record, removed just the id), instead of
+  // re-fetching the whole list on every change.
   void HandleGameEvent(const std::string& type, const std::string& data);
   int FindRow(const std::string& id) const;
   void PopulateRow(int row, const mira_gui::GameSummary& game);
@@ -51,9 +51,8 @@ private:
   QPushButton* refresh_button_;
   QTableWidget* games_table_;
   QLabel* connection_footer_;
-  // Client-side only — derived from game.state events, not any GET response
-  // (docs/api.md: a game's persisted status is never "running"). Consulted
-  // by PopulateRow to decide each row's Launch/Stop button.
+  // Client-side only — derived from game.state events, not any GET response.
+  // Consulted by PopulateRow to decide each row's Launch/Stop button.
   std::set<std::string> running_ids_;
   // Whether RefreshGames() has ever completed successfully.
   bool loaded_ = false;

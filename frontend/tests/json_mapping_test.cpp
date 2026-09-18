@@ -8,10 +8,9 @@
 using nlohmann::json;
 using namespace mira_gui;
 
-// These cover the frontend's half of the contract in docs/api.md: what the
-// UI believes each field means. A mismatch here is the kind of bug that
-// shows up as a blank column rather than an error, so the interesting cases
-// are the absent and the wrongly-typed ones, not the happy path.
+// These cover what the UI believes each field means. A mismatch here shows
+// up as a blank column rather than an error, so the interesting cases are
+// the absent and wrongly-typed ones, not the happy path.
 
 TEST_CASE("ToGameSummary reads the fields a library row shows") {
   const json entry = json::parse(R"({
@@ -36,9 +35,8 @@ TEST_CASE("ToGameSummary reads the fields a library row shows") {
 
 TEST_CASE("ToGameSummary tolerates a record missing every optional field") {
   // mirad omits nothing today, but a summary is also built from an SSE
-  // payload (ParseGameSummary), and an older daemon or a future trimmed
-  // event must not produce garbage — every absent field falls back rather
-  // than throwing.
+  // payload, and a trimmed event must not produce garbage — every absent
+  // field falls back rather than throwing.
   const GameSummary game = mapping::ToGameSummary(json::parse(R"({"id": "x"})"));
   CHECK(game.id == "x");
   CHECK(game.name.empty());
@@ -50,10 +48,9 @@ TEST_CASE("ToGameSummary tolerates a record missing every optional field") {
 }
 
 TEST_CASE("ToGameSummary treats a null last_played_at as never played") {
-  // The distinction the UI actually renders: mirad sends null (not a
-  // missing key, not 0) for a game that has never run, and "Never" has to
-  // survive that. A 0 would be a real timestamp — 1970 — so these must not
-  // collapse into each other.
+  // mirad sends null (not a missing key, not 0) for never played, and
+  // "Never" has to survive that. A 0 is a real timestamp — 1970 — so these
+  // must not collapse into each other.
   const GameSummary never =
       mapping::ToGameSummary(json::parse(R"({"id": "x", "last_played_at": null})"));
   CHECK_FALSE(never.last_played_at.has_value());
@@ -167,9 +164,9 @@ TEST_CASE("FlattenConfig produces the dotted keys the schema uses") {
 }
 
 TEST_CASE("FlattenConfig skips the opaque frontend table") {
-  // settings.toml's [frontend] is passthrough storage the backend never
-  // validates (docs/architecture.md); showing it in a schema-generated
-  // settings screen would offer edits no schema entry describes.
+  // [frontend] is passthrough storage the backend never validates; showing
+  // it in a schema-generated settings screen would offer edits no schema
+  // entry describes.
   std::map<std::string, std::string> out;
   mapping::FlattenConfig(json::parse(R"({
     "auto_setup": true,

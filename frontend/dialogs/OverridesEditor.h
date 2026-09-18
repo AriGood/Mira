@@ -16,16 +16,13 @@ class QPushButton;
 namespace mira_gui {
 
 // The "just for this game" half of GameDetailDialog: every overridable
-// setting (GET /v1/games/{id}/config), resolved through
-// default -> settings.toml -> this game, editable the same way
-// SettingsDialog edits the global value, plus a Clear that drops back to the
-// layer underneath.
+// setting, resolved through default -> settings.toml -> this game, editable
+// the same way SettingsDialog edits the global value, plus a Clear that
+// drops back to the layer underneath.
 //
-// Its own widget because it is a self-contained conversation with a
-// different endpoint than the dialog around it: the dialog saves fields via
-// PATCH /v1/games/{id}, this saves keys via PATCH /v1/games/{id}/config, and
-// neither needs to know how the other is spelled. The dialog only asks it
-// what changed.
+// Its own widget because it talks to a different endpoint than the dialog
+// around it: the dialog saves fields via PATCH .../games/{id}, this saves
+// keys via PATCH .../games/{id}/config. The dialog only asks it what changed.
 class OverridesEditor : public QWidget {
   Q_OBJECT
 

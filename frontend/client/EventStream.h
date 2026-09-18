@@ -9,16 +9,13 @@
 
 namespace mira_gui {
 
-// A long-lived connection to GET /v1/events (docs/api.md), which streams
-// Server-Sent Events for `game.added`/`game.updated`/`game.removed`/
-// `game.state` as the daemon does its work. `mira watch` (src/cli/main.cpp)
-// is the reference client this mirrors: a streaming GET split on blank
-// lines.
-//
-// Unlike MiradClient's one-shot calls this holds state — the last event id,
-// for replay across reconnects — and its background thread runs for as long
-// as the connection keeps getting reconnected, so it is an instance rather
-// than a static call.
+// Long-lived connection to GET /v1/events, streaming Server-Sent Events as
+// the daemon does its work. Mirrors `mira watch` (src/cli/main.cpp), a streaming
+// GET split on blank lines.
+// 
+// Holds state, with the last event id for replay across reconnects. Background
+// thread runs for as long as the connection continues reconnecting, so it is
+// an instance rather than a static call.
 class EventStream {
 public:
   EventStream();
@@ -26,16 +23,11 @@ public:
   EventStream(const EventStream&) = delete;
   EventStream& operator=(const EventStream&) = delete;
 
-  // Starts (or restarts) the background connection. Delivers each event's
-  // type and raw JSON data on the main thread. Reconnects with a fixed
-  // backoff on any drop — mirad itself may restart independently of the
-  // frontend — replaying via Last-Event-ID so a reconnect doesn't miss
-  // events still in mirad's 500-event buffer.
-  //
-  // Destroying the stream stops it. It used to be left running forever on
-  // the theory that the process has exactly one window for its whole
-  // lifetime, which stopped being true the moment a second window could be
-  // opened, and was never safe anyway — see async::Deliver.
+  // Starts or restarts the background connection. Delivers on the main thread
+  // each event's type and raw JSON data. On drop, reconnects with fixed backoff
+  // since mirad may restart independently, replaying via Last-Event-ID so a
+  // reconnect doesn't miss events still in mirad's 500-event buffer. Stream stops
+  // on destruction.
   void Start(QObject* context, std::function<void(std::string type, std::string data)> on_event);
 
 private:

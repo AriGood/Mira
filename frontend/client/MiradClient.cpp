@@ -70,10 +70,7 @@ DeleteResult DeleteGameSync(const std::string& id, bool delete_files, bool delet
 LaunchResult LaunchGameSync(const std::string& id) {
   const transport::Reply reply = transport::Post("/v1/games/" + id + "/launch");
   // mirad answers `tracked` directly (docs/api.md): whether game.state
-  // events are coming for this launch. Defaulting to true for a body
-  // without it keeps an older daemon behaving as it did — every launch it
-  // reported was tracked except the Steam one, which is what the status
-  // string used to be read for.
+  // events are coming for this launch.
   const bool tracked = !reply.body.is_object() ||
                        reply.body.value("tracked",
                                         reply.body.value("status", std::string()) !=
@@ -130,9 +127,6 @@ PatchGameResult PatchGameSync(const std::string& id, const GamePatch& patch) {
   if (patch.data_dir) body["data_dir"] = *patch.data_dir;
   if (patch.tags) body["tags"] = *patch.tags;
 
-  // Parsed client-side rather than left for the server to reject: a bad
-  // JSON object here is a typing mistake, not something worth a round trip
-  // to discover.
   const auto parse_object = [&](const std::string& text, const char* field,
                                 const char* message) -> bool {
     const json parsed = json::parse(text, nullptr, false);
@@ -264,9 +258,7 @@ GameConfigResult GetGameConfigSync(const std::string& id) {
   }
 
   result.ok = true;
-  // Schema::Entries() order (Server.cpp's EffectiveDocument iterates it
-  // directly), so this comes out in the same stable order GET
-  // /v1/config/schema does — useful for a caller joining the two by key.
+  // Schema::Entries() order.
   for (const auto& [key, entry] : reply.body.items()) {
     GameConfigEntry e;
     e.key = key;
@@ -287,9 +279,8 @@ FrontendPrefsResult GetFrontendPrefsSync() {
   }
 
   result.ok = true;
-  // Absent, or present but the wrong kind after a hand-edit: either way the
-  // frontend falls back to its built-in defaults rather than refusing to
-  // start. Nothing here is important enough to fail over.
+  // Frontend falls back to defaults rather than refusing to start on absense
+  // or wrong kind after a hand-edit.
   const json table = reply.body.value("frontend", json::object());
   if (!table.is_object()) return result;
 
@@ -593,9 +584,7 @@ bool MiradClient::ParseGameSummary(const std::string& data, GameSummary* out) {
   const json entry = json::parse(data, nullptr, false);
   if (entry.is_discarded() || !entry.is_object()) return false;
   // An id is what makes this a game record. Without this check any JSON
-  // object at all parsed as a game with every field empty — a
-  // runners.download.started payload did exactly that, and the library grew
-  // a blank tile every time a runner was downloaded.
+  // object at all parsed as a game with every field empty.
   if (!entry.contains("id") || !entry["id"].is_string() || entry["id"].get<std::string>().empty()) {
     return false;
   }

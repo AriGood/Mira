@@ -18,22 +18,18 @@ namespace mira_gui {
 // generated placeholder when it doesn't, and one place that knows which is
 // which.
 //
-// `GET /v1/games/{id}/artwork` is per game and answers 404 for anything
-// never fetched, so a library of any size is a burst of requests where most
-// come back empty. Three rules keep that from being the frontend's problem:
+// The per-game artwork fetch answers 404 for anything never fetched, so a
+// library of any size is a burst of requests where most come back empty.
+// Three rules keep that from being the frontend's problem:
 //
-//  - **Ask once.** An id that has answered, either way, is never asked
-//    again until something invalidates it — a `game.metadata_ready` event,
-//    or an explicit refresh.
+//  - **Ask once.** An id that has answered, either way, isn't asked again
+//    until something invalidates it.
 //  - **At most `kMaxInFlight` at a time.** Every request is a thread and a
-//    socket (client/Async.h), and a 500-game library would otherwise open
-//    500 of both the moment the window appears.
-//  - **Keep the original, scale on demand.** The zoom slider changes the
-//    tile size constantly; re-decoding a JPEG per step would be visible,
-//    and re-fetching it would be absurd.
+//    socket; a 500-game library would otherwise open 500 of both at once.
+//  - **Keep the original, scale on demand.** The zoom slider changes tile
+//    size constantly; re-decoding or re-fetching per step would be absurd.
 //
-// Everything here is main-thread only, which is where the client delivers
-// its results anyway.
+// Everything here is main-thread only.
 class ArtworkStore : public QObject {
   Q_OBJECT
 
