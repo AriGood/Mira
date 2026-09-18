@@ -138,6 +138,20 @@ void ApplyCommandWrappers(Command& command, const std::vector<std::string>& wrap
   }
 }
 
+// Same check GET /v1/games/{id}/artwork's default "cover" slot uses to
+// decide between serving a file and 404ing — reused here so "missing
+// artwork" means the same thing to both endpoints.
+bool HasCachedArtwork(const config::Config& config, const std::string& id) {
+  const std::filesystem::path metadata_file = metadata::MetadataFile(config, id);
+  std::ifstream meta_in(metadata_file);
+  if (!meta_in) return false;
+  const json info = json::parse(meta_in, nullptr, false);
+  if (info.is_discarded() || !info.contains("artwork")) return false;
+  const std::filesystem::path file =
+      metadata::ArtworkDir(config, id) / info["artwork"].value("file", std::string());
+  return std::ifstream(file, std::ios::binary).good();
+}
+
 void SyncDesktopEntries(config::Config& config, store::GameStore& games) {
   if (auto synced = desktop::DesktopEntries(config).Sync(games.All()); !synced) {
     log::Warn("could not update application menu entries: {}", synced.error().message);
@@ -230,11 +244,14 @@ void Server::RegisterRoutes() {
           {"default", entry.default_value},
           {"tier", config::ToString(entry.tier)},
           {"doc", entry.doc},
+          {"category", entry.category},
       });
       // Present only when there's a shape to describe.
       if (!entry.constraint.one_of.empty()) entries.back()["one_of"] = entry.constraint.one_of;
       if (entry.constraint.minimum) entries.back()["minimum"] = *entry.constraint.minimum;
       if (entry.constraint.maximum) entries.back()["maximum"] = *entry.constraint.maximum;
+      if (entry.is_secret) entries.back()["is_secret"] = true;
+      if (entry.is_runner_ref) entries.back()["is_runner_ref"] = true;
     }
     SendJson(res, std::move(entries));
   });
@@ -458,7 +475,7 @@ void Server::RegisterRoutes() {
     auto command = resolved->runner->BuildCommand(*game, resolved->build);
     if (!command) return SendError(res, 400, command.error().code, command.error().message);
 
-    ApplyCommandWrappers(*command, config_.GetStringArray("command_wrappers"));
+    ApplyCommandWrappers(*command, resolver.GetStringArray("command_wrappers"));
 
     if (auto launched = supervisor_.Launch(*game, *command, post_script); !launched) {
       return SendError(res, 409, launched.error().code, launched.error().message);
@@ -526,7 +543,8 @@ void Server::RegisterRoutes() {
 
     auto command = resolved->runner->BuildCommand(run_as, resolved->build);
     if (!command) return SendError(res, 400, command.error().code, command.error().message);
-    ApplyCommandWrappers(*command, config_.GetStringArray("command_wrappers"));
+    const config::Resolver resolver(config_, game->overrides);
+    ApplyCommandWrappers(*command, resolver.GetStringArray("command_wrappers"));
 
     if (auto launched = supervisor_.Launch(*game, *command); !launched) {
       return SendError(res, 409, launched.error().code, launched.error().message);
@@ -669,6 +687,20 @@ void Server::RegisterRoutes() {
     const bool announce = req.get_param_value("announce") == "1";
     metadata_fetches_.Enqueue(config_, events_, *game, /*force=*/true, announce);
     SendJson(res, {{"status", "fetching"}}, 202);
+  });
+
+  // Bulk version of the above: enqueues a fetch for every game with no
+  // cached cover art yet, in one request — a caller wanting to backfill the
+  // whole library used to have to loop over it and fire one POST
+  // .../metadata/refresh per game itself.
+  http_->Post("/v1/games/metadata/refresh-missing", [this](const Request&, Response& res) {
+    std::size_t count = 0;
+    for (const model::Game& game : games_.All()) {
+      if (HasCachedArtwork(config_, game.id)) continue;
+      metadata_fetches_.Enqueue(config_, events_, game, /*force=*/true);
+      ++count;
+    }
+    SendJson(res, {{"status", "fetching"}, {"count", count}}, 202);
   });
 
   // --- runners --------------------------------------------------------------

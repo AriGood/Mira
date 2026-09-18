@@ -43,6 +43,29 @@ struct Entry {
   Tier tier;
   std::string doc;
   Constraint constraint = {};  // optional
+
+  // UI hints the schema itself can carry, so a settings screen doesn't need
+  // its own hardcoded list of "which keys are secrets/runner refs/what group
+  // they're in" — filled in by Schema's constructor, not written per entry
+  // above (category defaults from the dotted prefix; is_secret/is_runner_ref
+  // default false and are set for the handful of keys that need them).
+  bool is_secret = false;
+  bool is_runner_ref = false;
+  std::string category;
+
+  // A real constructor rather than relying on aggregate init: the fields
+  // above are filled in after the fact by Schema's constructor, and letting
+  // every one of entries_'s ~30 brace-init entries stay a plain 5/6-argument
+  // list (rather than growing a trailing run of {false, false, ""} on each)
+  // needs Entry to no longer be a plain aggregate.
+  Entry(std::string key, Type type, nlohmann::json default_value, Tier tier, std::string doc,
+        Constraint constraint = {})
+      : key(std::move(key)),
+        type(type),
+        default_value(std::move(default_value)),
+        tier(tier),
+        doc(std::move(doc)),
+        constraint(std::move(constraint)) {}
 };
 
 // Every configurable value in the daemon is declared here exactly once. The

@@ -90,6 +90,13 @@ struct MetadataRefreshResult {
   std::string error;
 };
 
+// POST /v1/games/metadata/refresh-missing. `count` is how many were enqueued.
+struct RefreshMissingArtworkResult {
+  bool ok = false;
+  std::string error;
+  int count = 0;
+};
+
 // A game.metadata_ready / game.metadata_failed payload, trimmed to what the
 // UI acts on.
 struct MetadataEvent {
@@ -194,6 +201,9 @@ struct ConfigSchemaEntry {
   std::string tier;
   std::string doc;
   std::string default_display;
+  std::string category;        // UI grouping; always present
+  bool is_secret = false;      // mask this value's field
+  bool is_runner_ref = false;  // offer a runner picker (GET /v1/runners) instead of free text
 };
 
 struct ConfigSchemaResult {

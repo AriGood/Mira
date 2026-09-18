@@ -1,7 +1,10 @@
 #include "config/Schema.h"
 
 #include <algorithm>
+#include <cctype>
 #include <format>
+#include <map>
+#include <string_view>
 
 #include "config/KnownExePatterns.h"
 #include "config/RunnerSources.h"
@@ -63,6 +66,46 @@ Validator NonEmptyString() {
     if (value.get<std::string>().empty()) return "must not be empty";
     return std::nullopt;
   };
+}
+
+// UI grouping for a settings screen. A handful of keys are named explicitly
+// because their dotted prefix alone would land them somewhere confusing (a
+// runner reference split from "Runners", the artwork/store-info feature
+// split across a "Metadata" and a "Steamgriddb" group); everything else
+// falls back to a guess from its own dotted prefix, or "General" with none.
+// This used to live in the frontend (SettingsCategories.cpp) with no way for
+// the schema itself to say which group a key belonged in — moved here so
+// GET /v1/config/schema can just say it.
+std::string CategoryFor(std::string_view key) {
+  static const std::map<std::string_view, std::string_view> kOverrides = {
+      {"library_roots", "Library"},        {"prefix_root", "Library"},
+      {"prefix_provider", "Library"},      {"prefix_template", "Library"},
+      {"auto_setup", "Library"},           {"open_config_on_add", "Library"},
+      {"command_wrappers", "Library"},     {"default_runner.windows", "Runners"},
+      {"default_runner.native", "Runners"}, {"runner_search_paths", "Runners"},
+      {"wine_search_paths", "Runners"},    {"socket_path", "Advanced"},
+      {"log.level", "Advanced"},           {"events.sse_keepalive_s", "Advanced"},
+      {"library.remove_missing", "Library"},
+      {"metadata.enabled", "Metadata"},
+      {"steamgriddb.api_key", "Metadata"},
+  };
+  if (const auto it = kOverrides.find(key); it != kOverrides.end()) return std::string(it->second);
+
+  const size_t dot = key.find('.');
+  if (dot == std::string_view::npos) return "General";
+  const std::string_view prefix = key.substr(0, dot);
+  if (prefix == "detect") return "Detection";
+  if (prefix == "scan") return "Scanning";
+  if (prefix == "default_runner") return "Runners";
+  if (prefix == "log" || prefix == "events") return "Advanced";
+  if (prefix == "launch") return "Launching";
+  if (prefix == "desktop_entries") return "Desktop Entries";
+  if (prefix == "library") return "Library";
+
+  std::string label(prefix);
+  std::ranges::replace(label, '_', ' ');
+  if (!label.empty()) label.front() = static_cast<char>(std::toupper(static_cast<unsigned char>(label.front())));
+  return label;
 }
 
 }  // namespace
@@ -306,6 +349,21 @@ Schema::Schema() {
        "socket does not need them and a timer would cost idle wakeups.",
        Range(0, 3600)},
   };
+
+  for (Entry& entry : entries_) {
+    entry.category = CategoryFor(entry.key);
+  }
+  // The schema type alone can't say "this string is a credential" or "this
+  // string is a runner reference the UI could offer a picker for" — named
+  // here instead of guessed at.
+  if (const auto it = std::ranges::find(entries_, "steamgriddb.api_key", &Entry::key);
+      it != entries_.end()) {
+    it->is_secret = true;
+  }
+  if (const auto it = std::ranges::find(entries_, "default_runner.windows", &Entry::key);
+      it != entries_.end()) {
+    it->is_runner_ref = true;
+  }
 }
 
 const Schema& Schema::Instance() {

@@ -214,6 +214,15 @@ void GameDetailDialog::Populate(const mira_gui::GameDetail& game) {
   // Load() can land in either order with the same result.
   runner_combo_->setEditText(QString::fromStdString(game.runner_ref));
   runner_combo_->lineEdit()->setCursorPosition(0);
+
+  original_patch_.name = game.name;
+  original_patch_.exe_path = game.exe_path;
+  original_patch_.args = game.args;
+  original_patch_.working_dir = game.working_dir;
+  original_patch_.runner_ref = game.runner_ref;
+  original_patch_.data_dir = game.data_dir;
+  original_patch_.runner_config_json = game.runner_config_json;
+  original_patch_.env_json = game.env_json;
 }
 
 void GameDetailDialog::PopulateExeCombo(
@@ -312,12 +321,17 @@ void GameDetailDialog::Save() {
     }
     mira_gui::MiradClient::PatchGameConfigAsync(
         this, id_, override_edits, [this](mira_gui::PatchGameConfigResult override_result) {
-          setEnabled(true);
           if (!override_result.ok) {
-            mira_gui::notify::Failed(this, "Could not save this game's overrides.",
-                                  QString::fromStdString(override_result.error));
+            // Roll back the game-fields PATCH that already landed; best-effort.
+            mira_gui::MiradClient::PatchGameAsync(this, id_, original_patch_,
+                                                  [](mira_gui::PatchGameResult) {});
+            setEnabled(true);
+            mira_gui::notify::Failed(
+                this, "Could not save this game's overrides — reverted the other changes too.",
+                QString::fromStdString(override_result.error));
             return;
           }
+          setEnabled(true);
           accept();
         });
   });

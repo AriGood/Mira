@@ -534,26 +534,26 @@ void LibraryWindow::ShowSteamGridDbNotice(bool asked_for) {
 }
 
 void LibraryWindow::FetchMissingArtwork() {
-  // Over the whole library, not the current filter: "fetch what's missing"
-  // means the library, and a sidebar filter is about what you are looking
-  // at right now.
-  std::vector<std::string> missing;
-  for (const mira_gui::GameSummary& game : games_) {
-    if (!artwork_->HasArtwork(game.id)) missing.push_back(game.id);
-  }
-
-  if (missing.empty()) {
-    mira_gui::notify::Toast(this, mira_gui::notify::Level::Success,
-                            "Every game already has cover art.");
-    return;
-  }
-
-  for (const std::string& id : missing) RefreshMetadata(id, /*announce=*/false);
-  // One toast for the batch. Per-game would be one notification per game,
-  // which on a fresh library is the whole library.
-  mira_gui::notify::Toast(
-      this, mira_gui::notify::Level::Info,
-      QString("Fetching cover art for %1 game(s)… they appear as they arrive.").arg(missing.size()));
+  // One request for the whole library; mirad decides what's missing.
+  mira_gui::MiradClient::RefreshMissingArtworkAsync(
+      this, [this](mira_gui::RefreshMissingArtworkResult result) {
+        if (!result.ok) {
+          mira_gui::notify::Failed(this, "Could not fetch missing cover art.",
+                                   QString::fromStdString(result.error));
+          return;
+        }
+        if (result.count == 0) {
+          mira_gui::notify::Toast(this, mira_gui::notify::Level::Success,
+                                  "Every game already has cover art.");
+          return;
+        }
+        // One toast for the batch. Per-game would be one notification per
+        // game, which on a fresh library is the whole library.
+        mira_gui::notify::Toast(
+            this, mira_gui::notify::Level::Info,
+            QString("Fetching cover art for %1 game(s)… they appear as they arrive.")
+                .arg(result.count));
+      });
 }
 
 void LibraryWindow::RefreshMetadata(const std::string& id, bool announce) {
@@ -607,7 +607,13 @@ void LibraryWindow::RescanAndRefreshGames(bool force_scan) {
     RefreshGames();
     return;
   }
-  mira_gui::MiradClient::ScanLibraryAsync(this, [this](mira_gui::ScanResult) { RefreshGames(); });
+  if (!loaded_) {
+    // First load: a scan only reports changes, not what already existed.
+    mira_gui::MiradClient::ScanLibraryAsync(this, [this](mira_gui::ScanResult) { RefreshGames(); });
+    return;
+  }
+  // Kept in sync since by game.added/.updated/.removed events.
+  mira_gui::MiradClient::ScanLibraryAsync(this, [](mira_gui::ScanResult) {});
 }
 
 void LibraryWindow::RefreshGames() {
@@ -622,6 +628,7 @@ void LibraryWindow::RefreshGames() {
       return;
     }
     games_ = std::move(result.games);
+    loaded_ = true;
     ApplyFilter();
   });
 }
@@ -860,9 +867,13 @@ void LibraryWindow::HandleGameEvent(const std::string& type, const std::string& 
     } else {
       running_ids_.erase(state.id);
     }
-    // An exit changes play_seconds/last_played_at, which `game.state` does
-    // not carry (docs/api.md) — hence a re-fetch rather than a local patch.
-    RefreshGames();
+    // Carries the full record now, so patch the row instead of relisting.
+    mira_gui::GameSummary game;
+    if (mira_gui::MiradClient::ParseGameSummary(data, &game)) {
+      UpsertGame(game);
+    } else {
+      RefreshGames();
+    }
     return;
   }
 

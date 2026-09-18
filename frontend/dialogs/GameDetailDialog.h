@@ -50,6 +50,9 @@ private:
 
   std::string id_;
   std::string install_path_;
+  // Snapshot as loaded, so Save() can revert the game fields if the
+  // separate overrides PATCH that follows them fails.
+  mira_gui::GamePatch original_patch_;
 
   QLabel* status_label_;
   QLabel* install_path_label_;

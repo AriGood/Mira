@@ -183,7 +183,9 @@ void SettingsDialog::BuildRows() {
   // Bucket field indices by category, preserving each field's original
   // (schema declaration) order within its bucket.
   std::map<QString, std::vector<size_t>> buckets;
-  for (size_t i = 0; i < fields_.size(); ++i) buckets[mira_gui::settings::CategoryFor(fields_[i].entry.key)].push_back(i);
+  for (size_t i = 0; i < fields_.size(); ++i) {
+    buckets[QString::fromStdString(fields_[i].entry.category)].push_back(i);
+  }
 
   QStringList ordered_categories;
   for (const QString& category : mira_gui::settings::CategoryOrder()) {
@@ -220,7 +222,7 @@ void SettingsDialog::BuildRows() {
         field.check = new QCheckBox(row_widget);
         row_layout->addWidget(field.check);
         row_layout->addStretch(1);
-      } else if (mira_gui::settings::IsRunnerKey(field.entry.key)) {
+      } else if (field.entry.is_runner_ref) {
         // Same editable-combo pattern as GameDetailDialog's runner field:
         // typeable (for a runner GET /v1/runners won't list, e.g. "native:
         // native") or pickable by name from what's actually installed.
@@ -246,7 +248,7 @@ void SettingsDialog::BuildRows() {
         if (field.entry.type == "an array of strings") {
           field.line->setPlaceholderText("comma-separated");
         }
-        if (mira_gui::settings::IsSecretKey(field.entry.key)) {
+        if (field.entry.is_secret) {
           // PasswordEchoOnEdit, not Password: the value has to be checkable
           // against what the site shows, and a key you can never read back
           // is a key you re-paste every time you doubt it.

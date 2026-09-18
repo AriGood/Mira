@@ -18,6 +18,8 @@
 namespace mira::proc {
 namespace {
 
+using nlohmann::json;
+
 constexpr auto kPollInterval = std::chrono::milliseconds(1000);
 
 // Playtime is written back as it accrues, not only at exit: if mirad is
@@ -198,13 +200,19 @@ Result<void> ProcessSupervisor::Launch(const model::Game& game, const Command& c
   }
 
   log::Info("launched {} (pid {})", game.id, *pid);
-  events_.Publish("game.state", {{"id", game.id}, {"state", "running"}, {"pid", *pid}});
+  // Full record (see the exit events below for why) so a listener never
+  // has to relist just to pick up last_played_at.
+  json event = stamped ? model::ToJson(*stamped) : json{{"id", game.id}};
+  event["state"] = "running";
+  event["pid"] = *pid;
+  events_.Publish("game.state", std::move(event));
   return {};
 }
 
 Result<void> ProcessSupervisor::Stop(const std::string& game_id) {
   pid_t pid = 0;
   std::string data_dir;
+  std::string appid;
   {
     std::lock_guard lock(mutex_);
     const auto it = running_.find(game_id);
@@ -215,6 +223,9 @@ Result<void> ProcessSupervisor::Stop(const std::string& game_id) {
     if (const auto prefix = prefixes_.find(game_id); prefix != prefixes_.end()) {
       data_dir = prefix->second;
     }
+    if (const auto steam = steam_appids_.find(game_id); steam != steam_appids_.end()) {
+      appid = steam->second;
+    }
   }
   // 0 is TrackSteamLaunch's "reserved, not confirmed yet" sentinel — kill(0,
   // ...)/kill(-0, ...) both mean "signal every process in the caller's own
@@ -224,12 +235,17 @@ Result<void> ProcessSupervisor::Stop(const std::string& game_id) {
               std::format("\"{}\" was launched but its process isn't confirmed yet — try again shortly",
                           game_id));
   }
-  // Group (see runner::SpawnDetached's setpgid note) plus the prefix — see
-  // FindPrefixProcesses for why the group alone usually isn't enough.
+  // Group (see runner::SpawnDetached's setpgid note) plus the prefix, plus —
+  // for a Steam-launched game — every pid FindSteamProcesses finds under its
+  // appid: that tree is Steam's own (reaper/pressure-vessel/proton/the game),
+  // not a child of mirad and not one shared process group, so the group
+  // signal above only ever reaches whichever single pid WatchSteam recorded.
   const std::set<pid_t> in_prefix = FindPrefixProcesses(data_dir);
-  const bool group_signalled = ::kill(-pid, SIGTERM) == 0 || ::kill(pid, SIGTERM) == 0;
-  for (pid_t found : in_prefix) ::kill(found, SIGTERM);
-  if (!group_signalled && in_prefix.empty()) {
+  const std::set<pid_t> in_steam_tree = appid.empty() ? std::set<pid_t>() : FindSteamProcesses(appid);
+  bool signalled = ::kill(-pid, SIGTERM) == 0 || ::kill(pid, SIGTERM) == 0;
+  for (pid_t found : in_prefix) { ::kill(found, SIGTERM); signalled = true; }
+  for (pid_t found : in_steam_tree) { ::kill(found, SIGTERM); signalled = true; }
+  if (!signalled) {
     return Err("stop_failed", std::format("could not signal pid {}", pid));
   }
   {
@@ -327,12 +343,18 @@ void ProcessSupervisor::Watch(std::string game_id, pid_t pid, std::int64_t start
   } else {
     log::Info("{} exited cleanly after {}s", game_id, played);
   }
-  events_.Publish("game.state", {{"id", game_id},
-                                 {"state", crashed ? "crashed" : "exited"},
-                                 {"exit_code", exit_code},
-                                 {"signal", signal_number},
-                                 {"played_seconds", played},
-                                 {"error", error}});
+  // The full updated record rides along on top of the session-only fields
+  // below (exit_code, signal, played_seconds are this session's, not the
+  // row's running totals) so a listener can patch its one row directly —
+  // this used to carry only id/state, forcing a full GET /v1/games relist
+  // just to pick up the new play_seconds/last_played_at/last_error.
+  json event = updated ? model::ToJson(*updated) : json{{"id", game_id}};
+  event["state"] = crashed ? "crashed" : "exited";
+  event["exit_code"] = exit_code;
+  event["signal"] = signal_number;
+  event["played_seconds"] = played;
+  event["error"] = error;
+  events_.Publish("game.state", std::move(event));
 
   RunScript(post_script, game_id, "post");
 }
@@ -351,6 +373,7 @@ Result<void> ProcessSupervisor::TrackSteamLaunch(const model::Game& game, const 
     // eventually find the same real process. 0 is never a real pid (see
     // Stop()'s guard below) so it's unambiguous as "not confirmed yet".
     running_[game.id] = 0;
+    steam_appids_[game.id] = appid;  // for Stop()/WatchSteam()'s kill escalation
     if (auto stale = watchers_.find(game.id); stale != watchers_.end()) {
       if (stale->second.joinable()) stale->second.detach();
       watchers_.erase(stale);
@@ -376,6 +399,7 @@ void ProcessSupervisor::WatchSteam(std::string game_id, std::string appid, std::
       std::lock_guard lock(mutex_);
       running_.erase(game_id);
       prefixes_.erase(game_id);
+      steam_appids_.erase(game_id);
       return;
     }
     std::this_thread::sleep_for(kPollInterval);
@@ -390,7 +414,9 @@ void ProcessSupervisor::WatchSteam(std::string game_id, std::string appid, std::
   auto stamped = games_.Update(game_id, [&](model::Game& stored) { stored.last_played_at = started_at; });
   if (!stamped) log::Error("failed to record launch time for {}: {}", game_id, stamped.error().message);
   log::Info("detected {} running (appid {}, {} process(es))", game_id, appid, matched.size());
-  events_.Publish("game.state", {{"id", game_id}, {"state", "running"}});
+  json running_event = stamped ? model::ToJson(*stamped) : json{{"id", game_id}};
+  running_event["state"] = "running";
+  events_.Publish("game.state", std::move(running_event));
 
   // Liveness phase: re-scan every tick rather than just poll the pids
   // already found, since the process tree can reshape early on (pressure-
@@ -401,6 +427,20 @@ void ProcessSupervisor::WatchSteam(std::string game_id, std::string appid, std::
     const std::set<pid_t> current = FindSteamProcesses(appid);
     if (current.empty() && !AnyAlive(matched)) break;
     if (!current.empty()) matched = current;
+
+    // Same SIGKILL escalation Watch() does for a directly-launched game —
+    // missing here before meant Stop() on a Steam-launched game only ever
+    // sent one SIGTERM and never followed up, so a game that ignored it kept
+    // running forever with mirad unable to tell.
+    {
+      std::lock_guard lock(mutex_);
+      const auto deadline = kill_deadlines_.find(game_id);
+      if (deadline != kill_deadlines_.end() && model::NowSeconds() >= deadline->second) {
+        log::Warn("{} (Steam-launched) ignored SIGTERM; sending SIGKILL", game_id);
+        for (pid_t found : matched) ::kill(found, SIGKILL);
+        kill_deadlines_.erase(deadline);
+      }
+    }
 
     const std::int64_t elapsed = model::NowSeconds() - started_at;
     if (elapsed - credited >= kCheckpointSeconds) {
@@ -419,6 +459,7 @@ void ProcessSupervisor::WatchSteam(std::string game_id, std::string appid, std::
     std::lock_guard lock(mutex_);
     running_.erase(game_id);
     prefixes_.erase(game_id);
+    steam_appids_.erase(game_id);
     kill_deadlines_.erase(game_id);
     stop_requested_.erase(game_id);
   }
@@ -431,8 +472,12 @@ void ProcessSupervisor::WatchSteam(std::string game_id, std::string appid, std::
   if (!updated) log::Error("failed to record playtime for {}: {}", game_id, updated.error().message);
 
   log::Info("{} (Steam-launched) exited after {}s", game_id, played);
-  events_.Publish("game.state",
-                 {{"id", game_id}, {"state", "exited"}, {"played_seconds", played}});
+  // Same reasoning as Watch()'s exit event: the full updated record rides
+  // along so a listener can patch its one row instead of relisting.
+  json event = updated ? model::ToJson(*updated) : json{{"id", game_id}};
+  event["state"] = "exited";
+  event["played_seconds"] = played;
+  events_.Publish("game.state", std::move(event));
 
   RunScript(post_script, game_id, "post");
 }
