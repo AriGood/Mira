@@ -314,6 +314,15 @@ Schema::Schema() {
        "way — that's Steam's own client's job. Off disables the /proc scan "
        "entirely; launching still works, Mira just won't show it running."},
 
+      {"lutris.enabled", Type::Bool, true, Tier::Basic,
+       "Let \"mira lutris import\" / POST /v1/lutris/import read Lutris's own "
+       "game database (pga.db) and per-game configs and add them alongside "
+       "Mira's own library."},
+
+      {"lutris.data_dir", Type::String, "", Tier::Advanced,
+       "Override for where Lutris keeps pga.db and its per-game configs. "
+       "Empty auto-detects $XDG_DATA_HOME/lutris, then ~/.local/share/lutris."},
+
       {"runner_sources.proton_ge.repo", Type::String, std::string(runner_sources::kProtonGERepo),
        Tier::Advanced, "GitHub \"owner/repo\" Proton-GE builds are downloaded from."},
 

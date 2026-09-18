@@ -46,6 +46,8 @@ qt_add_executable(mira-gui
   ui/ArtworkStore.h
   ui/CoverArt.cpp
   ui/CoverArt.h
+  ui/DaemonSupervisor.cpp
+  ui/DaemonSupervisor.h
   ui/GameActions.cpp
   ui/GameActions.h
   ui/GameDetailsPanel.cpp
@@ -136,6 +138,7 @@ add_executable(mira_gui_tests
   client/JsonMapping.cpp
   client/MiradClient.cpp
   ui/LibrarySort.cpp
+  ui/DaemonSupervisor.cpp
   client/Transport.cpp
 )
 target_include_directories(mira_gui_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
