@@ -17,6 +17,7 @@
 #include "core/Log.h"
 #include "desktop/DesktopEntries.h"
 #include "library/Scanner.h"
+#include "lutris/LutrisImporter.h"
 #include "metadata/MetadataFetcher.h"
 #include "runner/Downloader.h"
 #include "runner/Exec.h"
@@ -405,6 +406,20 @@ void Server::RegisterRoutes() {
     SyncDesktopEntries(config_, games_);
     for (const model::Game& game : summary->added_games) metadata_fetches_.Enqueue(config_, events_, game);
     SendJson(res, {{"added", summary->added}, {"updated", summary->updated}});
+  });
+
+  // --- lutris -----------------------------------------------------------
+
+  // Imported games land in the same GameStore as everything else (see
+  // LutrisImporter's class comment) — no separate GET endpoint needed, they
+  // just show up in GET /v1/games.
+  http_->Post("/v1/lutris/import", [this](const Request&, Response& res) {
+    lutris::LutrisImporter importer(config_, games_, events_);
+    auto summary = importer.Import();
+    if (!summary) return SendError(res, 404, summary.error().code, summary.error().message);
+    SyncDesktopEntries(config_, games_);
+    for (const model::Game& game : summary->added_games) metadata_fetches_.Enqueue(config_, events_, game);
+    SendJson(res, {{"added", summary->added}, {"updated", summary->updated}, {"skipped", summary->skipped}});
   });
 
   // --- launching ------------------------------------------------------------
