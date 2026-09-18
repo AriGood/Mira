@@ -383,8 +383,7 @@ struct FrontendPrefs {
   std::optional<int> window_width;
   std::optional<int> window_height;
   std::optional<int> tile_width;
-  std::optional<std::string> library_filter;  // a sidebar filter key
-  std::optional<int> sidebar_width;
+  std::optional<std::string> library_filter;  // a filter key
   std::optional<int> details_width;
   std::optional<std::string> sort_by;  // "name" | "last_played" | "playtime" | "status"
   std::optional<bool> sort_descending;
@@ -399,10 +398,6 @@ struct FrontendPrefs {
   // Seconds a notification stays up; 0 means until dismissed, which is the
   // default. See notify::SetTimeoutSeconds.
   std::optional<int> notification_timeout_s;
-  // The File/View/Library/Tools/Help menu bar. Off by default — see
-  // BuildMenus — and held down with Alt while it's off; this remembers a
-  // user who pinned it open instead.
-  std::optional<bool> menu_bar_pinned;
   // On (default): "Details & settings" edits a game inline in the right
   // panel instead of opening a dialog.
   std::optional<bool> game_settings_in_sidebar;

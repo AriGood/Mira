@@ -5,22 +5,25 @@
 #include <QAction>
 #include <QKeySequence>
 #include <QHBoxLayout>
+#include <QIcon>
 #include <QLabel>
 #include <QLineEdit>
-#include <QKeyEvent>
 #include <QListWidget>
+#include <QPainter>
 #include <QListWidgetItem>
 #include <QMenu>
+#include <QMouseEvent>
 #include <QCloseEvent>
 #include <QComboBox>
-#include <QMenuBar>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSlider>
 #include <QSplitter>
 #include <QStackedWidget>
+#include <QStyle>
 #include <QToolButton>
 #include <QVBoxLayout>
+#include <QWindow>
 
 #include <iterator>
 
@@ -42,8 +45,8 @@
 
 namespace {
 
-// Sidebar entries. The status keys match docs/api.md's `status` values
-// exactly; "all", "running" and "never" are frontend-only groupings.
+// The top bar's filter picker. The status keys match docs/api.md's `status`
+// values exactly; "all", "running" and "never" are frontend-only groupings.
 struct FilterEntry {
   const char* label;
   const char* key;
@@ -68,11 +71,89 @@ bool HasTag(const mira_gui::GameSummary& game, const std::string& tag) {
   return std::find(game.tags.begin(), game.tags.end(), tag) != game.tags.end();
 }
 
+// The desktop's own gear when the icon theme has one, and the ⚙ glyph drawn
+// into a pixmap when it doesn't — an icon-less QToolButton is a blank square.
+QIcon SettingsIcon() {
+  for (const char* name : {"preferences-system", "settings-configure", "gtk-preferences"}) {
+    QIcon themed = QIcon::fromTheme(name);
+    if (!themed.isNull()) return themed;
+  }
+  QPixmap pixmap(16, 16);
+  pixmap.fill(Qt::transparent);
+  QPainter painter(&pixmap);
+  painter.setRenderHint(QPainter::Antialiasing);
+  painter.drawText(pixmap.rect(), Qt::AlignCenter, QString::fromUtf8("⚙"));
+  return QIcon(pixmap);
+}
+
+constexpr int kResizeMargin = 5;
+
+Qt::Edges EdgesAt(const QSize& size, const QPoint& pos) {
+  Qt::Edges edges;
+  if (pos.x() <= kResizeMargin) edges |= Qt::LeftEdge;
+  if (pos.x() >= size.width() - kResizeMargin) edges |= Qt::RightEdge;
+  if (pos.y() <= kResizeMargin) edges |= Qt::TopEdge;
+  if (pos.y() >= size.height() - kResizeMargin) edges |= Qt::BottomEdge;
+  return edges;
+}
+
+// The frameless window's own background: a thin margin around the real
+// content, and the only thing left to grab for an edge resize now that the
+// OS titlebar (and its resize handles) are gone. QWindow::startSystemResize
+// hands the drag to the compositor, which is what makes this work correctly
+// under Wayland — a plain "move the window by the mouse delta" approach does
+// not, since a client cannot reposition itself there without the compositor.
+class RootWidget : public QWidget {
+public:
+  explicit RootWidget(QMainWindow* window) : window_(window) { setMouseTracking(true); }
+
+protected:
+  void mousePressEvent(QMouseEvent* event) override {
+    const Qt::Edges edges = EdgesAt(size(), event->pos());
+    if (event->button() == Qt::LeftButton && !window_->isMaximized() &&
+        window_->windowHandle() != nullptr && edges != Qt::Edges()) {
+      window_->windowHandle()->startSystemResize(edges);
+      event->accept();
+      return;
+    }
+    QWidget::mousePressEvent(event);
+  }
+
+  void mouseMoveEvent(QMouseEvent* event) override {
+    if (window_->isMaximized()) {
+      unsetCursor();
+      return;
+    }
+    const Qt::Edges edges = EdgesAt(size(), event->pos());
+    if ((edges & Qt::LeftEdge) && (edges & Qt::TopEdge)) {
+      setCursor(Qt::SizeFDiagCursor);
+    } else if ((edges & Qt::RightEdge) && (edges & Qt::BottomEdge)) {
+      setCursor(Qt::SizeFDiagCursor);
+    } else if ((edges & Qt::RightEdge) && (edges & Qt::TopEdge)) {
+      setCursor(Qt::SizeBDiagCursor);
+    } else if ((edges & Qt::LeftEdge) && (edges & Qt::BottomEdge)) {
+      setCursor(Qt::SizeBDiagCursor);
+    } else if (edges & (Qt::LeftEdge | Qt::RightEdge)) {
+      setCursor(Qt::SizeHorCursor);
+    } else if (edges & (Qt::TopEdge | Qt::BottomEdge)) {
+      setCursor(Qt::SizeVerCursor);
+    } else {
+      unsetCursor();
+    }
+  }
+
+private:
+  QMainWindow* window_;
+};
+
 }  // namespace
 
 LibraryWindow::LibraryWindow(QWidget* parent) : QMainWindow(parent) {
   setWindowTitle("Mira");
   resize(1180, 720);
+  // A custom top bar takes over move/resize/minimize/maximize/close (see
+  // RootWidget and eventFilter below) — there is no OS decoration left.
+  setWindowFlags(Qt::Window | Qt::FramelessWindowHint);
 
   // Before the panel and the grid, because both ask it for covers.
   artwork_ = new mira_gui::ArtworkStore(this);
@@ -89,47 +170,50 @@ LibraryWindow::LibraryWindow(QWidget* parent) : QMainWindow(parent) {
   connect(details_, &mira_gui::GameDetailsPanel::MetadataRefreshRequested, this,
           [this](const QString& id) { RefreshMetadata(id.toStdString()); });
 
-  // page 1 (game_edit_page_) is built lazily by OpenGameDialog; page 2 is
-  // blank, shown while settings is open (game selection is a grid concept).
+  // page 1 (game_edit_page_) is built lazily by OpenGameDialog.
   sidebar_stack_ = new QStackedWidget(this);
   sidebar_stack_->addWidget(details_);
-  blank_sidebar_page_ = new QWidget(this);
-  sidebar_stack_->addWidget(blank_sidebar_page_);
-
-  // page 1 (settings) is built lazily by OpenSettings. Takes over only
-  // this middle slot — sidebar and details stay mounted either side.
-  middle_stack_ = new QStackedWidget(this);
-  middle_stack_->addWidget(BuildGrid());
 
   splitter_ = new QSplitter(Qt::Horizontal, this);
-  splitter_->addWidget(BuildSidebar());
-  splitter_->addWidget(middle_stack_);
+  splitter_->addWidget(BuildGrid());
   splitter_->addWidget(sidebar_stack_);
-  splitter_->setStretchFactor(0, 0);
-  splitter_->setStretchFactor(1, 1);
-  splitter_->setStretchFactor(2, 0);
-  splitter_->setSizes({190, 660, 330});
+  splitter_->setStretchFactor(0, 1);
+  splitter_->setStretchFactor(1, 0);
+  splitter_->setSizes({850, 330});
   splitter_->setChildrenCollapsible(false);
 
-  auto* central = new QWidget(this);
+  // page 1 (settings) is built lazily by OpenSettings and covers this
+  // entire slot — there is no left sidebar left to keep visible next to it,
+  // and the right one goes with it.
+  content_stack_ = new QStackedWidget(this);
+  content_stack_->addWidget(splitter_);
+
+  auto* central = new RootWidget(this);
   auto* layout = new QVBoxLayout(central);
-  layout->setContentsMargins(0, 0, 0, 0);
+  layout->setContentsMargins(kResizeMargin, kResizeMargin, kResizeMargin, kResizeMargin);
   layout->setSpacing(0);
-  layout->addWidget(splitter_, /*stretch=*/1);
+  QWidget* top_bar = BuildTopBar();
+  // Qt has a widget with no cursor of its own show its parent's — without
+  // an explicit one here, a resize cursor RootWidget set while the mouse
+  // was over its edge margin (see EdgesAt) would still be showing over the
+  // whole window after the drag ends, since nothing else in the middle of
+  // the window ever moves the mouse over RootWidget again to reset it.
+  top_bar->setCursor(Qt::ArrowCursor);
+  layout->addWidget(top_bar);
+  content_stack_->setCursor(Qt::ArrowCursor);
+  layout->addWidget(content_stack_, /*stretch=*/1);
 
   footer_ = new QLabel(central);
   footer_->setStyleSheet("font-size: 10px; color: #9e9e9e; padding: 4px 10px;");
+  footer_->setCursor(Qt::ArrowCursor);
   layout->addWidget(footer_);
 
   setCentralWidget(central);
 
-  // After the widgets, because most of these act on one: BuildMenus
-  // then puts the three window-wide actions into File and Help.
+  // After BuildShortcuts, not before: BuildMenus reads common_'s actions,
+  // which BuildShortcuts is what populates.
   BuildShortcuts();
   BuildMenus();
-  // Hidden by default — Alt toggles it (keyPressEvent below), or pin it
-  // from the View menu. LoadPrefs() may pin it back on.
-  menuBar()->setVisible(menu_bar_pinned_);
 
   LoadPrefs();
   RefreshHealth(/*force_scan=*/false);
@@ -139,14 +223,17 @@ LibraryWindow::LibraryWindow(QWidget* parent) : QMainWindow(parent) {
 }
 
 void LibraryWindow::BuildMenus() {
+  auto* menu = new QMenu(menu_button_);
+  menu_button_->setMenu(menu);
+
   // The actions themselves come from BuildShortcuts, which already added
   // them to the window. Listing one in a menu is what makes its key
   // discoverable — Qt draws the sequence next to the label.
-  auto* file_menu = menuBar()->addMenu("&File");
+  auto* file_menu = menu->addMenu("&File");
   file_menu->addAction(common_.close_window);
   file_menu->addAction(common_.quit);
 
-  auto* view_menu = menuBar()->addMenu("&View");
+  auto* view_menu = menu->addMenu("&View");
   // Always scans, whatever scan_on_startup says: the preference is about
   // opening the window, not about this command.
   QAction* refresh = view_menu->addAction("&Refresh library", this,
@@ -154,15 +241,9 @@ void LibraryWindow::BuildMenus() {
   // F5 is the platform's own Refresh; Ctrl+R is the one every browser
   // taught, and a second binding costs nothing.
   refresh->setShortcuts({QKeySequence(QKeySequence::Refresh), QKeySequence(Qt::CTRL | Qt::Key_R)});
-  menu_bar_pin_action_ = view_menu->addAction("Always show this &menu bar", this,
-                                              [this] { SetMenuBarPinned(!menu_bar_pinned_); });
-  menu_bar_pin_action_->setCheckable(true);
-  menu_bar_pin_action_->setChecked(menu_bar_pinned_);
-  menu_bar_pin_action_->setToolTip("Keep this menu bar open instead of holding Alt to show it");
-  view_menu->addSeparator();
   view_menu->addAction("Open &classic table view", this, &LibraryWindow::OpenClassicView);
 
-  auto* library_menu = menuBar()->addMenu("&Library");
+  auto* library_menu = menu->addMenu("&Library");
   library_menu->addAction("Import &Steam library", this, &LibraryWindow::ImportSteamLibrary);
   library_menu->addAction("Fetch missing &cover art", this, &LibraryWindow::FetchMissingArtwork)
       ->setToolTip(
@@ -170,14 +251,14 @@ void LibraryWindow::BuildMenus() {
           "newly detected game, so a game that failed once — or a non-Steam game from before a "
           "SteamGridDB key was set — stays without one until asked again.");
 
-  auto* tools_menu = menuBar()->addMenu("&Tools");
+  auto* tools_menu = menu->addMenu("&Tools");
   tools_menu->addAction("&Runners…", this, &LibraryWindow::OpenRunners);
   QAction* settings = tools_menu->addAction("&Settings…", this, &LibraryWindow::OpenSettings);
   // Spelled out rather than QKeySequence::Preferences, which Qt binds on
   // macOS only — this row showed no shortcut at all on Linux.
   settings->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Comma));
 
-  auto* help_menu = menuBar()->addMenu("&Help");
+  auto* help_menu = menu->addMenu("&Help");
   help_menu->addAction(common_.reference);
 }
 
@@ -186,7 +267,7 @@ void LibraryWindow::BuildShortcuts() {
       this, {
                 {"Ctrl+F", "Focus the search box"},
                 {"Esc", "Clear the search, then the selection"},
-                {"Ctrl+1…9", "Pick a sidebar filter"},
+                {"Ctrl+1…9", "Pick a filter"},
                 {"Ctrl+H", "Toggle the Hidden filter"},
                 {"F5, Ctrl+R", "Refresh the library"},
                 {"Enter", "Play the selected game — Stop while it runs"},
@@ -221,10 +302,15 @@ void LibraryWindow::BuildShortcuts() {
     search_->selectAll();
   });
 
-  // One key, two jobs, in the order a user expects to undo them: the search
-  // narrowed the library, so it goes first, and only an already-empty box
-  // means Escape was aimed at the selection.
+  // One key, three jobs, in the order a user expects to undo them: leave
+  // settings if that is what's covering the screen, then the search that
+  // narrowed the library, and only an already-empty box means Escape was
+  // aimed at the selection.
   window_action({QKeySequence(Qt::Key_Escape)}, [this] {
+    if (SettingsOpen()) {
+      RequestCloseSettings();
+      return;
+    }
     if (!search_->text().isEmpty()) {
       search_->clear();
       return;
@@ -240,11 +326,11 @@ void LibraryWindow::BuildShortcuts() {
   window_action({QKeySequence(Qt::CTRL | Qt::Key_0)},
                 [this] { zoom_->setValue(kDefaultTileWidth); });
 
-  // Ctrl+1 through Ctrl+8, in sidebar order. Guarded by count() rather than
+  // Ctrl+1 through Ctrl+8, in filter order. Guarded by count() rather than
   // by kFilters so adding a ninth filter cannot walk past Ctrl+9.
   for (int row = 0; row < filters_->count() && row < 9; ++row) {
     window_action({QKeySequence(Qt::CTRL | static_cast<Qt::Key>(Qt::Key_1 + row))},
-                  [this, row] { filters_->setCurrentRow(row); });
+                  [this, row] { filters_->setCurrentIndex(row); });
   }
 
   // A dedicated toggle for Hidden, on top of whatever Ctrl+9 already gives
@@ -254,7 +340,7 @@ void LibraryWindow::BuildShortcuts() {
   window_action({QKeySequence(Qt::CTRL | Qt::Key_H)}, [this] {
     const int hidden_row = FilterRow("hidden");
     if (hidden_row < 0) return;
-    filters_->setCurrentRow(CurrentFilterKey() == "hidden" ? FilterRow("all") : hidden_row);
+    filters_->setCurrentIndex(CurrentFilterKey() == "hidden" ? FilterRow("all") : hidden_row);
   });
 
   // Qt::Key_Enter is the keypad one — a separate key from Qt::Key_Return,
@@ -301,9 +387,9 @@ void LibraryWindow::LoadPrefs() {
       // not be able to ask for a 4000px tile.
       zoom_->setValue(*prefs.tile_width);
     }
-    if (prefs.sidebar_width && prefs.details_width) {
-      const int middle = qMax(200, width() - *prefs.sidebar_width - *prefs.details_width);
-      splitter_->setSizes({*prefs.sidebar_width, middle, *prefs.details_width});
+    if (prefs.details_width) {
+      const int details = *prefs.details_width;
+      splitter_->setSizes({qMax(200, width() - details), details});
     }
     if (prefs.scan_on_startup) scan_on_startup_ = *prefs.scan_on_startup;
     if (prefs.notifications) {
@@ -326,14 +412,9 @@ void LibraryWindow::LoadPrefs() {
     }
     if (prefs.library_filter) {
       const QString wanted = QString::fromStdString(*prefs.library_filter);
-      for (int row = 0; row < filters_->count(); ++row) {
-        if (filters_->item(row)->data(Qt::UserRole).toString() == wanted) {
-          filters_->setCurrentRow(row);
-          break;
-        }
-      }
+      const int index = filters_->findData(wanted);
+      if (index >= 0) filters_->setCurrentIndex(index);
     }
-    if (prefs.menu_bar_pinned) SetMenuBarPinned(*prefs.menu_bar_pinned);
     if (prefs.game_settings_in_sidebar) game_settings_in_sidebar_ = *prefs.game_settings_in_sidebar;
   });
 }
@@ -352,17 +433,8 @@ void LibraryWindow::SavePrefs() {
   prefs.notifications =
       mira_gui::notify::DeliveryToString(mira_gui::notify::CurrentDelivery()).toStdString();
   prefs.notification_timeout_s = mira_gui::notify::CurrentTimeoutSeconds();
-  prefs.menu_bar_pinned = menu_bar_pinned_;
   const QList<int> sizes = splitter_->sizes();
-  if (sizes.size() == 3) {
-    prefs.sidebar_width = sizes[0];
-    prefs.details_width = sizes[2];
-  }
-  // Blocking, not fire-and-forget: this runs from closeEvent, and on the
-  // last window the process exits before a worker thread ever reaches the
-  // socket. A failure here costs a remembered layout, not data, so the
-  // result is still not worth reporting — but losing the write to a race
-  // was not a trade-off, it was a bug.
+  if (sizes.size() == 2) prefs.details_width = sizes[1];
   // Blocking, not fire-and-forget. The async form hands the request to a
   // detached thread (async::Run), and this is the one call site where the
   // process may exit before that thread reaches the socket — closeEvent on
@@ -374,20 +446,40 @@ void LibraryWindow::SavePrefs() {
   mira_gui::MiradClient::SaveFrontendPrefsBlocking(prefs);
 }
 
-void LibraryWindow::SetMenuBarPinned(bool pinned) {
-  menu_bar_pinned_ = pinned;
-  menuBar()->setVisible(pinned);
-  if (menu_bar_pin_action_) menu_bar_pin_action_->setChecked(pinned);
+void LibraryWindow::ToggleMaximize() {
+  if (isMaximized()) {
+    showNormal();
+  } else {
+    showMaximized();
+  }
 }
 
-void LibraryWindow::keyPressEvent(QKeyEvent* event) {
-  // isAutoRepeat() excludes the repeat events X11/Wayland send for a held
-  // key — a held Alt would otherwise toggle back and forth on its own.
-  if (!menu_bar_pinned_ && event->key() == Qt::Key_Alt && !event->isAutoRepeat()) {
-    menuBar()->setVisible(!menuBar()->isVisible());
-    return;
+void LibraryWindow::changeEvent(QEvent* event) {
+  if (event->type() == QEvent::WindowStateChange && maximize_button_ != nullptr) {
+    maximize_button_->setIcon(style()->standardIcon(
+        isMaximized() ? QStyle::SP_TitleBarNormalButton : QStyle::SP_TitleBarMaxButton));
+    maximize_button_->setToolTip(isMaximized() ? "Restore" : "Maximize");
   }
-  QMainWindow::keyPressEvent(event);
+  QMainWindow::changeEvent(event);
+}
+
+bool LibraryWindow::eventFilter(QObject* watched, QEvent* event) {
+  // Only the top bar's own empty background reaches here — a click on any
+  // of its child controls (search, combos, buttons…) goes to that child
+  // instead and never becomes an event on top_bar_ itself.
+  if (watched == top_bar_) {
+    if (event->type() == QEvent::MouseButtonPress) {
+      auto* mouse = static_cast<QMouseEvent*>(event);
+      if (mouse->button() == Qt::LeftButton && windowHandle() != nullptr) {
+        windowHandle()->startSystemMove();
+        return true;
+      }
+    } else if (event->type() == QEvent::MouseButtonDblClick) {
+      ToggleMaximize();
+      return true;
+    }
+  }
+  return QMainWindow::eventFilter(watched, event);
 }
 
 void LibraryWindow::closeEvent(QCloseEvent* event) {
@@ -438,65 +530,32 @@ void LibraryWindow::ImportSteamLibrary() {
   });
 }
 
-QWidget* LibraryWindow::BuildSidebar() {
-  auto* sidebar = new QWidget(this);
-  auto* layout = new QVBoxLayout(sidebar);
-  layout->setContentsMargins(10, 10, 6, 10);
+QWidget* LibraryWindow::BuildTopBar() {
+  top_bar_ = new QWidget(this);
+  top_bar_->setObjectName("top_bar");
+  // Catches a press/double-click on the bar's own empty background — see
+  // eventFilter. A click on any child widget never reaches here.
+  top_bar_->installEventFilter(this);
+
+  auto* layout = new QHBoxLayout(top_bar_);
+  layout->setContentsMargins(8, 4, 6, 4);
   layout->setSpacing(8);
 
-  auto* title = new QLabel("Mira", sidebar);
-  title->setStyleSheet("font-size: 18px; font-weight: 600;");
-  layout->addWidget(title);
+  menu_button_ = new QToolButton(top_bar_);
+  menu_button_->setText("☰");
+  menu_button_->setPopupMode(QToolButton::InstantPopup);
+  menu_button_->setAutoRaise(true);
+  // Its menu is filled in later, by BuildMenus() — deferred until
+  // BuildShortcuts() has populated common_, which BuildMenus() reads.
+  layout->addWidget(menu_button_);
 
-  health_badge_ = new QLabel(sidebar);
-  health_badge_->setStyleSheet("font-size: 11px; color: #757575;");
-  health_badge_->setText("● checking…");
-  layout->addWidget(health_badge_);
-
-  search_ = new QLineEdit(sidebar);
-  search_->setObjectName("library_search");
-  search_->setPlaceholderText("Search…");
-  search_->setClearButtonEnabled(true);
-  connect(search_, &QLineEdit::textChanged, this, [this] { ApplyFilter(); });
-  layout->addWidget(search_);
-
-  filters_ = new QListWidget(sidebar);
-  filters_->setFrameShape(QFrame::NoFrame);
-  for (const FilterEntry& entry : kFilters) {
-    auto* item = new QListWidgetItem(entry.label, filters_);
-    item->setData(Qt::UserRole, QString(entry.key));
-  }
-  filters_->setCurrentRow(0);
-  // Sized to its contents rather than stretched: a filter list with eight
-  // fixed entries and a metre of empty space under them reads as a list that
-  // failed to load.
-  filters_->setFixedHeight(filters_->sizeHintForRow(0) * filters_->count() +
-                           2 * filters_->frameWidth() + 4);
-  connect(filters_, &QListWidget::currentRowChanged, this, [this] { ApplyFilter(); });
+  filters_ = new QComboBox(top_bar_);
+  for (const FilterEntry& entry : kFilters) filters_->addItem(entry.label, QString(entry.key));
+  connect(filters_, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+          [this] { ApplyFilter(); });
   layout->addWidget(filters_);
-  layout->addStretch(1);
 
-  auto* settings_button = new QPushButton("Settings", sidebar);
-  connect(settings_button, &QPushButton::clicked, this, &LibraryWindow::OpenSettings);
-  layout->addWidget(settings_button);
-
-  return sidebar;
-}
-
-QWidget* LibraryWindow::BuildGrid() {
-  auto* container = new QWidget(this);
-  auto* layout = new QVBoxLayout(container);
-  layout->setContentsMargins(6, 10, 6, 6);
-  layout->setSpacing(6);
-
-  toolbar_widget_ = new QWidget(container);
-  auto* toolbar = new QHBoxLayout(toolbar_widget_);
-  toolbar->setContentsMargins(0, 0, 0, 0);
-  auto* sort_label = new QLabel("Sort by", container);
-  sort_label->setStyleSheet("font-size: 11px; color: #9e9e9e;");
-  toolbar->addWidget(sort_label);
-
-  sort_ = new QComboBox(container);
+  sort_ = new QComboBox(top_bar_);
   for (const mira_gui::SortOption& option : mira_gui::SortOptions()) {
     sort_->addItem(option.label, QString(option.key));
   }
@@ -504,10 +563,11 @@ QWidget* LibraryWindow::BuildGrid() {
     sort_key_ = sort_->currentData().toString().toStdString();
     ApplyFilter();
   });
-  toolbar->addWidget(sort_);
+  layout->addWidget(sort_);
 
-  sort_direction_ = new QToolButton(container);
+  sort_direction_ = new QToolButton(top_bar_);
   sort_direction_->setArrowType(Qt::UpArrow);
+  sort_direction_->setAutoRaise(true);
   sort_direction_->setToolTip("Ascending — click for descending");
   connect(sort_direction_, &QToolButton::clicked, this, [this] {
     sort_descending_ = !sort_descending_;
@@ -516,19 +576,81 @@ QWidget* LibraryWindow::BuildGrid() {
                                                  : "Ascending — click for descending");
     ApplyFilter();
   });
-  toolbar->addWidget(sort_direction_);
+  layout->addWidget(sort_direction_);
 
-  toolbar->addStretch(1);
-  auto* zoom_label = new QLabel("Tile size", container);
-  zoom_label->setStyleSheet("font-size: 11px; color: #9e9e9e;");
-  toolbar->addWidget(zoom_label);
-  zoom_ = new QSlider(Qt::Horizontal, container);
+  layout->addStretch(1);
+
+  search_ = new QLineEdit(top_bar_);
+  search_->setObjectName("library_search");
+  search_->setPlaceholderText("Search…");
+  search_->setClearButtonEnabled(true);
+  search_->setMaximumWidth(420);
+  connect(search_, &QLineEdit::textChanged, this, [this] { ApplyFilter(); });
+  layout->addWidget(search_, /*stretch=*/1);
+
+  layout->addStretch(1);
+
+  zoom_ = new QSlider(Qt::Horizontal, top_bar_);
   zoom_->setRange(120, 260);
   zoom_->setValue(tile_width_);
-  zoom_->setMaximumWidth(140);
+  zoom_->setMaximumWidth(120);
+  zoom_->setToolTip("Tile size");
   connect(zoom_, &QSlider::valueChanged, this, &LibraryWindow::SetTileWidth);
-  toolbar->addWidget(zoom_);
-  layout->addWidget(toolbar_widget_);
+  layout->addWidget(zoom_);
+
+  // Gear <-> Back/Save, swapped by OpenSettings/CloseSettings. Deliberately
+  // two sibling widgets rather than a QStackedWidget: a stack is as wide as
+  // its widest page, which stretched the gear to the width of Back+Save.
+  settings_button_ = new QToolButton(top_bar_);
+  settings_button_->setIcon(SettingsIcon());
+  settings_button_->setToolTip("Settings");
+  connect(settings_button_, &QToolButton::clicked, this, &LibraryWindow::OpenSettings);
+  layout->addWidget(settings_button_);
+
+  settings_actions_widget_ = new QWidget(top_bar_);
+  auto* settings_actions_layout = new QHBoxLayout(settings_actions_widget_);
+  settings_actions_layout->setContentsMargins(0, 0, 0, 0);
+  settings_actions_layout->setSpacing(6);
+  settings_back_button_ = new QPushButton("← Back", settings_actions_widget_);
+  connect(settings_back_button_, &QPushButton::clicked, this, &LibraryWindow::RequestCloseSettings);
+  settings_save_button_ = new QPushButton("Save", settings_actions_widget_);
+  connect(settings_save_button_, &QPushButton::clicked, this, [this] {
+    if (settings_panel_ != nullptr) settings_panel_->Save();
+  });
+  settings_actions_layout->addWidget(settings_back_button_);
+  settings_actions_layout->addWidget(settings_save_button_);
+  settings_actions_widget_->hide();
+  layout->addWidget(settings_actions_widget_);
+
+  minimize_button_ = new QToolButton(top_bar_);
+  minimize_button_->setAutoRaise(true);
+  minimize_button_->setIcon(style()->standardIcon(QStyle::SP_TitleBarMinButton));
+  minimize_button_->setToolTip("Minimize");
+  connect(minimize_button_, &QToolButton::clicked, this, &QWidget::showMinimized);
+  layout->addWidget(minimize_button_);
+
+  maximize_button_ = new QToolButton(top_bar_);
+  maximize_button_->setAutoRaise(true);
+  maximize_button_->setIcon(style()->standardIcon(QStyle::SP_TitleBarMaxButton));
+  maximize_button_->setToolTip("Maximize");
+  connect(maximize_button_, &QToolButton::clicked, this, &LibraryWindow::ToggleMaximize);
+  layout->addWidget(maximize_button_);
+
+  close_button_ = new QToolButton(top_bar_);
+  close_button_->setAutoRaise(true);
+  close_button_->setIcon(style()->standardIcon(QStyle::SP_TitleBarCloseButton));
+  close_button_->setToolTip("Close");
+  connect(close_button_, &QToolButton::clicked, this, &QWidget::close);
+  layout->addWidget(close_button_);
+
+  return top_bar_;
+}
+
+QWidget* LibraryWindow::BuildGrid() {
+  auto* container = new QWidget(this);
+  auto* layout = new QVBoxLayout(container);
+  layout->setContentsMargins(6, 10, 6, 6);
+  layout->setSpacing(6);
 
   grid_ = new QListWidget(container);
   grid_->setObjectName("library_grid");
@@ -678,28 +800,15 @@ void LibraryWindow::RefreshMetadata(const std::string& id, bool announce) {
       });
 }
 
-void LibraryWindow::SetHealthy(bool healthy, const QString& tooltip) {
-  health_badge_->setToolTip(tooltip);
-  if (healthy) {
-    health_badge_->setText("● Online");
-    health_badge_->setStyleSheet("font-size: 11px; color: #2e7d32; font-weight: 600;");
-  } else {
-    health_badge_->setText("● Offline");
-    health_badge_->setStyleSheet("font-size: 11px; color: #c62828; font-weight: 600;");
-  }
-}
-
 void LibraryWindow::RefreshHealth(bool force_scan) {
-  health_badge_->setText("● checking…");
-  health_badge_->setStyleSheet("font-size: 11px; color: #757575;");
-
   mira_gui::MiradClient::CheckHealthAsync(this, [this, force_scan](mira_gui::HealthStatus status) {
-    SetHealthy(status.reachable, QString::fromStdString(status.detail));
     if (status.reachable) {
       RescanAndRefreshGames(force_scan);
     } else {
       games_.clear();
       ApplyFilter();
+      mira_gui::notify::Failed(this, "Could not reach mirad.",
+                               QString::fromStdString(status.detail));
     }
   });
 }
@@ -722,8 +831,8 @@ void LibraryWindow::RefreshGames() {
   // a round trip.
   mira_gui::MiradClient::ListGamesAsync(this, [this](mira_gui::GamesResult visible) {
     if (!visible.ok) {
-      health_badge_->setToolTip(QString("mirad is reachable, but GET /v1/games failed: %1")
-                                    .arg(QString::fromStdString(visible.error)));
+      mira_gui::notify::Failed(this, "Could not list games.",
+                               QString::fromStdString(visible.error));
       games_.clear();
       ApplyFilter();
       return;
@@ -744,13 +853,13 @@ void LibraryWindow::RefreshGames() {
 }
 
 QString LibraryWindow::CurrentFilterKey() const {
-  auto* item = filters_->currentItem();
-  return item ? item->data(Qt::UserRole).toString() : QString("all");
+  const QVariant data = filters_->currentData();
+  return data.isValid() ? data.toString() : QString("all");
 }
 
 int LibraryWindow::FilterRow(const QString& key) const {
   for (int row = 0; row < filters_->count(); ++row) {
-    if (filters_->item(row)->data(Qt::UserRole).toString() == key) return row;
+    if (filters_->itemData(row).toString() == key) return row;
   }
   return -1;
 }
@@ -861,7 +970,7 @@ void LibraryWindow::RemoveGame(const std::string& id) {
 }
 
 void LibraryWindow::SelectionChanged() {
-  if (middle_stack_->currentWidget() == settings_page_) return;  // sidebar stays blank
+  if (content_stack_->currentWidget() == settings_page_) return;  // grid isn't on screen
   if (restoring_selection_) return;  // re-entrant call from the revert below
 
   if (sidebar_stack_->currentWidget() == game_edit_page_) {
@@ -1027,26 +1136,51 @@ void LibraryWindow::CloseGameEdit() {
 }
 
 void LibraryWindow::OpenSettings() {
+  // Already open: rebuilding would throw away whatever is half-typed, and
+  // Ctrl+, (or the SteamGridDB notice) can land here at any time.
+  if (SettingsOpen()) return;
+
   // Fresh instance each time: starts synced to what's actually saved,
   // not stale edits left in the widgets from a discarded previous open.
   if (settings_page_ != nullptr) {
-    middle_stack_->removeWidget(settings_page_);
+    content_stack_->removeWidget(settings_page_);
     settings_page_->deleteLater();
   }
   settings_page_ = BuildSettingsPage();
-  middle_stack_->addWidget(settings_page_);
-
-  // Game selection is a grid concept — blank the sidebar while it's covered.
-  grid_->clearSelection();
-  selected_id_.clear();
-  details_->Clear();
-  sidebar_stack_->setCurrentWidget(blank_sidebar_page_);
-  middle_stack_->setCurrentWidget(settings_page_);
+  content_stack_->addWidget(settings_page_);
+  content_stack_->setCurrentWidget(settings_page_);
+  SetSettingsChromeVisible(true);
 }
 
 void LibraryWindow::CloseSettings() {
-  middle_stack_->setCurrentIndex(0);
-  sidebar_stack_->setCurrentWidget(details_);
+  content_stack_->setCurrentWidget(splitter_);
+  SetSettingsChromeVisible(false);
+}
+
+bool LibraryWindow::SettingsOpen() const {
+  return settings_page_ != nullptr && content_stack_->currentWidget() == settings_page_;
+}
+
+void LibraryWindow::SetSettingsChromeVisible(bool settings_open) {
+  settings_button_->setVisible(!settings_open);
+  settings_actions_widget_->setVisible(settings_open);
+  // The library controls act on a grid that isn't on screen while settings
+  // covers it, so they read as broken rather than as available.
+  for (QWidget* control : {static_cast<QWidget*>(filters_), static_cast<QWidget*>(sort_),
+                           static_cast<QWidget*>(sort_direction_), static_cast<QWidget*>(search_),
+                           static_cast<QWidget*>(zoom_)}) {
+    control->setEnabled(!settings_open);
+  }
+}
+
+void LibraryWindow::RequestCloseSettings() {
+  if (settings_panel_ != nullptr && settings_panel_->IsDirty() &&
+      !mira_gui::notify::Confirm(this, "Discard changes?",
+                                 "Settings changed but not saved. Discard them?", "Discard",
+                                 /*destructive=*/true)) {
+    return;
+  }
+  CloseSettings();
 }
 
 QWidget* LibraryWindow::BuildSettingsPage() {
@@ -1055,17 +1189,11 @@ QWidget* LibraryWindow::BuildSettingsPage() {
   layout->setContentsMargins(16, 12, 16, 16);
   layout->setSpacing(10);
 
-  auto* header = new QHBoxLayout();
   auto* title = new QLabel("Settings", page);
   title->setStyleSheet("font-size: 16px; font-weight: 600;");
-  header->addWidget(title);
-  header->addStretch(1);
-  auto* save = new QPushButton("Save", page);
-  header->addWidget(save);
-  layout->addLayout(header);
+  layout->addWidget(title);
 
   settings_panel_ = new mira_gui::SettingsPanel(page);
-  connect(save, &QPushButton::clicked, settings_panel_, &mira_gui::SettingsPanel::Save);
   connect(settings_panel_, &mira_gui::SettingsPanel::LoadFailed, this, [this](QString error) {
     mira_gui::notify::Failed(this, "Could not load the settings.", error);
     CloseSettings();
@@ -1078,27 +1206,12 @@ QWidget* LibraryWindow::BuildSettingsPage() {
             }
             mira_gui::notify::Toast(this, mira_gui::notify::Level::Success, "Settings saved.");
             CloseSettings();
-            // Frontend-only prefs (menu_bar_pinned, game_settings_in_sidebar) just
-            // changed on the daemon; re-reading them is how this window picks the
+            // Frontend-only prefs (game_settings_in_sidebar) just changed on
+            // the daemon; re-reading them is how this window picks the
             // change up without a restart.
             LoadPrefs();
           });
   layout->addWidget(settings_panel_, /*stretch=*/1);
-
-  auto* footer = new QHBoxLayout();
-  auto* back = new QPushButton("← Back to library", page);
-  connect(back, &QPushButton::clicked, this, [this] {
-    if (settings_panel_ != nullptr && settings_panel_->IsDirty() &&
-        !mira_gui::notify::Confirm(this, "Discard changes?",
-                                   "Settings changed but not saved. Discard them?", "Discard",
-                                   /*destructive=*/true)) {
-      return;
-    }
-    CloseSettings();
-  });
-  footer->addWidget(back);
-  footer->addStretch(1);
-  layout->addLayout(footer);
 
   return page;
 }

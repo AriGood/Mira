@@ -14,6 +14,7 @@ class OverridesEditor;
 
 class QCheckBox;
 class QComboBox;
+class QFormLayout;
 class QLabel;
 class QLineEdit;
 class QPlainTextEdit;
@@ -59,9 +60,9 @@ private:
   std::string install_path_;
   mira_gui::GamePatch original_patch_;
 
+  QFormLayout* form_ = nullptr;
   QLabel* status_label_;
   QLabel* install_path_label_;
-  QLabel* confidence_label_;
   QLabel* last_error_label_;
   QLineEdit* name_edit_;
   QComboBox* exe_combo_;

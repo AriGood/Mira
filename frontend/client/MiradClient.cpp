@@ -296,7 +296,6 @@ FrontendPrefsResult GetFrontendPrefsSync() {
   read_int("window_width", result.prefs.window_width);
   read_int("window_height", result.prefs.window_height);
   read_int("tile_width", result.prefs.tile_width);
-  read_int("sidebar_width", result.prefs.sidebar_width);
   read_int("details_width", result.prefs.details_width);
   const auto read_string = [&table](const char* key, std::optional<std::string>& out) {
     if (table.contains(key) && table[key].is_string()) out = table[key].get<std::string>();
@@ -310,7 +309,6 @@ FrontendPrefsResult GetFrontendPrefsSync() {
   read_bool("scan_on_startup", result.prefs.scan_on_startup);
   read_string("notifications", result.prefs.notifications);
   read_int("notification_timeout_s", result.prefs.notification_timeout_s);
-  read_bool("menu_bar_pinned", result.prefs.menu_bar_pinned);
   read_bool("game_settings_in_sidebar", result.prefs.game_settings_in_sidebar);
   return result;
 }
@@ -320,7 +318,6 @@ PatchConfigResult SaveFrontendPrefsSync(const FrontendPrefs& prefs) {
   if (prefs.window_width) table["window_width"] = *prefs.window_width;
   if (prefs.window_height) table["window_height"] = *prefs.window_height;
   if (prefs.tile_width) table["tile_width"] = *prefs.tile_width;
-  if (prefs.sidebar_width) table["sidebar_width"] = *prefs.sidebar_width;
   if (prefs.details_width) table["details_width"] = *prefs.details_width;
   if (prefs.library_filter) table["library_filter"] = *prefs.library_filter;
   if (prefs.sort_by) table["sort_by"] = *prefs.sort_by;
@@ -330,7 +327,6 @@ PatchConfigResult SaveFrontendPrefsSync(const FrontendPrefs& prefs) {
   if (prefs.notification_timeout_s) {
     table["notification_timeout_s"] = *prefs.notification_timeout_s;
   }
-  if (prefs.menu_bar_pinned) table["menu_bar_pinned"] = *prefs.menu_bar_pinned;
   if (prefs.game_settings_in_sidebar) {
     table["game_settings_in_sidebar"] = *prefs.game_settings_in_sidebar;
   }

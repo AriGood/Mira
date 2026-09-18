@@ -7,10 +7,19 @@ that decision is load-bearing and is not restated here.
 
 ## Two views, both kept
 
-`mira-gui` opens on **the grid** (`views/LibraryWindow`): cover tiles, a
-filter sidebar, a search box, a details panel. It is modelled on Playnite's
-shelf, which is the interaction most people arriving at a Linux game
-launcher already know.
+`mira-gui` opens on **the grid** (`views/LibraryWindow`): cover tiles and a
+details panel, with a custom top bar in place of a native titlebar — filter
+and sort controls, search, tile size, and window controls (minimize/
+maximize/close), inspired by Lutris. It is modelled on Playnite's shelf for
+the tile browsing itself, which is the interaction most people arriving at a
+Linux game launcher already know.
+
+The window is frameless (`Qt::FramelessWindowHint`): the top bar owns
+move (`QWindow::startSystemMove`, dragging its own empty background) and
+double-click-to-maximize, and a `RootWidget` central widget reserves a few
+pixels at each edge for `QWindow::startSystemResize`. Both go through the
+compositor rather than repositioning the window by hand, which is what makes
+them work under Wayland as well as X11.
 
 **The table** (`views/MainWindow`) shows every field of every game at once.
 It is reachable as `mira-gui --classic`, or from the grid's *View → Open
@@ -43,7 +52,7 @@ because `LibraryWindow` saves its layout in `closeEvent` and a quit that
 skipped that handler would drop the prefs silently.
 
 The grid adds: `Ctrl+F` search, `Esc` (clears the search first, the
-selection second), `Ctrl+1`–`Ctrl+8` sidebar filters, `F5`/`Ctrl+R` refresh,
+selection second), `Ctrl+1`–`Ctrl+8` filters, `F5`/`Ctrl+R` refresh,
 `Ctrl+,` settings, `Ctrl++`/`Ctrl+-`/`Ctrl+0` tile size, and — only while
 the grid itself has focus — `Enter` to play or stop, `Alt+Enter` for details,
 `Delete` to remove.
@@ -110,21 +119,22 @@ forever on the off chance one was dropped. See "Idle cost" in
 This matters more than it looks:
 
 - **`settings.toml`** holds backend settings. Every key is declared in
-  `src/config/Schema.cpp`, and `SettingsDialog` is generated entirely from
+  `src/config/Schema.cpp`, and `ui/SettingsPanel` is generated entirely from
   `GET /v1/config/schema` — almost no setting name is hardcoded in the
   frontend. Adding a backend setting requires no frontend change.
 - **`frontend.toml`** holds the frontend's own state and preferences:
-  window size, tile size, which sidebar filter and sort were selected,
-  splitter widths, and whether to scan the library on startup. The backend
-  stores it verbatim and never validates it, reachable as the opaque
-  `frontend` key of `GET`/`PATCH /v1/config` (see `FrontendPrefs`).
+  window size, tile size, which filter and sort were selected,
+  the details panel's splitter width, and whether to scan the library on
+  startup. The backend stores it verbatim and never validates it, reachable
+  as the opaque `frontend` key of `GET`/`PATCH /v1/config` (see
+  `FrontendPrefs`).
 
   | key | what it does |
   |---|---|
   | `window_width`, `window_height` | remembered window size |
-  | `sidebar_width`, `details_width` | remembered splitter layout |
+  | `details_width` | remembered splitter width for the details panel |
   | `tile_width` | cover tile size (clamped to the zoom slider's range) |
-  | `library_filter` | which sidebar filter was selected |
+  | `library_filter` | which filter was selected |
   | `sort_by`, `sort_descending` | grid order — see `ui/LibrarySort` |
   | `scan_on_startup` | whether opening the frontend runs `POST /v1/library/scan` |
   | `notifications` | `auto` / `system` / `in_app` — see "Telling the user things" |

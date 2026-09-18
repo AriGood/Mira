@@ -27,14 +27,14 @@ GameEditForm::GameEditForm(std::string id, QWidget* parent) : QWidget(parent), i
   layout->setContentsMargins(0, 0, 0, 0);
   layout->setSpacing(12);
 
-  auto* form = new QFormLayout();
+  form_ = new QFormLayout();
+  auto* form = form_;
   form->setVerticalSpacing(10);
   form->setHorizontalSpacing(14);
   status_label_ = new QLabel(this);
   install_path_label_ = new QLabel(this);
   install_path_label_->setWordWrap(true);
   install_path_label_->setTextInteractionFlags(Qt::TextSelectableByMouse);
-  confidence_label_ = new QLabel(this);
   last_error_label_ = new QLabel(this);
   last_error_label_->setWordWrap(true);
   last_error_label_->setStyleSheet("color: #c62828;");
@@ -73,7 +73,6 @@ GameEditForm::GameEditForm(std::string id, QWidget* parent) : QWidget(parent), i
   runner_row->addWidget(runner_combo_, /*stretch=*/1);
 
   form->addRow("Status:", status_label_);
-  form->addRow("Confidence:", confidence_label_);
   form->addRow("Install path:", install_path_label_);
   form->addRow("Name:", name_edit_);
   form->addRow("Executable:", exe_row);
@@ -143,13 +142,12 @@ void GameEditForm::Load() {
 void GameEditForm::Populate(const mira_gui::GameDetail& game) {
   emit Loaded(QString::fromStdString(game.name));
 
+  // "Ready" is the common case and says nothing worth a line of its own —
+  // only a state that needs attention earns one.
+  form_->setRowVisible(status_label_, game.status != "ready");
   status_label_->setText(QString::fromStdString(game.status));
   status_label_->setStyleSheet(
       QString("color: %1;").arg(mira_gui::StatusColor(game.status).name()));
-
-  confidence_label_->setText(mira_gui::ConfidenceText(game.reviewed, game.confidence));
-  confidence_label_->setStyleSheet(
-      QString("color: %1;").arg(mira_gui::ConfidenceColor(game.reviewed, game.confidence).name()));
 
   install_path_ = game.install_path;
   install_path_label_->setText(QString::fromStdString(game.install_path));

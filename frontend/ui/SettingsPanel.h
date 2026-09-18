@@ -80,8 +80,6 @@ private:
   QString notifications_original_;
   QSpinBox* notification_timeout_ = nullptr;
   int notification_timeout_original_ = 0;
-  QCheckBox* menu_bar_pinned_ = nullptr;
-  bool menu_bar_pinned_original_ = false;
   QCheckBox* game_settings_in_sidebar_ = nullptr;
   bool game_settings_in_sidebar_original_ = true;
   std::vector<Field> fields_;

@@ -87,11 +87,6 @@ void SettingsPanel::BuildInterfaceGroup() {
       "How long a notification stays up. \"Until dismissed\" is the default.");
   form->addRow("Keep notifications for", notification_timeout_);
 
-  menu_bar_pinned_ = new QCheckBox(box);
-  menu_bar_pinned_->setToolTip(
-      "Keep the File/View/Library/Tools/Help menu bar open instead of toggling it with Alt.");
-  form->addRow("Always show the menu bar", menu_bar_pinned_);
-
   game_settings_in_sidebar_ = new QCheckBox(box);
   game_settings_in_sidebar_->setChecked(true);
   game_settings_in_sidebar_->setToolTip(
@@ -128,10 +123,6 @@ void SettingsPanel::LoadFrontendPrefs() {
     if (result.prefs.notification_timeout_s) {
       notification_timeout_->setValue(*result.prefs.notification_timeout_s);
       notification_timeout_original_ = notification_timeout_->value();  // after the clamp
-    }
-    if (result.prefs.menu_bar_pinned) {
-      menu_bar_pinned_original_ = *result.prefs.menu_bar_pinned;
-      menu_bar_pinned_->setChecked(menu_bar_pinned_original_);
     }
     if (result.prefs.game_settings_in_sidebar) {
       game_settings_in_sidebar_original_ = *result.prefs.game_settings_in_sidebar;
@@ -343,7 +334,6 @@ bool SettingsPanel::IsDirty() const {
   if (scan_on_startup_->isChecked() != scan_on_startup_original_) return true;
   if (notifications_->currentData().toString() != notifications_original_) return true;
   if (notification_timeout_->value() != notification_timeout_original_) return true;
-  if (menu_bar_pinned_->isChecked() != menu_bar_pinned_original_) return true;
   if (game_settings_in_sidebar_->isChecked() != game_settings_in_sidebar_original_) return true;
   for (const Field& field : fields_) {
     if (CurrentText(field) != field.original) return true;
@@ -354,22 +344,18 @@ bool SettingsPanel::IsDirty() const {
 void SettingsPanel::Save() {
   const QString notifications = notifications_->currentData().toString();
   const int timeout = notification_timeout_->value();
-  const bool menu_bar_pinned = menu_bar_pinned_->isChecked();
   const bool game_settings_in_sidebar = game_settings_in_sidebar_->isChecked();
   if (scan_on_startup_->isChecked() != scan_on_startup_original_ ||
       notifications != notifications_original_ || timeout != notification_timeout_original_ ||
-      menu_bar_pinned != menu_bar_pinned_original_ ||
       game_settings_in_sidebar != game_settings_in_sidebar_original_) {
     mira_gui::FrontendPrefs prefs;
     prefs.scan_on_startup = scan_on_startup_->isChecked();
     prefs.notifications = notifications.toStdString();
     prefs.notification_timeout_s = timeout;
-    prefs.menu_bar_pinned = menu_bar_pinned;
     prefs.game_settings_in_sidebar = game_settings_in_sidebar;
     scan_on_startup_original_ = *prefs.scan_on_startup;
     notifications_original_ = notifications;
     notification_timeout_original_ = timeout;
-    menu_bar_pinned_original_ = menu_bar_pinned;
     game_settings_in_sidebar_original_ = game_settings_in_sidebar;
     mira_gui::notify::SetDelivery(mira_gui::notify::DeliveryFromString(notifications));
     mira_gui::notify::SetTimeoutSeconds(timeout);
