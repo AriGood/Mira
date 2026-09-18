@@ -20,7 +20,7 @@ QCheckBox* AddPathOption(QVBoxLayout* layout, QWidget* parent, const QString& la
   path_label->setWordWrap(true);
   path_label->setTextInteractionFlags(Qt::TextSelectableByMouse);
   path_label->setContentsMargins(22, 0, 0, 6);
-  path_label->setStyleSheet("font-size: 11px; color: #9e9e9e;");
+  path_label->setProperty("role", "muted");
   layout->addWidget(path_label);
 
   if (path.isEmpty()) {
@@ -47,7 +47,7 @@ DeleteChoice AskDeleteGame(QWidget* parent, const QString& name, const QString& 
 
   auto* heading = new QLabel(QString("Remove \"%1\" from the library?").arg(name), &dialog);
   heading->setWordWrap(true);
-  heading->setStyleSheet("font-weight: 600;");
+  heading->setProperty("role", "section");
   layout->addWidget(heading);
 
   auto* explanation = new QLabel(
@@ -68,7 +68,7 @@ DeleteChoice AskDeleteGame(QWidget* parent, const QString& name, const QString& 
       "configured library root or prefix root.",
       &dialog);
   warning->setWordWrap(true);
-  warning->setStyleSheet("color: #c62828; font-size: 11px;");
+  warning->setProperty("role", "error");
   warning->setVisible(false);
   layout->addWidget(warning);
 

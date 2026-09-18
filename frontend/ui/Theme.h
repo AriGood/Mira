@@ -5,6 +5,8 @@
 #include <QString>
 #include <QStringList>
 
+class QWidget;
+
 namespace mira_gui::theme {
 
 // Every color and measurement the UI draws with. A theme file sets these and
@@ -70,6 +72,13 @@ void Apply(const QString& name);
 
 // The name last passed to Apply(), so the settings picker can show it.
 QString CurrentName();
+
+// Sets one of the stylesheet's own properties on a widget — "role" for a text
+// style (muted, heading, section, error, keys), "status" for a lifecycle
+// color. Qt does not restyle a widget when a property changes after it has
+// been polished, so this re-polishes it; setting the property directly works
+// only before the widget is first shown.
+void SetStyleProperty(QWidget* widget, const char* name, const QString& value);
 
 // Changed() fires after every Apply(). Anything that paints with tokens
 // instead of with the stylesheet — the tile delegate, the toasts — connects to

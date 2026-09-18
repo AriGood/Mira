@@ -11,6 +11,7 @@
 #include "ArtworkStore.h"
 #include "CoverArt.h"
 #include "GamePresentation.h"
+#include "Theme.h"
 
 namespace mira_gui {
 namespace {
@@ -36,7 +37,7 @@ GameDetailsPanel::GameDetailsPanel(QWidget* parent) : QWidget(parent) {
   auto* placeholder = new QLabel("Select a game to see its details.", stack_);
   placeholder->setAlignment(Qt::AlignCenter);
   placeholder->setWordWrap(true);
-  placeholder->setStyleSheet("color: #9e9e9e;");
+  placeholder->setProperty("role", "muted");
   stack_->addWidget(placeholder);
 
   auto* panel = new QWidget(stack_);
@@ -50,11 +51,10 @@ GameDetailsPanel::GameDetailsPanel(QWidget* parent) : QWidget(parent) {
 
   name_ = new QLabel(panel);
   name_->setWordWrap(true);
-  name_->setStyleSheet("font-size: 16px; font-weight: 600;");
+  name_->setProperty("role", "heading");
   layout->addWidget(name_);
 
   status_ = new QLabel(panel);
-  status_->setStyleSheet("font-size: 11px; font-weight: 600;");
   layout->addWidget(status_);
 
   play_ = new QPushButton("Play", panel);
@@ -103,7 +103,7 @@ GameDetailsPanel::GameDetailsPanel(QWidget* parent) : QWidget(parent) {
   layout->addLayout(form);
 
   error_ = ValueLabel(panel);
-  error_->setStyleSheet("color: #c62828; font-size: 11px;");
+  error_->setProperty("role", "error");
   error_->setVisible(false);
   layout->addWidget(error_);
 
@@ -146,8 +146,8 @@ void GameDetailsPanel::ShowGame(const GameSummary& game, bool running) {
   const bool can_launch = game.status == "ready";
   status_->setVisible(running || !can_launch);
   status_->setText(running ? "Playing now" : StatusLabel(game.status));
-  status_->setStyleSheet(QString("font-size: 11px; font-weight: 600; color: %1;")
-                             .arg(running ? QString("#43a047") : StatusColor(game.status).name()));
+  theme::SetStyleProperty(status_, "status",
+                          running ? QString("running") : QString::fromStdString(game.status));
 
   play_->setText(running ? "Stop" : "Play");
   play_->setEnabled(running || can_launch);

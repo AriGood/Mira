@@ -96,7 +96,7 @@ void SettingsPanel::BuildInterfaceGroup() {
 
   auto* note = new QLabel("Stored in frontend.toml, never interpreted by the daemon.", box);
   note->setWordWrap(true);
-  note->setStyleSheet("color: #9e9e9e; font-size: 11px;");
+  note->setProperty("role", "muted");
   form->addRow(note);
 
   LoadFrontendPrefs();

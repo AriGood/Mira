@@ -32,6 +32,27 @@ QLabel[role="keys"] {
   font-weight: 600;
 }
 
+/* A game's lifecycle state, set as a "status" property so a theme change
+ * recolors it without the widget having to be repopulated (ui/Theme.h's
+ * SetStyleProperty). "running" is not a status mirad reports — it is the
+ * frontend's own "playing right now". */
+QLabel[status="ready"],
+QLabel[status="setting_up"],
+QLabel[status="broken"],
+QLabel[status="missing"],
+QLabel[status="needs_install"],
+QLabel[status="running"] {
+  font-size: @font_size_small;
+  font-weight: 600;
+}
+
+QLabel[status="ready"] { color: @status_ready; }
+QLabel[status="setting_up"] { color: @status_setting_up; }
+QLabel[status="broken"] { color: @status_broken; }
+QLabel[status="missing"] { color: @status_missing; }
+QLabel[status="needs_install"] { color: @status_needs_install; }
+QLabel[status="running"] { color: @running; }
+
 /* --- The custom top bar -------------------------------------------------- */
 
 QWidget#top_bar {

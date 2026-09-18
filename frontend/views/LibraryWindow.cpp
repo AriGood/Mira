@@ -40,6 +40,7 @@
 #include "../ui/Notify.h"
 #include "../ui/SettingsPanel.h"
 #include "../ui/Shortcuts.h"
+#include "../ui/Theme.h"
 #include "../ui/Tray.h"
 #include "MainWindow.h"
 
@@ -156,6 +157,14 @@ LibraryWindow::LibraryWindow(QWidget* parent) : QMainWindow(parent) {
   artwork_ = new mira_gui::ArtworkStore(this);
   connect(artwork_, &mira_gui::ArtworkStore::CoverChanged, this, &LibraryWindow::UpdateTileCover);
 
+  // The stylesheet re-polishes every widget by itself; what it cannot reach
+  // is what we paint — the tiles, and the placeholder covers drawn in the
+  // theme's own colors.
+  connect(mira_gui::theme::Notifier::Instance(), &mira_gui::theme::Notifier::Changed, this, [this] {
+    artwork_->InvalidateAllRenderings();
+    ApplyFilter();
+  });
+
   details_ = new mira_gui::GameDetailsPanel(this);
   details_->SetArtworkStore(artwork_);
   connect(details_, &mira_gui::GameDetailsPanel::PlayRequested, this,
@@ -197,7 +206,8 @@ LibraryWindow::LibraryWindow(QWidget* parent) : QMainWindow(parent) {
   layout->addWidget(content_stack_, /*stretch=*/1);
 
   footer_ = new QLabel(central);
-  footer_->setStyleSheet("font-size: 10px; color: #9e9e9e; padding: 4px 10px;");
+  footer_->setProperty("role", "muted");
+  footer_->setContentsMargins(10, 4, 10, 4);
   footer_->setCursor(Qt::ArrowCursor);
   layout->addWidget(footer_);
 
@@ -659,7 +669,7 @@ QWidget* LibraryWindow::BuildGrid() {
 
   empty_hint_ = new QLabel(container);
   empty_hint_->setAlignment(Qt::AlignCenter);
-  empty_hint_->setStyleSheet("color: #9e9e9e;");
+  empty_hint_->setProperty("role", "muted");
   empty_hint_->setVisible(false);
   layout->addWidget(empty_hint_);
 
@@ -1161,7 +1171,7 @@ QWidget* LibraryWindow::BuildSettingsPage() {
   layout->setSpacing(10);
 
   auto* title = new QLabel("Settings", page);
-  title->setStyleSheet("font-size: 16px; font-weight: 600;");
+  title->setProperty("role", "heading");
   layout->addWidget(title);
 
   settings_panel_ = new mira_gui::SettingsPanel(page);

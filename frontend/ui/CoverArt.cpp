@@ -1,5 +1,7 @@
 #include "CoverArt.h"
 
+#include "Theme.h"
+
 #include <QFont>
 #include <QLinearGradient>
 #include <QPainter>
@@ -10,7 +12,8 @@ namespace mira_gui {
 
 QColor PlaceholderBase(const QString& seed) {
   const int hue = static_cast<int>(qHash(seed) % 360u);
-  return QColor::fromHsv(hue, 110, 135);
+  const theme::Tokens& tokens = theme::Current();
+  return QColor::fromHsv(hue, tokens.placeholder_saturation, tokens.placeholder_value);
 }
 
 QString CoverInitials(const QString& name) {

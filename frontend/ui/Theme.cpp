@@ -11,6 +11,7 @@
 #include <QPainterPath>
 #include <QRegularExpression>
 #include <QStandardPaths>
+#include <QWidget>
 #include <QStyle>
 #include <QStyleFactory>
 #include <QStyleHints>
@@ -261,6 +262,14 @@ void ApplyResolved(const QString& resolved) {
 }  // namespace
 
 const Tokens& Current() { return g_tokens; }
+
+void SetStyleProperty(QWidget* widget, const char* name, const QString& value) {
+  if (widget == nullptr) return;
+  if (widget->property(name).toString() == value) return;
+  widget->setProperty(name, value);
+  widget->style()->unpolish(widget);
+  widget->style()->polish(widget);
+}
 
 QString CurrentName() { return g_name; }
 

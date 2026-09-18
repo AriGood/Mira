@@ -83,6 +83,8 @@ void ArtworkStore::InvalidateRendering(const std::string& id) {
   }
 }
 
+void ArtworkStore::InvalidateAllRenderings() { scaled_.clear(); }
+
 void ArtworkStore::Request(const QString& id) {
   if (queued_.contains(id)) return;
   queued_.insert(id);

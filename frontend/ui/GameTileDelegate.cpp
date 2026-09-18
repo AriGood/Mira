@@ -7,6 +7,7 @@
 #include <QPixmap>
 
 #include "GamePresentation.h"
+#include "Theme.h"
 
 namespace mira_gui {
 namespace {
@@ -36,8 +37,14 @@ void GameTileDelegate::paint(QPainter* painter, const QStyleOptionViewItem& opti
   const bool selected = option.state & QStyle::State_Selected;
   const bool hovered = option.state & QStyle::State_MouseOver;
 
+  const theme::Tokens& tokens = theme::Current();
+
   QPainterPath path;
-  path.addRect(rect);
+  if (tokens.radius_tile > 0) {
+    path.addRoundedRect(rect, tokens.radius_tile, tokens.radius_tile);
+  } else {
+    path.addRect(rect);
+  }
 
   painter->save();
   painter->setRenderHint(QPainter::Antialiasing);
@@ -45,7 +52,7 @@ void GameTileDelegate::paint(QPainter* painter, const QStyleOptionViewItem& opti
 
   const QPixmap cover = index.data(Qt::DecorationRole).value<QPixmap>();
   if (cover.isNull()) {
-    painter->fillRect(rect, QColor("#303030"));
+    painter->fillRect(rect, tokens.tile_placeholder);
   } else {
     painter->drawPixmap(rect, cover);
   }
@@ -57,7 +64,7 @@ void GameTileDelegate::paint(QPainter* painter, const QStyleOptionViewItem& opti
   const int scrim_height = qMin(rect.height(), kScrimHeight);
   const QRect scrim(rect.left(), rect.bottom() - scrim_height + 1, rect.width(), scrim_height);
   QLinearGradient gradient(scrim.bottomLeft(), scrim.topLeft());
-  gradient.setColorAt(0.0, QColor(0, 0, 0, 225));
+  gradient.setColorAt(0.0, QColor(0, 0, 0, tokens.scrim_alpha));
   gradient.setColorAt(1.0, QColor(0, 0, 0, 0));
   painter->fillRect(scrim, gradient);
   painter->restore();
@@ -91,11 +98,11 @@ void GameTileDelegate::paint(QPainter* painter, const QStyleOptionViewItem& opti
   // Border last, so selection reads on top of the artwork.
   painter->setBrush(Qt::NoBrush);
   if (running) {
-    painter->setPen(QPen(QColor("#43a047"), 2));
+    painter->setPen(QPen(tokens.running, 2));
     painter->drawPath(path);
   }
   if (selected) {
-    painter->setPen(QPen(QColor("#5c6bc0"), 3));
+    painter->setPen(QPen(tokens.accent, 3));
     painter->drawPath(path);
   } else if (hovered) {
     painter->setPen(QPen(QColor(255, 255, 255, 80), 2));
