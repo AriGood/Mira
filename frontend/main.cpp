@@ -1,7 +1,10 @@
 #include <QApplication>
+#include <QDir>
 #include <QGuiApplication>
 #include <QIcon>
+#include <QLockFile>
 #include <QMessageBox>
+#include <QStandardPaths>
 #include <QStringList>
 
 #include "ui/DaemonSupervisor.h"
@@ -14,6 +17,18 @@ int main(int argc, char** argv) {
   QApplication app(argc, argv);
   QApplication::setApplicationName("Mira");
   QApplication::setOrganizationName("mira");
+
+  // Mira closes to tray rather than quitting, so a second launch (another
+  // double-click on the AppImage, another "Mira" from the app menu) must
+  // not open a second window against the same daemon — it should just no-op.
+  // QLockFile detects and clears a lock left by a crashed instance on its
+  // own (it checks whether the PID that holds it is still alive).
+  const QString runtime_dir = QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation) + "/mira";
+  QDir().mkpath(runtime_dir);
+  QLockFile single_instance_lock(runtime_dir + "/mira-gui.lock");
+  if (!single_instance_lock.tryLock(0)) {
+    return 0;
+  }
   // Matches packaging/mira.desktop, which is how a Wayland compositor and
   // the notification service both work out which application this is — it
   // is what puts Mira's own name and icon on a desktop notification rather

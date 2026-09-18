@@ -185,12 +185,7 @@ frontend's. Closing the frontend can either stop the daemon immediately or
 (if the user enables "keep running in background" / tray mode) leave it
 running until the frontend is told to fully quit.
 
-This is currently a documented design, not yet implemented — `mira-gui`
-today assumes `mirad` is already running and just reports it unreachable if
-not (see "Built: the frontend" below for what does exist). Recorded here
-because it is a load-bearing decision for how the frontend is built, not an
-afterthought: whoever implements this should add a small `DaemonSupervisor`
-in the frontend that:
+Implemented as `frontend/ui/DaemonSupervisor.{h,cpp}`:
 
 1. Probes `GET /v1/health` on the configured socket.
 2. On failure, resolves `mirad` next to its own binary (mirroring what
@@ -199,8 +194,20 @@ in the frontend that:
 3. Tracks whether *it* started the daemon (vs. finding one already running
    via systemd) — only a self-started daemon should ever be torn down on
    exit; a systemd-managed one is left alone regardless of frontend state.
-4. On the frontend's own exit (or tray-quit), stops a self-started daemon
-   with the same SIGTERM path `systemd` would use.
+4. On the frontend's own exit (`QApplication::aboutToQuit`, which a
+   close-to-tray does *not* trigger), stops a self-started daemon with the
+   same SIGTERM path `systemd` would use.
+
+This is why systemd (path 1, above) is mainly relevant to CLI-only/headless
+use now — a GUI user never has to touch it, `mira-gui` starting is enough.
+
+Since Mira closes to tray rather than quitting, `frontend/main.cpp` also
+enforces a single `mira-gui` instance with a `QLockFile` at
+`$XDG_RUNTIME_DIR/mira/mira-gui.lock`, acquired before anything else runs —
+a second launch (another AppImage double-click, another menu launch) just
+exits immediately rather than opening a second window against the same
+daemon. `QLockFile` clears a lock left behind by a crashed instance on its
+own (it checks whether the PID that holds it is still alive).
 
 ### 3. One-shot, no persistent anything
 
