@@ -398,6 +398,7 @@ void LibraryWindow::LoadPrefs() {
       const int index = filters_->findData(wanted);
       if (index >= 0) filters_->setCurrentIndex(index);
     }
+    if (prefs.theme) mira_gui::theme::Apply(QString::fromStdString(*prefs.theme));
     if (prefs.game_settings_in_sidebar) game_settings_in_sidebar_ = *prefs.game_settings_in_sidebar;
   });
 }

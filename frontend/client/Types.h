@@ -407,6 +407,9 @@ struct FrontendPrefs {
   // Seconds a notification stays up; 0 means until dismissed, which is the
   // default. See notify::SetTimeoutSeconds.
   std::optional<int> notification_timeout_s;
+  // A theme name (ui/Theme.h), or "auto" — the default — to follow the
+  // desktop's own light/dark preference.
+  std::optional<std::string> theme;
   // On (default): "Details & settings" edits a game inline in the right
   // panel instead of opening a dialog.
   std::optional<bool> game_settings_in_sidebar;

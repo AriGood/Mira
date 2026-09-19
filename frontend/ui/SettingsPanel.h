@@ -76,6 +76,8 @@ private:
   QCheckBox* show_advanced_ = nullptr;
   QCheckBox* scan_on_startup_ = nullptr;
   bool scan_on_startup_original_ = true;
+  QComboBox* theme_ = nullptr;
+  QString theme_original_;
   QComboBox* notifications_ = nullptr;
   QString notifications_original_;
   QSpinBox* notification_timeout_ = nullptr;

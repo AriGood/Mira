@@ -67,6 +67,42 @@ whatever tile happened to be selected.
 `QKeySequence::Quit`/`::Preferences`. Qt binds `Preferences` on macOS only,
 so the Settings row showed no shortcut at all on Linux.
 
+## Theming
+
+`mira-gui` sets its own style, palette and stylesheet at startup
+(`ui/Theme.cpp`), rather than inheriting the desktop's. Fusion is the base
+style: it is fully palette-driven and identical everywhere, so our stylesheet
+is not layering over Breeze or Adwaita and inheriting whatever they drew for
+the parts it does not name.
+
+A **theme is a TOML token file**, never raw selectors. One stylesheet ships
+with the app (`themes/base.qss`) and every `@token` in it is substituted from
+the theme being applied, so a user theme cannot break when a widget is renamed
+or restructured. Bundled themes (`mira-dark`, `mira-light`) are embedded in the
+binary; a user's own go in `$XDG_CONFIG_HOME/mira/themes/*.toml` and show up in
+the settings picker. Every key is optional — anything missing, misspelled or of
+the wrong type falls back to the built-in default rather than failing the file,
+so a half-written theme still produces a usable window.
+
+The `theme` preference is a theme name or `auto`, which follows the desktop's
+own light/dark setting (`QStyleHints::colorScheme`) and keeps following it.
+
+Three things the stylesheet cannot reach read the tokens directly instead:
+`ui/GameTileDelegate` and `ui/CoverArt`, which paint with `QPainter`, and
+`ui/Notify`'s toasts. They repaint on `theme::Notifier::Changed`.
+
+Two conventions keep colors out of the widgets themselves:
+
+- **Style properties, not per-widget stylesheets.** A label says what it *is*
+  (`setProperty("role", "muted")`, or `"status"` for a lifecycle color) and
+  `base.qss` says what that looks like. `theme::SetStyleProperty` re-polishes
+  the widget, which Qt does not do on its own when a property changes after
+  the widget has been polished.
+- **`ui/Icons`** draws the top bar's glyphs (menu, gear, minimize, maximize,
+  restore, close) as vector paths in the theme's text color, rather than
+  `QStyle::standardIcon` — those are the platform style's dated titlebar
+  buttons and take their color from the platform.
+
 ## Layers
 
 Four directories, depending only downward:
@@ -139,8 +175,9 @@ This matters more than it looks:
   | `scan_on_startup` | whether opening the frontend runs `POST /v1/library/scan` |
   | `notifications` | `auto` / `system` / `in_app` — see "Telling the user things" |
   | `notification_timeout_s` | how long one stays up; `0` (the default) means until dismissed |
+  | `theme` | a theme name, or `auto` to follow the desktop — see "Theming" |
 
-  `scan_on_startup`, `notifications` and `notification_timeout_s` get rows in
+  `scan_on_startup`, `notifications`, `notification_timeout_s` and `theme` get rows in
   the settings screen, in an "Interface (this frontend only)" group above the
   schema-driven ones.
   The rest are implicit UI state: they are saved by using the window, not by
