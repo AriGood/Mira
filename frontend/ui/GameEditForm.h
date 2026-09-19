@@ -12,8 +12,8 @@ namespace mira_gui {
 class OverridesEditor;
 }
 
-class QCheckBox;
 class QComboBox;
+class QDialog;
 class QFormLayout;
 class QLabel;
 class QLineEdit;
@@ -53,7 +53,7 @@ private:
   void OnExeComboActivated(int index);
   void OnRunnerComboActivated(int index);
   void BrowseExecutable();
-  void SetAdvancedVisible(bool show);
+  void OpenAdvanced();
   mira_gui::GamePatch CurrentPatch() const;
 
   std::string id_;
@@ -71,8 +71,10 @@ private:
   QLineEdit* tags_edit_;
   QComboBox* runner_combo_;
 
-  QCheckBox* show_advanced_;
-  QWidget* advanced_container_;
+  // Non-modal window holding just the per-game overrides table (its own
+  // category tabs, one row per overridable key) — long enough on its own to
+  // cramp the sidebar if it were inline.
+  QDialog* advanced_dialog_ = nullptr;
   QLineEdit* data_dir_edit_;
   QPlainTextEdit* runner_config_edit_;
   QPlainTextEdit* env_edit_;
