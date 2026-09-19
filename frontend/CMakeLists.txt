@@ -42,6 +42,8 @@ qt_add_executable(mira-gui
   client/Types.h
 
   # ui/ — presentation shared by more than one view or dialog.
+  ui/AboutPanel.cpp
+  ui/AboutPanel.h
   ui/ArtworkStore.cpp
   ui/ArtworkStore.h
   ui/CoverArt.cpp
@@ -61,6 +63,8 @@ qt_add_executable(mira-gui
   ui/Icons.h
   ui/Notify.cpp
   ui/Notify.h
+  ui/PopupDialog.cpp
+  ui/PopupDialog.h
   ui/SystemNotifier.cpp
   ui/SystemNotifier.h
   ui/Shortcuts.cpp
@@ -81,6 +85,8 @@ qt_add_executable(mira-gui
   views/MainWindow.h
 
   # dialogs/
+  dialogs/ArtworkPickerDialog.cpp
+  dialogs/ArtworkPickerDialog.h
   dialogs/DeleteGameDialog.cpp
   dialogs/DeleteGameDialog.h
   dialogs/GameDetailDialog.cpp
@@ -132,6 +138,14 @@ qt_add_resources(mira-gui "themes"
 # uses, not a shortcut past the API.
 target_link_libraries(mira-gui PRIVATE Qt6::Widgets Qt6::DBus mira_third_party Threads::Threads)
 target_compile_features(mira-gui PRIVATE cxx_std_20)
+
+# The version the About panel shows. CMAKE_PROJECT_VERSION is the root
+# project's, which a standalone frontend configure does not have.
+set(MIRA_GUI_VERSION "${CMAKE_PROJECT_VERSION}")
+if(NOT MIRA_GUI_VERSION)
+  set(MIRA_GUI_VERSION "dev")
+endif()
+target_compile_definitions(mira-gui PRIVATE MIRA_VERSION="${MIRA_GUI_VERSION}")
 
 set_target_properties(mira-gui PROPERTIES
   WIN32_EXECUTABLE OFF

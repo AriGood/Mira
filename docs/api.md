@@ -415,7 +415,11 @@ Steam-owned (`runner_ref` starting `"steam:"`):
   (https://www.protondb.com)'s compatibility tier; four art slots from
   Steam's own CDN — `cover` (`library_600x900`), `hero` (`library_hero`,
   the wide banner), `capsule` (small store-listing thumbnail), `header`
-  (the classic store-page banner). None of these need a key.
+  (the classic store-page banner). None of these need a key. If
+  `steamgriddb.api_key` is set, SteamGridDB is also searched by name for
+  `cover`/`hero`/`logo`/`icon` candidates the same as below — added to
+  `art_candidates` as alternates to switch to, never overwriting Steam's own
+  default `cover`/`hero`.
 - **Everything else**: [SteamGridDB](https://www.steamgriddb.com), matched
   by name search, for four art slots — `cover` (grids), `hero`, `logo`
   (transparent overlay), `icon` — there is no equivalent free metadata
@@ -441,7 +445,11 @@ present only if that source actually returned something for it; `artwork`
 is the cover slot specifically, kept under that name for wire compatibility
 with clients written before `hero` existed. Each art key that is present
 looks like `{"file": "hero.jpg", "content_type": "image/jpeg", "source":
-"steam_cdn"|"steamgriddb"}`. `404` means either "never fetched" or
+"steam_cdn"|"steamgriddb", "candidate_id": <id>}` — `candidate_id` only when
+the image came from `art_candidates` (auto-picked or explicitly selected),
+naming which entry in that slot's list is the one currently active; absent
+for Steam's own CDN art, which isn't a candidate. `404` means either "never
+fetched" or
 "fetched, found nothing" — `POST .../metadata/refresh` below disambiguates
 by trying again. `art_candidates` (SteamGridDB games only) is
 `{"hero": [{"id", "url", "thumb", "width", "height", "style"}, ...], ...}`

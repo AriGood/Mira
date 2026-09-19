@@ -6,14 +6,11 @@
 
 namespace mira_gui::notify {
 
-// The desktop's own notification service, org.freedesktop.Notifications.
-//
-// Worth reaching for over always drawing our own card: a system
-// notification survives the window being minimised, lands in the desktop's
-// notification history, and obeys Do Not Disturb — an in-window toast does
-// none of that. Not interchangeable the other way either, which is why
-// Delivery::Auto exists: a system popup for something in the window you're
-// looking at is noise the desktop then keeps a record of.
+// The desktop's own notification service, org.freedesktop.Notifications —
+// where every toast goes (ui/Notify.h). A system notification survives the
+// window being minimised, lands in the desktop's notification history, and
+// obeys Do Not Disturb — an in-window card does none of that. `Toast` falls
+// back to a card only when Available() is false.
 namespace system_notifier {
 
 // True if Mira's own mira.desktop is installed where the desktop can find

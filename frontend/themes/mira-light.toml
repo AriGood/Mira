@@ -30,6 +30,11 @@ radius_control = 6
 radius_tile = 0
 radius_toast = 8
 
+# Grid layout. Settings can override both per user, which wins over whatever
+# a theme sets here.
+tile_spacing = 5
+grid_margin = 6
+
 font_size_small = 11
 font_size_heading = 16
 

@@ -41,11 +41,18 @@ GameDetailDialog::GameDetailDialog(std::string id, QWidget* parent) : QDialog(pa
 }
 
 void GameDetailDialog::reject() {
-  if (form_->IsDirty() &&
-      !mira_gui::notify::Confirm(this, "Discard changes?",
-                                 "This game's edits aren't saved. Discard them?", "Discard",
-                                 /*destructive=*/true)) {
+  if (!form_->IsDirty()) {
+    QDialog::reject();
     return;
   }
-  QDialog::reject();
+  switch (mira_gui::notify::ConfirmUnsaved(this, "This game's edits aren't saved.")) {
+    case mira_gui::notify::UnsavedAction::Cancel:
+      return;
+    case mira_gui::notify::UnsavedAction::SaveAndExit:
+      form_->Save();  // SaveFinished, connected above, calls accept() on success
+      return;
+    case mira_gui::notify::UnsavedAction::DiscardAndExit:
+      QDialog::reject();
+      return;
+  }
 }

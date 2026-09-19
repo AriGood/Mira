@@ -6,6 +6,7 @@
 
 #include "../client/MiradClient.h"
 #include "CoverArt.h"
+#include "Theme.h"
 
 namespace mira_gui {
 namespace {
@@ -17,6 +18,11 @@ QString ScaleKey(const QString& id, QSize tile) {
 // Real artwork isn't always 2:3 like the tile, so it's scaled to cover and
 // centre-cropped rather than letterboxed — a cropped edge reads as a cover,
 // a background band reads as a broken image.
+//
+// Rounded here to the live radius_tile, not a fixed constant: GameTileDelegate
+// re-clips the grid's own copy to the same token on every paint, but a plain
+// QLabel (the sidebar's cover) has no such second clip, so an unrounded or
+// wrongly-rounded pixmap here would show through as-is.
 QPixmap FitToTile(const QPixmap& source, QSize tile, qreal device_pixel_ratio) {
   const QSize target = tile * device_pixel_ratio;
   const QPixmap filled =
@@ -27,9 +33,14 @@ QPixmap FitToTile(const QPixmap& source, QSize tile, qreal device_pixel_ratio) {
   {
     QPainter painter(&out);
     painter.setRenderHint(QPainter::Antialiasing);
+    const int radius = theme::Current().radius_tile;
     QPainterPath clip;
-    clip.addRoundedRect(QRectF(QPointF(0, 0), QSizeF(target)), 6 * device_pixel_ratio,
-                        6 * device_pixel_ratio);
+    if (radius > 0) {
+      clip.addRoundedRect(QRectF(QPointF(0, 0), QSizeF(target)), radius * device_pixel_ratio,
+                          radius * device_pixel_ratio);
+    } else {
+      clip.addRect(QRectF(QPointF(0, 0), QSizeF(target)));
+    }
     painter.setClipPath(clip);
     painter.drawPixmap((target.width() - filled.width()) / 2,
                        (target.height() - filled.height()) / 2, filled);

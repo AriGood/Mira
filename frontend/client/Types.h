@@ -100,6 +100,56 @@ struct ArtworkResult {
   std::string content_type;
 };
 
+// GET /v1/games/{id}/metadata — the store info mirad cached alongside the
+// art. Only what a details panel shows; the cached JSON carries more
+// (screenshots, requirements, DLC ids) than anything here reads.
+// One entry from art_candidates (docs/api.md, GET .../metadata) — a
+// SteamGridDB result not necessarily the one currently applied. `url`/
+// `thumb` are left out: they're addresses on SteamGridDB's own CDN, and the
+// frontend has no HTTP client for the open internet, only mirad's socket —
+// a candidate is chosen by `id` and mirad fetches it, never the frontend.
+struct ArtCandidate {
+  std::int64_t id = 0;
+  int width = 0;
+  int height = 0;
+  std::string style;
+};
+
+struct GameMetadata {
+  std::string source;  // "steam" | "steamgriddb"
+  std::string description;
+  std::string release_date;
+  std::vector<std::string> developers;
+  std::vector<std::string> genres;
+  std::string price;
+  int metacritic_score = 0;
+  std::string review_summary;  // "Very Positive", from Steam's own wording
+  int review_total = 0;
+  std::string protondb_tier;
+  std::string website;
+  // Which art slots are actually cached, so a panel knows whether asking for
+  // one is worth a round trip. See GET /v1/games/{id}/artwork?type=.
+  std::vector<std::string> art_slots;
+  // Every cover/hero SteamGridDB returned, cached alongside whichever one is
+  // active. Populated for a Steam-owned game too now (as alternates to
+  // Steam's own CDN default, not a replacement for it) — empty only when no
+  // steamgriddb.api_key is set, or SteamGridDB has no match for the name.
+  std::vector<ArtCandidate> cover_candidates;
+  std::vector<ArtCandidate> hero_candidates;
+  // The candidate currently applied to each slot, when it came from one of
+  // the lists above — unset for Steam's own CDN art, which isn't a
+  // candidate. What ArtworkPickerDialog marks "(current)".
+  std::optional<std::int64_t> cover_active_candidate_id;
+  std::optional<std::int64_t> hero_active_candidate_id;
+};
+
+struct GameMetadataResult {
+  bool ok = false;
+  bool missing = false;  // never fetched, or fetched and found nothing
+  std::string error;
+  GameMetadata metadata;
+};
+
 // POST /v1/games/{id}/metadata/refresh — 202, so this says only that the
 // fetch was accepted. The outcome arrives as game.metadata_ready or
 // game.metadata_failed on the event stream (docs/api.md).
@@ -122,6 +172,21 @@ struct MetadataEvent {
   // Both only on .metadata_failed. Branch on `code`, never on `error`:
   // `error` is a sentence written for a human to read.
   std::string code;
+  std::string error;
+};
+
+// game.artwork_selected / .artwork_select_failed — the outcome of
+// POST /v1/games/{id}/artwork?type=, which itself only returns 202.
+struct ArtworkSelectEvent {
+  std::string id;
+  std::string slot;
+  std::string error;  // .artwork_select_failed only
+};
+
+// POST /v1/games/{id}/artwork?type= — 202, so this is only "accepted", not
+// "done". The outcome is ArtworkSelectEvent on the event stream.
+struct ArtworkSelectResult {
+  bool ok = false;
   std::string error;
 };
 
@@ -363,6 +428,16 @@ struct SteamScanResult {
   int updated = 0;
 };
 
+// POST /v1/lutris/import. `skipped` counts Lutris rows this import cannot
+// use — a non-wine runner, or a wine game whose yaml records no prefix.
+struct LutrisImportResult {
+  bool ok = false;
+  std::string error;
+  int added = 0;
+  int updated = 0;
+  int skipped = 0;
+};
+
 // POST /v1/games/{id}/run — an arbitrary executable inside this game's own
 // prefix, tracked like a normal launch.
 struct RunInPrefixResult {
@@ -401,11 +476,10 @@ struct FrontendPrefs {
   // is the slowest thing about startup and the daemon's own watcher
   // (library::Watcher) already keeps the library current while it runs.
   std::optional<bool> scan_on_startup;
-  // "auto" | "system" | "in_app" — where a toast goes. See notify::Delivery
-  // for what each one means and why "auto" is not just a hedge.
-  std::optional<std::string> notifications;
-  // Seconds a notification stays up; 0 means until dismissed, which is the
-  // default. See notify::SetTimeoutSeconds.
+  // Seconds a toast stays up before it's dismissed automatically; 0 means
+  // until dismissed, which is the default. See notify::SetTimeoutSeconds —
+  // toasts always go to the desktop's own notification service, so this is
+  // also that notification's expire timeout.
   std::optional<int> notification_timeout_s;
   // A theme name (ui/Theme.h), or "auto" — the default — to follow the
   // desktop's own light/dark preference.
@@ -413,6 +487,13 @@ struct FrontendPrefs {
   // On (default): "Details & settings" edits a game inline in the right
   // panel instead of opening a dialog.
   std::optional<bool> game_settings_in_sidebar;
+  // Shape adjustments layered over whatever the theme sets, in pixels — see
+  // theme::Overrides. Unset means "leave it to the theme".
+  std::optional<int> tile_spacing;
+  std::optional<int> grid_margin;
+  std::optional<int> tile_radius;
+  std::optional<int> panel_radius;
+  std::optional<int> control_radius;
 };
 
 struct FrontendPrefsResult {

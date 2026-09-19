@@ -26,8 +26,10 @@
 #include <QWindow>
 
 #include <iterator>
+#include <optional>
 
 #include "../client/MiradClient.h"
+#include "../dialogs/ArtworkPickerDialog.h"
 #include "../dialogs/GameDetailDialog.h"
 #include "../dialogs/RunnerDialog.h"
 
@@ -44,6 +46,15 @@
 #include "../ui/Theme.h"
 #include "../ui/Tray.h"
 #include "MainWindow.h"
+
+// setViewportMargins is protected on QAbstractScrollArea; this just republishes
+// it so ApplyLayoutTokens() can pad the tiles without also inseting the
+// scrollbar (a container's own contents margins would do both).
+class LibraryGrid : public QListWidget {
+public:
+  using QListWidget::QListWidget;
+  using QListWidget::setViewportMargins;
+};
 
 namespace {
 
@@ -148,6 +159,7 @@ LibraryWindow::LibraryWindow(QWidget* parent) : QMainWindow(parent) {
   // theme's own colors.
   connect(mira_gui::theme::Notifier::Instance(), &mira_gui::theme::Notifier::Changed, this, [this] {
     artwork_->InvalidateAllRenderings();
+    ApplyLayoutTokens();
     ApplyFilter();
     ApplyTopBarIcons();
   });
@@ -162,6 +174,10 @@ LibraryWindow::LibraryWindow(QWidget* parent) : QMainWindow(parent) {
           [this](const QString& id) { OpenGameDialog(id.toStdString()); });
   connect(details_, &mira_gui::GameDetailsPanel::MetadataRefreshRequested, this,
           [this](const QString& id) { RefreshMetadata(id.toStdString()); });
+  connect(details_, &mira_gui::GameDetailsPanel::ArtworkPickRequested, this,
+          [this](const QString& id, const QString& slot) {
+            OpenArtworkPicker(id.toStdString(), slot.toStdString());
+          });
 
   // page 1 (game_edit_page_) is built lazily by OpenGameDialog.
   sidebar_stack_ = new QStackedWidget(this);
@@ -235,6 +251,10 @@ void LibraryWindow::BuildMenus() {
 
   auto* library_menu = menu->addMenu("&Library");
   library_menu->addAction("Import &Steam library", this, &LibraryWindow::ImportSteamLibrary);
+  library_menu->addAction("Import &Lutris games", this, &LibraryWindow::ImportLutrisLibrary)
+      ->setToolTip(
+          "Read Lutris's own database and add its Wine games here. Nothing is moved or renamed, "
+          "in either launcher's files — a game stays playable in Lutris too.");
   library_menu->addAction("Fetch missing &cover art", this, &LibraryWindow::FetchMissingArtwork)
       ->setToolTip(
           "Re-fetch metadata for every game with no cover. mirad only fetches automatically for a "
@@ -243,7 +263,7 @@ void LibraryWindow::BuildMenus() {
 
   auto* tools_menu = menu->addMenu("&Tools");
   tools_menu->addAction("&Runners…", this, &LibraryWindow::OpenRunners);
-  QAction* settings = tools_menu->addAction("&Settings…", this, &LibraryWindow::OpenSettings);
+  QAction* settings = tools_menu->addAction("&Settings…", this, [this] { OpenSettings(); });
   // Spelled out rather than QKeySequence::Preferences, which Qt binds on
   // macOS only — this row showed no shortcut at all on Linux.
   settings->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Comma));
@@ -375,11 +395,6 @@ void LibraryWindow::LoadPrefs() {
       splitter_->setSizes({qMax(200, width() - details), details});
     }
     if (prefs.scan_on_startup) scan_on_startup_ = *prefs.scan_on_startup;
-    if (prefs.notifications) {
-      notifications_ = *prefs.notifications;
-      mira_gui::notify::SetDelivery(
-          mira_gui::notify::DeliveryFromString(QString::fromStdString(notifications_)));
-    }
     if (prefs.notification_timeout_s) {
       mira_gui::notify::SetTimeoutSeconds(*prefs.notification_timeout_s);
     }
@@ -398,6 +413,21 @@ void LibraryWindow::LoadPrefs() {
       const int index = filters_->findData(wanted);
       if (index >= 0) filters_->setCurrentIndex(index);
     }
+    // Before the theme, so applying one does not repaint twice with the
+    // theme's own shape first.
+    mira_gui::theme::Overrides overrides;
+    // Negative is how frontend.toml spells "leave it to the theme": the key
+    // has to stay writable to be cleared again.
+    const auto shape = [](const std::optional<int>& pref) -> std::optional<int> {
+      if (pref && *pref >= 0) return pref;
+      return std::nullopt;
+    };
+    overrides.tile_spacing = shape(prefs.tile_spacing);
+    overrides.grid_margin = shape(prefs.grid_margin);
+    overrides.radius_tile = shape(prefs.tile_radius);
+    overrides.radius_panel = shape(prefs.panel_radius);
+    overrides.radius_control = shape(prefs.control_radius);
+    mira_gui::theme::SetOverrides(overrides);
     if (prefs.theme) mira_gui::theme::Apply(QString::fromStdString(*prefs.theme));
     if (prefs.game_settings_in_sidebar) game_settings_in_sidebar_ = *prefs.game_settings_in_sidebar;
   });
@@ -412,10 +442,8 @@ void LibraryWindow::SavePrefs() {
   prefs.sort_by = sort_key_;
   prefs.sort_descending = sort_descending_;
   prefs.scan_on_startup = scan_on_startup_;
-  // Read back from notify rather than from the member, so a change made in
+  // Read back from notify rather than from a member, so a change made in
   // the settings dialog survives closing the window that did not make it.
-  prefs.notifications =
-      mira_gui::notify::DeliveryToString(mira_gui::notify::CurrentDelivery()).toStdString();
   prefs.notification_timeout_s = mira_gui::notify::CurrentTimeoutSeconds();
   const QList<int> sizes = splitter_->sizes();
   if (sizes.size() == 2) prefs.details_width = sizes[1];
@@ -423,6 +451,16 @@ void LibraryWindow::SavePrefs() {
   // not reach the socket before the process exits on the last window's
   // close. Failure isn't reported — the cost is a remembered layout, not data.
   mira_gui::MiradClient::SaveFrontendPrefsBlocking(prefs);
+}
+
+void LibraryWindow::ApplyLayoutTokens() {
+  if (grid_ == nullptr) return;
+  // Viewport margins, not the container's contents margins: those would
+  // inset the whole QListWidget frame, pushing its scrollbar in by the same
+  // amount. This pads only the tiles' own drawing area, leaving the
+  // scrollbar docked at the panel's true right edge.
+  const int margin = mira_gui::theme::Current().grid_margin;
+  grid_->setViewportMargins(margin, margin, margin, margin);
 }
 
 void LibraryWindow::ApplyTopBarIcons() {
@@ -484,12 +522,36 @@ void LibraryWindow::closeEvent(QCloseEvent* event) {
   const bool game_dirty = game_edit_form_ != nullptr &&
                           sidebar_stack_->currentWidget() == game_edit_page_ &&
                           game_edit_form_->IsDirty();
-  if ((settings_dirty || game_dirty) &&
-      !mira_gui::notify::Confirm(this, "Discard changes?",
-                                 "Unsaved changes will be lost. Quit anyway?", "Quit",
-                                 /*destructive=*/true)) {
-    event->ignore();
-    return;
+  if (settings_dirty || game_dirty) {
+    switch (mira_gui::notify::ConfirmUnsaved(
+        this, settings_dirty ? "Settings changed but not saved."
+                             : "This game's edits aren't saved.")) {
+      case mira_gui::notify::UnsavedAction::Cancel:
+        event->ignore();
+        return;
+      case mira_gui::notify::UnsavedAction::SaveAndExit:
+        event->ignore();
+        // Neither Save() finishes synchronously — quit for real only once it
+        // has, via the one-shot below, not this closeEvent call.
+        if (settings_dirty) {
+          connect(settings_panel_, &mira_gui::SettingsPanel::SaveFinished, this,
+                  [this](bool ok, QString) {
+                    if (ok) close();
+                  },
+                  Qt::SingleShotConnection);
+          settings_panel_->Save();
+        } else {
+          connect(game_edit_form_, &mira_gui::GameEditForm::SaveFinished, this,
+                  [this](bool ok, QString) {
+                    if (ok) close();
+                  },
+                  Qt::SingleShotConnection);
+          game_edit_form_->Save();
+        }
+        return;
+      case mira_gui::notify::UnsavedAction::DiscardAndExit:
+        break;  // fall through to the ordinary close below
+    }
   }
 
   SavePrefs();
@@ -513,6 +575,30 @@ void LibraryWindow::ImportSteamLibrary() {
     mira_gui::notify::Toast(
         this, result.added > 0 ? mira_gui::notify::Level::Success : mira_gui::notify::Level::Info,
         QString("Steam import: %1 added, %2 updated.").arg(result.added).arg(result.updated));
+    RefreshGames();
+  });
+}
+
+void LibraryWindow::ImportLutrisLibrary() {
+  mira_gui::MiradClient::ImportLutrisAsync(this, [this](mira_gui::LutrisImportResult result) {
+    if (!result.ok) {
+      mira_gui::notify::FailedWithHint(
+          this, "Could not import from Lutris.", QString::fromStdString(result.error),
+          "Lutris keeps its library in an sqlite database Mira reads with the sqlite3 command. "
+          "If Lutris is installed somewhere unusual, point lutris.data_dir at it in settings.");
+      return;
+    }
+    QString message =
+        QString("Lutris import: %1 added, %2 updated.").arg(result.added).arg(result.updated);
+    // Worth saying: a skip is almost always a Steam-runner row or a game
+    // whose prefix Lutris never wrote down, not a failure.
+    if (result.skipped > 0) {
+      message += QString(" %1 skipped (not a Wine game, or no prefix recorded).")
+                     .arg(result.skipped);
+    }
+    mira_gui::notify::Toast(
+        this, result.added > 0 ? mira_gui::notify::Level::Success : mira_gui::notify::Level::Info,
+        message);
     RefreshGames();
   });
 }
@@ -589,7 +675,7 @@ QWidget* LibraryWindow::BuildTopBar() {
   settings_button_ = new QToolButton(top_bar_);
   settings_button_->setAutoRaise(true);
   settings_button_->setToolTip("Settings");
-  connect(settings_button_, &QToolButton::clicked, this, &LibraryWindow::OpenSettings);
+  connect(settings_button_, &QToolButton::clicked, this, [this] { OpenSettings(); });
   layout->addWidget(settings_button_);
 
   settings_actions_widget_ = new QWidget(top_bar_);
@@ -632,11 +718,11 @@ QWidget* LibraryWindow::BuildTopBar() {
 
 QWidget* LibraryWindow::BuildGrid() {
   auto* container = new QWidget(this);
-  auto* layout = new QVBoxLayout(container);
-  layout->setContentsMargins(6, 10, 6, 6);
+  grid_layout_ = new QVBoxLayout(container);
+  QVBoxLayout* layout = grid_layout_;
   layout->setSpacing(6);
 
-  grid_ = new QListWidget(container);
+  grid_ = new LibraryGrid(container);
   grid_->setObjectName("library_grid");
   delegate_ = new mira_gui::GameTileDelegate(grid_, TileSize());
   grid_->setItemDelegate(delegate_);
@@ -662,6 +748,7 @@ QWidget* LibraryWindow::BuildGrid() {
     ToggleRunning(item->data(mira_gui::GameTileDelegate::IdRole).toString().toStdString());
   });
   layout->addWidget(grid_, /*stretch=*/1);
+  ApplyLayoutTokens();  // needs grid_ to already exist
 
   empty_hint_ = new QLabel(container);
   empty_hint_->setAlignment(Qt::AlignCenter);
@@ -719,12 +806,6 @@ void LibraryWindow::ShowSteamGridDbNotice(bool asked_for) {
   if (steamgriddb_notice_shown_) return;
   steamgriddb_notice_shown_ = true;
 
-  const QString explanation =
-      "Non-Steam games need a free SteamGridDB API key before Mira can find cover art for "
-      "them — there is no other free source for one. Steam games are unaffected.\n\n"
-      "Paste a key into \"steamgriddb.api_key\" in Settings, then use Library → Fetch "
-      "missing cover art.";
-
   if (!asked_for) {
     // Nobody asked for this; a modal over a background scan is an ambush.
     mira_gui::notify::Toast(
@@ -733,9 +814,11 @@ void LibraryWindow::ShowSteamGridDbNotice(bool asked_for) {
     return;
   }
 
-  if (mira_gui::notify::Confirm(this, "No SteamGridDB API key", explanation, "Open settings…")) {
-    OpenSettings();
-  }
+  mira_gui::notify::FailedWithAction(
+      this, "No SteamGridDB API key set.",
+      "Non-Steam games need a free SteamGridDB API key before Mira can find cover art for "
+      "them — there is no other free source for one. Steam games are unaffected.",
+      QString(), "Open the Metadata settings…", [this] { OpenSettings("steamgriddb.api_key"); });
 }
 
 void LibraryWindow::FetchMissingArtwork() {
@@ -776,6 +859,15 @@ void LibraryWindow::RefreshMetadata(const std::string& id, bool announce) {
       });
 }
 
+void LibraryWindow::OpenArtworkPicker(const std::string& id, const std::string& slot) {
+  // Its own window, not modal: browsing candidates works better alongside
+  // the grid than blocking it, and each one is a throwaway (WA_DeleteOnClose)
+  // rather than something worth tracking and reusing.
+  auto* picker = new mira_gui::ArtworkPickerDialog(id, slot, this);
+  picker->setAttribute(Qt::WA_DeleteOnClose);
+  picker->show();
+}
+
 void LibraryWindow::RefreshHealth(bool force_scan) {
   mira_gui::MiradClient::CheckHealthAsync(this, [this, force_scan](mira_gui::HealthStatus status) {
     if (status.reachable) {
@@ -783,8 +875,12 @@ void LibraryWindow::RefreshHealth(bool force_scan) {
     } else {
       games_.clear();
       ApplyFilter();
-      mira_gui::notify::Failed(this, "Could not reach mirad.",
-                               QString::fromStdString(status.detail));
+      mira_gui::notify::FailedWithHint(
+          this, "Could not reach mirad.", QString::fromStdString(status.detail),
+          "It was reachable when this window opened, so something stopped it. If you started "
+          "it yourself, run \"mirad\" again in a terminal. If systemd manages it: "
+          "systemctl --user restart mirad — and journalctl --user -u mirad to see why it "
+          "stopped.");
     }
   });
 }
@@ -952,17 +1048,32 @@ void LibraryWindow::SelectionChanged() {
   if (content_stack_->currentWidget() == settings_page_) return;  // grid isn't on screen
   if (restoring_selection_) return;  // re-entrant call from the revert below
 
-  if (sidebar_stack_->currentWidget() == game_edit_page_) {
-    if (game_edit_form_ != nullptr && game_edit_form_->IsDirty() &&
-        !mira_gui::notify::Confirm(this, "Discard changes?",
-                                   "This game's edits aren't saved. Discard them?", "Discard",
-                                   /*destructive=*/true)) {
-      restoring_selection_ = true;
-      SelectGridItem(game_edit_form_->id());
-      restoring_selection_ = false;
-      return;
-    }
+  if (sidebar_stack_->currentWidget() == game_edit_page_ &&
+      !(game_edit_form_ != nullptr && game_edit_form_->IsDirty())) {
     sidebar_stack_->setCurrentWidget(details_);
+  } else if (sidebar_stack_->currentWidget() == game_edit_page_) {
+    QListWidgetItem* clicked = grid_->currentItem();
+    const std::string clicked_id =
+        clicked != nullptr ? clicked->data(mira_gui::GameTileDelegate::IdRole).toString().toStdString()
+                           : std::string();
+
+    switch (mira_gui::notify::ConfirmUnsaved(this, "This game's edits aren't saved.")) {
+      case mira_gui::notify::UnsavedAction::Cancel:
+        restoring_selection_ = true;
+        SelectGridItem(game_edit_form_->id());
+        restoring_selection_ = false;
+        return;
+      case mira_gui::notify::UnsavedAction::SaveAndExit:
+        // So the reselect RefreshGames does after CloseGameEdit() (via the
+        // SaveFinished connection in BuildGameEditPage) lands on the tile
+        // just clicked, not the one being edited.
+        selected_id_ = clicked_id;
+        game_edit_form_->Save();
+        return;
+      case mira_gui::notify::UnsavedAction::DiscardAndExit:
+        sidebar_stack_->setCurrentWidget(details_);
+        break;
+    }
   }
 
   auto* item = grid_->currentItem();
@@ -1110,13 +1221,24 @@ void LibraryWindow::OpenGameDialog(const std::string& id) {
 
 void LibraryWindow::CloseGameEdit() {
   sidebar_stack_->setCurrentWidget(details_);
+  // Torn down rather than left alive off-screen: IsDirty() on a discarded
+  // form would otherwise still read dirty, and wrongly prompt again on the
+  // next Ctrl+Q from the grid.
+  if (game_edit_page_ != nullptr) {
+    sidebar_stack_->removeWidget(game_edit_page_);
+    game_edit_page_->deleteLater();
+    game_edit_page_ = nullptr;
+    game_edit_form_ = nullptr;
+  }
   RefreshGames();
 }
 
-void LibraryWindow::OpenSettings() {
-  // Already open: rebuilding would throw away whatever is half-typed, and
-  // Ctrl+, (or the SteamGridDB notice) can land here at any time.
-  if (SettingsOpen()) return;
+void LibraryWindow::OpenSettings(const QString& focus_key) {
+  // Already open: rebuilding would throw away whatever is half-typed.
+  if (SettingsOpen()) {
+    if (!focus_key.isEmpty() && settings_panel_ != nullptr) settings_panel_->FocusKey(focus_key);
+    return;
+  }
 
   // Fresh instance each time: starts synced to what's actually saved,
   // not stale edits left in the widgets from a discarded previous open.
@@ -1128,11 +1250,21 @@ void LibraryWindow::OpenSettings() {
   content_stack_->addWidget(settings_page_);
   content_stack_->setCurrentWidget(settings_page_);
   SetSettingsChromeVisible(true);
+  if (!focus_key.isEmpty()) settings_panel_->FocusKey(focus_key);
 }
 
 void LibraryWindow::CloseSettings() {
   content_stack_->setCurrentWidget(splitter_);
   SetSettingsChromeVisible(false);
+  // Torn down rather than left alive off-screen: IsDirty() on a discarded
+  // panel would otherwise still read dirty, and wrongly prompt again on the
+  // next Ctrl+Q from the grid.
+  if (settings_page_ != nullptr) {
+    content_stack_->removeWidget(settings_page_);
+    settings_page_->deleteLater();
+    settings_page_ = nullptr;
+    settings_panel_ = nullptr;
+  }
 }
 
 bool LibraryWindow::SettingsOpen() const {
@@ -1151,13 +1283,20 @@ void LibraryWindow::SetSettingsChromeVisible(bool settings_open) {
 }
 
 void LibraryWindow::RequestCloseSettings() {
-  if (settings_panel_ != nullptr && settings_panel_->IsDirty() &&
-      !mira_gui::notify::Confirm(this, "Discard changes?",
-                                 "Settings changed but not saved. Discard them?", "Discard",
-                                 /*destructive=*/true)) {
+  if (settings_panel_ == nullptr || !settings_panel_->IsDirty()) {
+    CloseSettings();
     return;
   }
-  CloseSettings();
+  switch (mira_gui::notify::ConfirmUnsaved(this, "Settings changed but not saved.")) {
+    case mira_gui::notify::UnsavedAction::Cancel:
+      return;
+    case mira_gui::notify::UnsavedAction::SaveAndExit:
+      settings_panel_->Save();  // SaveFinished, connected in BuildSettingsPage, closes on success
+      return;
+    case mira_gui::notify::UnsavedAction::DiscardAndExit:
+      CloseSettings();
+      return;
+  }
 }
 
 QWidget* LibraryWindow::BuildSettingsPage() {
@@ -1181,7 +1320,9 @@ QWidget* LibraryWindow::BuildSettingsPage() {
               mira_gui::notify::Failed(this, "Could not save the settings.", error);
               return;
             }
-            mira_gui::notify::Toast(this, mira_gui::notify::Level::Success, "Settings saved.");
+            // The screen closing back to the grid is already the feedback —
+            // a save the user just triggered isn't the background-result
+            // case a toast is for.
             CloseSettings();
             // Picks up a changed game_settings_in_sidebar without a restart.
             LoadPrefs();
@@ -1197,11 +1338,7 @@ QWidget* LibraryWindow::BuildGameEditPage(const std::string& id) {
   layout->setContentsMargins(12, 12, 12, 12);
   layout->setSpacing(10);
 
-  auto* header = new QHBoxLayout();
-  header->addStretch(1);
   auto* save = new QPushButton("Save", page);
-  header->addWidget(save);
-  layout->addLayout(header);
 
   auto* scroll = new QScrollArea(page);
   scroll->setWidgetResizable(true);
@@ -1218,7 +1355,9 @@ QWidget* LibraryWindow::BuildGameEditPage(const std::string& id) {
               mira_gui::notify::Failed(this, "Could not save this game.", error);
               return;
             }
-            mira_gui::notify::Toast(this, mira_gui::notify::Level::Success, "Game saved.");
+            // The screen closing back to the grid is already the feedback —
+            // a save the user just triggered isn't the background-result
+            // case a toast is for.
             CloseGameEdit();
           });
   scroll->setWidget(game_edit_form_);
@@ -1227,15 +1366,23 @@ QWidget* LibraryWindow::BuildGameEditPage(const std::string& id) {
   auto* footer = new QHBoxLayout();
   auto* back = new QPushButton("← Back", page);
   connect(back, &QPushButton::clicked, this, [this] {
-    if (game_edit_form_ != nullptr && game_edit_form_->IsDirty() &&
-        !mira_gui::notify::Confirm(this, "Discard changes?",
-                                   "This game's edits aren't saved. Discard them?", "Discard",
-                                   /*destructive=*/true)) {
+    if (game_edit_form_ == nullptr || !game_edit_form_->IsDirty()) {
+      CloseGameEdit();
       return;
     }
-    CloseGameEdit();
+    switch (mira_gui::notify::ConfirmUnsaved(this, "This game's edits aren't saved.")) {
+      case mira_gui::notify::UnsavedAction::Cancel:
+        return;
+      case mira_gui::notify::UnsavedAction::SaveAndExit:
+        game_edit_form_->Save();  // SaveFinished, connected above, closes on success
+        return;
+      case mira_gui::notify::UnsavedAction::DiscardAndExit:
+        CloseGameEdit();
+        return;
+    }
   });
   footer->addWidget(back);
+  footer->addWidget(save);
   footer->addStretch(1);
   layout->addLayout(footer);
 
@@ -1305,6 +1452,17 @@ void LibraryWindow::HandleGameEvent(const std::string& type, const std::string& 
     // Everything else mirad already reports as a `notification` event when
     // the fetch was announced.
     awaiting_metadata_.erase(event.id);
+    return;
+  }
+
+  if (type == "game.artwork_selected") {
+    mira_gui::ArtworkSelectEvent event;
+    if (!mira_gui::MiradClient::ParseArtworkSelectEvent(data, &event)) return;
+    if (event.slot == "cover") {
+      artwork_->Invalidate(event.id);
+    } else if (event.slot == "hero") {
+      details_->RefreshBanner(event.id);
+    }
     return;
   }
 

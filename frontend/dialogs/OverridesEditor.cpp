@@ -6,6 +6,8 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
+#include <QSizePolicy>
+#include <QTabWidget>
 
 #include "../ui/Notify.h"
 #include <QPushButton>
@@ -13,9 +15,11 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <map>
 #include <utility>
 
 #include "../client/MiradClient.h"
+#include "SettingsCategories.h"
 
 namespace mira_gui {
 
@@ -23,23 +27,23 @@ OverridesEditor::OverridesEditor(std::string game_id, QWidget* parent)
     : QWidget(parent), game_id_(std::move(game_id)) {
   auto* outer = new QVBoxLayout(this);
   outer->setContentsMargins(0, 0, 0, 0);
-  outer->setSpacing(4);
 
-  auto* heading = new QLabel("Overrides (global settings, just for this game):", this);
-  heading->setProperty("role", "section");
-  outer->addWidget(heading);
+  tabs_ = new QTabWidget(this);
+  outer->addWidget(tabs_);
+}
 
-  auto* rows = new QWidget(this);
-  form_ = new QFormLayout(rows);
-  form_->setVerticalSpacing(8);
-  form_->setHorizontalSpacing(14);
+QFormLayout* OverridesEditor::AddCategoryTab(const QString& title) {
+  auto* page = new QWidget(tabs_);
+  auto* form = new QFormLayout(page);
+  form->setVerticalSpacing(8);
+  form->setHorizontalSpacing(14);
 
-  auto* scroll = new QScrollArea(this);
-  scroll->setWidget(rows);
+  auto* scroll = new QScrollArea(tabs_);
+  scroll->setWidget(page);
   scroll->setWidgetResizable(true);
-  scroll->setMaximumHeight(200);
   scroll->setFrameShape(QFrame::NoFrame);
-  outer->addWidget(scroll);
+  tabs_->addTab(scroll, title);
+  return form;
 }
 
 void OverridesEditor::Load() {
@@ -57,47 +61,68 @@ void OverridesEditor::Reload() {
 }
 
 void OverridesEditor::BuildRows(const ConfigSchemaResult& schema) {
-  for (const ConfigSchemaEntry& entry : schema.entries) {
-    Field field;
-    field.entry = entry;
+  std::map<QString, std::vector<size_t>> buckets;
+  std::vector<ConfigSchemaEntry> entries = schema.entries;
+  for (size_t i = 0; i < entries.size(); ++i) {
+    buckets[QString::fromStdString(entries[i].category)].push_back(i);
+  }
 
-    auto* row_widget = new QWidget(this);
-    auto* row_layout = new QHBoxLayout(row_widget);
-    row_layout->setContentsMargins(0, 0, 0, 0);
-    row_layout->setSpacing(8);
+  QStringList ordered_categories;
+  for (const QString& category : mira_gui::settings::CategoryOrder()) {
+    if (buckets.contains(category)) ordered_categories.push_back(category);
+  }
+  for (const auto& [category, indices] : buckets) {
+    if (!ordered_categories.contains(category)) ordered_categories.push_back(category);
+  }
 
-    if (entry.type == "a boolean") {
-      field.check = new QCheckBox(row_widget);
-      row_layout->addWidget(field.check);
-    } else {
-      field.line = new QLineEdit(row_widget);
-      if (entry.type == "an array of strings") field.line->setPlaceholderText("comma-separated");
-      row_layout->addWidget(field.line, /*stretch=*/1);
+  for (const QString& category : ordered_categories) {
+    QFormLayout* form = AddCategoryTab(category.isEmpty() ? "General" : category);
+
+    for (const size_t i : buckets[category]) {
+      const ConfigSchemaEntry& entry = entries[i];
+      Field field;
+      field.entry = entry;
+      field.owner_form = form;
+
+      auto* row_widget = new QWidget(this);
+      auto* row_layout = new QHBoxLayout(row_widget);
+      row_layout->setContentsMargins(0, 0, 0, 0);
+      row_layout->setSpacing(8);
+
+      if (entry.type == "a boolean") {
+        field.check = new QCheckBox(row_widget);
+        row_layout->addWidget(field.check);
+      } else {
+        field.line = new QLineEdit(row_widget);
+        if (entry.type == "an array of strings") field.line->setPlaceholderText("comma-separated");
+        if (entry.is_secret) field.line->setEchoMode(QLineEdit::PasswordEchoOnEdit);
+        row_layout->addWidget(field.line, /*stretch=*/1);
+      }
+
+      field.layer_label = new QLabel(row_widget);
+      field.layer_label->setProperty("role", "muted");
+      field.layer_label->setMinimumWidth(56);
+      row_layout->addWidget(field.layer_label);
+
+      // Only meaningful once this game actually has an override to remove —
+      // disabled until ApplyValues confirms layer == "game", since there's
+      // nothing to clear otherwise.
+      field.reset_button = new QPushButton("Clear", row_widget);
+      field.reset_button->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+      field.reset_button->setEnabled(false);
+      field.reset_button->setToolTip("No per-game override set for this key");
+      row_layout->addWidget(field.reset_button);
+
+      auto* label = new QLabel(QString::fromStdString(entry.key), this);
+      label->setToolTip(QString::fromStdString(entry.doc));
+      row_widget->setToolTip(QString::fromStdString(entry.doc));
+
+      field.row_widget = row_widget;
+      fields_.push_back(field);
+      const size_t index = fields_.size() - 1;
+      connect(field.reset_button, &QPushButton::clicked, this, [this, index] { ResetField(index); });
+      form->addRow(label, row_widget);
     }
-
-    field.layer_label = new QLabel(row_widget);
-    field.layer_label->setProperty("role", "muted");
-    field.layer_label->setMinimumWidth(56);
-    row_layout->addWidget(field.layer_label);
-
-    // Only meaningful once this game actually has an override to remove —
-    // disabled until ApplyValues confirms layer == "game", since there's
-    // nothing to clear otherwise.
-    field.reset_button = new QPushButton("Clear", row_widget);
-    field.reset_button->setMaximumWidth(48);
-    field.reset_button->setEnabled(false);
-    field.reset_button->setToolTip("No per-game override set for this key");
-    row_layout->addWidget(field.reset_button);
-
-    auto* label = new QLabel(QString::fromStdString(entry.key), this);
-    label->setToolTip(QString::fromStdString(entry.doc));
-    row_widget->setToolTip(QString::fromStdString(entry.doc));
-
-    field.row_widget = row_widget;
-    fields_.push_back(field);
-    const size_t index = fields_.size() - 1;
-    connect(field.reset_button, &QPushButton::clicked, this, [this, index] { ResetField(index); });
-    form_->addRow(label, row_widget);
   }
 }
 
@@ -111,7 +136,7 @@ void OverridesEditor::ApplyValues(const GameConfigResult& config) {
     if (it == fields_.end()) continue;
     Field& field = *it;
 
-    form_->setRowVisible(field.row_widget, entry.overridable);
+    field.owner_form->setRowVisible(field.row_widget, entry.overridable);
     if (!entry.overridable) continue;
 
     field.layer = entry.layer;

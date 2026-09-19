@@ -6,6 +6,7 @@
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
+#include <QGridLayout>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
@@ -16,12 +17,16 @@
 #include "SystemNotifier.h"
 #include <QPushButton>
 #include <QScrollArea>
+#include <QSizePolicy>
 #include <QStringList>
 #include <QTabWidget>
 #include <QVBoxLayout>
 #include <QWidget>
 
+#include <algorithm>
 #include <map>
+#include <optional>
+#include <utility>
 
 namespace mira_gui {
 
@@ -76,24 +81,19 @@ void SettingsPanel::BuildInterfaceGroup() {
       "bundled theme for the keys it can set.");
   form->addRow("Theme", theme_);
 
-  notifications_ = new QComboBox(box);
-  notifications_->addItem("When Mira isn't focused", "auto");
-  notifications_->addItem("Always as a desktop notification", "system");
-  notifications_->addItem("Always inside the window", "in_app");
-  notifications_->setToolTip(
-      mira_gui::notify::system_notifier::Available()
-          ? "Background results — a runner finishing downloading, metadata arriving — can go to "
-            "the desktop's notification service instead of a card inside the window."
-          : "No desktop notification service is running, so everything is shown inside the "
-            "window whatever this says.");
-  form->addRow("Show background results", notifications_);
-
   notification_timeout_ = new QSpinBox(box);
   notification_timeout_->setRange(0, mira_gui::notify::kMaxTimeoutSeconds);
   notification_timeout_->setSuffix(" seconds");
   notification_timeout_->setSpecialValueText("Until dismissed");
+  // A number, not a text field — full form width around three digits reads
+  // as broken, not spacious.
+  notification_timeout_->setFixedWidth(140);
   notification_timeout_->setToolTip(
-      "How long a notification stays up. \"Until dismissed\" is the default.");
+      mira_gui::notify::system_notifier::Available()
+          ? "How long a background result (a runner finishing downloading, metadata arriving) "
+            "stays up as a desktop notification. \"Until dismissed\" is the default."
+          : "No desktop notification service is running, so this falls back to a card inside "
+            "the window. How long it stays up. \"Until dismissed\" is the default.");
   form->addRow("Keep notifications for", notification_timeout_);
 
   game_settings_in_sidebar_ = new QCheckBox(box);
@@ -103,6 +103,43 @@ void SettingsPanel::BuildInterfaceGroup() {
       "separate window.");
   form->addRow("Edit a game in the sidebar", game_settings_in_sidebar_);
 
+  auto* shapes = new QLabel("Layout", box);
+  shapes->setProperty("role", "section");
+  form->addRow(shapes);
+
+  // A 2-column grid that hugs its own content, not five rows the form's
+  // AllNonFixedFieldsGrow policy stretches edge to edge: a pixel count next
+  // to its label, not a text-input-width box around a two-digit number.
+  auto* shape_grid_widget = new QWidget(box);
+  shape_grid_widget->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Preferred);
+  auto* shape_grid = new QGridLayout(shape_grid_widget);
+  shape_grid->setContentsMargins(0, 0, 0, 0);
+  shape_grid->setHorizontalSpacing(20);
+  shape_grid->setVerticalSpacing(8);
+  shape_grid->addWidget(
+      MakeShapeControl(tile_spacing_, "Tile gap", 40,
+                       "Empty space around each tile — the top bar's zoom slider is what changes "
+                       "the cell itself."),
+      0, 0);
+  shape_grid->addWidget(
+      MakeShapeControl(grid_margin_, "Grid padding", 60,
+                       "Space between the grid and the window's edges and panels."),
+      0, 1);
+  shape_grid->addWidget(
+      MakeShapeControl(tile_radius_, "Cover rounding", 40, "Corner radius of a cover. 0 is square."),
+      1, 0);
+  shape_grid->addWidget(
+      MakeShapeControl(panel_radius_, "Panel rounding", 24, "Corner radius of panels and toasts."),
+      1, 1);
+  shape_grid->addWidget(
+      MakeShapeControl(control_radius_, "Control rounding", 20,
+                       "Corner radius of buttons, inputs and dropdowns."),
+      2, 0);
+  form->addRow(shape_grid_widget);
+  RefreshShapeDefaults();
+  connect(mira_gui::theme::Notifier::Instance(), &mira_gui::theme::Notifier::Changed, this,
+          &SettingsPanel::RefreshShapeDefaults);
+
   auto* note = new QLabel("Stored in frontend.toml, never interpreted by the daemon.", box);
   note->setWordWrap(true);
   note->setProperty("role", "muted");
@@ -111,14 +148,50 @@ void SettingsPanel::BuildInterfaceGroup() {
   LoadFrontendPrefs();
 }
 
+QWidget* SettingsPanel::MakeShapeControl(ShapeField& field, const QString& label, int maximum,
+                                         const QString& tip) {
+  auto* row = new QWidget(this);
+  row->setToolTip(tip);
+  auto* row_layout = new QHBoxLayout(row);
+  row_layout->setContentsMargins(0, 0, 0, 0);
+  row_layout->setSpacing(8);
+
+  auto* text = new QLabel(label, row);
+  row_layout->addWidget(text);
+  row_layout->addStretch(1);
+
+  field.spin = new QSpinBox(row);
+  // -1 rather than 0: 0 is a real radius, and "no rounding at all" has to
+  // stay distinguishable from "leave it to the theme".
+  field.spin->setRange(-1, maximum);
+  field.spin->setValue(-1);
+  field.spin->setSuffix(" px");
+  // Wide enough for the special-value text (e.g. "60 px (theme default)"),
+  // not just a couple of digits.
+  field.spin->setFixedWidth(190);
+  field.spin->setToolTip(tip);
+  row_layout->addWidget(field.spin);
+
+  return row;
+}
+
+void SettingsPanel::RefreshShapeDefaults() {
+  const mira_gui::theme::Tokens& defaults = mira_gui::theme::ThemeDefaults();
+  const auto set = [](ShapeField& field, int value) {
+    field.spin->setSpecialValueText(QString("%1 px (theme default)").arg(value));
+  };
+  set(tile_spacing_, defaults.tile_spacing);
+  set(grid_margin_, defaults.grid_margin);
+  set(tile_radius_, defaults.radius_tile);
+  set(panel_radius_, defaults.radius_panel);
+  set(control_radius_, defaults.radius_control);
+}
+
 void SettingsPanel::LoadFrontendPrefs() {
   theme_original_ = mira_gui::theme::CurrentName();
   const int theme_index = theme_->findData(theme_original_);
   if (theme_index >= 0) theme_->setCurrentIndex(theme_index);
 
-  notifications_original_ =
-      mira_gui::notify::DeliveryToString(mira_gui::notify::CurrentDelivery());
-  notifications_->setCurrentIndex(notifications_->findData(notifications_original_));
   notification_timeout_original_ = mira_gui::notify::CurrentTimeoutSeconds();
   notification_timeout_->setValue(notification_timeout_original_);
 
@@ -133,11 +206,6 @@ void SettingsPanel::LoadFrontendPrefs() {
       const int index = theme_->findData(theme_original_);
       if (index >= 0) theme_->setCurrentIndex(index);
     }
-    if (result.prefs.notifications) {
-      notifications_original_ = QString::fromStdString(*result.prefs.notifications);
-      const int index = notifications_->findData(notifications_original_);
-      if (index >= 0) notifications_->setCurrentIndex(index);
-    }
     if (result.prefs.notification_timeout_s) {
       notification_timeout_->setValue(*result.prefs.notification_timeout_s);
       notification_timeout_original_ = notification_timeout_->value();  // after the clamp
@@ -146,6 +214,15 @@ void SettingsPanel::LoadFrontendPrefs() {
       game_settings_in_sidebar_original_ = *result.prefs.game_settings_in_sidebar;
       game_settings_in_sidebar_->setChecked(game_settings_in_sidebar_original_);
     }
+    const auto shape = [](ShapeField& field, const std::optional<int>& pref) {
+      field.spin->setValue(pref ? *pref : -1);
+      field.original = field.spin->value();  // after the clamp
+    };
+    shape(tile_spacing_, result.prefs.tile_spacing);
+    shape(grid_margin_, result.prefs.grid_margin);
+    shape(tile_radius_, result.prefs.tile_radius);
+    shape(panel_radius_, result.prefs.panel_radius);
+    shape(control_radius_, result.prefs.control_radius);
   });
 }
 
@@ -176,8 +253,35 @@ void SettingsPanel::Load() {
         field.original = CurrentText(field);
       }
       setEnabled(true);
+      if (!pending_focus_key_.isEmpty()) FocusKey(std::exchange(pending_focus_key_, QString()));
     });
   });
+}
+
+void SettingsPanel::FocusKey(const QString& key) {
+  const std::string wanted = key.toStdString();
+  const auto it = std::ranges::find(fields_, wanted, [](const Field& f) { return f.entry.key; });
+  if (it == fields_.end()) {
+    // Schema not loaded yet, most likely — try again once it is.
+    pending_focus_key_ = key;
+    return;
+  }
+
+  if (it->entry.tier != "basic") show_advanced_->setChecked(true);
+  for (const CategoryGroup& group : groups_) {
+    if (group.form == it->owner_form) {
+      tabs_->setCurrentIndex(group.tab_index);
+      break;
+    }
+  }
+
+  QWidget* field_widget = it->check   ? static_cast<QWidget*>(it->check)
+                          : it->combo ? static_cast<QWidget*>(it->combo)
+                          : it->spin  ? static_cast<QWidget*>(it->spin)
+                                      : static_cast<QWidget*>(it->line);
+  if (field_widget == nullptr) return;
+  field_widget->setFocus(Qt::OtherFocusReason);
+  if (auto* line = qobject_cast<QLineEdit*>(field_widget)) line->selectAll();
 }
 
 void SettingsPanel::BuildRows() {
@@ -242,7 +346,7 @@ void SettingsPanel::BuildRows() {
         row_layout->addWidget(field.combo, /*stretch=*/1);
 
         auto* reset_button = new QPushButton("Reset", row_widget);
-        reset_button->setMaximumWidth(56);
+        reset_button->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
         reset_button->setToolTip(
             QString("Reset to default: %1").arg(QString::fromStdString(field.entry.default_display)));
         connect(reset_button, &QPushButton::clicked, this, [this, i] { ResetField(i); });
@@ -258,7 +362,7 @@ void SettingsPanel::BuildRows() {
         row_layout->addWidget(field.line, /*stretch=*/1);
 
         auto* reset_button = new QPushButton("Reset", row_widget);
-        reset_button->setMaximumWidth(56);
+        reset_button->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
         reset_button->setToolTip(
             QString("Reset to default: %1").arg(QString::fromStdString(field.entry.default_display)));
         connect(reset_button, &QPushButton::clicked, this, [this, i] { ResetField(i); });
@@ -352,10 +456,13 @@ void SettingsPanel::ResetField(size_t index) {
 
 bool SettingsPanel::IsDirty() const {
   if (scan_on_startup_->isChecked() != scan_on_startup_original_) return true;
-  if (notifications_->currentData().toString() != notifications_original_) return true;
   if (notification_timeout_->value() != notification_timeout_original_) return true;
   if (theme_->currentData().toString() != theme_original_) return true;
   if (game_settings_in_sidebar_->isChecked() != game_settings_in_sidebar_original_) return true;
+  for (const ShapeField* field :
+       {&tile_spacing_, &grid_margin_, &tile_radius_, &panel_radius_, &control_radius_}) {
+    if (field->spin->value() != field->original) return true;
+  }
   for (const Field& field : fields_) {
     if (CurrentText(field) != field.original) return true;
   }
@@ -363,29 +470,54 @@ bool SettingsPanel::IsDirty() const {
 }
 
 void SettingsPanel::Save() {
-  const QString notifications = notifications_->currentData().toString();
   const int timeout = notification_timeout_->value();
   const QString theme_name = theme_->currentData().toString();
   const bool game_settings_in_sidebar = game_settings_in_sidebar_->isChecked();
+  bool shapes_changed = false;
+  for (const ShapeField* field :
+       {&tile_spacing_, &grid_margin_, &tile_radius_, &panel_radius_, &control_radius_}) {
+    if (field->spin->value() != field->original) shapes_changed = true;
+  }
   if (scan_on_startup_->isChecked() != scan_on_startup_original_ ||
-      notifications != notifications_original_ || timeout != notification_timeout_original_ ||
-      theme_name != theme_original_ ||
+      timeout != notification_timeout_original_ ||
+      theme_name != theme_original_ || shapes_changed ||
       game_settings_in_sidebar != game_settings_in_sidebar_original_) {
     mira_gui::FrontendPrefs prefs;
     prefs.scan_on_startup = scan_on_startup_->isChecked();
-    prefs.notifications = notifications.toStdString();
     prefs.notification_timeout_s = timeout;
     prefs.theme = theme_name.toStdString();
     prefs.game_settings_in_sidebar = game_settings_in_sidebar;
+    // Always written, including the -1 that means "theme default": the key
+    // has to be able to go back to unset, and a merge-patch cannot drop one.
+    prefs.tile_spacing = tile_spacing_.spin->value();
+    prefs.grid_margin = grid_margin_.spin->value();
+    prefs.tile_radius = tile_radius_.spin->value();
+    prefs.panel_radius = panel_radius_.spin->value();
+    prefs.control_radius = control_radius_.spin->value();
+    for (ShapeField* field :
+         {&tile_spacing_, &grid_margin_, &tile_radius_, &panel_radius_, &control_radius_}) {
+      field->original = field->spin->value();
+    }
+    if (shapes_changed) {
+      mira_gui::theme::Overrides overrides;
+      const auto shape = [](const ShapeField& field) -> std::optional<int> {
+        if (field.spin->value() < 0) return std::nullopt;
+        return field.spin->value();
+      };
+      overrides.tile_spacing = shape(tile_spacing_);
+      overrides.grid_margin = shape(grid_margin_);
+      overrides.radius_tile = shape(tile_radius_);
+      overrides.radius_panel = shape(panel_radius_);
+      overrides.radius_control = shape(control_radius_);
+      mira_gui::theme::SetOverrides(overrides);
+    }
     scan_on_startup_original_ = *prefs.scan_on_startup;
-    notifications_original_ = notifications;
     notification_timeout_original_ = timeout;
     game_settings_in_sidebar_original_ = game_settings_in_sidebar;
     if (theme_name != theme_original_) {
       theme_original_ = theme_name;
       mira_gui::theme::Apply(theme_name);
     }
-    mira_gui::notify::SetDelivery(mira_gui::notify::DeliveryFromString(notifications));
     mira_gui::notify::SetTimeoutSeconds(timeout);
     mira_gui::MiradClient::SaveFrontendPrefsAsync(this, prefs, [](mira_gui::PatchConfigResult) {});
   }

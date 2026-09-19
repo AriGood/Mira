@@ -3,11 +3,11 @@
 #include <QGuiApplication>
 #include <QIcon>
 #include <QLockFile>
-#include <QMessageBox>
 #include <QStandardPaths>
 #include <QStringList>
 
 #include "ui/DaemonSupervisor.h"
+#include "ui/Notify.h"
 #include "ui/SystemNotifier.h"
 #include "ui/Theme.h"
 #include "ui/Tray.h"
@@ -69,7 +69,13 @@ int main(int argc, char** argv) {
     window->show();
   });
   QObject::connect(supervisor, &mira_gui::DaemonSupervisor::Failed, &app, [](QString error) {
-    QMessageBox::critical(nullptr, "Mira", "Could not start mirad: " + error);
+    mira_gui::notify::FailedWithHint(
+        nullptr, "Could not start mirad.", error,
+        "Mira looks for \"mirad\" next to its own binary, then on PATH. Build it "
+        "(cmake --build build --target mirad) or install the package that provides it, or "
+        "start it yourself first — a terminal running \"mirad\", or "
+        "systemctl --user enable --now mirad.service if you'd rather it started with your "
+        "session.");
     QApplication::quit();
   });
   supervisor->EnsureRunning();

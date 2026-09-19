@@ -301,10 +301,14 @@ FrontendPrefsResult GetFrontendPrefsSync() {
   read_string("sort_by", result.prefs.sort_by);
   read_bool("sort_descending", result.prefs.sort_descending);
   read_bool("scan_on_startup", result.prefs.scan_on_startup);
-  read_string("notifications", result.prefs.notifications);
   read_int("notification_timeout_s", result.prefs.notification_timeout_s);
   read_string("theme", result.prefs.theme);
   read_bool("game_settings_in_sidebar", result.prefs.game_settings_in_sidebar);
+  read_int("tile_spacing", result.prefs.tile_spacing);
+  read_int("grid_margin", result.prefs.grid_margin);
+  read_int("tile_radius", result.prefs.tile_radius);
+  read_int("panel_radius", result.prefs.panel_radius);
+  read_int("control_radius", result.prefs.control_radius);
   return result;
 }
 
@@ -318,7 +322,6 @@ PatchConfigResult SaveFrontendPrefsSync(const FrontendPrefs& prefs) {
   if (prefs.sort_by) table["sort_by"] = *prefs.sort_by;
   if (prefs.sort_descending) table["sort_descending"] = *prefs.sort_descending;
   if (prefs.scan_on_startup) table["scan_on_startup"] = *prefs.scan_on_startup;
-  if (prefs.notifications) table["notifications"] = *prefs.notifications;
   if (prefs.notification_timeout_s) {
     table["notification_timeout_s"] = *prefs.notification_timeout_s;
   }
@@ -326,6 +329,11 @@ PatchConfigResult SaveFrontendPrefsSync(const FrontendPrefs& prefs) {
   if (prefs.game_settings_in_sidebar) {
     table["game_settings_in_sidebar"] = *prefs.game_settings_in_sidebar;
   }
+  if (prefs.tile_spacing) table["tile_spacing"] = *prefs.tile_spacing;
+  if (prefs.grid_margin) table["grid_margin"] = *prefs.grid_margin;
+  if (prefs.tile_radius) table["tile_radius"] = *prefs.tile_radius;
+  if (prefs.panel_radius) table["panel_radius"] = *prefs.panel_radius;
+  if (prefs.control_radius) table["control_radius"] = *prefs.control_radius;
 
   // Short, because SaveFrontendPrefsBlocking runs this on the UI thread
   // while a window is closing.
@@ -334,9 +342,10 @@ PatchConfigResult SaveFrontendPrefsSync(const FrontendPrefs& prefs) {
   return {reply.ok, reply.error};
 }
 
-ArtworkResult GetArtworkSync(const std::string& id) {
+ArtworkResult GetArtworkSync(const std::string& id, const std::string& slot) {
   ArtworkResult result;
-  const transport::Blob blob = transport::GetBinary("/v1/games/" + id + "/artwork");
+  const transport::Blob blob =
+      transport::GetBinary("/v1/games/" + id + "/artwork?type=" + slot);
   if (blob.status == 404) {
     result.missing = true;
     return result;
@@ -351,9 +360,98 @@ ArtworkResult GetArtworkSync(const std::string& id) {
   return result;
 }
 
+GameMetadataResult GetMetadataSync(const std::string& id) {
+  GameMetadataResult result;
+  const transport::Reply reply = transport::Get("/v1/games/" + id + "/metadata");
+  if (reply.status == 404) {
+    result.missing = true;
+    return result;
+  }
+  if (!reply.ok) {
+    result.error = reply.error;
+    return result;
+  }
+
+  result.ok = true;
+  GameMetadata& out = result.metadata;
+  out.source = reply.body.value("source", std::string());
+
+  const auto strings = [](const json& array) {
+    std::vector<std::string> values;
+    if (!array.is_array()) return values;
+    for (const json& item : array) {
+      if (item.is_string()) values.push_back(item.get<std::string>());
+    }
+    return values;
+  };
+
+  // Every block is optional: which ones mirad cached depends on the source,
+  // and on what that source had for this game.
+  if (reply.body.contains("steam") && reply.body["steam"].is_object()) {
+    const json& steam = reply.body["steam"];
+    out.description = steam.value("short_description", std::string());
+    out.release_date = steam.value("release_date", std::string());
+    out.developers = strings(steam.value("developers", json::array()));
+    out.genres = strings(steam.value("genres", json::array()));
+    out.price = steam.value("price", std::string());
+    out.metacritic_score = steam.value("metacritic_score", 0);
+    out.website = steam.value("website", std::string());
+  }
+  if (reply.body.contains("steam_reviews") && reply.body["steam_reviews"].is_object()) {
+    const json& reviews = reply.body["steam_reviews"];
+    out.review_summary = reviews.value("score_description", std::string());
+    out.review_total = reviews.value("total_reviews", 0);
+  }
+  if (reply.body.contains("protondb") && reply.body["protondb"].is_object()) {
+    out.protondb_tier = reply.body["protondb"].value("tier", std::string());
+  }
+  // "artwork" is the cover slot under its pre-`hero` name — see docs/api.md.
+  for (const char* key : {"artwork", "hero", "capsule", "header", "logo", "icon"}) {
+    if (!reply.body.contains(key) || !reply.body[key].is_object()) continue;
+    out.art_slots.push_back(std::string(key) == "artwork" ? "cover" : key);
+  }
+
+  const auto candidates = [&](const char* slot) {
+    std::vector<ArtCandidate> list;
+    if (!reply.body.contains("art_candidates") || !reply.body["art_candidates"].is_object() ||
+        !reply.body["art_candidates"].contains(slot)) {
+      return list;
+    }
+    for (const json& item : reply.body["art_candidates"][slot]) {
+      ArtCandidate candidate;
+      candidate.id = item.value("id", std::int64_t{0});
+      candidate.width = item.value("width", 0);
+      candidate.height = item.value("height", 0);
+      candidate.style = item.value("style", std::string());
+      list.push_back(candidate);
+    }
+    return list;
+  };
+  out.cover_candidates = candidates("cover");
+  out.hero_candidates = candidates("hero");
+
+  const auto active_id = [&](const char* key) -> std::optional<std::int64_t> {
+    if (!reply.body.contains(key) || !reply.body[key].is_object() ||
+        !reply.body[key].contains("candidate_id")) {
+      return std::nullopt;
+    }
+    return reply.body[key].value("candidate_id", std::int64_t{0});
+  };
+  out.cover_active_candidate_id = active_id("artwork");
+  out.hero_active_candidate_id = active_id("hero");
+  return result;
+}
+
 MetadataRefreshResult RefreshMetadataSync(const std::string& id, bool announce) {
   const transport::Reply reply =
       transport::Post("/v1/games/" + id + "/metadata/refresh?announce=" + (announce ? "1" : "0"));
+  return {reply.ok, reply.error};
+}
+
+ArtworkSelectResult SelectArtworkSync(const std::string& id, const std::string& slot,
+                                      std::int64_t candidate_id) {
+  const transport::Reply reply = transport::PostJson(
+      "/v1/games/" + id + "/artwork?type=" + slot, json{{"candidate_id", candidate_id}});
   return {reply.ok, reply.error};
 }
 
@@ -401,6 +499,23 @@ RunnerDownloadResult DownloadRunnerSync(const std::string& kind, const std::stri
   const transport::Reply reply =
       transport::PostJson("/v1/runners/download", json{{"kind", kind}, {"tag", tag}});
   return {reply.ok, reply.error};
+}
+
+LutrisImportResult ImportLutrisSync() {
+  LutrisImportResult result;
+  // Same 30s as the Steam scan: this one reads Lutris's sqlite database
+  // through the sqlite3 CLI and a yaml file per game.
+  const transport::Reply reply =
+      transport::Post("/v1/lutris/import", {.read_timeout = std::chrono::seconds(30)});
+  if (!reply.ok) {
+    result.error = reply.error;
+    return result;
+  }
+  result.ok = true;
+  result.added = reply.body.value("added", 0);
+  result.updated = reply.body.value("updated", 0);
+  result.skipped = reply.body.value("skipped", 0);
+  return result;
 }
 
 SteamScanResult ScanSteamSync() {
@@ -531,12 +646,30 @@ PatchConfigResult MiradClient::SaveFrontendPrefsBlocking(const FrontendPrefs& pr
 
 void MiradClient::GetArtworkAsync(QObject* context, const std::string& id,
                                   std::function<void(ArtworkResult)> callback) {
-  async::Run(context, [id] { return GetArtworkSync(id); }, std::move(callback));
+  async::Run(context, [id] { return GetArtworkSync(id, "cover"); }, std::move(callback));
+}
+
+void MiradClient::GetArtworkSlotAsync(QObject* context, const std::string& id,
+                                      const std::string& slot,
+                                      std::function<void(ArtworkResult)> callback) {
+  async::Run(context, [id, slot] { return GetArtworkSync(id, slot); }, std::move(callback));
+}
+
+void MiradClient::GetMetadataAsync(QObject* context, const std::string& id,
+                                   std::function<void(GameMetadataResult)> callback) {
+  async::Run(context, [id] { return GetMetadataSync(id); }, std::move(callback));
 }
 
 void MiradClient::RefreshMetadataAsync(QObject* context, const std::string& id, bool announce,
                                        std::function<void(MetadataRefreshResult)> callback) {
   async::Run(context, [id, announce] { return RefreshMetadataSync(id, announce); }, std::move(callback));
+}
+
+void MiradClient::SelectArtworkAsync(QObject* context, const std::string& id, const std::string& slot,
+                                     std::int64_t candidate_id,
+                                     std::function<void(ArtworkSelectResult)> callback) {
+  async::Run(context, [id, slot, candidate_id] { return SelectArtworkSync(id, slot, candidate_id); },
+             std::move(callback));
 }
 
 void MiradClient::RefreshMissingArtworkAsync(QObject* context,
@@ -557,6 +690,11 @@ void MiradClient::DownloadRunnerAsync(QObject* context, const std::string& kind,
 
 void MiradClient::ScanSteamAsync(QObject* context, std::function<void(SteamScanResult)> callback) {
   async::Run(context, [] { return ScanSteamSync(); }, std::move(callback));
+}
+
+void MiradClient::ImportLutrisAsync(QObject* context,
+                                    std::function<void(LutrisImportResult)> callback) {
+  async::Run(context, [] { return ImportLutrisSync(); }, std::move(callback));
 }
 
 void MiradClient::RunInPrefixAsync(QObject* context, const std::string& id,
@@ -624,6 +762,17 @@ bool MiradClient::ParseMetadataEvent(const std::string& data, MetadataEvent* out
   if (id.empty()) return false;
   out->id = id;
   out->code = payload.value("code", std::string());
+  out->error = payload.value("error", std::string());
+  return true;
+}
+
+bool MiradClient::ParseArtworkSelectEvent(const std::string& data, ArtworkSelectEvent* out) {
+  const json payload = json::parse(data, nullptr, false);
+  if (!payload.is_object()) return false;
+  const std::string id = payload.value("id", std::string());
+  if (id.empty()) return false;
+  out->id = id;
+  out->slot = payload.value("type", std::string());
   out->error = payload.value("error", std::string());
   return true;
 }

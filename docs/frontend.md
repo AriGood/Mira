@@ -35,6 +35,11 @@ said.
 
 ### Selection model
 
+With nothing selected the details panel shows `ui/AboutPanel` — logo,
+version, authors, repository and license — rather than an empty rectangle.
+That is the whole of Mira's About: a frameless window has no Help menu to
+hang a dialog off, and the panel is otherwise idle.
+
 One click selects a tile and fills the details panel. A second (double)
 click launches. Right-click opens the per-game menu. Launching on the first
 click would turn a misclick into a started game, so a single click never
@@ -87,9 +92,19 @@ so a half-written theme still produces a usable window.
 The `theme` preference is a theme name or `auto`, which follows the desktop's
 own light/dark setting (`QStyleHints::colorScheme`) and keeps following it.
 
-Three things the stylesheet cannot reach read the tokens directly instead:
-`ui/GameTileDelegate` and `ui/CoverArt`, which paint with `QPainter`, and
-`ui/Notify`'s toasts. They repaint on `theme::Notifier::Changed`.
+**Shape is adjustable without writing a theme.** `theme::Overrides` carries a
+handful of pixel values from `frontend.toml` — tile spacing, grid padding and
+the tile, panel and control corner radii — and is applied on top of whatever
+theme is current, so switching theme keeps them. They are preferences about
+one library rather than part of a theme's identity, which is why they live in
+`frontend.toml`. `-1` is how the file spells "leave it to the theme": the keys
+have to stay writable to be cleared again, and a merge patch cannot drop one.
+
+Four things the stylesheet cannot reach read the tokens directly instead:
+`ui/GameTileDelegate` and `ui/CoverArt`, which paint with `QPainter`,
+`ui/Notify`'s toasts, and `ui/GameDetailsPanel`'s hero banner, which is
+clipped to `radius_panel` by hand because a stylesheet cannot round a pixmap
+inside a `QLabel`. They repaint on `theme::Notifier::Changed`.
 
 Two conventions keep colors out of the widgets themselves:
 
@@ -176,10 +191,12 @@ This matters more than it looks:
   | `notifications` | `auto` / `system` / `in_app` — see "Telling the user things" |
   | `notification_timeout_s` | how long one stays up; `0` (the default) means until dismissed |
   | `theme` | a theme name, or `auto` to follow the desktop — see "Theming" |
+  | `tile_spacing`, `grid_margin` | grid layout, in pixels; `-1` means "leave it to the theme" |
+  | `tile_radius`, `panel_radius`, `control_radius` | corner rounding, same `-1` rule |
 
-  `scan_on_startup`, `notifications`, `notification_timeout_s` and `theme` get rows in
-  the settings screen, in an "Interface (this frontend only)" group above the
-  schema-driven ones.
+  `scan_on_startup`, `notifications`, `notification_timeout_s`, `theme` and
+  the five shape keys get rows in the settings screen, on an Interface tab
+  ahead of the schema-driven ones.
   The rest are implicit UI state: they are saved by using the window, not by
   filling in a form.
 
@@ -214,7 +231,10 @@ Everything `api.md` marks implemented has a path through the UI:
 | `GET`/`PATCH /v1/games/{id}/config` | `OverridesEditor` |
 | `POST /v1/games/{id}/launch`, `/stop` | Play/Stop, tile double-click, context menu |
 | `GET /v1/games/{id}/artwork` | `ui/ArtworkStore` — grid tiles and the details panel |
+| `GET /v1/games/{id}/artwork?type=hero` | the details panel's banner, in place of the cover when a game has one |
+| `GET /v1/games/{id}/metadata` | the details panel — release date, developer, genres, review summary, ProtonDB tier; also `art_candidates.cover`/`.hero` for `ArtworkPickerDialog` |
 | `POST /v1/games/{id}/metadata/refresh` | the details panel's button, the tile context menu, and *Library → Fetch missing cover art* |
+| `POST /v1/games/{id}/artwork?type=` | *Choose cover art…* / *Choose hero art…* (`ArtworkPickerDialog`) |
 | `POST /v1/games/{id}/run` | *Run in prefix…* (`RunInPrefixDialog`) |
 | `POST /v1/games/{id}/finish-install` | *Mark as installed* |
 | `POST /v1/library/scan` | on startup, and *View → Refresh library* |
@@ -224,6 +244,7 @@ Everything `api.md` marks implemented has a path through the UI:
 | `GET /v1/runners/catalog` | `RunnerDialog`'s available list |
 | `POST /v1/runners/download` | `RunnerDialog`'s Download |
 | `POST /v1/steam/scan` | *Library → Import Steam library* |
+| `POST /v1/lutris/import` | *Library → Import Lutris games* |
 | `GET /v1/events` | `EventStream` |
 
 Events handled: `game.added`, `game.updated`, `game.removed`, `game.state`,
@@ -379,6 +400,24 @@ artwork" can only be answered by asking for it. That is the reason for the
 ask-once and in-flight rules above; a flag on `GET /v1/games` would remove
 the need for both.
 
+**`ArtworkPickerDialog`** (*Choose cover art…* / *Choose hero art…*, one
+instance per slot) lists a SteamGridDB game's cached `art_candidates.cover`
+or `.hero` by style and dimensions rather than showing a thumbnail grid: each
+candidate's own `url`/`thumb` point at SteamGridDB's CDN, and the frontend
+has no HTTP client for the open internet, only mirad's socket. The row
+matching the slot's `candidate_id` (GET .../metadata) is marked "(current)"
+and pre-selected on open. Picking a row applies it immediately (`POST
+.../artwork?type=`) and, once its own `EventStream` sees
+`game.artwork_selected`, redraws the preview from the real image mirad just
+fetched and cached — that redraw *is* the preview. The same event also
+reaches `LibraryWindow::HandleGameEvent`, which invalidates the game's
+`ArtworkStore` entry (cover) or the details panel's banner cache (hero) so
+the grid tile/sidebar follow without waiting for the picker to close. A game
+with no candidates cached (no `steamgriddb.api_key` set, or SteamGridDB has
+no match for the name) says so instead of showing an empty list — this now
+includes Steam-owned games too, which get SteamGridDB candidates as
+alternates alongside their Steam-CDN default when a key is set.
+
 ## Tests
 
 `mira_gui_tests` (`frontend/tests/`) is its own executable, not more files
@@ -410,11 +449,6 @@ is visible rather than assumed.
 
 Everything here exists in the API and has no path through the UI:
 
-- **`GET /v1/games/{id}/metadata`** — the store info behind the artwork:
-  description, genres, categories, release date, developers/publishers,
-  price, metacritic, a Steam review summary, and a ProtonDB tier. Only the
-  cover image is used today. The ProtonDB tier in particular belongs on a
-  Linux launcher's game page.
 - **`POST /v1/games/{id}/tricks`** — winetricks verbs. No catalog endpoint
   exists, so this wants a free-text verb field (plus, perhaps, a short list
   of common ones) shaped like `RunInPrefixDialog`, and it 404s for a native
@@ -422,8 +456,10 @@ Everything here exists in the API and has no path through the UI:
   disabled with the reason rather than hidden.
 - **`tricks.started`/`.finished`/`.failed`** — unhandled. They are the only
   report a verb ever makes, since the endpoint returns 202.
-
-- `DaemonSupervisor` — starting and supervising `mirad` from the frontend.
-  `architecture.md` describes the design; today `mira-gui` assumes the
-  daemon is already running and reports it unreachable if not.
-- A tray icon, and the "keep running in background" mode that goes with it.
+- **`DELETE /v1/runners/{kind}:{name}`** and **`GET /v1/runners/{kind}/
+  schema`** — `RunnerDialog` installs and lists, but never removes a build
+  or shows what a runner accepts.
+- The details panel shows the cached store info but not everything in it:
+  screenshots, trailers, PC requirements, DLC ids, content descriptors and
+  the achievement count are all fetched and cached, and none of them fit a
+  narrow sidebar. They want the wider game page that does not exist yet.

@@ -107,11 +107,30 @@ public:
   static void GetArtworkAsync(QObject* context, const std::string& id,
                               std::function<void(ArtworkResult)> callback);
 
+  // One named art slot — "cover", "hero", "capsule", "header", "logo",
+  // "icon". Which ones exist depends on the source; GetMetadataAsync's
+  // art_slots says which were cached.
+  static void GetArtworkSlotAsync(QObject* context, const std::string& id, const std::string& slot,
+                                  std::function<void(ArtworkResult)> callback);
+
+  // GET /v1/games/{id}/metadata. A 404 is ordinary — nothing fetched yet, or
+  // fetched and nothing found — and comes back as missing, not as an error.
+  static void GetMetadataAsync(QObject* context, const std::string& id,
+                               std::function<void(GameMetadataResult)> callback);
+
   // POST /v1/games/{id}/metadata/refresh. Returns 202 immediately; watch for
   // game.metadata_ready/.metadata_failed. `announce` marks this as
   // user-initiated so mirad reports the outcome as a `notification` event.
   static void RefreshMetadataAsync(QObject* context, const std::string& id, bool announce,
                                    std::function<void(MetadataRefreshResult)> callback);
+
+  // POST /v1/games/{id}/artwork?type=. `candidate_id` must be one of the ids
+  // GetMetadataAsync's cover_candidates listed — mirad looks it up rather
+  // than accepting a URL. Returns 202; watch for
+  // game.artwork_selected/.artwork_select_failed.
+  static void SelectArtworkAsync(QObject* context, const std::string& id, const std::string& slot,
+                                 std::int64_t candidate_id,
+                                 std::function<void(ArtworkSelectResult)> callback);
 
   // POST /v1/games/metadata/refresh-missing. Bulk version of the above.
   static void RefreshMissingArtworkAsync(QObject* context,
@@ -136,6 +155,11 @@ public:
   // POST /v1/steam/scan. Idempotent: updates Steam-owned fields without
   // touching anything the user configured.
   static void ScanSteamAsync(QObject* context, std::function<void(SteamScanResult)> callback);
+
+  // Upserts every wine game Lutris has, reading Lutris's own database and
+  // configs. Nothing on disk moves — see docs/api.md, POST /v1/lutris/import.
+  static void ImportLutrisAsync(QObject* context,
+                                std::function<void(LutrisImportResult)> callback);
 
   // POST /v1/games/{id}/run. Runs `exe_path` inside this game's prefix,
   // provisioning one on demand — which is how a needs_install game's
@@ -193,6 +217,9 @@ public:
   // the event type, which the payload does not repeat; false if `data` is
   // not a JSON object with an id.
   static bool ParseMetadataEvent(const std::string& data, MetadataEvent* out);
+
+  // Parses a `game.artwork_selected`/`.artwork_select_failed` payload.
+  static bool ParseArtworkSelectEvent(const std::string& data, ArtworkSelectEvent* out);
 
   // Parses a `notification` payload (`{"level": "...", "message": "..."}`).
   // False if `data` is not a JSON object with a message.

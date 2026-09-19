@@ -147,6 +147,36 @@ QComboBox::down-arrow {
   margin-right: 6px;
 }
 
+/* Styling a spinbox's frame hides Fusion's own up/down buttons unless the
+ * subcontrols are given explicitly here too. */
+QSpinBox::up-button, QDoubleSpinBox::up-button {
+  subcontrol-origin: border;
+  subcontrol-position: top right;
+  width: 18px;
+  border-left: 1px solid @border;
+  border-top-right-radius: @radius_control;
+}
+
+QSpinBox::down-button, QDoubleSpinBox::down-button {
+  subcontrol-origin: border;
+  subcontrol-position: bottom right;
+  width: 18px;
+  border-left: 1px solid @border;
+  border-bottom-right-radius: @radius_control;
+}
+
+QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {
+  image: @chevron_up_glyph;
+  width: 10px;
+  height: 10px;
+}
+
+QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {
+  image: @chevron_glyph;
+  width: 10px;
+  height: 10px;
+}
+
 QComboBox QAbstractItemView {
   background: @surface;
   border: 1px solid @border;

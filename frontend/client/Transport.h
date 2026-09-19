@@ -15,6 +15,10 @@ namespace mira_gui::transport {
 
 struct Reply {
   bool ok = false;
+  // 0 when the request never reached mirad. Carried for the endpoints where
+  // a 404 is a normal answer rather than a failure — GET
+  // /v1/games/{id}/metadata, for a game nothing has been fetched for.
+  int status = 0;
   std::string error;    // set when ok is false; already human-readable
   nlohmann::json body;  // parsed response body, null if empty or unparsable
 };

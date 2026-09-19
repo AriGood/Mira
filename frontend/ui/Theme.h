@@ -5,6 +5,8 @@
 #include <QString>
 #include <QStringList>
 
+#include <optional>
+
 class QWidget;
 
 namespace mira_gui::theme {
@@ -45,6 +47,9 @@ struct Tokens {
   int radius_tile = 0;
   int radius_toast = 8;
 
+  int tile_spacing = 5;  // gap between two tiles in the grid
+  int grid_margin = 6;   // padding between the grid and the panels around it
+
   // Only the two sizes the UI actually names. The base size is left to the
   // desktop's own font setting, which is an accessibility setting.
   int font_size_small = 11;
@@ -59,6 +64,28 @@ struct Tokens {
 // What everything currently draws with. Valid before Apply() is ever called —
 // it starts as the built-in defaults.
 const Tokens& Current();
+
+// The current theme's own shape values, before the user's Overrides are
+// layered on — what a shape control unset (-1) actually resolves to. For
+// showing that number in the settings screen instead of a placeholder like
+// "Theme default".
+const Tokens& ThemeDefaults();
+
+// One user's own adjustments to the shape tokens, kept in frontend.toml
+// rather than in a theme file: they are a preference about this library, not
+// part of what makes a theme look like itself, and they have to survive
+// switching theme. An unset field means "whatever the theme says".
+struct Overrides {
+  std::optional<int> tile_spacing;
+  std::optional<int> grid_margin;
+  std::optional<int> radius_tile;
+  std::optional<int> radius_panel;
+  std::optional<int> radius_control;
+};
+
+// Re-applies the current theme, so a change shows without a restart.
+void SetOverrides(const Overrides& overrides);
+const Overrides& CurrentOverrides();
 
 // Theme names, bundled ones first, then any *.toml in the user's theme
 // directory. Not including "auto", which is a resolution rule rather than a

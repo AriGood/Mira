@@ -5,8 +5,9 @@
 #include "GamePresentation.h"
 #include "Theme.h"
 
-#include <QCheckBox>
 #include <QComboBox>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QFileDialog>
 #include <QFormLayout>
 #include <QHBoxLayout>
@@ -32,9 +33,15 @@ GameEditForm::GameEditForm(std::string id, QWidget* parent) : QWidget(parent), i
   auto* form = form_;
   form->setVerticalSpacing(10);
   form->setHorizontalSpacing(14);
+  // A QLabel's default vertical size policy is Preferred, not Fixed like
+  // QLineEdit/QComboBox — inside the sidebar's QScrollArea, whose content
+  // is usually taller than this form needs, that leftover height lands on
+  // whichever field is still willing to grow. Both of these are one line of
+  // read-only text; pin them so it doesn't.
   status_label_ = new QLabel(this);
+  status_label_->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
   install_path_label_ = new QLabel(this);
-  install_path_label_->setWordWrap(true);
+  install_path_label_->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
   install_path_label_->setTextInteractionFlags(Qt::TextSelectableByMouse);
   last_error_label_ = new QLabel(this);
   last_error_label_->setWordWrap(true);
@@ -73,6 +80,17 @@ GameEditForm::GameEditForm(std::string id, QWidget* parent) : QWidget(parent), i
   auto* runner_row = new QHBoxLayout();
   runner_row->addWidget(runner_combo_, /*stretch=*/1);
 
+  data_dir_edit_ = new QLineEdit(this);
+  data_dir_edit_->setToolTip("Where this game's prefix/data directory lives.");
+
+  runner_config_edit_ = new QPlainTextEdit(this);
+  runner_config_edit_->setFixedHeight(70);
+  runner_config_edit_->setToolTip("Runner-specific settings, as a JSON object. Merged, not replaced.");
+
+  env_edit_ = new QPlainTextEdit(this);
+  env_edit_->setFixedHeight(70);
+  env_edit_->setToolTip("Extra environment variables, as a JSON object of strings. Merged, not replaced.");
+
   form->addRow("Status:", status_label_);
   form->addRow("Install path:", install_path_label_);
   form->addRow("Name:", name_edit_);
@@ -81,49 +99,44 @@ GameEditForm::GameEditForm(std::string id, QWidget* parent) : QWidget(parent), i
   form->addRow("Working directory:", working_dir_edit_);
   form->addRow("Tags:", tags_edit_);
   form->addRow("Runner:", runner_row);
+  form->addRow("Data directory:", data_dir_edit_);
+  form->addRow("Runner config:", runner_config_edit_);
+  form->addRow("Environment:", env_edit_);
   layout->addLayout(form);
   layout->addWidget(last_error_label_);
 
-  show_advanced_ = new QCheckBox("Show advanced (data directory, runner config, overrides)", this);
-  connect(show_advanced_, &QCheckBox::toggled, this, &GameEditForm::SetAdvancedVisible);
-  layout->addWidget(show_advanced_);
+  auto* advanced_button = new QPushButton("Advanced settings…", this);
+  advanced_button->setToolTip("Per-game overrides of the global settings.");
+  connect(advanced_button, &QPushButton::clicked, this, &GameEditForm::OpenAdvanced);
+  layout->addWidget(advanced_button);
 
-  advanced_container_ = new QWidget(this);
-  auto* advanced_layout = new QVBoxLayout(advanced_container_);
-  advanced_layout->setContentsMargins(0, 0, 0, 0);
-  advanced_layout->setSpacing(10);
+  // Built now, shown later: overrides_->Load() (called from Load(), below)
+  // needs somewhere to live regardless of whether the dialog has been
+  // opened yet. Its own window rather than inline — the overrides list is
+  // long enough (one row per overridable key, across every category) to
+  // cramp the sidebar otherwise.
+  advanced_dialog_ = new QDialog(this);
+  advanced_dialog_->setWindowTitle("Advanced settings");
+  advanced_dialog_->resize(520, 480);
+  auto* dialog_layout = new QVBoxLayout(advanced_dialog_);
 
-  auto* advanced_form = new QFormLayout();
-  advanced_form->setVerticalSpacing(10);
-  advanced_form->setHorizontalSpacing(14);
+  overrides_ = new mira_gui::OverridesEditor(id_, advanced_dialog_);
+  dialog_layout->addWidget(overrides_, /*stretch=*/1);
 
-  data_dir_edit_ = new QLineEdit(advanced_container_);
-  data_dir_edit_->setToolTip("Where this game's prefix/data directory lives.");
-  advanced_form->addRow("Data directory:", data_dir_edit_);
-
-  runner_config_edit_ = new QPlainTextEdit(advanced_container_);
-  runner_config_edit_->setFixedHeight(70);
-  runner_config_edit_->setToolTip("Runner-specific settings, as a JSON object. Merged, not replaced.");
-  advanced_form->addRow("Runner config:", runner_config_edit_);
-
-  env_edit_ = new QPlainTextEdit(advanced_container_);
-  env_edit_->setFixedHeight(70);
-  env_edit_->setToolTip("Extra environment variables, as a JSON object of strings. Merged, not replaced.");
-  advanced_form->addRow("Environment:", env_edit_);
-
-  advanced_layout->addLayout(advanced_form);
-
-  overrides_ = new mira_gui::OverridesEditor(id_, advanced_container_);
-  advanced_layout->addWidget(overrides_);
-
-  advanced_container_->hide();
-  layout->addWidget(advanced_container_, /*stretch=*/1);
+  auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close, advanced_dialog_);
+  connect(buttons, &QDialogButtonBox::rejected, advanced_dialog_, &QDialog::hide);
+  connect(buttons, &QDialogButtonBox::accepted, advanced_dialog_, &QDialog::hide);
+  dialog_layout->addWidget(buttons);
 
   setEnabled(false);
   Load();
 }
 
-void GameEditForm::SetAdvancedVisible(bool show) { advanced_container_->setVisible(show); }
+void GameEditForm::OpenAdvanced() {
+  advanced_dialog_->show();
+  advanced_dialog_->raise();
+  advanced_dialog_->activateWindow();
+}
 
 void GameEditForm::Load() {
   mira_gui::MiradClient::ListRunnersAsync(this, [this](mira_gui::RunnersResult result) {
@@ -151,6 +164,7 @@ void GameEditForm::Populate(const mira_gui::GameDetail& game) {
 
   install_path_ = game.install_path;
   install_path_label_->setText(QString::fromStdString(game.install_path));
+  install_path_label_->setToolTip(install_path_label_->text());
 
   if (game.last_error.empty()) {
     last_error_label_->hide();

@@ -3,12 +3,17 @@
 #include <QString>
 #include <QWidget>
 
+#include <QHash>
+#include <QPixmap>
+
 #include <string>
 
 #include "../client/Types.h"
 
+class QFormLayout;
 class QLabel;
 class QPushButton;
+class QResizeEvent;
 class QStackedWidget;
 
 namespace mira_gui {
@@ -40,14 +45,40 @@ public:
   // arrives after the panel was filled in.
   void RefreshCover(const GameSummary& game);
 
+  // Drops the cached hero banner for `id` and reloads it if that's the game
+  // currently shown. For game.artwork_selected on the hero slot.
+  void RefreshBanner(const std::string& id);
+
+protected:
+  void resizeEvent(QResizeEvent* event) override;
+
 signals:
   void PlayRequested(const QString& id);
   void StopRequested(const QString& id);
   void EditRequested(const QString& id);
   void MetadataRefreshRequested(const QString& id);
+  // `slot` is "cover" or "hero".
+  void ArtworkPickRequested(const QString& id, const QString& slot);
 
 private:
+  // GET /v1/games/{id}/metadata, once per selection. What comes back is
+  // cached store info, so a repeat selection costs one socket round trip and
+  // no network.
+  void LoadMetadata(const std::string& id);
+  void ShowMetadata(const GameMetadata& metadata);
+  void ClearMetadata();
+  void LoadBanner(const std::string& id);
+  void RenderBanner();
+
   QStackedWidget* stack_ = nullptr;
+  QFormLayout* form_ = nullptr;
+  QLabel* banner_ = nullptr;
+  QLabel* description_ = nullptr;
+  QLabel* released_ = nullptr;
+  QLabel* developer_ = nullptr;
+  QLabel* genres_ = nullptr;
+  QLabel* reviews_ = nullptr;
+  QLabel* protondb_ = nullptr;
   QLabel* cover_ = nullptr;
   QLabel* name_ = nullptr;
   QLabel* status_ = nullptr;
@@ -62,6 +93,8 @@ private:
   ArtworkStore* artwork_ = nullptr;
   std::string game_id_;
   bool running_ = false;
+  QHash<QString, QPixmap> banners_;  // hero art by id, at the size mirad sent
+  QPixmap banner_source_;            // the one on screen, before scaling
 };
 
 }  // namespace mira_gui
