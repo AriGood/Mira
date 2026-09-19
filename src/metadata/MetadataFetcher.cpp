@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <format>
 #include <fstream>
+#include <optional>
 #include <string_view>
 
 #include <json.hpp>
@@ -90,8 +91,13 @@ std::string ContentTypeFor(const fs::path& file) {
 // legacy naming for the cover slot, kept for API wire compatibility.
 // Sends no credentials: both sources use a plain public CDN, and
 // SteamGridDB's own API 401s if its key is passed to it here.
+//
+// `candidate_id`, when the image came from one of art_candidates[slot],
+// records which one -- the one piece of state a caller needs to show which
+// candidate is the one currently active for a slot.
 bool FetchArtworkInto(const config::Config& config, const std::string& url, const std::string& game_id,
-                      std::string_view source, std::string_view slot, json& info) {
+                      std::string_view source, std::string_view slot, json& info,
+                      std::optional<std::int64_t> candidate_id = std::nullopt) {
   std::string ext = fs::path(std::string(url)).extension().string();
   if (ext.empty() || ext.size() > 5) ext = ".jpg";
 
@@ -121,15 +127,17 @@ bool FetchArtworkInto(const config::Config& config, const std::string& url, cons
   const std::string key = slot == "cover" ? "artwork" : std::string(slot);
   info[key] = {{"file", dest.filename().string()}, {"content_type", ContentTypeFor(dest)},
               {"source", source}};
+  if (candidate_id) info[key]["candidate_id"] = *candidate_id;
   return true;
 }
 
 // Fetches every SteamGridDB candidate for one art slot (grids/heroes/logos/
-// icons -> cover/hero/logo/icon), stores the full list in
-// info["art_candidates"][slot] so a caller can offer a choice, and downloads
-// the first (SteamGridDB's own top-ranked result) as the slot's default --
-// same behaviour as before this existed, just without a second round trip
-// once the user wants to pick a different one via SelectArtwork.
+// icons -> cover/hero/logo/icon) and stores the full list in
+// info["art_candidates"][slot] so a caller can offer a choice. Downloads the
+// first (SteamGridDB's own top-ranked result) as the slot's default only if
+// the slot doesn't already have one -- a Steam-owned game already got its
+// cover/hero from Steam's own CDN (FetchSteamOwned), and SteamGridDB here is
+// an alternate to switch to, not a replacement to switch to automatically.
 void FetchGriddbSlot(const config::Config& config, const std::string& auth_header, std::int64_t griddb_id,
                      const std::string& game_id, std::string_view endpoint, std::string_view slot, json& info) {
   const json response = CurlJson({"curl", "-sSL", "-H", auth_header,
@@ -154,13 +162,50 @@ void FetchGriddbSlot(const config::Config& config, const std::string& auth_heade
   if (candidates.empty()) return;
   info["art_candidates"][std::string(slot)] = candidates;
 
+  const std::string key = slot == "cover" ? "artwork" : std::string(slot);
+  if (info.contains(key)) return;
+
   // No credentials on the image download itself -- see FetchArtworkInto.
   const std::string best_url = Value(candidates[0], "url", std::string());
-  FetchArtworkInto(config, best_url, game_id, "steamgriddb", slot, info);
+  const std::int64_t best_id = Value(candidates[0], "id", std::int64_t{0});
+  FetchArtworkInto(config, best_url, game_id, "steamgriddb", slot, info, best_id);
 }
 
-void FetchSteamOwned(const config::Config& config, const std::string& appid, const std::string& game_id,
-                     json& info) {
+// Resolves `name` to a SteamGridDB game id and fetches every candidate for
+// every slot. Best-effort and silent about it: called for both a game that
+// has nothing else (FetchNonSteam, where the caller turns a missing key into
+// a hard error beforehand) and one that already has Steam's own art
+// (FetchSteamOwned, where a missing key or no name match just means no
+// alternates to offer).
+void FetchGriddbCandidates(const config::Config& config, const std::string& api_key, const std::string& name,
+                           const std::string& game_id, json& info) {
+  const std::string auth_header = std::format("Authorization: Bearer {}", api_key);
+  const json search = CurlJson({"curl", "-sSL", "-H", auth_header,
+                                std::format("https://www.steamgriddb.com/api/v2/search/autocomplete/{}",
+                                           UrlEncode(name))});
+  if (search.is_discarded() || !Value(search, "success", false) ||
+      Value(search, "data", json::array()).empty()) {
+    return;
+  }
+  const std::int64_t griddb_id = Value(search["data"][0], "id", std::int64_t{0});
+  if (griddb_id == 0) return;
+
+  // Every candidate for every slot goes into info["art_candidates"][slot]
+  // (see FetchGriddbSlot) so a caller can offer a choice instead of only
+  // ever getting SteamGridDB's top pick.
+  FetchGriddbSlot(config, auth_header, griddb_id, game_id, "grids", "cover", info);
+  // Same griddb_id already resolved above -- a separate SteamGridDB
+  // endpoint, not a field on the grids response.
+  FetchGriddbSlot(config, auth_header, griddb_id, game_id, "heroes", "hero", info);
+  // Transparent logo (overlaid on hero/background in a GUI) and small
+  // square icon -- two more SteamGridDB endpoints, same griddb_id, same
+  // independent-of-each-other treatment as grids/heroes above.
+  FetchGriddbSlot(config, auth_header, griddb_id, game_id, "logos", "logo", info);
+  FetchGriddbSlot(config, auth_header, griddb_id, game_id, "icons", "icon", info);
+}
+
+void FetchSteamOwned(const config::Config& config, const std::string& appid, const std::string& name,
+                     const std::string& game_id, json& info) {
   const json store = CurlJson(
       {"curl", "-sSL", std::format("https://store.steampowered.com/api/appdetails?appids={}&l=english", appid)});
   if (!store.is_discarded() && store.contains(appid) && Value(store[appid], "success", false)) {
@@ -276,6 +321,14 @@ void FetchSteamOwned(const config::Config& config, const std::string& appid, con
                    game_id, "steam_cdn", "capsule", info);
   FetchArtworkInto(config, std::format("https://cdn.akamai.steamstatic.com/steam/apps/{}/header.jpg", appid), game_id,
                    "steam_cdn", "header", info);
+
+  // Steam's own art above is already the default; this only adds
+  // SteamGridDB's candidates as alternates to switch to, when a key is set.
+  // Never fails the fetch -- a Steam-owned game already has its cover either
+  // way.
+  if (const std::string api_key = config.GetString("steamgriddb.api_key"); !api_key.empty()) {
+    FetchGriddbCandidates(config, api_key, name, game_id, info);
+  }
 }
 
 Result<void> FetchNonSteam(const config::Config& config, const std::string& name,
@@ -293,29 +346,7 @@ Result<void> FetchNonSteam(const config::Config& config, const std::string& name
                "steamgriddb.api_key (it is free, from steamgriddb.com)");
   }
 
-  const std::string auth_header = std::format("Authorization: Bearer {}", api_key);
-  const json search = CurlJson({"curl", "-sSL", "-H", auth_header,
-                                std::format("https://www.steamgriddb.com/api/v2/search/autocomplete/{}",
-                                           UrlEncode(name))});
-  if (search.is_discarded() || !Value(search, "success", false) ||
-      Value(search, "data", json::array()).empty()) {
-    return {};  // no match by name is an ordinary outcome, not a failure
-  }
-  const std::int64_t griddb_id = Value(search["data"][0], "id", std::int64_t{0});
-  if (griddb_id == 0) return {};
-
-  // Every candidate for every slot goes into info["art_candidates"][slot]
-  // (see FetchGriddbSlot) so a caller can offer a choice instead of only
-  // ever getting SteamGridDB's top pick.
-  FetchGriddbSlot(config, auth_header, griddb_id, game_id, "grids", "cover", info);
-  // Same griddb_id already resolved above -- a separate SteamGridDB
-  // endpoint, not a field on the grids response.
-  FetchGriddbSlot(config, auth_header, griddb_id, game_id, "heroes", "hero", info);
-  // Transparent logo (overlaid on hero/background in a GUI) and small
-  // square icon -- two more SteamGridDB endpoints, same griddb_id, same
-  // independent-of-each-other treatment as grids/heroes above.
-  FetchGriddbSlot(config, auth_header, griddb_id, game_id, "logos", "logo", info);
-  FetchGriddbSlot(config, auth_header, griddb_id, game_id, "icons", "icon", info);
+  FetchGriddbCandidates(config, api_key, name, game_id, info);
   return {};
 }
 
@@ -334,7 +365,7 @@ Result<void> Fetch(const config::Config& config, const model::Game& game) {
 
   if (game.runner_ref.starts_with("steam:")) {
     info["source"] = "steam";
-    FetchSteamOwned(config, game.runner_ref.substr(std::string_view("steam:").size()), game.id, info);
+    FetchSteamOwned(config, game.runner_ref.substr(std::string_view("steam:").size()), game.name, game.id, info);
   } else {
     info["source"] = "steamgriddb";
     // Returned before anything is written: a failure here means nothing was
@@ -380,7 +411,7 @@ Result<void> SelectArtwork(const config::Config& config, const std::string& game
   // cached, rather than accepting a caller-supplied URL directly -- so the
   // daemon never ends up fetching an arbitrary URL on the API's behalf. No
   // credentials on the download itself -- see FetchArtworkInto.
-  if (!FetchArtworkInto(config, url, game_id, "steamgriddb", slot, info)) {
+  if (!FetchArtworkInto(config, url, game_id, "steamgriddb", slot, info, candidate_id)) {
     return Err("download_failed", "couldn't download the selected image");
   }
 

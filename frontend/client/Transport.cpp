@@ -23,6 +23,7 @@ httplib::Client MakeClient(const Options& options) {
 // {"error": {"code", "message"}} envelope every failure uses.
 Reply Finish(const httplib::Result& res) {
   Reply reply;
+  if (res) reply.status = res->status;
   if (res && res->status >= 200 && res->status < 300) {
     reply.ok = true;
     reply.body = json::parse(res->body, nullptr, false);
