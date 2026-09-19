@@ -12,6 +12,7 @@
 #include <QSpinBox>
 
 #include "Notify.h"
+#include "Theme.h"
 #include "SystemNotifier.h"
 #include <QPushButton>
 #include <QScrollArea>
@@ -67,6 +68,14 @@ void SettingsPanel::BuildInterfaceGroup() {
       "while it runs, so this only matters for changes made while it was stopped.");
   form->addRow("Scan the library on startup", scan_on_startup_);
 
+  theme_ = new QComboBox(box);
+  theme_->addItem("Follow the desktop", "auto");
+  for (const QString& name : mira_gui::theme::Available()) theme_->addItem(name, name);
+  theme_->setToolTip(
+      "Drop a .toml of your own into ~/.config/mira/themes to add to this list — see any "
+      "bundled theme for the keys it can set.");
+  form->addRow("Theme", theme_);
+
   notifications_ = new QComboBox(box);
   notifications_->addItem("When Mira isn't focused", "auto");
   notifications_->addItem("Always as a desktop notification", "system");
@@ -96,13 +105,17 @@ void SettingsPanel::BuildInterfaceGroup() {
 
   auto* note = new QLabel("Stored in frontend.toml, never interpreted by the daemon.", box);
   note->setWordWrap(true);
-  note->setStyleSheet("color: #9e9e9e; font-size: 11px;");
+  note->setProperty("role", "muted");
   form->addRow(note);
 
   LoadFrontendPrefs();
 }
 
 void SettingsPanel::LoadFrontendPrefs() {
+  theme_original_ = mira_gui::theme::CurrentName();
+  const int theme_index = theme_->findData(theme_original_);
+  if (theme_index >= 0) theme_->setCurrentIndex(theme_index);
+
   notifications_original_ =
       mira_gui::notify::DeliveryToString(mira_gui::notify::CurrentDelivery());
   notifications_->setCurrentIndex(notifications_->findData(notifications_original_));
@@ -114,6 +127,11 @@ void SettingsPanel::LoadFrontendPrefs() {
     if (result.prefs.scan_on_startup) {
       scan_on_startup_original_ = *result.prefs.scan_on_startup;
       scan_on_startup_->setChecked(scan_on_startup_original_);
+    }
+    if (result.prefs.theme) {
+      theme_original_ = QString::fromStdString(*result.prefs.theme);
+      const int index = theme_->findData(theme_original_);
+      if (index >= 0) theme_->setCurrentIndex(index);
     }
     if (result.prefs.notifications) {
       notifications_original_ = QString::fromStdString(*result.prefs.notifications);
@@ -336,6 +354,7 @@ bool SettingsPanel::IsDirty() const {
   if (scan_on_startup_->isChecked() != scan_on_startup_original_) return true;
   if (notifications_->currentData().toString() != notifications_original_) return true;
   if (notification_timeout_->value() != notification_timeout_original_) return true;
+  if (theme_->currentData().toString() != theme_original_) return true;
   if (game_settings_in_sidebar_->isChecked() != game_settings_in_sidebar_original_) return true;
   for (const Field& field : fields_) {
     if (CurrentText(field) != field.original) return true;
@@ -346,19 +365,26 @@ bool SettingsPanel::IsDirty() const {
 void SettingsPanel::Save() {
   const QString notifications = notifications_->currentData().toString();
   const int timeout = notification_timeout_->value();
+  const QString theme_name = theme_->currentData().toString();
   const bool game_settings_in_sidebar = game_settings_in_sidebar_->isChecked();
   if (scan_on_startup_->isChecked() != scan_on_startup_original_ ||
       notifications != notifications_original_ || timeout != notification_timeout_original_ ||
+      theme_name != theme_original_ ||
       game_settings_in_sidebar != game_settings_in_sidebar_original_) {
     mira_gui::FrontendPrefs prefs;
     prefs.scan_on_startup = scan_on_startup_->isChecked();
     prefs.notifications = notifications.toStdString();
     prefs.notification_timeout_s = timeout;
+    prefs.theme = theme_name.toStdString();
     prefs.game_settings_in_sidebar = game_settings_in_sidebar;
     scan_on_startup_original_ = *prefs.scan_on_startup;
     notifications_original_ = notifications;
     notification_timeout_original_ = timeout;
     game_settings_in_sidebar_original_ = game_settings_in_sidebar;
+    if (theme_name != theme_original_) {
+      theme_original_ = theme_name;
+      mira_gui::theme::Apply(theme_name);
+    }
     mira_gui::notify::SetDelivery(mira_gui::notify::DeliveryFromString(notifications));
     mira_gui::notify::SetTimeoutSeconds(timeout);
     mira_gui::MiradClient::SaveFrontendPrefsAsync(this, prefs, [](mira_gui::PatchConfigResult) {});

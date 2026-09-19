@@ -66,6 +66,9 @@ private:
   void changeEvent(QEvent* event) override;
   bool eventFilter(QObject* watched, QEvent* event) override;
   void ToggleMaximize();
+  // Redrawn rather than stored: each glyph is painted in the theme's text
+  // color, so a theme change has to regenerate them.
+  void ApplyTopBarIcons();
 
   // `force_scan` separates the two callers: startup, which honours the
   // scan_on_startup preference, and Refresh, which does not.

@@ -303,6 +303,7 @@ FrontendPrefsResult GetFrontendPrefsSync() {
   read_bool("scan_on_startup", result.prefs.scan_on_startup);
   read_string("notifications", result.prefs.notifications);
   read_int("notification_timeout_s", result.prefs.notification_timeout_s);
+  read_string("theme", result.prefs.theme);
   read_bool("game_settings_in_sidebar", result.prefs.game_settings_in_sidebar);
   return result;
 }
@@ -321,6 +322,7 @@ PatchConfigResult SaveFrontendPrefsSync(const FrontendPrefs& prefs) {
   if (prefs.notification_timeout_s) {
     table["notification_timeout_s"] = *prefs.notification_timeout_s;
   }
+  if (prefs.theme) table["theme"] = *prefs.theme;
   if (prefs.game_settings_in_sidebar) {
     table["game_settings_in_sidebar"] = *prefs.game_settings_in_sidebar;
   }

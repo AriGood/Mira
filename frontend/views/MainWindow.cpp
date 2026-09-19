@@ -59,7 +59,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 
   auto* header_row = new QHBoxLayout();
   auto* title_label = new QLabel("Mira", central);
-  title_label->setStyleSheet("font-size: 18px; font-weight: 600;");
+  title_label->setProperty("role", "heading");
 
   status_filter_ = new QComboBox(central);
   status_filter_->addItem("All statuses", "");
@@ -105,7 +105,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   layout->addWidget(games_table_, /*stretch=*/1);
 
   connection_footer_ = new QLabel(central);
-  connection_footer_->setStyleSheet("font-size: 10px; color: #9e9e9e;");
+  connection_footer_->setProperty("role", "muted");
   connection_footer_->setText(
       QString("Connected via %1").arg(QString::fromStdString(mira_gui::MiradClient::ResolveSocketPath())));
   layout->addWidget(connection_footer_);

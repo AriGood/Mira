@@ -1,6 +1,7 @@
 #include "Notify.h"
 
 #include "SystemNotifier.h"
+#include "Theme.h"
 
 #include <QEvent>
 
@@ -26,13 +27,14 @@ namespace {
 // The accent for each level, shared by both shapes so an error toast and an
 // error popup are recognisably the same kind of message.
 QString AccentFor(Level level) {
+  const theme::Tokens& tokens = theme::Current();
   switch (level) {
-    case Level::Success: return "#2e7d32";
-    case Level::Warning: return "#ef6c00";
-    case Level::Error: return "#c62828";
+    case Level::Success: return tokens.success.name();
+    case Level::Warning: return tokens.warning.name();
+    case Level::Error: return tokens.error.name();
     case Level::Info: break;
   }
-  return "#1e88e5";
+  return tokens.info.name();
 }
 
 // Process-wide, from frontend.toml. Zero means "until dismissed".
@@ -63,10 +65,14 @@ class ToastCard : public QFrame {
 public:
   ToastCard(Level level, const QString& text, QWidget* parent) : QFrame(parent) {
     setCursor(Qt::PointingHandCursor);
-    setStyleSheet(QString("QFrame { background: #2b2b2b; border-radius: 6px; "
-                          "border-left: 4px solid %1; }"
-                          "QLabel { color: #f0f0f0; }")
-                      .arg(AccentFor(level)));
+    const theme::Tokens& tokens = theme::Current();
+    setStyleSheet(QString("QFrame { background: %1; border-radius: %2px; "
+                          "border-left: 4px solid %3; }"
+                          "QLabel { color: %4; }")
+                      .arg(tokens.surface_alt.name())
+                      .arg(tokens.radius_toast)
+                      .arg(AccentFor(level))
+                      .arg(tokens.text.name()));
 
     auto* layout = new QHBoxLayout(this);
     layout->setContentsMargins(kCardPadding, kCardPadding, kCardPadding, kCardPadding);

@@ -1,0 +1,39 @@
+# Mira's light theme, used when the desktop asks for light and the theme
+# setting is "Follow the desktop". Same keys as mira-dark.toml.
+
+window = "#f4f5f7"
+surface = "#ffffff"
+surface_alt = "#eceef2"
+border = "#d5d9e0"
+text = "#1c1f25"
+text_muted = "#6b7280"
+accent = "#3b5bdb"
+on_accent = "#ffffff"
+
+running = "#2e7d32"
+success = "#2e7d32"
+warning = "#c05621"
+error = "#c62828"
+info = "#1565c0"
+
+status_ready = "#2e7d32"
+status_setting_up = "#1565c0"
+status_broken = "#c62828"
+status_missing = "#757575"
+status_needs_install = "#c05621"
+
+tile_placeholder = "#d5d9e0"
+scrim_alpha = 225
+
+radius_panel = 8
+radius_control = 6
+radius_tile = 0
+radius_toast = 8
+
+font_size_small = 11
+font_size_heading = 16
+
+# Lighter artwork placeholders, so generated covers do not read as holes in a
+# light window the way the dark theme's do against a dark one.
+placeholder_saturation = 80
+placeholder_value = 190

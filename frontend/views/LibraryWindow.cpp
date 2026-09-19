@@ -36,10 +36,12 @@
 #include "../ui/GameDetailsPanel.h"
 #include "../ui/GameEditForm.h"
 #include "../ui/GameTileDelegate.h"
+#include "../ui/Icons.h"
 #include "../ui/LibrarySort.h"
 #include "../ui/Notify.h"
 #include "../ui/SettingsPanel.h"
 #include "../ui/Shortcuts.h"
+#include "../ui/Theme.h"
 #include "../ui/Tray.h"
 #include "MainWindow.h"
 
@@ -68,21 +70,6 @@ const FilterEntry kFilters[] = {
 
 bool HasTag(const mira_gui::GameSummary& game, const std::string& tag) {
   return std::find(game.tags.begin(), game.tags.end(), tag) != game.tags.end();
-}
-
-// The desktop's own gear when the icon theme has one, else the ⚙ glyph
-// drawn into a pixmap — an icon-less QToolButton is a blank square.
-QIcon SettingsIcon() {
-  for (const char* name : {"preferences-system", "settings-configure", "gtk-preferences"}) {
-    QIcon themed = QIcon::fromTheme(name);
-    if (!themed.isNull()) return themed;
-  }
-  QPixmap pixmap(16, 16);
-  pixmap.fill(Qt::transparent);
-  QPainter painter(&pixmap);
-  painter.setRenderHint(QPainter::Antialiasing);
-  painter.drawText(pixmap.rect(), Qt::AlignCenter, QString::fromUtf8("⚙"));
-  return QIcon(pixmap);
 }
 
 constexpr int kResizeMargin = 5;
@@ -156,6 +143,15 @@ LibraryWindow::LibraryWindow(QWidget* parent) : QMainWindow(parent) {
   artwork_ = new mira_gui::ArtworkStore(this);
   connect(artwork_, &mira_gui::ArtworkStore::CoverChanged, this, &LibraryWindow::UpdateTileCover);
 
+  // The stylesheet re-polishes every widget by itself; what it cannot reach
+  // is what we paint — the tiles, and the placeholder covers drawn in the
+  // theme's own colors.
+  connect(mira_gui::theme::Notifier::Instance(), &mira_gui::theme::Notifier::Changed, this, [this] {
+    artwork_->InvalidateAllRenderings();
+    ApplyFilter();
+    ApplyTopBarIcons();
+  });
+
   details_ = new mira_gui::GameDetailsPanel(this);
   details_->SetArtworkStore(artwork_);
   connect(details_, &mira_gui::GameDetailsPanel::PlayRequested, this,
@@ -197,7 +193,8 @@ LibraryWindow::LibraryWindow(QWidget* parent) : QMainWindow(parent) {
   layout->addWidget(content_stack_, /*stretch=*/1);
 
   footer_ = new QLabel(central);
-  footer_->setStyleSheet("font-size: 10px; color: #9e9e9e; padding: 4px 10px;");
+  footer_->setProperty("role", "muted");
+  footer_->setContentsMargins(10, 4, 10, 4);
   footer_->setCursor(Qt::ArrowCursor);
   layout->addWidget(footer_);
 
@@ -401,6 +398,7 @@ void LibraryWindow::LoadPrefs() {
       const int index = filters_->findData(wanted);
       if (index >= 0) filters_->setCurrentIndex(index);
     }
+    if (prefs.theme) mira_gui::theme::Apply(QString::fromStdString(*prefs.theme));
     if (prefs.game_settings_in_sidebar) game_settings_in_sidebar_ = *prefs.game_settings_in_sidebar;
   });
 }
@@ -427,6 +425,16 @@ void LibraryWindow::SavePrefs() {
   mira_gui::MiradClient::SaveFrontendPrefsBlocking(prefs);
 }
 
+void LibraryWindow::ApplyTopBarIcons() {
+  using mira_gui::icons::Glyph;
+  menu_button_->setIcon(mira_gui::icons::For(Glyph::Menu));
+  settings_button_->setIcon(mira_gui::icons::For(Glyph::Settings));
+  minimize_button_->setIcon(mira_gui::icons::For(Glyph::Minimize));
+  maximize_button_->setIcon(
+      mira_gui::icons::For(isMaximized() ? Glyph::Restore : Glyph::Maximize));
+  close_button_->setIcon(mira_gui::icons::For(Glyph::Close));
+}
+
 void LibraryWindow::ToggleMaximize() {
   if (isMaximized()) {
     showNormal();
@@ -437,8 +445,8 @@ void LibraryWindow::ToggleMaximize() {
 
 void LibraryWindow::changeEvent(QEvent* event) {
   if (event->type() == QEvent::WindowStateChange && maximize_button_ != nullptr) {
-    maximize_button_->setIcon(style()->standardIcon(
-        isMaximized() ? QStyle::SP_TitleBarNormalButton : QStyle::SP_TitleBarMaxButton));
+    maximize_button_->setIcon(mira_gui::icons::For(
+        isMaximized() ? mira_gui::icons::Glyph::Restore : mira_gui::icons::Glyph::Maximize));
     maximize_button_->setToolTip(isMaximized() ? "Restore" : "Maximize");
   }
   QMainWindow::changeEvent(event);
@@ -521,7 +529,6 @@ QWidget* LibraryWindow::BuildTopBar() {
   layout->setSpacing(8);
 
   menu_button_ = new QToolButton(top_bar_);
-  menu_button_->setText("☰");
   menu_button_->setPopupMode(QToolButton::InstantPopup);
   menu_button_->setAutoRaise(true);
   // Its menu is filled in later, by BuildMenus() — deferred until
@@ -580,7 +587,7 @@ QWidget* LibraryWindow::BuildTopBar() {
   // Gear <-> Back/Save, swapped by OpenSettings/CloseSettings. Two sibling
   // widgets, not a QStackedWidget — a stack is as wide as its widest page.
   settings_button_ = new QToolButton(top_bar_);
-  settings_button_->setIcon(SettingsIcon());
+  settings_button_->setAutoRaise(true);
   settings_button_->setToolTip("Settings");
   connect(settings_button_, &QToolButton::clicked, this, &LibraryWindow::OpenSettings);
   layout->addWidget(settings_button_);
@@ -602,25 +609,24 @@ QWidget* LibraryWindow::BuildTopBar() {
 
   minimize_button_ = new QToolButton(top_bar_);
   minimize_button_->setAutoRaise(true);
-  minimize_button_->setIcon(style()->standardIcon(QStyle::SP_TitleBarMinButton));
   minimize_button_->setToolTip("Minimize");
   connect(minimize_button_, &QToolButton::clicked, this, &QWidget::showMinimized);
   layout->addWidget(minimize_button_);
 
   maximize_button_ = new QToolButton(top_bar_);
   maximize_button_->setAutoRaise(true);
-  maximize_button_->setIcon(style()->standardIcon(QStyle::SP_TitleBarMaxButton));
   maximize_button_->setToolTip("Maximize");
   connect(maximize_button_, &QToolButton::clicked, this, &LibraryWindow::ToggleMaximize);
   layout->addWidget(maximize_button_);
 
   close_button_ = new QToolButton(top_bar_);
   close_button_->setAutoRaise(true);
-  close_button_->setIcon(style()->standardIcon(QStyle::SP_TitleBarCloseButton));
+  close_button_->setObjectName("close_button");
   close_button_->setToolTip("Close");
   connect(close_button_, &QToolButton::clicked, this, &QWidget::close);
   layout->addWidget(close_button_);
 
+  ApplyTopBarIcons();
   return top_bar_;
 }
 
@@ -659,7 +665,7 @@ QWidget* LibraryWindow::BuildGrid() {
 
   empty_hint_ = new QLabel(container);
   empty_hint_->setAlignment(Qt::AlignCenter);
-  empty_hint_->setStyleSheet("color: #9e9e9e;");
+  empty_hint_->setProperty("role", "muted");
   empty_hint_->setVisible(false);
   layout->addWidget(empty_hint_);
 
@@ -1161,7 +1167,7 @@ QWidget* LibraryWindow::BuildSettingsPage() {
   layout->setSpacing(10);
 
   auto* title = new QLabel("Settings", page);
-  title->setStyleSheet("font-size: 16px; font-weight: 600;");
+  title->setProperty("role", "heading");
   layout->addWidget(title);
 
   settings_panel_ = new mira_gui::SettingsPanel(page);

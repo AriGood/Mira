@@ -1,0 +1,353 @@
+/* Mira's stylesheet. Not a theme — themes are the .toml token files, and
+ * every @name below is substituted from the one being applied (ui/Theme.cpp).
+ *
+ * Broad backgrounds are left to the palette, which Fusion already honours;
+ * what is here is the chrome the palette cannot express: shape, spacing,
+ * borders and the states (hover, focus, checked) that make the app feel less
+ * like a stock Qt dialog. */
+
+/* --- Text roles ---------------------------------------------------------- */
+
+QLabel[role="muted"] {
+  color: @text_muted;
+  font-size: @font_size_small;
+}
+
+QLabel[role="heading"] {
+  font-size: @font_size_heading;
+  font-weight: 600;
+}
+
+QLabel[role="section"] {
+  font-weight: 600;
+}
+
+QLabel[role="error"] {
+  color: @error;
+  font-size: @font_size_small;
+}
+
+QLabel[role="keys"] {
+  font-family: monospace;
+  font-weight: 600;
+}
+
+/* A game's lifecycle state, set as a "status" property so a theme change
+ * recolors it without the widget having to be repopulated (ui/Theme.h's
+ * SetStyleProperty). "running" is not a status mirad reports — it is the
+ * frontend's own "playing right now". */
+QLabel[status="ready"],
+QLabel[status="setting_up"],
+QLabel[status="broken"],
+QLabel[status="missing"],
+QLabel[status="needs_install"],
+QLabel[status="running"] {
+  font-size: @font_size_small;
+  font-weight: 600;
+}
+
+QLabel[status="ready"] { color: @status_ready; }
+QLabel[status="setting_up"] { color: @status_setting_up; }
+QLabel[status="broken"] { color: @status_broken; }
+QLabel[status="missing"] { color: @status_missing; }
+QLabel[status="needs_install"] { color: @status_needs_install; }
+QLabel[status="running"] { color: @running; }
+
+/* --- The custom top bar -------------------------------------------------- */
+
+QWidget#top_bar {
+  background: @surface;
+  border-bottom: 1px solid @border;
+}
+
+QWidget#top_bar QToolButton {
+  border: none;
+  border-radius: @radius_control;
+  padding: 5px;
+}
+
+/* The button already opens a menu on click; Qt's little corner triangle just
+ * adds noise next to a glyph this small. */
+QWidget#top_bar QToolButton::menu-indicator {
+  image: none;
+  width: 0;
+}
+
+QWidget#top_bar QToolButton:hover {
+  background: @surface_alt;
+}
+
+QWidget#top_bar QToolButton:pressed {
+  background: @border;
+}
+
+QWidget#top_bar QToolButton#close_button:hover {
+  background: @error;
+}
+
+/* --- Buttons ------------------------------------------------------------- */
+
+QPushButton {
+  background: @surface_alt;
+  border: 1px solid @border;
+  border-radius: @radius_control;
+  padding: 5px 14px;
+}
+
+QPushButton:hover {
+  border-color: @accent;
+}
+
+QPushButton:pressed {
+  background: @border;
+}
+
+QPushButton:default {
+  background: @accent;
+  border-color: @accent;
+  color: @on_accent;
+}
+
+QPushButton:disabled {
+  color: @text_muted;
+  border-color: @border;
+}
+
+/* --- Inputs -------------------------------------------------------------- */
+
+QLineEdit, QPlainTextEdit, QTextEdit, QSpinBox, QDoubleSpinBox, QComboBox {
+  background: @surface;
+  border: 1px solid @border;
+  border-radius: @radius_control;
+  padding: 4px 8px;
+  selection-background-color: @accent;
+  selection-color: @on_accent;
+}
+
+QLineEdit:focus, QPlainTextEdit:focus, QTextEdit:focus,
+QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus {
+  border-color: @accent;
+}
+
+QLineEdit:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled, QComboBox:disabled {
+  color: @text_muted;
+}
+
+/* Styling a combo's frame means owning its arrow and its popup too, or the
+ * stock ones stay behind and stop matching. */
+QComboBox::drop-down {
+  border: none;
+  width: 18px;
+}
+
+QComboBox::down-arrow {
+  image: @chevron_glyph;
+  width: 12px;
+  height: 12px;
+  margin-right: 6px;
+}
+
+QComboBox QAbstractItemView {
+  background: @surface;
+  border: 1px solid @border;
+  border-radius: @radius_control;
+  padding: 4px;
+  outline: none;
+  selection-background-color: @accent;
+  selection-color: @on_accent;
+}
+
+QCheckBox::indicator, QRadioButton::indicator {
+  width: 15px;
+  height: 15px;
+  border: 1px solid @border;
+  border-radius: 3px;
+  background: @surface;
+}
+
+QCheckBox::indicator:hover, QRadioButton::indicator:hover {
+  border-color: @accent;
+}
+
+QCheckBox::indicator:checked, QRadioButton::indicator:checked {
+  background: @accent;
+  border-color: @accent;
+  image: @check_glyph;
+}
+
+/* --- Tabs ---------------------------------------------------------------- */
+
+QTabWidget::pane {
+  border: none;
+  border-top: 1px solid @border;
+  top: -1px;
+}
+
+QTabBar::tab {
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 7px 14px;
+  margin: 0;
+  color: @text_muted;
+}
+
+QTabBar::tab:hover {
+  color: @text;
+}
+
+QTabBar::tab:selected {
+  color: @text;
+  border-bottom-color: @accent;
+}
+
+/* --- Sliders ------------------------------------------------------------- */
+
+QSlider::groove:horizontal {
+  height: 4px;
+  background: @border;
+  border-radius: 2px;
+}
+
+QSlider::sub-page:horizontal {
+  background: @accent;
+  border-radius: 2px;
+}
+
+QSlider::handle:horizontal {
+  background: @text;
+  width: 12px;
+  height: 12px;
+  margin: -5px 0;
+  border-radius: 6px;
+}
+
+QSlider::handle:horizontal:disabled {
+  background: @text_muted;
+}
+
+/* --- Scrollbars ---------------------------------------------------------- */
+
+QScrollBar:vertical, QScrollBar:horizontal {
+  background: transparent;
+  border: none;
+  margin: 0;
+}
+
+QScrollBar:vertical { width: 10px; }
+QScrollBar:horizontal { height: 10px; }
+
+QScrollBar::handle:vertical, QScrollBar::handle:horizontal {
+  background: @border;
+  border-radius: 5px;
+  min-height: 32px;
+  min-width: 32px;
+}
+
+QScrollBar::handle:hover {
+  background: @text_muted;
+}
+
+QScrollBar::add-line, QScrollBar::sub-line {
+  width: 0;
+  height: 0;
+}
+
+QScrollBar::add-page, QScrollBar::sub-page {
+  background: transparent;
+}
+
+/* --- Lists, tables, menus ------------------------------------------------ */
+
+/* The grid paints its own tiles (ui/GameTileDelegate), so it wants a backdrop
+ * and nothing else — a stylesheet selection here would draw underneath them. */
+QListWidget#library_grid {
+  background: @window;
+  border: none;
+}
+
+QListWidget, QTreeWidget, QTableWidget {
+  background: @surface;
+  border: 1px solid @border;
+  border-radius: @radius_panel;
+  outline: none;
+}
+
+QListWidget::item, QTreeWidget::item, QTableWidget::item {
+  padding: 4px;
+  border-radius: @radius_control;
+}
+
+QListWidget::item:selected, QTreeWidget::item:selected, QTableWidget::item:selected {
+  background: @accent;
+  color: @on_accent;
+}
+
+QHeaderView::section {
+  background: @surface_alt;
+  border: none;
+  border-bottom: 1px solid @border;
+  padding: 6px 8px;
+  font-weight: 600;
+}
+
+QMenu {
+  background: @surface;
+  border: 1px solid @border;
+  border-radius: @radius_panel;
+  padding: 5px;
+}
+
+QMenu::item {
+  padding: 6px 22px 6px 12px;
+  border-radius: @radius_control;
+}
+
+QMenu::item:selected {
+  background: @accent;
+  color: @on_accent;
+}
+
+QMenu::item:disabled {
+  color: @text_muted;
+}
+
+QMenu::separator {
+  height: 1px;
+  background: @border;
+  margin: 5px 8px;
+}
+
+QToolTip {
+  background: @surface_alt;
+  color: @text;
+  border: 1px solid @border;
+  border-radius: @radius_control;
+  padding: 4px 7px;
+}
+
+/* --- Containers ---------------------------------------------------------- */
+
+QSplitter::handle {
+  background: @border;
+}
+
+QSplitter::handle:horizontal { width: 1px; }
+QSplitter::handle:vertical { height: 1px; }
+
+QGroupBox {
+  border: 1px solid @border;
+  border-radius: @radius_panel;
+  margin-top: 10px;
+  padding-top: 10px;
+}
+
+QGroupBox::title {
+  subcontrol-origin: margin;
+  left: 10px;
+  padding: 0 4px;
+}
+
+QScrollArea {
+  border: none;
+}

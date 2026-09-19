@@ -54,6 +54,11 @@ public:
   // rename, which changes the placeholder's initials but not the artwork.
   void InvalidateRendering(const std::string& id);
 
+  // The same, for every game at once. For a theme change: a generated
+  // placeholder is drawn in the theme's colors (see ui/CoverArt), so all of
+  // them are stale even though the fetched artwork is not.
+  void InvalidateAllRenderings();
+
 signals:
   // Real artwork arrived (or was dropped) for this id; whatever is drawing
   // it should ask for the cover again.

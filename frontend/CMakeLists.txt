@@ -57,12 +57,16 @@ qt_add_executable(mira-gui
   ui/LibrarySort.h
   ui/GameTileDelegate.cpp
   ui/GameTileDelegate.h
+  ui/Icons.cpp
+  ui/Icons.h
   ui/Notify.cpp
   ui/Notify.h
   ui/SystemNotifier.cpp
   ui/SystemNotifier.h
   ui/Shortcuts.cpp
   ui/Shortcuts.h
+  ui/Theme.cpp
+  ui/Theme.h
   ui/Tray.cpp
   ui/Tray.h
   ui/SettingsPanel.cpp
@@ -108,6 +112,18 @@ qt_add_resources(mira-gui "icons"
     "${MIRA_ICON_DIR}/64x64/apps/mira.png"
     "${MIRA_ICON_DIR}/128x128/apps/mira.png"
     "${MIRA_ICON_DIR}/256x256/apps/mira.png"
+)
+
+# The stylesheet and the themes that fill it in (ui/Theme.cpp). Embedded so a
+# build tree, an AppImage and an installed copy all theme themselves the same
+# way; a user's own themes are read from ~/.config/mira/themes at run time.
+qt_add_resources(mira-gui "themes"
+  PREFIX "/themes"
+  BASE "${CMAKE_CURRENT_SOURCE_DIR}/themes"
+  FILES
+    "${CMAKE_CURRENT_SOURCE_DIR}/themes/base.qss"
+    "${CMAKE_CURRENT_SOURCE_DIR}/themes/mira-dark.toml"
+    "${CMAKE_CURRENT_SOURCE_DIR}/themes/mira-light.toml"
 )
 
 # mira_third_party is header-only (httplib.h, json.hpp) and carries no

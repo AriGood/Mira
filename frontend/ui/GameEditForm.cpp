@@ -3,6 +3,7 @@
 #include "../client/JsonMapping.h"
 #include "../dialogs/OverridesEditor.h"
 #include "GamePresentation.h"
+#include "Theme.h"
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -37,7 +38,7 @@ GameEditForm::GameEditForm(std::string id, QWidget* parent) : QWidget(parent), i
   install_path_label_->setTextInteractionFlags(Qt::TextSelectableByMouse);
   last_error_label_ = new QLabel(this);
   last_error_label_->setWordWrap(true);
-  last_error_label_->setStyleSheet("color: #c62828;");
+  last_error_label_->setProperty("role", "error");
   last_error_label_->hide();
 
   name_edit_ = new QLineEdit(this);
@@ -146,8 +147,7 @@ void GameEditForm::Populate(const mira_gui::GameDetail& game) {
   // only a state that needs attention earns one.
   form_->setRowVisible(status_label_, game.status != "ready");
   status_label_->setText(QString::fromStdString(game.status));
-  status_label_->setStyleSheet(
-      QString("color: %1;").arg(mira_gui::StatusColor(game.status).name()));
+  theme::SetStyleProperty(status_label_, "status", QString::fromStdString(game.status));
 
   install_path_ = game.install_path;
   install_path_label_->setText(QString::fromStdString(game.install_path));

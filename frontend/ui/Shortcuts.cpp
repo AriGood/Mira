@@ -31,7 +31,7 @@ QList<Entry> CommonEntries() {
 void AddRows(QFormLayout* form, QWidget* parent, const QList<Entry>& entries) {
   for (const Entry& entry : entries) {
     auto* keys = new QLabel(entry.keys, parent);
-    keys->setStyleSheet("font-family: monospace; font-weight: 600;");
+    keys->setProperty("role", "keys");
     form->addRow(keys, new QLabel(entry.description, parent));
   }
 }

@@ -1,0 +1,41 @@
+# Mira's default dark theme.
+#
+# Copy this file to ~/.config/mira/themes/<name>.toml to make your own — every
+# key is optional, and anything left out keeps the value below. Colors are
+# "#rrggbb" or "#rrggbbaa" (alpha last, as in CSS), so a translucent panel is
+# just a longer color.
+
+window = "#16181d"
+surface = "#1e2127"
+surface_alt = "#272b33"
+border = "#333843"
+text = "#e6e8ec"
+text_muted = "#949aa6"
+accent = "#5c7cfa"
+on_accent = "#ffffff"
+
+running = "#4caf50"
+success = "#4caf50"
+warning = "#f0883e"
+error = "#e5484d"
+info = "#4c9aff"
+
+status_ready = "#4caf50"
+status_setting_up = "#4c9aff"
+status_broken = "#e5484d"
+status_missing = "#7d848f"
+status_needs_install = "#f0883e"
+
+tile_placeholder = "#272b33"
+scrim_alpha = 225
+
+radius_panel = 8
+radius_control = 6
+radius_tile = 0
+radius_toast = 8
+
+font_size_small = 11
+font_size_heading = 16
+
+placeholder_saturation = 110
+placeholder_value = 135

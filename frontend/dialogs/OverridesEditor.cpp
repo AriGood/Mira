@@ -26,7 +26,7 @@ OverridesEditor::OverridesEditor(std::string game_id, QWidget* parent)
   outer->setSpacing(4);
 
   auto* heading = new QLabel("Overrides (global settings, just for this game):", this);
-  heading->setStyleSheet("font-weight: 600;");
+  heading->setProperty("role", "section");
   outer->addWidget(heading);
 
   auto* rows = new QWidget(this);
@@ -76,7 +76,7 @@ void OverridesEditor::BuildRows(const ConfigSchemaResult& schema) {
     }
 
     field.layer_label = new QLabel(row_widget);
-    field.layer_label->setStyleSheet("color: #9e9e9e; font-size: 11px;");
+    field.layer_label->setProperty("role", "muted");
     field.layer_label->setMinimumWidth(56);
     row_layout->addWidget(field.layer_label);
 

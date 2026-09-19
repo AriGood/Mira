@@ -11,6 +11,7 @@
 
 #include "../client/MiradClient.h"
 #include "../ui/GamePresentation.h"
+#include "../ui/Theme.h"
 
 namespace {
 
@@ -63,7 +64,7 @@ RunnerDialog::RunnerDialog(QWidget* parent) : QDialog(parent) {
   layout->addLayout(header);
 
   auto* installed_label = new QLabel("Installed", this);
-  installed_label->setStyleSheet("font-weight: 600;");
+  installed_label->setProperty("role", "section");
   layout->addWidget(installed_label);
 
   installed_ = new QTreeWidget(this);
@@ -75,7 +76,7 @@ RunnerDialog::RunnerDialog(QWidget* parent) : QDialog(parent) {
   layout->addWidget(installed_, /*stretch=*/1);
 
   auto* catalog_label = new QLabel("Available to install", this);
-  catalog_label->setStyleSheet("font-weight: 600;");
+  catalog_label->setProperty("role", "section");
   layout->addWidget(catalog_label);
 
   catalog_ = new QTreeWidget(this);
@@ -91,7 +92,7 @@ RunnerDialog::RunnerDialog(QWidget* parent) : QDialog(parent) {
 
   status_ = new QLabel(this);
   status_->setWordWrap(true);
-  status_->setStyleSheet("font-size: 11px; color: #9e9e9e;");
+  status_->setProperty("role", "muted");
   layout->addWidget(status_);
 
   auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close, this);
@@ -112,8 +113,7 @@ std::string RunnerDialog::CurrentKind() const { return kind_->currentData().toSt
 
 void RunnerDialog::SetStatus(const QString& text, bool error) {
   status_->setText(text);
-  status_->setStyleSheet(error ? "font-size: 11px; color: #c62828;"
-                               : "font-size: 11px; color: #9e9e9e;");
+  mira_gui::theme::SetStyleProperty(status_, "role", error ? "error" : "muted");
 }
 
 void RunnerDialog::RefreshInstalled() {
@@ -134,7 +134,7 @@ void RunnerDialog::RefreshInstalled() {
     if (installed_->topLevelItemCount() == 0) {
       auto* item = new QTreeWidgetItem(installed_);
       item->setText(0, "None installed");
-      item->setForeground(0, QColor("#9e9e9e"));
+      item->setForeground(0, mira_gui::theme::Current().text_muted);
       item->setFlags(Qt::NoItemFlags);
     }
   });
@@ -165,7 +165,7 @@ void RunnerDialog::RefreshCatalog() {
           // A release without one still installs; it just can't be verified
           // before it is, which is worth seeing before downloading 500 MB.
           item->setText(3, release.has_checksum ? "yes" : "no");
-          if (!release.has_checksum) item->setForeground(3, QColor("#ef6c00"));
+          if (!release.has_checksum) item->setForeground(3, mira_gui::theme::Current().warning);
         }
         SetStatus(QString("%1 build(s) available.").arg(result.releases.size()));
       });

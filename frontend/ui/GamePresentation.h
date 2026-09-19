@@ -4,6 +4,8 @@
 #include <QDateTime>
 #include <QString>
 
+#include "Theme.h"
+
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -12,15 +14,16 @@
 // GameDetailDialog, so a game reads the same way in both places.
 namespace mira_gui {
 
-// A soft color per lifecycle state so status reads at a glance without a
-// legend.
+// A color per lifecycle state so status reads at a glance without a
+// legend. The theme owns the colors; see ui/Theme.h.
 inline QColor StatusColor(const std::string& status) {
-  if (status == "ready") return QColor("#2e7d32");
-  if (status == "setting_up") return QColor("#1565c0");
-  if (status == "broken") return QColor("#c62828");
-  if (status == "missing") return QColor("#757575");
-  if (status == "needs_install") return QColor("#ef6c00");
-  return QColor("#424242");
+  const theme::Tokens& tokens = theme::Current();
+  if (status == "ready") return tokens.status_ready;
+  if (status == "setting_up") return tokens.status_setting_up;
+  if (status == "broken") return tokens.status_broken;
+  if (status == "missing") return tokens.status_missing;
+  if (status == "needs_install") return tokens.status_needs_install;
+  return tokens.text_muted;
 }
 
 // Shared by both library views so the same game reads identically in the
