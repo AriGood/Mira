@@ -23,8 +23,14 @@ class QPushButton;
 class QSlider;
 class QSplitter;
 class QStackedWidget;
+class QVBoxLayout;
 class QAction;
 class QToolButton;
+
+// QListWidget with setViewportMargins made public — Qt keeps it protected on
+// QAbstractScrollArea. Defined in LibraryWindow.cpp; this file only ever
+// holds a pointer to it.
+class LibraryGrid;
 
 namespace mira_gui {
 class GameDetailsPanel;
@@ -69,6 +75,7 @@ private:
   // Redrawn rather than stored: each glyph is painted in the theme's text
   // color, so a theme change has to regenerate them.
   void ApplyTopBarIcons();
+  void ApplyLayoutTokens();
 
   // `force_scan` separates the two callers: startup, which honours the
   // scan_on_startup preference, and Refresh, which does not.
@@ -99,7 +106,8 @@ private:
   void OpenGameDialog(const std::string& id);
   QWidget* BuildGameEditPage(const std::string& id);
   void CloseGameEdit();
-  void OpenSettings();
+  // `focus_key` jumps straight to that schema field once loaded.
+  void OpenSettings(const QString& focus_key = QString());
   void CloseSettings();
   // Confirms first if settings_panel_ is dirty — the top bar's Back button.
   void RequestCloseSettings();
@@ -108,10 +116,12 @@ private:
   void SetSettingsChromeVisible(bool settings_open);
   void OpenRunners();
   void ImportSteamLibrary();
+  void ImportLutrisLibrary();
   void OpenClassicView();
   // `announce` is false for the bulk path, where one toast covers the batch
   // and per-game messages would be one notification per game.
   void RefreshMetadata(const std::string& id, bool announce = true);
+  void OpenArtworkPicker(const std::string& id, const std::string& slot);
   void FetchMissingArtwork();
   void ShowSteamGridDbNotice(bool asked_for);
   void UpdateTileCover(const QString& id);
@@ -123,7 +133,8 @@ private:
   QToolButton* menu_button_ = nullptr;
   QLineEdit* search_ = nullptr;
   QComboBox* filters_ = nullptr;
-  QListWidget* grid_ = nullptr;
+  LibraryGrid* grid_ = nullptr;
+  QVBoxLayout* grid_layout_ = nullptr;
   mira_gui::GameTileDelegate* delegate_ = nullptr;
   QSlider* zoom_ = nullptr;
   QComboBox* sort_ = nullptr;
@@ -173,7 +184,6 @@ private:
   std::string sort_key_ = "name";
   bool sort_descending_ = false;
   bool scan_on_startup_ = true;
-  std::string notifications_ = "auto";
   // Keyed by "<id>@<tile width>" — a generated cover is cheap but not free,
   // and ApplyFilter() rebuilds every visible tile on each keystroke.
   mira_gui::ArtworkStore* artwork_ = nullptr;

@@ -38,11 +38,18 @@ SettingsDialog::SettingsDialog(QWidget* parent) : QDialog(parent) {
 }
 
 void SettingsDialog::reject() {
-  if (panel_->IsDirty() &&
-      !mira_gui::notify::Confirm(this, "Discard changes?",
-                                 "Settings changed but not saved. Discard them?", "Discard",
-                                 /*destructive=*/true)) {
+  if (!panel_->IsDirty()) {
+    QDialog::reject();
     return;
   }
-  QDialog::reject();
+  switch (mira_gui::notify::ConfirmUnsaved(this, "Settings changed but not saved.")) {
+    case mira_gui::notify::UnsavedAction::Cancel:
+      return;
+    case mira_gui::notify::UnsavedAction::SaveAndExit:
+      panel_->Save();  // SaveFinished, connected above, calls accept() on success
+      return;
+    case mira_gui::notify::UnsavedAction::DiscardAndExit:
+      QDialog::reject();
+      return;
+  }
 }
