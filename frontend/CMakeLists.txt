@@ -61,6 +61,8 @@ qt_add_executable(mira-gui
   ui/Icons.h
   ui/Notify.cpp
   ui/Notify.h
+  ui/PopupDialog.cpp
+  ui/PopupDialog.h
   ui/SystemNotifier.cpp
   ui/SystemNotifier.h
   ui/Shortcuts.cpp

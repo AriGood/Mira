@@ -1,6 +1,9 @@
 #pragma once
 
+#include <QColor>
 #include <QString>
+
+#include <functional>
 
 class QWidget;
 
@@ -25,6 +28,9 @@ enum class Level { Info, Success, Warning, Error };
 // An unknown string reads as Info rather than as an error.
 Level LevelFromString(const QString& text);
 
+// The theme color a level reads as. Shared by ToastCard and PopupDialog.
+QColor AccentFor(Level level);
+
 // --- Popups ----------------------------------------------------------------
 
 // The standard failure popup. `what` names what failed, as a sentence the
@@ -36,6 +42,12 @@ void Failed(QWidget* parent, const QString& what, const QString& detail);
 void FailedWithHint(QWidget* parent, const QString& what, const QString& detail,
                     const QString& hint);
 
+// Same, plus a clickable `action` link that runs `activate` — a route to
+// wherever actually fixes the problem, not just an explanation of it.
+void FailedWithAction(QWidget* parent, const QString& what, const QString& detail,
+                      const QString& hint, const QString& action,
+                      std::function<void()> activate);
+
 void Info(QWidget* parent, const QString& title, const QString& message);
 
 // A question the caller must not proceed without an answer to. `accept`
@@ -44,39 +56,33 @@ void Info(QWidget* parent, const QString& title, const QString& message);
 bool Confirm(QWidget* parent, const QString& title, const QString& question,
              const QString& accept, bool destructive = false);
 
+// What a caller leaving a dirty form asked for.
+enum class UnsavedAction { Cancel, SaveAndExit, DiscardAndExit };
+
+// The unsaved-edits prompt every Back/Close/Quit path shares. `what` names
+// what's unsaved, as a sentence ("This game's edits aren't saved."). No
+// separate Cancel button — the popup's own top-right X is that answer.
+UnsavedAction ConfirmUnsaved(QWidget* parent, const QString& what);
+
 // --- Toasts ----------------------------------------------------------------
 
-// Where a toast is shown. `Auto` sends it to the desktop's notification
-// service when Mira's window is not active, and draws the in-window card
-// when it is.
-enum class Delivery { Auto, System, InApp };
+// Always the desktop's own notification service (ui/SystemNotifier), never
+// an in-window card — the user has usually moved on to another window by
+// the time one of these fires, and only Mira's own window could show a
+// card. The one exception: no notification service reachable at all (a bare
+// window manager, no daemon), where `Toast` falls back to a card itself so
+// the message isn't just lost. Not a preference — there's nothing to set.
 
-// Read from frontend.toml at startup — see LibraryWindow::LoadPrefs. Falls
-// back to the in-window card whenever the system route is unavailable, so
-// this is a preference and never a way to lose a message.
-void SetDelivery(Delivery delivery);
-Delivery CurrentDelivery();
-
-// The frontend.toml spelling of a Delivery, and back. An unknown string
-// reads as Auto rather than as an error — the file is hand-editable.
-QString DeliveryToString(Delivery delivery);
-Delivery DeliveryFromString(const QString& text);
-
-// How long a toast stays up, in seconds. **Zero means until dismissed**,
-// and that is the default — these report things that happened while the
-// user was elsewhere, and are worth still being there when they look back.
-//
-// Clamped to kMaxTimeoutSeconds since the value is hand-editable and a
-// nonsense one should read as "a long time", not an overflow.
+// Seconds a toast stays up. Zero (the default) means until dismissed. Also
+// the desktop notification's own expire timeout. Clamped to
+// kMaxTimeoutSeconds since the value is hand-editable.
 constexpr int kMaxTimeoutSeconds = 600;
 void SetTimeoutSeconds(int seconds);
 int CurrentTimeoutSeconds();
 
-// A transient card stacked in the bottom-right of `parent`'s window. A click
-// dismisses it early.
-//
-// Attaches to the top-level window, not to `parent`, so a toast raised from
-// inside a dialog survives that dialog closing.
+// Sends to the desktop's notification service, or — only when none is
+// reachable — a card stacked bottom-right of `parent`'s window. Attaches to
+// the top-level window, not `parent`, so it survives a dialog closing.
 void Toast(QWidget* parent, Level level, const QString& text);
 
 }  // namespace mira_gui::notify

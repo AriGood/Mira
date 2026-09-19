@@ -1,5 +1,6 @@
 #include "Notify.h"
 
+#include "PopupDialog.h"
 #include "SystemNotifier.h"
 #include "Theme.h"
 
@@ -12,7 +13,6 @@
 #include <QGraphicsOpacityEffect>
 #include <QHBoxLayout>
 #include <QLabel>
-#include <QMessageBox>
 #include <QMouseEvent>
 #include <QShowEvent>
 #include <QPropertyAnimation>
@@ -23,19 +23,6 @@
 
 namespace mira_gui::notify {
 namespace {
-
-// The accent for each level, shared by both shapes so an error toast and an
-// error popup are recognisably the same kind of message.
-QString AccentFor(Level level) {
-  const theme::Tokens& tokens = theme::Current();
-  switch (level) {
-    case Level::Success: return tokens.success.name();
-    case Level::Warning: return tokens.warning.name();
-    case Level::Error: return tokens.error.name();
-    case Level::Info: break;
-  }
-  return tokens.info.name();
-}
 
 // Process-wide, from frontend.toml. Zero means "until dismissed".
 int g_timeout_seconds = 0;
@@ -53,10 +40,6 @@ constexpr int kFontPixelSize = 12;
 constexpr int kMaxVisible = 6;
 constexpr const char* kHostName = "mira_toast_host";
 
-// Process-wide, set once from frontend.toml at startup — a per-window
-// setting would let two windows disagree about desktop notifications.
-Delivery g_delivery = Delivery::Auto;
-
 // One card. Click anywhere on it to dismiss.
 //
 // Not a QObject subclass: overriding mousePressEvent needs no signals, and
@@ -71,7 +54,7 @@ public:
                           "QLabel { color: %4; }")
                       .arg(tokens.surface_alt.name())
                       .arg(tokens.radius_toast)
-                      .arg(AccentFor(level))
+                      .arg(AccentFor(level).name())
                       .arg(tokens.text.name()));
 
     auto* layout = new QHBoxLayout(this);
@@ -210,52 +193,68 @@ ToastHost* HostFor(QWidget* parent) {
   return new ToastHost(window);
 }
 
-// Every popup goes through here. PlainText is not optional: an error
-// message quoting a path or shell fragment would otherwise be parsed as
-// rich text and partly swallowed.
-void ShowMessage(QWidget* parent, QMessageBox::Icon icon, const QString& title,
-                 const QString& text, const QString& detail) {
-  QMessageBox box(parent);
-  box.setIcon(icon);
-  box.setWindowTitle(title);
-  box.setTextFormat(Qt::PlainText);
-  box.setText(text);
-  if (!detail.isEmpty()) box.setInformativeText(detail);
-  box.setStandardButtons(QMessageBox::Ok);
-  box.exec();
-}
-
 }  // namespace
 
 void Failed(QWidget* parent, const QString& what, const QString& detail) {
-  ShowMessage(parent, QMessageBox::Warning, "Mira", what, detail);
+  PopupDialog dialog(parent, Level::Error, "Mira");
+  dialog.SetMessage(what);
+  if (!detail.isEmpty()) dialog.SetDetail(detail);
+  dialog.AddButton("OK", /*accept_role=*/true, /*default_button=*/true);
+  dialog.exec();
 }
 
 void FailedWithHint(QWidget* parent, const QString& what, const QString& detail,
                     const QString& hint) {
-  ShowMessage(parent, QMessageBox::Warning, "Mira", what,
-              detail.isEmpty() ? hint : detail + "\n\n" + hint);
+  PopupDialog dialog(parent, Level::Error, "Mira");
+  dialog.SetMessage(what);
+  dialog.SetDetail(detail.isEmpty() ? hint : detail + "\n\n" + hint);
+  dialog.AddButton("OK", /*accept_role=*/true, /*default_button=*/true);
+  dialog.exec();
+}
+
+void FailedWithAction(QWidget* parent, const QString& what, const QString& detail,
+                      const QString& hint, const QString& action,
+                      std::function<void()> activate) {
+  PopupDialog dialog(parent, Level::Error, "Mira");
+  dialog.SetMessage(what);
+  if (!detail.isEmpty() || !hint.isEmpty()) {
+    dialog.SetDetail(detail.isEmpty() ? hint : detail + "\n\n" + hint);
+  }
+  dialog.SetAction(action, std::move(activate));
+  dialog.AddButton("OK", /*accept_role=*/true, /*default_button=*/true);
+  dialog.exec();
 }
 
 void Info(QWidget* parent, const QString& title, const QString& message) {
-  ShowMessage(parent, QMessageBox::Information, title, message, QString());
+  PopupDialog dialog(parent, Level::Info, title);
+  dialog.SetMessage(message);
+  dialog.AddButton("OK", /*accept_role=*/true, /*default_button=*/true);
+  dialog.exec();
 }
 
 bool Confirm(QWidget* parent, const QString& title, const QString& question, const QString& accept,
              bool destructive) {
-  QMessageBox box(parent);
-  box.setIcon(destructive ? QMessageBox::Warning : QMessageBox::Question);
-  box.setWindowTitle(title);
-  box.setTextFormat(Qt::PlainText);
-  box.setText(question);
-
-  QPushButton* go = box.addButton(accept, QMessageBox::AcceptRole);
-  QPushButton* cancel = box.addButton("Cancel", QMessageBox::RejectRole);
+  PopupDialog dialog(parent, destructive ? Level::Warning : Level::Info, title);
+  dialog.SetMessage(question);
   // Cancel keeps focus on anything destructive — a stray Return should
   // never pick the dangerous answer.
-  box.setDefaultButton(destructive ? cancel : go);
-  box.exec();
-  return box.clickedButton() == go;
+  QPushButton* go = dialog.AddButton(accept, /*accept_role=*/true, !destructive);
+  dialog.AddButton("Cancel", /*accept_role=*/false, destructive);
+  Q_UNUSED(go);
+  return dialog.exec() == QDialog::Accepted;
+}
+
+UnsavedAction ConfirmUnsaved(QWidget* parent, const QString& what) {
+  PopupDialog dialog(parent, Level::Warning, "Unsaved changes");
+  dialog.SetMessage(what);
+  constexpr int kDiscard = static_cast<int>(UnsavedAction::DiscardAndExit);
+  constexpr int kSave = static_cast<int>(UnsavedAction::SaveAndExit);
+  dialog.AddButton("Save and exit", kSave, /*default_button=*/true);
+  dialog.AddButton("Exit without saving", kDiscard, /*default_button=*/false);
+  const int result = dialog.exec();
+  if (result == kSave) return UnsavedAction::SaveAndExit;
+  if (result == kDiscard) return UnsavedAction::DiscardAndExit;
+  return UnsavedAction::Cancel;
 }
 
 Level LevelFromString(const QString& text) {
@@ -265,7 +264,16 @@ Level LevelFromString(const QString& text) {
   return Level::Info;
 }
 
-void SetDelivery(Delivery delivery) { g_delivery = delivery; }
+QColor AccentFor(Level level) {
+  const theme::Tokens& tokens = theme::Current();
+  switch (level) {
+    case Level::Success: return tokens.success;
+    case Level::Warning: return tokens.warning;
+    case Level::Error: return tokens.error;
+    case Level::Info: break;
+  }
+  return tokens.info;
+}
 
 void SetTimeoutSeconds(int seconds) {
   g_timeout_seconds = std::clamp(seconds, 0, kMaxTimeoutSeconds);
@@ -273,36 +281,12 @@ void SetTimeoutSeconds(int seconds) {
 
 int CurrentTimeoutSeconds() { return g_timeout_seconds; }
 
-Delivery CurrentDelivery() { return g_delivery; }
-
-QString DeliveryToString(Delivery delivery) {
-  switch (delivery) {
-    case Delivery::System: return "system";
-    case Delivery::InApp: return "in_app";
-    case Delivery::Auto: break;
-  }
-  return "auto";
-}
-
-Delivery DeliveryFromString(const QString& text) {
-  if (text == "system") return Delivery::System;
-  if (text == "in_app") return Delivery::InApp;
-  return Delivery::Auto;
-}
-
 void Toast(QWidget* parent, Level level, const QString& text) {
-  const QWidget* window = parent != nullptr ? parent->window() : nullptr;
-  // isActiveWindow(), not isVisible(): a window can be fully mapped and
-  // still be behind others, where a card drawn inside it goes unseen.
-  const bool unattended = window == nullptr || !window->isActiveWindow();
+  if (system_notifier::Send(level, text)) return;
 
-  const bool use_system = g_delivery == Delivery::System ||
-                          (g_delivery == Delivery::Auto && unattended);
-  if (use_system && system_notifier::Send(level, text)) return;
-
-  // Falls through to the card whenever the system route wasn't taken or
-  // didn't work, so choosing "system" with no notification service loses
-  // nothing.
+  // Only reached when there is no notification service on the session bus
+  // at all — a bare window manager, most often. Not a preference: the
+  // alternative is the message never appearing anywhere.
   if (ToastHost* host = HostFor(parent)) host->Add(level, text);
 }
 
