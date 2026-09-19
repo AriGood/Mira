@@ -34,6 +34,11 @@ public:
   // decides what "done" means (close a dialog, switch back to the grid).
   void Save();
 
+  // Switches to `key`'s tab (revealing advanced settings first if needed)
+  // and focuses its field. No-op for an unknown key; retried once the
+  // schema loads if called too early.
+  void FocusKey(const QString& key);
+
   // True if anything differs from what Load() last fetched or Save() last
   // confirmed — the signal a caller uses to warn before discarding.
   bool IsDirty() const;
@@ -54,6 +59,13 @@ private:
     QFormLayout* owner_form = nullptr;  // the category group's form this row lives in
   };
 
+  // One pixel adjustment layered over the theme. -1 is the spinbox's special
+  // value, "whatever the theme says".
+  struct ShapeField {
+    QSpinBox* spin = nullptr;
+    int original = -1;
+  };
+
   struct CategoryGroup {
     int tab_index = -1;
     QFormLayout* form = nullptr;
@@ -63,6 +75,12 @@ private:
   void Load();
   void LoadFrontendPrefs();
   void BuildInterfaceGroup();
+  QWidget* MakeShapeControl(ShapeField& field, const QString& label, int maximum,
+                            const QString& tip);
+  // Shows each shape spinbox's special "unset" value as the actual number
+  // the current theme resolves it to, not a placeholder — refreshed on
+  // theme::Notifier::Changed so it never goes stale.
+  void RefreshShapeDefaults();
   void BuildRows();
   // Adds a tab (scroll-wrapped) and returns its form layout, ready for rows.
   QFormLayout* AddCategoryTab(const QString& title);
@@ -78,14 +96,18 @@ private:
   bool scan_on_startup_original_ = true;
   QComboBox* theme_ = nullptr;
   QString theme_original_;
-  QComboBox* notifications_ = nullptr;
-  QString notifications_original_;
   QSpinBox* notification_timeout_ = nullptr;
   int notification_timeout_original_ = 0;
   QCheckBox* game_settings_in_sidebar_ = nullptr;
   bool game_settings_in_sidebar_original_ = true;
+  ShapeField tile_spacing_;
+  ShapeField grid_margin_;
+  ShapeField tile_radius_;
+  ShapeField panel_radius_;
+  ShapeField control_radius_;
   std::vector<Field> fields_;
   std::vector<CategoryGroup> groups_;
+  QString pending_focus_key_;  // FocusKey called before the schema arrived
 };
 
 }  // namespace mira_gui

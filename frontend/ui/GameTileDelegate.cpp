@@ -12,7 +12,6 @@
 namespace mira_gui {
 namespace {
 
-constexpr int kMargin = 5;
 constexpr int kScrimHeight = 62;
 
 }  // namespace
@@ -28,7 +27,11 @@ QSize GameTileDelegate::sizeHint(const QStyleOptionViewItem&, const QModelIndex&
 
 void GameTileDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option,
                              const QModelIndex& index) const {
-  const QRect rect = option.rect.adjusted(kMargin, kMargin, -kMargin, -kMargin);
+  const theme::Tokens& tokens = theme::Current();
+  // The gap between tiles is this inset, not QListView::spacing: the grid
+  // cell stays the size the zoom slider asked for either way.
+  const int inset = tokens.tile_spacing;
+  const QRect rect = option.rect.adjusted(inset, inset, -inset, -inset);
   if (rect.isEmpty()) return;
 
   const QString name = index.data(NameRole).toString();
@@ -36,8 +39,6 @@ void GameTileDelegate::paint(QPainter* painter, const QStyleOptionViewItem& opti
   const bool running = index.data(RunningRole).toBool();
   const bool selected = option.state & QStyle::State_Selected;
   const bool hovered = option.state & QStyle::State_MouseOver;
-
-  const theme::Tokens& tokens = theme::Current();
 
   QPainterPath path;
   if (tokens.radius_tile > 0) {

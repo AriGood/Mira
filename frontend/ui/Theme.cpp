@@ -26,7 +26,10 @@ namespace mira_gui::theme {
 namespace {
 
 Tokens g_tokens;
+Tokens g_theme_tokens;  // parsed theme, before g_overrides is layered on
+Overrides g_overrides;
 QString g_name = "auto";
+QString g_resolved = "mira-dark";
 bool g_following_desktop = false;
 
 // "#rrggbb" and "#rrggbbaa" — CSS order, because that is the order anyone
@@ -118,6 +121,8 @@ Tokens ParseTokens(const std::string& text) {
   number("font_size_heading", tokens.font_size_heading);
   number("placeholder_saturation", tokens.placeholder_saturation);
   number("placeholder_value", tokens.placeholder_value);
+  number("tile_spacing", tokens.tile_spacing);
+  number("grid_margin", tokens.grid_margin);
 
   return tokens;
 }
@@ -148,6 +153,10 @@ QString GlyphPath(const QString& kind, const QColor& color) {
     stroke.moveTo(8, 17);
     stroke.lineTo(13.5, 22.5);
     stroke.lineTo(24, 10);
+  } else if (kind == "chevron_up") {
+    stroke.moveTo(9, 20);
+    stroke.lineTo(16, 13);
+    stroke.lineTo(23, 20);
   } else {
     stroke.moveTo(9, 13);
     stroke.lineTo(16, 20);
@@ -189,6 +198,8 @@ QHash<QString, QString> QssValues(const Tokens& tokens) {
   values.insert("font_size_heading", QString("%1px").arg(tokens.font_size_heading));
   values.insert("check_glyph", QString("url(%1)").arg(GlyphPath("check", tokens.on_accent)));
   values.insert("chevron_glyph", QString("url(%1)").arg(GlyphPath("chevron", tokens.text_muted)));
+  values.insert("chevron_up_glyph",
+                QString("url(%1)").arg(GlyphPath("chevron_up", tokens.text_muted)));
   return values;
 }
 
@@ -245,8 +256,18 @@ QString DesktopTheme() {
 }
 
 void ApplyResolved(const QString& resolved) {
+  g_resolved = resolved;
   const std::string text = ReadThemeFile(resolved);
   g_tokens = text.empty() ? Tokens{} : ParseTokens(text);
+  g_theme_tokens = g_tokens;
+
+  // Last word: a theme supplies the shape, the user's own adjustment wins
+  // over it.
+  if (g_overrides.tile_spacing) g_tokens.tile_spacing = *g_overrides.tile_spacing;
+  if (g_overrides.grid_margin) g_tokens.grid_margin = *g_overrides.grid_margin;
+  if (g_overrides.radius_tile) g_tokens.radius_tile = *g_overrides.radius_tile;
+  if (g_overrides.radius_panel) g_tokens.radius_panel = *g_overrides.radius_panel;
+  if (g_overrides.radius_control) g_tokens.radius_control = *g_overrides.radius_control;
 
   // Fusion rather than the desktop's own style: ours is the only palette and
   // stylesheet in play, and Breeze/Adwaita would otherwise keep drawing the
@@ -262,6 +283,15 @@ void ApplyResolved(const QString& resolved) {
 }  // namespace
 
 const Tokens& Current() { return g_tokens; }
+
+const Tokens& ThemeDefaults() { return g_theme_tokens; }
+
+const Overrides& CurrentOverrides() { return g_overrides; }
+
+void SetOverrides(const Overrides& overrides) {
+  g_overrides = overrides;
+  ApplyResolved(g_resolved);
+}
 
 void SetStyleProperty(QWidget* widget, const char* name, const QString& value) {
   if (widget == nullptr) return;
