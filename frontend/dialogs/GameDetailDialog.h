@@ -5,6 +5,7 @@
 #include <string>
 
 namespace mira_gui {
+class ArtworkStore;
 class GameEditForm;
 }
 
@@ -19,7 +20,10 @@ class GameDetailDialog : public QDialog {
   Q_OBJECT
 
 public:
-  GameDetailDialog(std::string id, QWidget* parent = nullptr);
+  // `artwork`, when given, is the same store the caller's own cover grid
+  // uses -- MainWindow's classic table view has none, and the form just
+  // shows placeholders in that case.
+  GameDetailDialog(std::string id, QWidget* parent = nullptr, mira_gui::ArtworkStore* artwork = nullptr);
 
   // Warns before discarding unsaved changes — covers Cancel, Esc, and the
   // titlebar close button, which all route through reject().

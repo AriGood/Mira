@@ -54,6 +54,8 @@ qt_add_executable(mira-gui
   ui/GameActions.h
   ui/GameDetailsPanel.cpp
   ui/GameDetailsPanel.h
+  ui/HeroArtWidget.cpp
+  ui/HeroArtWidget.h
   ui/GamePresentation.h
   ui/LibrarySort.cpp
   ui/LibrarySort.h

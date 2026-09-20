@@ -8,7 +8,8 @@
 #include <QScrollArea>
 #include <QVBoxLayout>
 
-GameDetailDialog::GameDetailDialog(std::string id, QWidget* parent) : QDialog(parent) {
+GameDetailDialog::GameDetailDialog(std::string id, QWidget* parent, mira_gui::ArtworkStore* artwork)
+    : QDialog(parent) {
   setWindowTitle("Loading…");
   // 780x640, not the old 560x480: wide enough for the form's fields next to
   // their labels, tall enough that the QScrollArea below rarely has to
@@ -23,6 +24,7 @@ GameDetailDialog::GameDetailDialog(std::string id, QWidget* parent) : QDialog(pa
   scroll->setWidgetResizable(true);
   scroll->setFrameShape(QFrame::NoFrame);
   form_ = new mira_gui::GameEditForm(std::move(id), scroll);
+  form_->SetArtworkStore(artwork);
   scroll->setWidget(form_);
   connect(form_, &mira_gui::GameEditForm::Loaded, this,
           [this](QString name) { setWindowTitle(name); });

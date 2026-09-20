@@ -1240,7 +1240,7 @@ void LibraryWindow::LaunchGame(const std::string& id) {
 
 void LibraryWindow::OpenGameDialog(const std::string& id) {
   if (!game_settings_in_sidebar_) {
-    GameDetailDialog dialog(id, this);
+    GameDetailDialog dialog(id, this, artwork_);
     dialog.exec();
     RefreshGames();
     return;
@@ -1381,6 +1381,7 @@ QWidget* LibraryWindow::BuildGameEditPage(const std::string& id) {
   scroll->setWidgetResizable(true);
   scroll->setFrameShape(QFrame::NoFrame);
   game_edit_form_ = new mira_gui::GameEditForm(id, scroll);
+  game_edit_form_->SetArtworkStore(artwork_);
   connect(save, &QPushButton::clicked, game_edit_form_, &mira_gui::GameEditForm::Save);
   connect(game_edit_form_, &mira_gui::GameEditForm::LoadFailed, this, [this](QString error) {
     mira_gui::notify::Failed(this, "Could not load this game.", error);

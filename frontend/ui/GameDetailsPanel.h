@@ -3,10 +3,6 @@
 #include <QString>
 #include <QWidget>
 
-#include <QHash>
-#include <QPixmap>
-
-#include <optional>
 #include <string>
 
 #include "../client/Types.h"
@@ -14,12 +10,12 @@
 class QFormLayout;
 class QLabel;
 class QPushButton;
-class QResizeEvent;
 class QStackedWidget;
 
 namespace mira_gui {
 
 class ArtworkStore;
+class HeroArtWidget;
 
 // The side panel a selected game fills in: cover, name, status, the
 // play/stop button, and its metadata.
@@ -50,9 +46,6 @@ public:
   // currently shown. For game.artwork_selected on the hero slot.
   void RefreshBanner(const std::string& id);
 
-protected:
-  void resizeEvent(QResizeEvent* event) override;
-
 signals:
   void PlayRequested(const QString& id);
   void StopRequested(const QString& id);
@@ -68,29 +61,16 @@ private:
   void LoadMetadata(const std::string& id);
   void ShowMetadata(const GameMetadata& metadata);
   void ClearMetadata();
-  void LoadBanner(const std::string& id);
-  void RenderBanner();
-  // The image area a hero and, when there's no hero, a game's cover alike
-  // get fit-and-letterboxed into (see FitLetterboxed in the .cpp).
-  QSize ImageBoxSize() const;
-  // Shows exactly one of banner_/cover_/placeholder_, based on hero_known_
-  // and whether that hero's pixmap has actually arrived yet.
-  void UpdateImageVisibility();
 
   QStackedWidget* stack_ = nullptr;
   QFormLayout* form_ = nullptr;
-  QLabel* banner_ = nullptr;
-  // Shown only while it's genuinely unknown whether this game has a hero —
-  // never cover, so a game that turns out to have one never flashes its
-  // cover first. See UpdateImageVisibility.
-  QLabel* placeholder_ = nullptr;
+  HeroArtWidget* hero_art_ = nullptr;
   QLabel* description_ = nullptr;
   QLabel* released_ = nullptr;
   QLabel* developer_ = nullptr;
   QLabel* genres_ = nullptr;
   QLabel* reviews_ = nullptr;
   QLabel* protondb_ = nullptr;
-  QLabel* cover_ = nullptr;
   QLabel* name_ = nullptr;
   QLabel* status_ = nullptr;
   QLabel* platform_ = nullptr;
@@ -101,20 +81,8 @@ private:
   QLabel* error_ = nullptr;
   QPushButton* play_ = nullptr;
 
-  ArtworkStore* artwork_ = nullptr;
   std::string game_id_;
   bool running_ = false;
-  // Kept only so a live hero_height change (theme::Notifier::Changed) can
-  // regenerate the cover at the new size -- ArtworkStore bakes the target
-  // size into the pixmap itself, so there's no cheaper way to resize it than
-  // asking again with the same game.
-  std::optional<GameSummary> current_game_;
-  QHash<QString, QPixmap> banners_;  // hero art by id, at the size mirad sent
-  QPixmap banner_source_;            // the one on screen, before scaling
-  // Whether `id` has hero art, once LoadMetadata has resolved it this
-  // session -- absent means "don't know yet". Lets a repeat selection skip
-  // straight to banner_/cover_ with no placeholder, no cover-then-hero flash.
-  QHash<QString, bool> hero_known_;
 };
 
 }  // namespace mira_gui

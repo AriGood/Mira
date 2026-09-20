@@ -3,6 +3,7 @@
 #include "../client/JsonMapping.h"
 #include "../dialogs/OverridesEditor.h"
 #include "GamePresentation.h"
+#include "HeroArtWidget.h"
 #include "Theme.h"
 
 #include <QComboBox>
@@ -28,6 +29,9 @@ GameEditForm::GameEditForm(std::string id, QWidget* parent) : QWidget(parent), i
   auto* layout = new QVBoxLayout(this);
   layout->setContentsMargins(0, 0, 0, 0);
   layout->setSpacing(12);
+
+  hero_art_ = new HeroArtWidget(this);
+  layout->addWidget(hero_art_);
 
   form_ = new QFormLayout();
   auto* form = form_;
@@ -132,6 +136,13 @@ GameEditForm::GameEditForm(std::string id, QWidget* parent) : QWidget(parent), i
   layout->addLayout(form);
   layout->addWidget(last_error_label_);
 
+  // Without a stretch factor here, Qt spreads the QScrollArea's leftover
+  // height evenly across every form row instead of leaving one gap below.
+  layout->addStretch(1);
+
+  // After the stretch, not right below the form: pushed to the very bottom
+  // of the page, next to the containing page's own Save/Cancel, rather than
+  // sitting in the middle of the form fields above it.
   auto* advanced_button = new QPushButton("Advanced settings…", this);
   // QPushButton defaults to Fixed horizontal — same sidebar-floor bug as
   // install_path_label_ above, this time spilling the button's own text.
@@ -139,10 +150,6 @@ GameEditForm::GameEditForm(std::string id, QWidget* parent) : QWidget(parent), i
   advanced_button->setToolTip("Per-game overrides of the global settings.");
   connect(advanced_button, &QPushButton::clicked, this, &GameEditForm::OpenAdvanced);
   layout->addWidget(advanced_button);
-
-  // Without a stretch factor here, Qt spreads the QScrollArea's leftover
-  // height evenly across every form row instead of leaving one gap below.
-  layout->addStretch(1);
 
   // Built now, shown later: overrides_->Load() (in Load(), below) needs
   // somewhere to live before the dialog's ever opened. Its own window, not
@@ -168,6 +175,8 @@ GameEditForm::GameEditForm(std::string id, QWidget* parent) : QWidget(parent), i
   Load();
 }
 
+void GameEditForm::SetArtworkStore(ArtworkStore* store) { hero_art_->SetArtworkStore(store); }
+
 void GameEditForm::OpenAdvanced() {
   advanced_dialog_->show();
   advanced_dialog_->raise();
@@ -191,6 +200,23 @@ void GameEditForm::Load() {
 
 void GameEditForm::Populate(const mira_gui::GameDetail& game) {
   emit Loaded(QString::fromStdString(game.name));
+
+  // GameDetail, not GameSummary: hero_art_ only needs the handful of fields
+  // the two share, and GetGameAsync (Load(), above) is what this form has.
+  mira_gui::GameSummary summary;
+  summary.id = game.id;
+  summary.name = game.name;
+  summary.status = game.status;
+  summary.platform = game.platform;
+  summary.runner_ref = game.runner_ref;
+  summary.last_error = game.last_error;
+  summary.install_path = game.install_path;
+  summary.reviewed = game.reviewed;
+  summary.confidence = game.confidence;
+  summary.last_played_at = game.last_played_at;
+  summary.play_seconds = game.play_seconds;
+  summary.tags = game.tags;
+  hero_art_->ShowGame(summary);
 
   // "Ready" is the common case and says nothing worth a line of its own —
   // only a state that needs attention earns one.
