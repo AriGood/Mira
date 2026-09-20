@@ -1,17 +1,17 @@
 #include "RunInPrefixDialog.h"
 
-#include <QComboBox>
 #include <QDialogButtonBox>
+#include <QFileDialog>
 #include <QFormLayout>
+#include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
-#include <QMessageBox>
 
 #include "../ui/Notify.h"
 #include <QPushButton>
 #include <QVBoxLayout>
 
-#include <algorithm>
+#include <filesystem>
 #include <utility>
 
 #include "../client/MiradClient.h"
@@ -19,9 +19,13 @@
 namespace mira_gui {
 
 RunInPrefixDialog::RunInPrefixDialog(std::string game_id, const GameDetail& game, QWidget* parent)
-    : QDialog(parent), game_id_(std::move(game_id)) {
+    : QDialog(parent), game_id_(std::move(game_id)), install_path_(game.install_path) {
   setWindowTitle("Run in prefix");
-  resize(520, 0);
+  // 680, not the old 520, for a real install path next to the Browse
+  // button. setMinimumWidth, not resize(680, 0): resize() marks the widget
+  // explicitly sized, clamping it to the layout's bare minimum instead of
+  // its sizeHint() on first show — that's what clipped the button's text.
+  setMinimumWidth(680);
 
   auto* layout = new QVBoxLayout(this);
   layout->setSpacing(8);
@@ -36,29 +40,35 @@ RunInPrefixDialog::RunInPrefixDialog(std::string game_id, const GameDetail& game
   layout->addWidget(explanation);
 
   auto* form = new QFormLayout();
-  exe_ = new QComboBox(this);
-  exe_->setEditable(true);
-  exe_->setInsertPolicy(QComboBox::NoInsert);
-  exe_->lineEdit()->setPlaceholderText("Path, absolute or relative to the install folder");
+  exe_ = new QLineEdit(this);
+  exe_->setPlaceholderText("Path, absolute or relative to the install folder");
+  connect(exe_, &QLineEdit::textChanged, this,
+          [this](const QString& text) { run_->setEnabled(!text.trimmed().isEmpty()); });
 
-  // Installers first: the common case for this dialog is a needs_install
-  // game whose chosen candidate *is* the setup program.
-  std::vector<GameDetail::Candidate> candidates = game.candidates;
-  std::stable_partition(candidates.begin(), candidates.end(),
-                        [](const GameDetail::Candidate& c) { return c.is_installer; });
-  for (const GameDetail::Candidate& candidate : candidates) {
-    QString label = QString::fromStdString(candidate.rel_path);
-    if (candidate.is_installer) label += "  (installer)";
-    exe_->addItem(label, QString::fromStdString(candidate.rel_path));
-  }
-  if (exe_->count() > 0) {
-    exe_->setCurrentIndex(0);
-    exe_->setEditText(exe_->itemData(0).toString());
-  }
-  connect(exe_, QOverload<int>::of(&QComboBox::activated), this, [this](int index) {
-    if (index >= 0) exe_->setEditText(exe_->itemData(index).toString());
+  auto* browse = new QPushButton("Browse…", this);
+  connect(browse, &QPushButton::clicked, this, [this] {
+    const QString start_dir =
+        install_path_.empty() ? QString() : QString::fromStdString(install_path_);
+    const QString selected = QFileDialog::getOpenFileName(this, "Select executable", start_dir);
+    if (selected.isEmpty()) return;
+
+    std::error_code ec;
+    const std::filesystem::path relative =
+        std::filesystem::relative(selected.toStdString(), install_path_, ec);
+    exe_->setText(!ec && !relative.empty() ? QString::fromStdString(relative.string()) : selected);
+    exe_->setCursorPosition(0);
   });
-  form->addRow("Executable", exe_);
+
+  // A QWidget wrapper, not a bare QHBoxLayout passed to addRow(): QFormLayout
+  // sized the row to the line edit's own height, not the taller button's,
+  // clipping the button's text.
+  auto* exe_row_widget = new QWidget(this);
+  auto* exe_row = new QHBoxLayout(exe_row_widget);
+  exe_row->setContentsMargins(0, 0, 0, 0);
+  exe_row->setSpacing(8);
+  exe_row->addWidget(exe_, /*stretch=*/1);
+  exe_row->addWidget(browse);
+  form->addRow("Executable", exe_row_widget);
 
   args_ = new QLineEdit(this);
   args_->setPlaceholderText("Optional, e.g. /S for a silent install");
@@ -67,17 +77,17 @@ RunInPrefixDialog::RunInPrefixDialog(std::string game_id, const GameDetail& game
 
   auto* buttons = new QDialogButtonBox(QDialogButtonBox::Cancel, this);
   run_ = buttons->addButton("Run", QDialogButtonBox::AcceptRole);
+  // Nothing to run until a path is picked — disabling this says so, instead
+  // of a popup only reachable by clicking Run first to find out.
+  run_->setEnabled(false);
   connect(run_, &QPushButton::clicked, this, &RunInPrefixDialog::Run);
   connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
   layout->addWidget(buttons);
 }
 
 void RunInPrefixDialog::Run() {
-  const std::string exe = exe_->currentText().toStdString();
-  if (exe.empty()) {
-    mira_gui::notify::Info(this, "Run in prefix", "Pick an executable to run.");
-    return;
-  }
+  const std::string exe = exe_->text().trimmed().toStdString();
+  if (exe.empty()) return;  // the Run button is disabled for this case
 
   // Provisioning a prefix on demand is genuinely slow (it's initialising
   // Wine/Proton), and the request doesn't return until the process exists,
