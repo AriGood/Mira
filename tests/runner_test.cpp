@@ -1,6 +1,7 @@
 #include <doctest.h>
 
 #include <filesystem>
+#include <fstream>
 #include <system_error>
 #include <vector>
 
@@ -41,6 +42,85 @@ TEST_CASE("NativeRunner rejects a game with no exe_path") {
   game.install_path = "/games/Celeste";
   runner::NativeRunner native;
   CHECK_FALSE(native.BuildCommand(game, std::nullopt).has_value());
+}
+
+TEST_CASE("NativeRunner runs a .sh with no execute bit through sh") {
+  const fs::path dir = fs::temp_directory_path() / "mira-tests" / "native-sh";
+  fs::remove_all(dir);
+  fs::create_directories(dir);
+  const fs::path script = dir / "start.sh";
+  std::ofstream(script) << "#!/bin/sh\necho hi\n";
+  fs::permissions(script, fs::perms::owner_read | fs::perms::owner_write);  // no +x
+
+  model::Game game;
+  game.install_path = dir.string();
+  game.exe_path = "start.sh";
+  runner::NativeRunner native;
+  auto command = native.BuildCommand(game, std::nullopt);
+  REQUIRE(command.has_value());
+  CHECK(command->argv == std::vector<std::string>{"sh", script.string()});
+  fs::remove_all(dir);
+}
+
+TEST_CASE("NativeRunner runs an executable .sh directly through sh regardless") {
+  const fs::path dir = fs::temp_directory_path() / "mira-tests" / "native-sh-exec";
+  fs::remove_all(dir);
+  fs::create_directories(dir);
+  const fs::path script = dir / "start.sh";
+  std::ofstream(script) << "#!/bin/sh\necho hi\n";
+  fs::permissions(script, fs::perms::owner_all);
+
+  model::Game game;
+  game.install_path = dir.string();
+  game.exe_path = "start.sh";
+  runner::NativeRunner native;
+  auto command = native.BuildCommand(game, std::nullopt);
+  REQUIRE(command.has_value());
+  CHECK(command->argv == std::vector<std::string>{"sh", script.string()});
+  fs::remove_all(dir);
+}
+
+TEST_CASE("NativeRunner rejects a non-script exe with no execute bit") {
+  const fs::path dir = fs::temp_directory_path() / "mira-tests" / "native-noexec";
+  fs::remove_all(dir);
+  fs::create_directories(dir);
+  const fs::path exe = dir / "game";
+  std::ofstream(exe) << "not actually elf, doesn't matter here";
+  fs::permissions(exe, fs::perms::owner_read | fs::perms::owner_write);
+
+  model::Game game;
+  game.install_path = dir.string();
+  game.exe_path = "game";
+  runner::NativeRunner native;
+  auto command = native.BuildCommand(game, std::nullopt);
+  REQUIRE_FALSE(command.has_value());
+  CHECK(command.error().code == "not_executable");
+  fs::remove_all(dir);
+}
+
+TEST_CASE("NativeRunner runs an executable AppImage directly when FUSE is available") {
+  const fs::path dir = fs::temp_directory_path() / "mira-tests" / "native-appimage";
+  fs::remove_all(dir);
+  fs::create_directories(dir);
+  const fs::path exe = dir / "Game.AppImage";
+  std::ofstream(exe) << "not a real appimage, doesn't matter here";
+  fs::permissions(exe, fs::perms::owner_all);
+
+  model::Game game;
+  game.install_path = dir.string();
+  game.exe_path = "Game.AppImage";
+  runner::NativeRunner native;
+  auto command = native.BuildCommand(game, std::nullopt);
+  REQUIRE(command.has_value());
+  // Whether extraction is forced depends on whether this machine actually has
+  // FUSE — assert whichever shape that implies, same posture as the
+  // environment-dependent Proton/Wine tests below.
+  if (command->argv.size() > 1 && command->argv[1] == "--appimage-extract-and-run") {
+    CHECK(command->argv[0] == exe.string());
+  } else {
+    CHECK(command->argv == std::vector<std::string>{exe.string()});
+  }
+  fs::remove_all(dir);
 }
 
 TEST_CASE("RunnerRegistry resolves native:native with no build required") {

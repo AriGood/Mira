@@ -31,6 +31,15 @@ std::optional<std::string> FindOnPath(std::string_view name) {
   return std::nullopt;
 }
 
+std::optional<std::string> ResolveSiblingBinary(const std::filesystem::path& own_binary_dir, std::string_view name) {
+  if (!own_binary_dir.empty()) {
+    const std::filesystem::path candidate = own_binary_dir / name;
+    std::error_code ec;
+    if (std::filesystem::exists(candidate, ec)) return candidate.string();
+  }
+  return FindOnPath(name);
+}
+
 namespace {
 
 // Command.env is an overlay on the daemon's own environment, not a
@@ -86,6 +95,38 @@ Result<pid_t> SpawnDetached(const Command& command) {
     execvpe(prepared.argv[0], prepared.argv.data(), prepared.envp.data());
     _exit(127);
   }
+  return pid;
+}
+
+Result<pid_t> SpawnDetachedWithStatus(const Command& command, int& status_read_fd) {
+  if (command.argv.empty()) return Err("exec_empty_argv", "no command to run");
+  PreparedCommand prepared = Prepare(command);
+
+  int pipe_fds[2];
+  if (pipe2(pipe_fds, O_CLOEXEC) != 0) return Err("exec_pipe_failed", std::strerror(errno));
+
+  const pid_t pid = fork();
+  if (pid < 0) {
+    const std::string message = std::strerror(errno);
+    close(pipe_fds[0]);
+    close(pipe_fds[1]);
+    return Err("exec_fork_failed", message);
+  }
+  if (pid == 0) {
+    // Child: async-signal-safe calls only. The write end is moved onto a
+    // fixed, known fd (3) so the spawned process can be told about it as a
+    // plain CLI flag (--status-fd 3) rather than needing to inherit an
+    // unpredictable fd number.
+    setpgid(0, 0);
+    dup2(pipe_fds[1], 3);
+    close(pipe_fds[0]);
+    if (pipe_fds[1] != 3) close(pipe_fds[1]);
+    if (!prepared.cwd.empty() && chdir(prepared.cwd.c_str()) != 0) _exit(127);
+    execvpe(prepared.argv[0], prepared.argv.data(), prepared.envp.data());
+    _exit(127);
+  }
+  close(pipe_fds[1]);
+  status_read_fd = pipe_fds[0];
   return pid;
 }
 

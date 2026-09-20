@@ -2,6 +2,7 @@
 
 #include <sys/types.h>
 
+#include <filesystem>
 #include <optional>
 #include <string>
 
@@ -26,9 +27,23 @@ Result<ExecResult> RunAndWait(const Command& command);
 // captured, so it lands in journalctl next to everything else.
 Result<pid_t> SpawnDetached(const Command& command);
 
+// Like SpawnDetached, but the child's file descriptor 3 is connected to a
+// pipe whose read end is returned via `status_read_fd` — for spawning
+// mira-run with a --status-fd 3 it can report "ready" or "pre_launch
+// failed" on, without mirad blocking on the whole process the way
+// RunAndWait does. The caller owns the returned fd and must close it.
+Result<pid_t> SpawnDetachedWithStatus(const Command& command, int& status_read_fd);
+
 // Absolute path to `name` if it's on $PATH, else nullopt. Used to check a
 // runner's actual dependency (umu-run, wine) is installed, rather than
 // discovering it "available" and only finding out it isn't when exec fails.
 std::optional<std::string> FindOnPath(std::string_view name);
+
+// Resolves `name` next to `own_binary_dir` first (an install where every
+// Mira binary sits in one directory -- an AppImage, a dev build), else falls
+// back to $PATH. A pure function so it's testable without touching
+// /proc/self/exe -- the caller resolves its own directory and passes it in,
+// same split as frontend/ui/DaemonSupervisor.cpp's ResolveMiradPath.
+std::optional<std::string> ResolveSiblingBinary(const std::filesystem::path& own_binary_dir, std::string_view name);
 
 }  // namespace mira::runner

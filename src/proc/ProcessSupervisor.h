@@ -3,6 +3,7 @@
 #include <sys/types.h>
 
 #include <atomic>
+#include <filesystem>
 #include <map>
 #include <set>
 #include <mutex>
@@ -12,6 +13,7 @@
 #include "api/EventBus.h"
 #include "core/Command.h"
 #include "core/Result.h"
+#include "proc/Session.h"
 #include "store/GameStore.h"
 
 namespace mira::proc {
@@ -36,9 +38,24 @@ public:
 
   // Starts the game and returns as soon as it's running. Publishes
   // game.state running now, and exited later, with playtime recorded.
-  // post_script (see launch.post_script) runs once the game exits, before
-  // playtime is finalized in the store.
+  // post_script runs after the store/event are finalized. Fallback path
+  // used only when mira-run couldn't be found or spawned (see api::Server);
+  // the normal path is LaunchWrapped below.
   Result<void> Launch(const model::Game& game, const Command& command, std::string post_script = "");
+
+  // The normal path: `wrapper_pid` is an already-running mira-run, spawned
+  // by the caller after a successful "ok" on its status pipe (see
+  // api::Server); `session_path` is where it writes the session record
+  // (proc::Session.h). pre/post_script aren't passed here -- mira-run owns
+  // them, which is what makes them survive mirad dying mid-session.
+  Result<void> LaunchWrapped(const model::Game& game, pid_t wrapper_pid, std::filesystem::path session_path);
+
+  // Called once at mirad startup, before serving: closes out whatever a
+  // previous mirad didn't get to see finish. A finished record is archived
+  // immediately; a still-running mira-run is re-adopted (WatchReconciledLive)
+  // so a relaunch can't duplicate it; anything else is closed out
+  // `incomplete`. Never fails outright -- a bad file is logged and skipped.
+  void Reconcile(const std::filesystem::path& sessions_dir);
 
   // For a game Steam's own client launched (steam.launch_mode "steam"), which
   // Mira can't waitpid() on. Polls /proc for SteamAppId=<appid> or
@@ -59,6 +76,10 @@ public:
 
 private:
   void Watch(std::string game_id, pid_t pid, std::int64_t started_at, std::string post_script);
+  void WatchWrapped(std::string game_id, pid_t wrapper_pid, std::filesystem::path session_path);
+  void WatchReconciledLive(std::string game_id, pid_t wrapper_pid, std::filesystem::path session_path);
+  void FinalizeWrappedSession(const std::string& game_id, const proc::SessionRecord& record,
+                              const std::filesystem::path& session_path);
   void WatchSteam(std::string game_id, std::string appid, std::int64_t requested_at,
                   std::string post_script);
 

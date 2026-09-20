@@ -1,9 +1,12 @@
 #include "api/Server.h"
 
+#include <poll.h>
 #include <sys/socket.h>
+#include <sys/wait.h>
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <filesystem>
 #include <format>
 #include <fstream>
@@ -15,12 +18,16 @@
 #include "config/Resolver.h"
 #include "config/Schema.h"
 #include "core/Log.h"
+#include "core/Strings.h"
 #include "desktop/DesktopEntries.h"
+#include "flatpak/FlatpakScanner.h"
 #include "library/Scanner.h"
 #include "lutris/LutrisImporter.h"
 #include "metadata/MetadataFetcher.h"
+#include "proc/Session.h"
 #include "runner/Downloader.h"
 #include "runner/Exec.h"
+#include "runner/GameMode.h"
 #include "runner/RunnerRegistry.h"
 #include "runner/Winetricks.h"
 #include "steam/SteamScanner.h"
@@ -130,13 +137,110 @@ std::optional<std::string> ValidateOverridesPatch(const json& patch) {
 }
 
 // Wraps the launch command in each configured wrapper, in order: the first
-// entry ends up outermost, so ["gamescope", "mangohud"] runs
-// `gamescope mangohud <game>`.
+// entry ends up outermost, so ["gamemoderun", "gamescope -W 1920 -H 1080"]
+// runs `gamemoderun gamescope -W 1920 -H 1080 <game>`. Each entry is split on
+// spaces, like game.args (see NativeRunner.cpp) -- no shell quoting support.
 void ApplyCommandWrappers(Command& command, const std::vector<std::string>& wrappers) {
   for (auto it = wrappers.rbegin(); it != wrappers.rend(); ++it) {
     if (it->empty()) continue;
-    command.argv.insert(command.argv.begin(), *it);
+    const std::vector<std::string> tokens = strings::Split(*it, ' ');
+    command.argv.insert(command.argv.begin(), tokens.begin(), tokens.end());
   }
+}
+
+// Checked before a launch actually spawns anything, so a wrapper that isn't
+// installed is a clear 400 naming it, instead of the whole launch silently
+// failing with exit code 127 from inside the outermost wrapper.
+Result<void> CheckCommandWrappers(const std::vector<std::string>& wrappers) {
+  for (const std::string& entry : wrappers) {
+    if (entry.empty()) continue;
+    const std::vector<std::string> tokens = strings::Split(entry, ' ');
+    if (tokens.empty()) continue;
+    if (!runner::FindOnPath(tokens[0])) {
+      return Err("wrapper_not_found",
+                std::format("command_wrappers entry \"{}\" is not on PATH", tokens[0]));
+    }
+  }
+  return {};
+}
+
+// launch.env, applied under whatever BuildCommand already set (game.env
+// merged in by the runner always wins, same "global default, per-game
+// override" contract command_wrappers already has).
+void ApplyLaunchEnv(Command& command, const std::vector<std::string>& entries) {
+  for (const std::string& entry : entries) {
+    const auto eq = entry.find('=');
+    if (eq == std::string::npos) continue;
+    const std::string key = entry.substr(0, eq);
+    if (!command.env.contains(key)) command.env[key] = entry.substr(eq + 1);
+  }
+}
+
+// Runs launch.pre_script synchronously and blocks the request -- the Steam
+// URL-handoff branch and the no-mira-run fallback both still need this; the
+// normal wrapped path runs it inside mira-run instead, which is what lets
+// it survive mirad dying mid-launch.
+Result<void> RunPreScriptInline(const std::string& pre_script) {
+  if (pre_script.empty()) return {};
+  Command script;
+  script.argv = {"sh", "-c", pre_script};
+  const Result<runner::ExecResult> ran = runner::RunAndWait(script);
+  if (!ran || ran->exit_code != 0) {
+    return Err("pre_launch_failed", !ran ? ran.error().message
+                                          : std::format("launch.pre_script exited {}: {}", ran->exit_code,
+                                                        ran->output));
+  }
+  return {};
+}
+
+// mirad's own binary directory, via /proc/self/exe. Empty on failure;
+// runner::ResolveSiblingBinary falls back to $PATH in that case.
+std::filesystem::path OwnBinaryDir() {
+  std::error_code ec;
+  const auto exe = std::filesystem::read_symlink("/proc/self/exe", ec);
+  return ec ? std::filesystem::path() : exe.parent_path();
+}
+
+struct WrapperStatus {
+  bool ok = false;
+  bool read_timed_out = false;  // mirad's own read deadline, distinct from mira-run's launch.pre_timeout_s
+  std::string code;             // "ok" / "pre_failed" / "pre_timeout"
+  std::string detail;           // session path (ok) or the pre script's captured output (pre_failed)
+};
+
+// Blocks on mira-run's status pipe until it writes something and closes it,
+// or `timeout_s` passes. Distinct from launch.pre_timeout_s expiring
+// (mira-run's own budget for the script, reported as "pre_timeout" below);
+// this is a hard ceiling on mira-run answering at all.
+WrapperStatus ReadWrapperStatus(int fd, int timeout_s) {
+  WrapperStatus result;
+  std::string buffer;
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(timeout_s);
+  char chunk[4096];
+  while (std::chrono::steady_clock::now() < deadline && buffer.size() < 65536) {
+    const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+        deadline - std::chrono::steady_clock::now());
+    pollfd pfd{.fd = fd, .events = POLLIN, .revents = 0};
+    const int rc = ::poll(&pfd, 1, static_cast<int>(std::max<std::chrono::milliseconds::rep>(0, remaining.count())));
+    if (rc <= 0) break;  // timed out, or poll itself failed
+    const ssize_t n = ::read(fd, chunk, sizeof(chunk));
+    if (n <= 0) break;  // EOF: mira-run closed its end after writing everything
+    buffer.append(chunk, static_cast<std::size_t>(n));
+  }
+  const auto newline = buffer.find('\n');
+  if (newline == std::string::npos) {
+    result.read_timed_out = true;
+    return result;
+  }
+  result.code = buffer.substr(0, newline);
+  result.detail = buffer.substr(newline + 1);
+  // For "ok" this is the session path, itself followed by mira-run's own
+  // trailing newline -- strip it, or the path never matches the real file.
+  while (!result.detail.empty() && (result.detail.back() == '\n' || result.detail.back() == '\r')) {
+    result.detail.pop_back();
+  }
+  result.ok = (result.code == "ok");
+  return result;
 }
 
 // Same check GET /v1/games/{id}/artwork's default "cover" slot uses to
@@ -196,6 +300,8 @@ Server::Server(config::Config& config, store::GameStore& games, EventBus& events
 
 Server::~Server() = default;
 
+void Server::ReconcileSessions() { supervisor_.Reconcile(games_.Dir() / "sessions"); }
+
 Result<void> Server::Serve(const std::filesystem::path& socket_path) {
   std::error_code ec;
   std::filesystem::create_directories(socket_path.parent_path(), ec);
@@ -226,6 +332,14 @@ void Server::Stop() {
 void Server::RegisterRoutes() {
   http_->Get("/v1/health", [](const Request&, Response& res) {
     SendJson(res, {{"status", "ok"}});
+  });
+
+  // For the frontend to warn about a launch.gamemode = true that won't
+  // actually do anything -- "installed" and "daemon_running" are reported
+  // separately since they're different problems (not installed at all, vs
+  // installed but the daemon isn't up right now).
+  http_->Get("/v1/gamemode/status", [](const Request&, Response& res) {
+    SendJson(res, {{"installed", gamemode::IsInstalled()}, {"daemon_running", gamemode::IsDaemonRunning()}});
   });
 
   // --- settings -----------------------------------------------------------
@@ -308,6 +422,43 @@ void Server::RegisterRoutes() {
     auto game = games_.Find(req.matches[1]);
     if (!game) return SendError(res, 404, "game_not_found", "no such game");
     SendJson(res, model::ToJson(*game));
+  });
+
+  // The tail of the log mira-run writes for this game (src/wrapper/main.cpp):
+  // the game's own stdout/stderr, plus mira-run's own annotated pre/post
+  // script output and exit summary — one file that explains a session, not
+  // just a status badge. A game that's never been launched through the
+  // wrapper (or was launched via the no-mira-run fallback) simply has no
+  // log file yet — reported as an empty list, not a 404 or 500, since "no
+  // log" is a completely ordinary state.
+  http_->Get(R"(/v1/games/([^/]+)/log)", [this](const Request& req, Response& res) {
+    auto game = games_.Find(req.matches[1]);
+    if (!game) return SendError(res, 404, "game_not_found", "no such game");
+
+    int requested_lines = 200;
+    if (auto it = req.params.find("lines"); it != req.params.end()) {
+      requested_lines = std::max(1, std::atoi(it->second.c_str()));
+    }
+
+    const std::filesystem::path log_file = games_.Dir() / "logs" / std::format("{}.log", game->id);
+    std::ifstream in(log_file, std::ios::binary);
+    if (!in) return SendJson(res, {{"lines", json::array()}});
+
+    // Bounded read from the end, not the whole file -- launch.log_max_mb
+    // can be configured up to 1GB, and this endpoint only ever needs a
+    // handful of recent lines.
+    constexpr std::streamoff kMaxTailBytes = 4 * 1024 * 1024;
+    in.seekg(0, std::ios::end);
+    const std::streamoff size = in.tellg();
+    in.seekg(size > kMaxTailBytes ? size - kMaxTailBytes : 0);
+    const std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+
+    std::vector<std::string> all_lines = strings::Split(content, '\n');
+    if (!all_lines.empty() && all_lines.back().empty()) all_lines.pop_back();  // trailing newline
+    const std::size_t take = std::min(all_lines.size(), static_cast<std::size_t>(requested_lines));
+    json out = json::array();
+    for (std::size_t i = all_lines.size() - take; i < all_lines.size(); ++i) out.push_back(all_lines[i]);
+    SendJson(res, {{"lines", out}});
   });
 
   http_->Patch(R"(/v1/games/([^/]+))", [this](const Request& req, Response& res) {
@@ -422,6 +573,15 @@ void Server::RegisterRoutes() {
     SendJson(res, {{"added", summary->added}, {"updated", summary->updated}, {"skipped", summary->skipped}});
   });
 
+  http_->Post("/v1/flatpak/scan", [this](const Request&, Response& res) {
+    flatpak::FlatpakScanner scanner(config_, games_, events_);
+    auto summary = scanner.Scan();
+    if (!summary) return SendError(res, 404, summary.error().code, summary.error().message);
+    SyncDesktopEntries(config_, games_);
+    for (const model::Game& game : summary->added_games) metadata_fetches_.Enqueue(config_, events_, game);
+    SendJson(res, {{"added", summary->added}, {"updated", summary->updated}});
+  });
+
   // --- launching ------------------------------------------------------------
 
   http_->Post(R"(/v1/games/([^/]+)/launch)", [this](const Request& req, Response& res) {
@@ -439,25 +599,19 @@ void Server::RegisterRoutes() {
     const config::Resolver resolver(config_, game->overrides);
     const std::string pre_script = resolver.GetString("launch.pre_script");
     const std::string post_script = resolver.GetString("launch.post_script");
-    if (!pre_script.empty()) {
-      Command script;
-      script.argv = {"sh", "-c", pre_script};
-      const Result<runner::ExecResult> ran = runner::RunAndWait(script);
-      if (!ran || ran->exit_code != 0) {
-        return SendError(res, 409, "pre_launch_failed",
-                         !ran ? ran.error().message
-                             : std::format("launch.pre_script exited {}: {}", ran->exit_code, ran->output));
-      }
-    }
 
     // A Steam-sourced game defaults to asking the Steam client to launch it
     // (steam://rungameid/<appid>) rather than Mira execing it directly: full
     // achievements/overlay support, and Steam's own accounting is what
     // GET /v1/games/{id} reads back for it (see steam.launch_mode's doc).
     // Mira didn't spawn this process, so it can't waitpid() it — that's what
-    // steam.track_process (a /proc scan, see ProcessSupervisor) is for.
+    // steam.track_process (a /proc scan, see ProcessSupervisor) is for. Not
+    // wrapped by mira-run either way: there's no process here for it to own.
     if (game->runner_ref.starts_with("steam:")) {
       if (resolver.GetString("steam.launch_mode") == "steam") {
+        if (auto ran = RunPreScriptInline(pre_script); !ran) {
+          return SendError(res, 409, ran.error().code, ran.error().message);
+        }
         const std::string appid = game->runner_ref.substr(std::string_view("steam:").size());
         Command command;
         command.argv = {"steam", std::format("steam://rungameid/{}", appid)};
@@ -490,9 +644,87 @@ void Server::RegisterRoutes() {
     auto command = resolved->runner->BuildCommand(*game, resolved->build);
     if (!command) return SendError(res, 400, command.error().code, command.error().message);
 
-    ApplyCommandWrappers(*command, resolver.GetStringArray("command_wrappers"));
+    const std::vector<std::string> wrappers = resolver.GetStringArray("command_wrappers");
+    if (auto checked = CheckCommandWrappers(wrappers); !checked) {
+      return SendError(res, 400, checked.error().code, checked.error().message);
+    }
+    ApplyLaunchEnv(*command, resolver.GetStringArray("launch.env"));
+    ApplyCommandWrappers(*command, wrappers);
 
-    if (auto launched = supervisor_.Launch(*game, *command, post_script); !launched) {
+    // mira-run owns the whole session end to end (pre/post script, the
+    // session record) so it survives mirad dying mid-launch — see
+    // proc/Session.h, docs/architecture.md. The wrapper is never a hard
+    // dependency: if it can't be found or spawned, mirad falls back to
+    // exactly today's behavior (pre_script run inline, no session record)
+    // rather than failing the launch.
+    const auto mira_run = runner::ResolveSiblingBinary(OwnBinaryDir(), "mira-run");
+    if (!mira_run) {
+      log::Warn("mira-run not found; launching {} directly with no session recording", game->id);
+      if (auto ran = RunPreScriptInline(pre_script); !ran) {
+        return SendError(res, 409, ran.error().code, ran.error().message);
+      }
+      if (auto launched = supervisor_.Launch(*game, *command, post_script); !launched) {
+        return SendError(res, 409, launched.error().code, launched.error().message);
+      }
+      return SendJson(res, {{"status", "running"}, {"tracked", true}});
+    }
+
+    const int pre_timeout_s = static_cast<int>(resolver.GetInt("launch.pre_timeout_s"));
+    const std::filesystem::path sessions_dir = games_.Dir() / "sessions";
+    const std::filesystem::path log_file = games_.Dir() / "logs" / std::format("{}.log", game->id);
+    Command wrapped;
+    wrapped.env = command->env;
+    wrapped.cwd = command->cwd;
+    wrapped.argv = {*mira_run,         "--game-id",       game->id,
+                    "--session-dir",  sessions_dir.string(), "--log-file", log_file.string(),
+                    "--log-max-mb",   std::to_string(resolver.GetInt("launch.log_max_mb")),
+                    "--status-fd",    "3",
+                    "--pre-timeout",  std::to_string(pre_timeout_s),
+                    "--post-timeout", std::to_string(resolver.GetInt("launch.post_timeout_s"))};
+    if (!pre_script.empty()) {
+      wrapped.argv.push_back("--pre");
+      wrapped.argv.push_back(pre_script);
+    }
+    if (!post_script.empty()) {
+      wrapped.argv.push_back("--post");
+      wrapped.argv.push_back(post_script);
+    }
+    if (resolver.GetBool("launch.gamemode")) wrapped.argv.push_back("--gamemode");
+    wrapped.argv.push_back("--");
+    wrapped.argv.insert(wrapped.argv.end(), command->argv.begin(), command->argv.end());
+
+    int status_fd = -1;
+    auto wrapper_pid = runner::SpawnDetachedWithStatus(wrapped, status_fd);
+    if (!wrapper_pid) return SendError(res, 500, wrapper_pid.error().code, wrapper_pid.error().message);
+
+    const WrapperStatus status = ReadWrapperStatus(status_fd, pre_timeout_s + 10);
+    ::close(status_fd);
+    // Always WNOHANG, never a blocking wait: on every other outcome
+    // mira-run has already exited by now, so this reaps it immediately with
+    // no delay -- but on read_timed_out it may still be genuinely hung, and
+    // this HTTP worker thread must never block on that indefinitely. A
+    // WNOHANG that doesn't reap here just leaves it for LaunchWrapped's own
+    // watcher (success) or an unreaped zombie mirad doesn't yet clean up
+    // (the timeout case -- rare enough not to chase further right now).
+    int wait_status = 0;
+    ::waitpid(*wrapper_pid, &wait_status, WNOHANG);
+
+    if (status.read_timed_out) {
+      return SendError(res, 500, "wrapper_unresponsive", "mira-run did not respond in time");
+    }
+    if (status.code == "pre_failed") {
+      return SendError(res, 409, "pre_launch_failed", status.detail);
+    }
+    if (status.code == "pre_timeout") {
+      return SendError(res, 409, "pre_launch_timeout",
+                       std::format("launch.pre_script did not finish within {}s", pre_timeout_s));
+    }
+    if (!status.ok) {
+      return SendError(res, 500, "wrapper_failed", std::format("unexpected mira-run status: {}", status.code));
+    }
+
+    if (auto launched = supervisor_.LaunchWrapped(*game, *wrapper_pid, std::filesystem::path(status.detail));
+        !launched) {
       return SendError(res, 409, launched.error().code, launched.error().message);
     }
     SendJson(res, {{"status", "running"}, {"tracked", true}});  // always true: Mira spawned it
@@ -559,7 +791,12 @@ void Server::RegisterRoutes() {
     auto command = resolved->runner->BuildCommand(run_as, resolved->build);
     if (!command) return SendError(res, 400, command.error().code, command.error().message);
     const config::Resolver resolver(config_, game->overrides);
-    ApplyCommandWrappers(*command, resolver.GetStringArray("command_wrappers"));
+    const std::vector<std::string> wrappers = resolver.GetStringArray("command_wrappers");
+    if (auto checked = CheckCommandWrappers(wrappers); !checked) {
+      return SendError(res, 400, checked.error().code, checked.error().message);
+    }
+    ApplyLaunchEnv(*command, resolver.GetStringArray("launch.env"));
+    ApplyCommandWrappers(*command, wrappers);
 
     if (auto launched = supervisor_.Launch(*game, *command); !launched) {
       return SendError(res, 409, launched.error().code, launched.error().message);

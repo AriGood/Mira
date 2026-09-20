@@ -180,9 +180,11 @@ Schema::Schema() {
        "Cloned with reflinks where the filesystem supports them."},
 
       {"command_wrappers", Type::StringArray, json::array(), Tier::Basic,
-       "Wrappers applied to the launch command in order, e.g. [\"gamescope\", \"mangohud\"]. "
-       "The first entry ends up outermost. Each receives the game's command line as its "
-       "arguments."},
+       "Wrappers applied to the launch command in order, e.g. [\"gamemoderun\", \"gamescope -W "
+       "1920 -H 1080\"]. The first entry ends up outermost. Each entry is split on spaces (like "
+       "a game's own args -- no shell quoting support), and receives the game's command line as "
+       "its arguments. A wrapper whose own binary isn't on PATH fails the launch with a clear "
+       "error instead of a mysterious \"exited with code 127\"."},
 
       {"launch.stop_timeout_s", Type::Int, 10, Tier::Advanced,
        "How long to give a game to quit after \"stop\" before it's killed outright. The "
@@ -190,18 +192,46 @@ Schema::Schema() {
        "the game.",
        Range(0, 600)},
 
+      {"launch.log_max_mb", Type::Int, 64, Tier::Advanced,
+       "Cap on a game's own log file (see GET /v1/games/{id}/log), applied when a new session "
+       "rotates the previous one out -- an oversized previous log is dropped instead of kept, "
+       "so this bounds disk use to roughly 2x this value per game.",
+       Range(1, 1024)},
+
+      {"launch.gamemode", Type::Bool, false, Tier::Basic,
+       "Register this game with Feral Interactive's GameMode daemon automatically -- no "
+       "command_wrappers entry needed. A no-op if the daemon isn't installed or isn't running; "
+       "see GET /v1/gamemode/status."},
+
+      {"launch.env", Type::StringArray, json::array(), Tier::Basic,
+       "KEY=VALUE environment variables set for every launch, e.g. [\"MANGOHUD=1\", "
+       "\"DXVK_ASYNC=1\"]. A game's own env (per-game overrides) always wins over these. Not "
+       "applied to a Steam game launched via steam.launch_mode \"steam\" -- Mira only hands "
+       "off a steam:// URL there, it never builds the game's own command line."},
+
       {"launch.pre_script", Type::String, "", Tier::Advanced,
        "Shell command run (via sh -c) before POST /v1/games/{id}/launch actually starts the "
        "game -- e.g. mounting a network drive a game needs, setting a CPU governor. Runs "
        "synchronously; a non-zero exit aborts the launch with the script's own output as the "
        "error. Empty disables it. Overridable per game (PATCH .../config)."},
 
+      {"launch.pre_timeout_s", Type::Int, 30, Tier::Advanced,
+       "How long launch.pre_script is given to finish before the launch is aborted outright, "
+       "to keep a hung script from wedging a launch forever.",
+       Range(1, 600)},
+
       {"launch.post_script", Type::String, "", Tier::Advanced,
        "Shell command run once the game process exits (any reason: clean exit, crash, or "
        "stop), the mirror of launch.pre_script -- e.g. reverting a CPU governor change. Runs "
        "in the background; its own exit code is only logged, never affects the recorded "
        "playtime/crash state. Not run for a Steam game launched via steam.launch_mode "
-       "\"steam\" -- Mira never owns that process (see docs/api.md's Steam section)."},
+       "\"steam\" unless steam.track_process is also on -- Mira otherwise never owns that "
+       "process at all (see docs/api.md's Steam section)."},
+
+      {"launch.post_timeout_s", Type::Int, 30, Tier::Advanced,
+       "How long launch.post_script is given to finish before it's killed outright, the "
+       "mirror of launch.pre_timeout_s.",
+       Range(1, 600)},
 
       {"desktop_entries.enabled", Type::Bool, true, Tier::Basic,
        "Add each ready game to your application menu as a .desktop entry, so it can be "
@@ -322,6 +352,10 @@ Schema::Schema() {
       {"lutris.data_dir", Type::String, "", Tier::Advanced,
        "Override for where Lutris keeps pga.db and its per-game configs. "
        "Empty auto-detects $XDG_DATA_HOME/lutris, then ~/.local/share/lutris."},
+
+      {"flatpak.enabled", Type::Bool, true, Tier::Basic,
+       "Let \"mira flatpak scan\" / POST /v1/flatpak/scan list installed Flatpak apps "
+       "(via flatpak list) and add them alongside Mira's own library."},
 
       {"runner_sources.proton_ge.repo", Type::String, std::string(runner_sources::kProtonGERepo),
        Tier::Advanced, "GitHub \"owner/repo\" Proton-GE builds are downloaded from."},

@@ -158,9 +158,18 @@ like `library_roots`, describe the daemon rather than a game, see
 
 ### `POST /v1/games/{id}/launch` — implemented
 Resolves `runner_ref` (defaulting to `native:native`) and execs the game,
-wrapped by `command_wrappers` in order (first entry outermost), tracked by
-`proc::ProcessSupervisor` for crash detection and playtime. 404 if unknown,
-409 if `needs_install` or not `ready`.
+wrapped by `command_wrappers` in order (first entry outermost), with
+`launch.env` applied under whatever env the runner itself set (the game's
+own `env` always wins over both), tracked by `proc::ProcessSupervisor` for
+crash detection and playtime. 404 if unknown, 409 if `needs_install` or not
+`ready`.
+
+Each `command_wrappers` entry is split on spaces before it's prepended (like
+a game's own `args` — no shell quoting), so `"gamescope -W 1920 -H 1080"` is
+one entry that expands to three argv tokens. Every wrapper's own binary is
+checked against `$PATH` before anything is spawned — `400 wrapper_not_found`
+names the missing one, rather than the launch failing invisibly with exit
+code 127 from inside the wrapper.
 
 `launch.pre_script` (global default, overridable per game via `.../config`)
 runs first, via `sh -c`, and blocks the request — a non-zero exit aborts
@@ -168,9 +177,23 @@ the launch entirely with `409 pre_launch_failed` and the script's own
 output as the error, so a script that's supposed to prepare something the
 game needs (mount a drive, set a CPU governor) actually gets to finish
 before the game starts. `launch.post_script` runs once the game process
-exits (clean, crashed, or stopped, always) — in the background, so it
-never blocks anything, and its own exit code is only logged, never
-reflected in the recorded playtime/crash state.
+exits (clean, crashed, or stopped, always) — never blocking anything, and
+its own exit code is only logged, never reflected in the recorded
+playtime/crash state.
+
+The actual spawn goes through a small wrapper binary, `mira-run`, not mirad
+itself — it owns pre/post_script, the game process, and a session record
+(`~/.config/mira/sessions/`, rolled into `stats.toml` once mirad has seen
+it) end to end, so a session survives mirad dying or restarting mid-game;
+mirad reconciles anything it missed at its next startup. `mira-run` also
+owns the game's own stdout/stderr, tailable via
+`GET /v1/games/{id}/log`. If `mira-run` itself can't be found or spawned,
+mirad falls back to launching directly with none of the above (pre_script
+still runs inline, post_script still runs, but no session record and no
+log) rather than failing the launch — the wrapper is never a hard
+dependency. `launch.gamemode` (default off) registers the game with
+GameMode automatically via `mira-run`, around the exact same lifetime; see
+`GET /v1/gamemode/status`.
 
 The reply's `tracked` says whether `game.state` events are coming for this
 launch — see the Steam case below for the one time it isn't true.
@@ -191,6 +214,20 @@ game) to have Mira exec it itself instead, through the same Proton build
 and prefix Steam already set up — normal tracking applies, but `exe_path`
 has to be set manually first (see `POST /v1/steam/scan` below for why
 Mira can't determine it on its own).
+
+### `GET /v1/games/{id}/log?lines=` — implemented
+```json
+{ "lines": ["[mira-run] session start, game_id=celeste", "..."] }
+```
+The tail of `mira-run`'s own log for this game (default 200 lines, capped
+to the last 4MB of the file regardless of `launch.log_max_mb`): the game's
+own stdout/stderr, interleaved with `mira-run`'s own annotated lines
+(resolved argv, pre/post_script output, the exit summary) — one file that
+explains a whole session, not just a status badge. A game that's never
+been launched through the wrapper (or was launched via the no-mira-run
+fallback) simply has no log yet — an empty list, not a 404 or 500. Rotated
+one generation deep at each new launch (`.log.1`), dropped instead of kept
+if it's already over `launch.log_max_mb` (default 64).
 
 ### `POST /v1/games/{id}/stop` — implemented
 Sends SIGTERM to the game's process group **and** every process running in
@@ -389,12 +426,59 @@ actually is (they don't have to be related at all — Lutris allows a prefix
 that lives nowhere near the game's files). Idempotent — rescanning updates
 Lutris-owned fields (`name`, `install_path`, `exe_path`, `data_dir`, `env`)
 without touching anything the user configured (`args` is Lutris-owned too,
-since it's Lutris's own launch argument, but `overrides`/`tags`/`reviewed`
-are left alone), matched by `install_path` rather than an id Lutris and
-Mira could agree on. `runner_ref` is never set by this import: Lutris's own
+since it's Lutris's own launch argument, but `overrides`/`reviewed` are left
+alone), matched by `install_path` rather than an id Lutris and Mira could
+agree on. `runner_ref` is never set by this import: Lutris's own
 `wine.version` is often a generic alias ("ge-proton"), not an exact
 installed build name Mira can resolve, so `default_runner.windows` picks
 one instead.
+
+Lutris's own categories are mapped onto `tags` (Lutris's `.hidden` becomes
+Mira's `hidden`, `favorites` becomes `favorite`, everything else carries
+over by name unchanged) and merged into whatever tags the game already has,
+never replacing them — a tag added by hand in Mira survives a re-import, and
+a game Lutris marks hidden stays out of the default `GET /v1/games` listing
+the same way a game Mira marked hidden by hand would. A Lutris install old
+enough to have no `categories`/`games_categories` tables degrades to "no
+categories" rather than failing the import.
+
+---
+
+## Flatpak
+
+### `POST /v1/flatpak/scan` — implemented
+Lists installed Flatpak apps (`flatpak list --app`) and upserts them, same
+`{ "added": N, "updated": N }` shape as `POST /v1/steam/scan`. `runner_ref`
+is `flatpak:<app-id>`, resolved by the fifth `IRunner`, `FlatpakRunner` — the
+installed app *is* the build, there's no separate "which build" choice the
+way Proton/Wine have. `exe_path` is never required for a Flatpak game,
+unlike every other runner. `install_path` points at the app's own
+`~/.var/app/<app-id>` data directory — the closest real on-disk stand-in
+Flatpak has to an install folder, for `DELETE`'s containment check and
+`FindByInstallPath`'s idempotence on rescan. Requires `flatpak.enabled`
+(default on).
+
+---
+
+## GameMode
+
+### `GET /v1/gamemode/status` — implemented
+```json
+{ "installed": true, "daemon_running": false }
+```
+`installed` is whether `gamemoded`/`gamemoderun` is on `PATH` at all;
+`daemon_running` is whether `com.feralinteractive.GameMode` currently owns
+its name on the session bus, i.e. the daemon is actually up right now — the
+two are reported separately since they're different problems (nothing
+installed at all, vs installed but not currently running) needing different
+guidance. Checked via `gdbus`, the desktop-bus-standard `NameHasOwner` call,
+not anything GameMode-specific.
+
+`launch.gamemode` (a per-game-overridable setting, default off) registers
+the game with GameMode automatically via its own D-Bus interface
+(`RegisterGame`/`UnregisterGame`) around the game's exact lifetime — no
+`command_wrappers` entry needed. Always best-effort: a daemon that isn't
+reachable is logged and otherwise ignored, never a launch failure.
 
 ---
 

@@ -64,14 +64,19 @@ src/
             WinePrefix (shared prefix-directory detection, used by both
             Detector and Scanner so neither re-discovers the other's
             prefixes as games).
-  runner/   IRunner + NativeRunner/ProtonRunner/WineRunner/SteamRunner,
-            RunnerRegistry (resolves "kind:name" -> a concrete runner +
-            build), Exec (RunAndWait for provisioning/downloads,
-            SpawnDetached for an actual game launch), Downloader (lists/
-            installs Proton-GE/Wine-GE builds from GitHub releases).
+  runner/   IRunner + NativeRunner/ProtonRunner/WineRunner/SteamRunner/
+            FlatpakRunner, RunnerRegistry (resolves "kind:name" -> a
+            concrete runner + build), Exec (RunAndWait for provisioning/
+            downloads, SpawnDetached/SpawnDetachedWithStatus for an actual
+            game launch), Downloader (lists/installs Proton-GE/Wine-GE
+            builds from GitHub releases), GameMode (RegisterGame/
+            UnregisterGame/status, via gdbus).
   proc/     ProcessSupervisor — supervises a launched game: crash vs.
             clean-exit classification, playtime checkpointing,
-            SIGTERM->SIGKILL stop escalation.
+            SIGTERM->SIGKILL stop escalation, reconciling a session left
+            behind by a previous mirad. Session (the on-disk session
+            record mira-run writes) and Stats (rolls a finished one into
+            stats.toml) are its own small modules, shared with mira-run.
   desktop/  DesktopEntries — generates/syncs .desktop menu entries for
             ready games, always launching back through Mira so playtime
             is never bypassed by a menu launch.
@@ -80,6 +85,10 @@ src/
             library folders, installed apps, which Proton build/prefix an
             app uses), SteamScanner (detect -> upsert into GameStore, the
             Steam equivalent of library::Scanner).
+  flatpak/  FlatpakScanner — detect -> upsert into GameStore, mirroring
+            SteamScanner/lutris::LutrisImporter.
+  wrapper/  main.cpp for `mira-run` — the process mirad actually spawns
+            for a direct launch; see "Built: launching a game" below.
   api/      EventBus (in-memory pub/sub) and Server (the REST routes) —
             see api.md for the surface this registers.
   cli/      main.cpp for `mira` — see cli.md for what it does.
@@ -281,13 +290,16 @@ doesn't:
 
 - **Runners** (`runner/IRunner.h`) — `umu-run` is a means to a working
   Proton launch, not a permanent dependency. Validated, not just asserted:
-  `NativeRunner`, `ProtonRunner`, and `WineRunner` (plain system Wine, no
-  Proton) are three real implementations of the same four-method interface,
-  and CI runs `grep -rniE 'umu|protonpath|gameid|steam_compat' src/
-  --exclude-dir=runner` — every umu/Proton-specific token is still contained
-  to `runner/ProtonRunner.{h,cpp}` (a couple of explanatory comments elsewhere
+  `NativeRunner`, `ProtonRunner`, `WineRunner` (plain system Wine, no
+  Proton), `SteamRunner`, and `FlatpakRunner` are five real implementations
+  of the same interface, and CI runs `grep -rniE
+  'umu|protonpath|gameid|steam_compat' src/ --exclude-dir=runner` — every
+  umu/Proton-specific token is still contained to
+  `runner/ProtonRunner.{h,cpp}` (a couple of explanatory comments elsewhere
   just name the tool; none encode its env vars or behavior). A future custom
-  Proton runner replacing umu is a fourth file, not a redesign.
+  Proton runner replacing umu is one more file, not a redesign — exactly
+  what `FlatpakRunner` already was, added with zero changes to any other
+  runner.
 - **Detection rules** — per-user heuristics that are certain to need
   retuning; `config/Schema.cpp`'s `detect.*` keys already externalize the
   weights this will use.
@@ -402,6 +414,12 @@ with. See `docs/api.md`'s Steam section for the full picture, including
 why the *default* way to launch a Steam game (`steam.launch_mode:
 "steam"`) never calls `BuildCommand` at all.
 
+A fifth, `FlatpakRunner` (`src/runner/FlatpakRunner.cpp`), doesn't fit
+either, differently: the installed app *is* the build (`UsesBuilds()` is
+`true`, but a build's `name` is just the app id — there's no separate
+"which build" choice the way Proton/Wine have), and `exe_path` is never
+required, unlike every other runner. See `docs/api.md`'s Flatpak section.
+
 ## Built: the frontend
 
 [`frontend.md`](frontend.md) is the full picture — the two views, the four
@@ -504,6 +522,66 @@ daemon with its own `--socket` (e.g. `~/.mira-dev/mirad.sock`) and the
 frontend with the matching `$MIRA_SOCKET` makes that collision structurally
 impossible instead of just unlikely.
 
+## Built: launching a game
+
+The actual spawn for a direct (non-Steam-URL) launch goes through a small
+separate binary, `mira-run` (`src/wrapper/main.cpp`), not mirad itself.
+mirad resolves the runner, applies `command_wrappers`/`launch.env`, and
+hands the resulting `Command` to `mira-run` as its own trailing argv,
+spawned via `runner::SpawnDetachedWithStatus` (`src/runner/Exec.{h,cpp}`) —
+mirad blocks only on a short status handshake over a pipe (`ok`/`pre_failed`/
+`pre_timeout`, plus the session path on success), not on the whole launch.
+
+`mira-run` owns the whole session end to end: `launch.pre_script`, forking
+and execing the game, `launch.post_script`, and a session record
+(`proc::Session.h`, `~/.config/mira/sessions/<game_id>-<started_at>.toml`,
+write-temp-then-rename-then-fsync) written before and after — so none of
+that depends on mirad staying alive for the session's whole duration.
+Confirmed live: killing mirad mid-session leaves the game and `mira-run`
+running, and the session still completes correctly with mirad dead the
+entire time. It also owns the game's own stdout/stderr, into
+`~/.config/mira/logs/<game_id>.log`, tailable via
+`GET /v1/games/{id}/log`, rotated one generation deep per launch.
+
+Deliberately *not* a new process group of its own: mirad's own spawn makes
+`mira-run` a fresh group's leader, and the game inherits that group rather
+than starting another — `Stop()`'s `kill(-pid)` reaches `mira-run` and the
+whole game tree in one external signal. `mira-run` ignores SIGTERM/SIGINT
+rather than handling them, specifically so it survives that signal long
+enough to still run `--post` and write the final record; the game gets the
+same signal directly from mirad's own `kill(-pid)`, not forwarded through
+`mira-run`.
+
+`proc::ProcessSupervisor::WatchWrapped` waits on `mira-run`'s own pid (not
+the game's), and once it exits, reads the finished session record to
+classify the real game's exit rather than decoding `mira-run`'s own exit
+status. `Reconcile()` (called once at mirad startup, before serving) walks
+leftover session files: a finished one is archived immediately; a
+still-running `mira-run` (checked via `kill(pid, 0)`, since it's not this
+mirad's child — `waitpid()` can't work on it) is re-adopted with a
+liveness-polling watcher instead of dropped, so a second launch request for
+the same game can't start a duplicate; anything else (`mira-run` itself
+also gone, e.g. SIGKILLed) is closed out `incomplete`. A completed session
+is rolled into `~/.config/mira/stats.toml` (`proc::Stats.h`) and the
+session file removed — see "Play-time..." below for what still isn't built
+on top of it.
+
+If `mira-run` can't be found (`runner::ResolveSiblingBinary`, next to
+mirad's own binary or on `PATH`) or can't be spawned at all, mirad falls
+back to launching the game directly with today's older behavior — inline
+`pre_script`, `post_script` still run from mirad's own watcher thread, but
+no session record and no log — rather than failing the launch. The wrapper
+is never a hard dependency.
+
+Also native `launch.gamemode` support: `mira-run` calls GameMode's own
+D-Bus interface (`RegisterGame`/`UnregisterGame`, via `gdbus`, not a linked
+`libgamemode` — matching the shell-out-rather-than-link convention curl/
+sqlite3/flatpak already use) around the game's exact lifetime, no
+`command_wrappers` entry needed. `GET /v1/gamemode/status`
+(`src/runner/GameMode.{h,cpp}`) reports whether GameMode is installed and
+whether its daemon is actually reachable right now, separately, since
+they're different problems.
+
 ## Planned, not yet built
 
 Recorded here so intent isn't lost between sessions:
@@ -532,19 +610,16 @@ Recorded here so intent isn't lost between sessions:
   the zero-config test must keep passing with the network disabled.
 - **`mirad --scan-once`** for the run-once-and-never-again persona described
   above.
-- **`DaemonSupervisor` in `mira-gui`** for path 2 above.
-- **Play-time, launch history, and (Steam-only) achievements.** `model::Game`
-  already has an aggregate `play_seconds` counter (a fast-path total the API
-  can return without reading a log), but the detailed history does not exist
-  yet. Plan: a separate `stats.toml` alongside `settings.toml`/`games.toml`,
-  holding one `[[session]]` entry per launch (`game_id`, `started_at`,
-  `ended_at`, `duration_seconds`), written by `ProcessSupervisor` when a
-  launched game exits (see `proc/ProcessSupervisor`, not yet built). Kept
-  deliberately separate from `games.toml`: that file is meant to stay a
-  clean, hand-editable *configuration* document, and an ever-growing
-  session log doesn't belong mixed into it — but it still lives in the same
-  `~/.config/mira` directory, so "one folder to back up" still holds.
-  Achievements are Steam-specific and off the critical path entirely: Steam's
+- **A read endpoint over `stats.toml`.** The write side is built (see
+  "Built: launching a game" above) — every direct-launch session lands in
+  `~/.config/mira/stats.toml`'s `[[session]]` array — but nothing serves it
+  back yet. `model::Game`'s aggregate `play_seconds` counter (a fast-path
+  total the API already returns without reading a log) covers "how long
+  total," not "when" — a `GET /v1/games/{id}/sessions` (or similar) to
+  expose per-session launch history is still open. A Steam-launched session
+  (either `launch_mode`) is not recorded here at all yet either — only a
+  direct, `mira-run`-wrapped launch is.
+- **(Steam-only) achievements.** Off the critical path entirely: Steam's
   official `ISteamUserStats/GetPlayerAchievements` Web API can return them,
   but only given a user-supplied Steam Web API key and SteamID64 (both
   optional settings, unset by default) and only for a game with a known

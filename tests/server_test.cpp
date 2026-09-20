@@ -70,6 +70,55 @@ private:
   std::thread thread_;
 };
 
+// Polling POST .../stop is the only externally-visible "has this launch
+// actually finished yet" signal available over the API (ProcessSupervisor's
+// own IsRunning() is test-only, not exposed to a client) — a 409 means
+// ProcessSupervisor no longer considers the game running, i.e. the watcher
+// thread already reaped it and recorded the outcome.
+bool WaitForExit(httplib::Client& client, const std::string& id,
+                 std::chrono::milliseconds timeout = std::chrono::milliseconds(3000)) {
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  while (std::chrono::steady_clock::now() < deadline) {
+    auto res = client.Post(std::format("/v1/games/{}/stop", id));
+    if (res && res->status == 409) return true;
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  }
+  return false;
+}
+
+// Unlike WaitForExit, this never calls stop -- for a test that cares about
+// the game's actual output, repeatedly SIGTERMing it as a polling mechanism
+// (WaitForExit's approach) races the signal against a fast script's own
+// completion and can kill it before it finishes writing anything.
+bool WaitForLogContains(httplib::Client& client, const std::string& id, std::string_view needle,
+                        std::chrono::milliseconds timeout = std::chrono::milliseconds(3000)) {
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  while (std::chrono::steady_clock::now() < deadline) {
+    auto res = client.Get(std::format("/v1/games/{}/log?lines=50", id));
+    if (res && res->status == 200 && res->body.find(needle) != std::string::npos) return true;
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  }
+  return false;
+}
+
+std::string LastError(httplib::Client& client, const std::string& id) {
+  auto res = client.Get(std::format("/v1/games/{}", id));
+  if (!res) return "<no response>";
+  const auto body = nlohmann::json::parse(res->body, nullptr, false);
+  if (body.is_discarded()) return "<unparseable>";
+  return body.value("last_error", std::string());
+}
+
+// A small script, since command_wrappers/launch.env behavior needs actual
+// env vars visible to a real child process to verify against — not something
+// observable from argv alone over HTTP.
+fs::path WriteEnvCheckScript(const fs::path& dir, std::string_view expect_foo) {
+  fs::create_directories(dir);
+  const fs::path script = dir / "check.sh";
+  std::ofstream(script) << std::format("#!/bin/sh\n[ \"$FOO\" = \"{}\" ] && exit 0 || exit 9\n", expect_foo);
+  return script;
+}
+
 }  // namespace
 
 TEST_CASE("PATCH /v1/games/{id} env: per-key null removes just that key") {
@@ -142,6 +191,126 @@ TEST_CASE("GET /v1/games excludes hidden-tagged games by default; ?tag= filters,
   auto tool_list = client.Get("/v1/games?tag=tool");
   REQUIRE(tool_list != nullptr);
   CHECK(tool_list->body.find("\"umu-launcher\"") != std::string::npos);
+}
+
+TEST_CASE("POST /v1/games/{id}/launch refuses a command_wrappers entry that isn't on PATH") {
+  LiveServer server(TempDir("server-launch-bad-wrapper"));
+
+  model::Game game;
+  game.id = "true-game";
+  game.name = "true-game";
+  game.platform = model::Platform::Native;
+  game.status = model::GameStatus::Ready;
+  game.install_path = "/bin";
+  game.exe_path = "true";
+  game.overrides["command_wrappers"] = nlohmann::json::array({"this-wrapper-does-not-exist-anywhere-xyz"});
+  REQUIRE(server.games().Upsert(game).has_value());
+
+  httplib::Client client = server.Client();
+  auto res = client.Post("/v1/games/true-game/launch");
+  REQUIRE(res != nullptr);
+  CHECK(res->status == 400);
+  CHECK(res->body.find("wrapper_not_found") != std::string::npos);
+}
+
+TEST_CASE("POST /v1/games/{id}/launch splits a multi-token command_wrappers entry into separate argv") {
+  LiveServer server(TempDir("server-launch-wrapper-split"));
+
+  model::Game game;
+  game.id = "wrapped-game";
+  game.name = "wrapped-game";
+  game.platform = model::Platform::Native;
+  game.status = model::GameStatus::Ready;
+  game.install_path = "/bin";
+  game.exe_path = "true";
+  // If this weren't split on spaces, exec would look for a binary literally
+  // named "sh -c true" and fail with exit 127 — a passing "true" here is
+  // only possible if ApplyCommandWrappers actually split it into ["sh",
+  // "-c", "true"].
+  game.overrides["command_wrappers"] = nlohmann::json::array({"sh -c true"});
+  REQUIRE(server.games().Upsert(game).has_value());
+
+  httplib::Client client = server.Client();
+  auto launched = client.Post("/v1/games/wrapped-game/launch");
+  REQUIRE(launched != nullptr);
+  CHECK(launched->status == 200);
+
+  REQUIRE(WaitForExit(client, "wrapped-game"));
+  CHECK(LastError(client, "wrapped-game").empty());
+}
+
+TEST_CASE("POST /v1/games/{id}/launch applies launch.env under the resolved command's own env") {
+  LiveServer server(TempDir("server-launch-env"));
+  const fs::path install_dir = TempDir("server-launch-env-install");
+  WriteEnvCheckScript(install_dir, "from-launch-env");
+
+  model::Game game;
+  game.id = "env-game";
+  game.name = "env-game";
+  game.platform = model::Platform::Native;
+  game.status = model::GameStatus::Ready;
+  game.install_path = install_dir.string();
+  game.exe_path = "check.sh";  // no +x needed: NativeRunner always runs .sh through sh
+  game.overrides["launch.env"] = nlohmann::json::array({"FOO=from-launch-env"});
+  REQUIRE(server.games().Upsert(game).has_value());
+
+  httplib::Client client = server.Client();
+  auto launched = client.Post("/v1/games/env-game/launch");
+  REQUIRE(launched != nullptr);
+  CHECK(launched->status == 200);
+
+  REQUIRE(WaitForExit(client, "env-game"));
+  CHECK(LastError(client, "env-game").empty());
+}
+
+TEST_CASE("POST /v1/games/{id}/launch: a game's own env wins over launch.env") {
+  LiveServer server(TempDir("server-launch-env-precedence"));
+  const fs::path install_dir = TempDir("server-launch-env-precedence-install");
+  WriteEnvCheckScript(install_dir, "from-game-env");
+
+  model::Game game;
+  game.id = "env-precedence-game";
+  game.name = "env-precedence-game";
+  game.platform = model::Platform::Native;
+  game.status = model::GameStatus::Ready;
+  game.install_path = install_dir.string();
+  game.exe_path = "check.sh";
+  game.env = {{"FOO", "from-game-env"}};
+  game.overrides["launch.env"] = nlohmann::json::array({"FOO=from-launch-env"});  // must lose
+  REQUIRE(server.games().Upsert(game).has_value());
+
+  httplib::Client client = server.Client();
+  auto launched = client.Post("/v1/games/env-precedence-game/launch");
+  REQUIRE(launched != nullptr);
+  CHECK(launched->status == 200);
+
+  REQUIRE(WaitForExit(client, "env-precedence-game"));
+  CHECK(LastError(client, "env-precedence-game").empty());
+}
+
+TEST_CASE("POST /v1/games/{id}/launch with launch.gamemode never blocks or fails the launch") {
+  LiveServer server(TempDir("server-launch-gamemode"));
+
+  model::Game game;
+  game.id = "gamemode-game";
+  game.name = "gamemode-game";
+  game.platform = model::Platform::Native;
+  game.status = model::GameStatus::Ready;
+  game.install_path = "/bin";
+  game.exe_path = "true";
+  game.overrides["launch.gamemode"] = true;
+  REQUIRE(server.games().Upsert(game).has_value());
+
+  httplib::Client client = server.Client();
+  auto launched = client.Post("/v1/games/gamemode-game/launch");
+  REQUIRE(launched != nullptr);
+  CHECK(launched->status == 200);
+
+  // Whether a real gamemoded is reachable on this machine or not, the
+  // launch itself must always complete cleanly -- GameMode registration is
+  // best-effort and must never surface as a launch failure or a crash.
+  REQUIRE(WaitForExit(client, "gamemode-game"));
+  CHECK(LastError(client, "gamemode-game").empty());
 }
 
 TEST_CASE("PATCH /v1/games/{id} tags replaces the array wholesale") {
@@ -324,4 +493,69 @@ TEST_CASE("DELETE /v1/runners/{reference} rejects a kind with no separate builds
   REQUIRE(auto_ref != nullptr);
   CHECK(auto_ref->status == 400);
   CHECK(auto_ref->body.find("invalid_reference") != std::string::npos);
+}
+
+TEST_CASE("GET /v1/games/{id}/log is an empty list before any launch, not a 404 or 500") {
+  LiveServer server(TempDir("server-log-empty"));
+
+  model::Game game;
+  game.id = "never-launched";
+  game.name = "never-launched";
+  REQUIRE(server.games().Upsert(game).has_value());
+
+  httplib::Client client = server.Client();
+  auto res = client.Get("/v1/games/never-launched/log");
+  REQUIRE(res != nullptr);
+  CHECK(res->status == 200);
+  const auto body = nlohmann::json::parse(res->body, nullptr, false);
+  REQUIRE(body.contains("lines"));
+  CHECK(body["lines"].empty());
+}
+
+TEST_CASE("GET /v1/games/{id}/log 404s for an unknown game") {
+  LiveServer server(TempDir("server-log-404"));
+  httplib::Client client = server.Client();
+  auto res = client.Get("/v1/games/does-not-exist/log");
+  REQUIRE(res != nullptr);
+  CHECK(res->status == 404);
+}
+
+TEST_CASE("POST /v1/games/{id}/launch through mira-run populates GET .../log with the game's own output") {
+  LiveServer server(TempDir("server-log-populated"));
+  const fs::path install_dir = TempDir("server-log-populated-install");
+  const fs::path script = install_dir / "run.sh";
+  std::ofstream(script) << "#!/bin/sh\necho hello-from-the-game\n";
+
+  model::Game game;
+  game.id = "logged-game";
+  game.name = "logged-game";
+  game.platform = model::Platform::Native;
+  game.status = model::GameStatus::Ready;
+  game.install_path = install_dir.string();
+  game.exe_path = "run.sh";  // no +x needed, see NativeRunner's .sh handling
+  REQUIRE(server.games().Upsert(game).has_value());
+
+  httplib::Client client = server.Client();
+  auto launched = client.Post("/v1/games/logged-game/launch");
+  REQUIRE(launched != nullptr);
+  CHECK(launched->status == 200);
+
+  REQUIRE(WaitForLogContains(client, "logged-game", "hello-from-the-game"));
+  auto res = client.Get("/v1/games/logged-game/log?lines=50");
+  REQUIRE(res != nullptr);
+  CHECK(res->status == 200);
+  CHECK(res->body.find("mira-run") != std::string::npos);
+}
+
+TEST_CASE("GET /v1/gamemode/status reports both installed and daemon_running") {
+  LiveServer server(TempDir("server-gamemode-status"));
+  httplib::Client client = server.Client();
+  auto res = client.Get("/v1/gamemode/status");
+  REQUIRE(res != nullptr);
+  CHECK(res->status == 200);
+  const auto body = nlohmann::json::parse(res->body, nullptr, false);
+  REQUIRE(body.contains("installed"));
+  REQUIRE(body.contains("daemon_running"));
+  CHECK(body["installed"].is_boolean());
+  CHECK(body["daemon_running"].is_boolean());
 }
