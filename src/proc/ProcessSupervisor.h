@@ -3,6 +3,7 @@
 #include <sys/types.h>
 
 #include <atomic>
+#include <filesystem>
 #include <map>
 #include <set>
 #include <mutex>
@@ -37,8 +38,18 @@ public:
   // Starts the game and returns as soon as it's running. Publishes
   // game.state running now, and exited later, with playtime recorded.
   // post_script (see launch.post_script) runs once the game exits, before
-  // playtime is finalized in the store.
+  // playtime is finalized in the store. This is the Rule-2 fallback path —
+  // used only when mira-run itself couldn't be found or spawned (see
+  // api::Server); the normal path is LaunchWrapped below.
   Result<void> Launch(const model::Game& game, const Command& command, std::string post_script = "");
+
+  // The normal path: `wrapper_pid` is an already-running mira-run (spawned
+  // by the caller via runner::SpawnDetachedWithStatus, after a successful
+  // "ok" on its status pipe — see api::Server), and `session_path` is where
+  // it will write the session record proc::Session.h describes. Unlike
+  // Launch(), pre/post_script are not passed here — mira-run itself owns
+  // them, which is what makes them survive mirad dying mid-session.
+  Result<void> LaunchWrapped(const model::Game& game, pid_t wrapper_pid, std::filesystem::path session_path);
 
   // For a game Steam's own client launched (steam.launch_mode "steam"), which
   // Mira can't waitpid() on. Polls /proc for SteamAppId=<appid> or
@@ -59,6 +70,7 @@ public:
 
 private:
   void Watch(std::string game_id, pid_t pid, std::int64_t started_at, std::string post_script);
+  void WatchWrapped(std::string game_id, pid_t wrapper_pid, std::filesystem::path session_path);
   void WatchSteam(std::string game_id, std::string appid, std::int64_t requested_at,
                   std::string post_script);
 

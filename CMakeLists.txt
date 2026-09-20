@@ -46,6 +46,7 @@ target_include_directories(mira_third_party SYSTEM INTERFACE third_party)
 file(GLOB_RECURSE MIRA_CORE_SOURCES CONFIGURE_DEPENDS src/*.cpp)
 list(FILTER MIRA_CORE_SOURCES EXCLUDE REGEX "src/mirad_main\\.cpp$")
 list(FILTER MIRA_CORE_SOURCES EXCLUDE REGEX "src/cli/.*\\.cpp$")
+list(FILTER MIRA_CORE_SOURCES EXCLUDE REGEX "src/wrapper/.*\\.cpp$")
 
 # mira_flags (-Wall -Wextra -Wpedantic, optionally -Werror) is applied PRIVATE
 # everywhere rather than propagated via mira_core's public link interface: it
@@ -64,6 +65,12 @@ target_link_libraries(mirad PRIVATE mira_core mira_flags)
 
 add_executable(mira src/cli/main.cpp)
 target_link_libraries(mira PRIVATE mira_core mira_flags)
+
+# The process mirad actually spawns for a game launch (see proc/Session.h,
+# docs/architecture.md) — a separate binary, not a mirad-internal thread, so
+# a launched game's session survives mirad restarting or crashing mid-game.
+add_executable(mira-run src/wrapper/main.cpp)
+target_link_libraries(mira-run PRIVATE mira_core mira_flags)
 
 # A target's own compile options are always ordered before flags inherited
 # through target_link_libraries, on every CMake generator — so a local
@@ -85,7 +92,7 @@ target_link_libraries(mira_tests PRIVATE mira_core mira_flags_test)
 add_test(NAME unit COMMAND mira_tests)
 
 include(GNUInstallDirs)
-install(TARGETS mirad mira RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(TARGETS mirad mira mira-run RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(FILES packaging/mirad.service
         DESTINATION ${CMAKE_INSTALL_LIBDIR}/systemd/user)
 install(FILES packaging/mira.desktop

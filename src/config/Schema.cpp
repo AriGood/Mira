@@ -204,12 +204,23 @@ Schema::Schema() {
        "synchronously; a non-zero exit aborts the launch with the script's own output as the "
        "error. Empty disables it. Overridable per game (PATCH .../config)."},
 
+      {"launch.pre_timeout_s", Type::Int, 30, Tier::Advanced,
+       "How long launch.pre_script is given to finish before the launch is aborted outright, "
+       "to keep a hung script from wedging a launch forever.",
+       Range(1, 600)},
+
       {"launch.post_script", Type::String, "", Tier::Advanced,
        "Shell command run once the game process exits (any reason: clean exit, crash, or "
        "stop), the mirror of launch.pre_script -- e.g. reverting a CPU governor change. Runs "
        "in the background; its own exit code is only logged, never affects the recorded "
        "playtime/crash state. Not run for a Steam game launched via steam.launch_mode "
-       "\"steam\" -- Mira never owns that process (see docs/api.md's Steam section)."},
+       "\"steam\" unless steam.track_process is also on -- Mira otherwise never owns that "
+       "process at all (see docs/api.md's Steam section)."},
+
+      {"launch.post_timeout_s", Type::Int, 30, Tier::Advanced,
+       "How long launch.post_script is given to finish before it's killed outright, the "
+       "mirror of launch.pre_timeout_s.",
+       Range(1, 600)},
 
       {"desktop_entries.enabled", Type::Bool, true, Tier::Basic,
        "Add each ready game to your application menu as a .desktop entry, so it can be "

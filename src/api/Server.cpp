@@ -1,9 +1,12 @@
 #include "api/Server.h"
 
+#include <poll.h>
 #include <sys/socket.h>
+#include <sys/wait.h>
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <filesystem>
 #include <format>
 #include <fstream>
@@ -20,6 +23,7 @@
 #include "library/Scanner.h"
 #include "lutris/LutrisImporter.h"
 #include "metadata/MetadataFetcher.h"
+#include "proc/Session.h"
 #include "runner/Downloader.h"
 #include "runner/Exec.h"
 #include "runner/RunnerRegistry.h"
@@ -168,6 +172,73 @@ void ApplyLaunchEnv(Command& command, const std::vector<std::string>& entries) {
     const std::string key = entry.substr(0, eq);
     if (!command.env.contains(key)) command.env[key] = entry.substr(eq + 1);
   }
+}
+
+// Runs launch.pre_script synchronously and blocks the request -- the Steam
+// URL-handoff branch and the Rule-2 (no mira-run) fallback both still need
+// this; the normal wrapped path runs it inside mira-run instead, which is
+// what lets it survive mirad dying mid-launch.
+Result<void> RunPreScriptInline(const std::string& pre_script) {
+  if (pre_script.empty()) return {};
+  Command script;
+  script.argv = {"sh", "-c", pre_script};
+  const Result<runner::ExecResult> ran = runner::RunAndWait(script);
+  if (!ran || ran->exit_code != 0) {
+    return Err("pre_launch_failed", !ran ? ran.error().message
+                                          : std::format("launch.pre_script exited {}: {}", ran->exit_code,
+                                                        ran->output));
+  }
+  return {};
+}
+
+// mirad's own binary directory, the way frontend/ui/DaemonSupervisor.cpp
+// resolves its own (via QCoreApplication::applicationDirPath() there) --
+// here via /proc/self/exe, the daemon's own equivalent. Empty on failure;
+// runner::ResolveSiblingBinary falls back to $PATH in that case.
+std::filesystem::path OwnBinaryDir() {
+  std::error_code ec;
+  const auto exe = std::filesystem::read_symlink("/proc/self/exe", ec);
+  return ec ? std::filesystem::path() : exe.parent_path();
+}
+
+struct WrapperStatus {
+  bool ok = false;
+  bool read_timed_out = false;  // mirad's own read deadline, distinct from mira-run's launch.pre_timeout_s
+  std::string code;             // "ok" / "pre_failed" / "pre_timeout"
+  std::string detail;           // session path (ok) or the pre script's captured output (pre_failed)
+};
+
+// Blocks on mira-run's status pipe until it writes something and closes it
+// (which it always does, whichever way the launch goes -- see
+// src/wrapper/main.cpp) or `timeout_s` passes. A read timeout here is not
+// the same thing as launch.pre_timeout_s expiring: that's mira-run's own
+// budget for the script itself and is reported as the "pre_timeout" code
+// below; this is a hard ceiling on mira-run answering at all, generous
+// enough it should never fire in practice.
+WrapperStatus ReadWrapperStatus(int fd, int timeout_s) {
+  WrapperStatus result;
+  std::string buffer;
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(timeout_s);
+  char chunk[4096];
+  while (std::chrono::steady_clock::now() < deadline && buffer.size() < 65536) {
+    const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+        deadline - std::chrono::steady_clock::now());
+    pollfd pfd{.fd = fd, .events = POLLIN, .revents = 0};
+    const int rc = ::poll(&pfd, 1, static_cast<int>(std::max<std::chrono::milliseconds::rep>(0, remaining.count())));
+    if (rc <= 0) break;  // timed out, or poll itself failed
+    const ssize_t n = ::read(fd, chunk, sizeof(chunk));
+    if (n <= 0) break;  // EOF: mira-run closed its end after writing everything
+    buffer.append(chunk, static_cast<std::size_t>(n));
+  }
+  const auto newline = buffer.find('\n');
+  if (newline == std::string::npos) {
+    result.read_timed_out = true;
+    return result;
+  }
+  result.code = buffer.substr(0, newline);
+  result.detail = buffer.substr(newline + 1);
+  result.ok = (result.code == "ok");
+  return result;
 }
 
 // Same check GET /v1/games/{id}/artwork's default "cover" slot uses to
@@ -470,25 +541,19 @@ void Server::RegisterRoutes() {
     const config::Resolver resolver(config_, game->overrides);
     const std::string pre_script = resolver.GetString("launch.pre_script");
     const std::string post_script = resolver.GetString("launch.post_script");
-    if (!pre_script.empty()) {
-      Command script;
-      script.argv = {"sh", "-c", pre_script};
-      const Result<runner::ExecResult> ran = runner::RunAndWait(script);
-      if (!ran || ran->exit_code != 0) {
-        return SendError(res, 409, "pre_launch_failed",
-                         !ran ? ran.error().message
-                             : std::format("launch.pre_script exited {}: {}", ran->exit_code, ran->output));
-      }
-    }
 
     // A Steam-sourced game defaults to asking the Steam client to launch it
     // (steam://rungameid/<appid>) rather than Mira execing it directly: full
     // achievements/overlay support, and Steam's own accounting is what
     // GET /v1/games/{id} reads back for it (see steam.launch_mode's doc).
     // Mira didn't spawn this process, so it can't waitpid() it — that's what
-    // steam.track_process (a /proc scan, see ProcessSupervisor) is for.
+    // steam.track_process (a /proc scan, see ProcessSupervisor) is for. Not
+    // wrapped by mira-run either way: there's no process here for it to own.
     if (game->runner_ref.starts_with("steam:")) {
       if (resolver.GetString("steam.launch_mode") == "steam") {
+        if (auto ran = RunPreScriptInline(pre_script); !ran) {
+          return SendError(res, 409, ran.error().code, ran.error().message);
+        }
         const std::string appid = game->runner_ref.substr(std::string_view("steam:").size());
         Command command;
         command.argv = {"steam", std::format("steam://rungameid/{}", appid)};
@@ -528,7 +593,75 @@ void Server::RegisterRoutes() {
     ApplyLaunchEnv(*command, resolver.GetStringArray("launch.env"));
     ApplyCommandWrappers(*command, wrappers);
 
-    if (auto launched = supervisor_.Launch(*game, *command, post_script); !launched) {
+    // mira-run owns the whole session end to end (pre/post script, the
+    // session record) so it survives mirad dying mid-launch — see
+    // proc/Session.h, docs/architecture.md. mirad never fails a launch just
+    // because the wrapper itself is unavailable (Rule 2): that falls back to
+    // exactly today's behavior, pre_script run inline and no session record.
+    const auto mira_run = runner::ResolveSiblingBinary(OwnBinaryDir(), "mira-run");
+    if (!mira_run) {
+      log::Warn("mira-run not found; launching {} directly with no session recording", game->id);
+      if (auto ran = RunPreScriptInline(pre_script); !ran) {
+        return SendError(res, 409, ran.error().code, ran.error().message);
+      }
+      if (auto launched = supervisor_.Launch(*game, *command, post_script); !launched) {
+        return SendError(res, 409, launched.error().code, launched.error().message);
+      }
+      return SendJson(res, {{"status", "running"}, {"tracked", true}});
+    }
+
+    const int pre_timeout_s = static_cast<int>(resolver.GetInt("launch.pre_timeout_s"));
+    const std::filesystem::path sessions_dir = games_.Dir() / "sessions";
+    Command wrapped;
+    wrapped.env = command->env;
+    wrapped.cwd = command->cwd;
+    wrapped.argv = {*mira_run,        "--game-id",   game->id,
+                    "--session-dir", sessions_dir.string(), "--status-fd", "3",
+                    "--pre-timeout", std::to_string(pre_timeout_s),
+                    "--post-timeout", std::to_string(resolver.GetInt("launch.post_timeout_s"))};
+    if (!pre_script.empty()) {
+      wrapped.argv.push_back("--pre");
+      wrapped.argv.push_back(pre_script);
+    }
+    if (!post_script.empty()) {
+      wrapped.argv.push_back("--post");
+      wrapped.argv.push_back(post_script);
+    }
+    wrapped.argv.push_back("--");
+    wrapped.argv.insert(wrapped.argv.end(), command->argv.begin(), command->argv.end());
+
+    int status_fd = -1;
+    auto wrapper_pid = runner::SpawnDetachedWithStatus(wrapped, status_fd);
+    if (!wrapper_pid) return SendError(res, 500, wrapper_pid.error().code, wrapper_pid.error().message);
+
+    const WrapperStatus status = ReadWrapperStatus(status_fd, pre_timeout_s + 10);
+    ::close(status_fd);
+    // Always WNOHANG, never a blocking wait: on every other outcome
+    // mira-run has already exited by now, so this reaps it immediately with
+    // no delay -- but on read_timed_out it may still be genuinely hung, and
+    // this HTTP worker thread must never block on that indefinitely. A
+    // WNOHANG that doesn't reap here just leaves it for LaunchWrapped's own
+    // watcher (success) or an unreaped zombie mirad doesn't yet clean up
+    // (the timeout case -- rare enough not to chase further right now).
+    int wait_status = 0;
+    ::waitpid(*wrapper_pid, &wait_status, WNOHANG);
+
+    if (status.read_timed_out) {
+      return SendError(res, 500, "wrapper_unresponsive", "mira-run did not respond in time");
+    }
+    if (status.code == "pre_failed") {
+      return SendError(res, 409, "pre_launch_failed", status.detail);
+    }
+    if (status.code == "pre_timeout") {
+      return SendError(res, 409, "pre_launch_timeout",
+                       std::format("launch.pre_script did not finish within {}s", pre_timeout_s));
+    }
+    if (!status.ok) {
+      return SendError(res, 500, "wrapper_failed", std::format("unexpected mira-run status: {}", status.code));
+    }
+
+    if (auto launched = supervisor_.LaunchWrapped(*game, *wrapper_pid, std::filesystem::path(status.detail));
+        !launched) {
       return SendError(res, 409, launched.error().code, launched.error().message);
     }
     SendJson(res, {{"status", "running"}, {"tracked", true}});  // always true: Mira spawned it

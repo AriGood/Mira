@@ -129,6 +129,7 @@ exec \"\$HERE/usr/bin/mira-gui\" \"$@\"
     COMMAND "${CMAKE_COMMAND}" -E make_directory "${MIRA_APPDIR}/usr/share/icons/hicolor/256x256/apps"
     COMMAND "${CMAKE_COMMAND}" -E copy "$<TARGET_FILE:mirad>" "${MIRA_APPDIR}/usr/bin/mirad"
     COMMAND "${CMAKE_COMMAND}" -E copy "$<TARGET_FILE:mira>" "${MIRA_APPDIR}/usr/bin/mira"
+    COMMAND "${CMAKE_COMMAND}" -E copy "$<TARGET_FILE:mira-run>" "${MIRA_APPDIR}/usr/bin/mira-run"
     COMMAND "${CMAKE_COMMAND}" -E copy "$<TARGET_FILE:mira-gui>" "${MIRA_APPDIR}/usr/bin/mira-gui"
     COMMAND "${CMAKE_COMMAND}" -E copy
             "${CMAKE_SOURCE_DIR}/packaging/mira.desktop"
@@ -160,13 +161,14 @@ exec \"\$HERE/usr/bin/mira-gui\" \"$@\"
               --appdir "${MIRA_APPDIR}"
               --executable "${MIRA_APPDIR}/usr/bin/mirad"
               --executable "${MIRA_APPDIR}/usr/bin/mira"
+              --executable "${MIRA_APPDIR}/usr/bin/mira-run"
               --executable "${MIRA_APPDIR}/usr/bin/mira-gui"
               --desktop-file "${MIRA_APPDIR}/usr/share/applications/mira.desktop"
               --icon-file "${MIRA_APPDIR}/usr/share/icons/hicolor/256x256/apps/mira.png"
               --plugin qt
               --output appimage
     WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
-    DEPENDS mirad mira mira-gui "${MIRA_LINUXDEPLOY}" "${MIRA_LINUXDEPLOY_QT}"
+    DEPENDS mirad mira mira-run mira-gui "${MIRA_LINUXDEPLOY}" "${MIRA_LINUXDEPLOY_QT}"
     COMMENT "Building Mira AppImage"
     VERBATIM)
 endif()
