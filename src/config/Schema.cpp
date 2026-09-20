@@ -198,6 +198,11 @@ Schema::Schema() {
        "so this bounds disk use to roughly 2x this value per game.",
        Range(1, 1024)},
 
+      {"launch.gamemode", Type::Bool, false, Tier::Basic,
+       "Register this game with Feral Interactive's GameMode daemon automatically -- no "
+       "command_wrappers entry needed. A no-op if the daemon isn't installed or isn't running; "
+       "see GET /v1/gamemode/status."},
+
       {"launch.env", Type::StringArray, json::array(), Tier::Basic,
        "KEY=VALUE environment variables set for every launch, e.g. [\"MANGOHUD=1\", "
        "\"DXVK_ASYNC=1\"]. A game's own env (per-game overrides) always wins over these. Not "

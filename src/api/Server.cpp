@@ -27,6 +27,7 @@
 #include "proc/Session.h"
 #include "runner/Downloader.h"
 #include "runner/Exec.h"
+#include "runner/GameMode.h"
 #include "runner/RunnerRegistry.h"
 #include "runner/Winetricks.h"
 #include "steam/SteamScanner.h"
@@ -337,6 +338,14 @@ void Server::Stop() {
 void Server::RegisterRoutes() {
   http_->Get("/v1/health", [](const Request&, Response& res) {
     SendJson(res, {{"status", "ok"}});
+  });
+
+  // For the frontend to warn about a launch.gamemode = true that won't
+  // actually do anything -- "installed" and "daemon_running" are reported
+  // separately since they're different problems (not installed at all, vs
+  // installed but the daemon isn't up right now).
+  http_->Get("/v1/gamemode/status", [](const Request&, Response& res) {
+    SendJson(res, {{"installed", gamemode::IsInstalled()}, {"daemon_running", gamemode::IsDaemonRunning()}});
   });
 
   // --- settings -----------------------------------------------------------
@@ -685,6 +694,7 @@ void Server::RegisterRoutes() {
       wrapped.argv.push_back("--post");
       wrapped.argv.push_back(post_script);
     }
+    if (resolver.GetBool("launch.gamemode")) wrapped.argv.push_back("--gamemode");
     wrapped.argv.push_back("--");
     wrapped.argv.insert(wrapped.argv.end(), command->argv.begin(), command->argv.end());
 

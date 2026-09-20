@@ -416,6 +416,44 @@ categories" rather than failing the import.
 
 ---
 
+## Flatpak
+
+### `POST /v1/flatpak/scan` — implemented
+Lists installed Flatpak apps (`flatpak list --app`) and upserts them, same
+`{ "added": N, "updated": N }` shape as `POST /v1/steam/scan`. `runner_ref`
+is `flatpak:<app-id>`, resolved by the fifth `IRunner`, `FlatpakRunner` — the
+installed app *is* the build, there's no separate "which build" choice the
+way Proton/Wine have. `exe_path` is never required for a Flatpak game,
+unlike every other runner. `install_path` points at the app's own
+`~/.var/app/<app-id>` data directory — the closest real on-disk stand-in
+Flatpak has to an install folder, for `DELETE`'s containment check and
+`FindByInstallPath`'s idempotence on rescan. Requires `flatpak.enabled`
+(default on).
+
+---
+
+## GameMode
+
+### `GET /v1/gamemode/status` — implemented
+```json
+{ "installed": true, "daemon_running": false }
+```
+`installed` is whether `gamemoded`/`gamemoderun` is on `PATH` at all;
+`daemon_running` is whether `com.feralinteractive.GameMode` currently owns
+its name on the session bus, i.e. the daemon is actually up right now — the
+two are reported separately since they're different problems (nothing
+installed at all, vs installed but not currently running) needing different
+guidance. Checked via `gdbus`, the desktop-bus-standard `NameHasOwner` call,
+not anything GameMode-specific.
+
+`launch.gamemode` (a per-game-overridable setting, default off) registers
+the game with GameMode automatically via its own D-Bus interface
+(`RegisterGame`/`UnregisterGame`) around the game's exact lifetime — no
+`command_wrappers` entry needed. Always best-effort: a daemon that isn't
+reachable is logged and otherwise ignored, never a launch failure.
+
+---
+
 ## Metadata
 
 Cover art and store info, fetched from public web APIs and cached on disk

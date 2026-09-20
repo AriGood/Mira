@@ -288,6 +288,31 @@ TEST_CASE("POST /v1/games/{id}/launch: a game's own env wins over launch.env") {
   CHECK(LastError(client, "env-precedence-game").empty());
 }
 
+TEST_CASE("POST /v1/games/{id}/launch with launch.gamemode never blocks or fails the launch") {
+  LiveServer server(TempDir("server-launch-gamemode"));
+
+  model::Game game;
+  game.id = "gamemode-game";
+  game.name = "gamemode-game";
+  game.platform = model::Platform::Native;
+  game.status = model::GameStatus::Ready;
+  game.install_path = "/bin";
+  game.exe_path = "true";
+  game.overrides["launch.gamemode"] = true;
+  REQUIRE(server.games().Upsert(game).has_value());
+
+  httplib::Client client = server.Client();
+  auto launched = client.Post("/v1/games/gamemode-game/launch");
+  REQUIRE(launched != nullptr);
+  CHECK(launched->status == 200);
+
+  // Whether a real gamemoded is reachable on this machine or not, the
+  // launch itself must always complete cleanly -- GameMode registration is
+  // best-effort and must never surface as a launch failure or a crash.
+  REQUIRE(WaitForExit(client, "gamemode-game"));
+  CHECK(LastError(client, "gamemode-game").empty());
+}
+
 TEST_CASE("PATCH /v1/games/{id} tags replaces the array wholesale") {
   LiveServer server(TempDir("server-tags-patch"));
 
@@ -520,4 +545,17 @@ TEST_CASE("POST /v1/games/{id}/launch through mira-run populates GET .../log wit
   REQUIRE(res != nullptr);
   CHECK(res->status == 200);
   CHECK(res->body.find("mira-run") != std::string::npos);
+}
+
+TEST_CASE("GET /v1/gamemode/status reports both installed and daemon_running") {
+  LiveServer server(TempDir("server-gamemode-status"));
+  httplib::Client client = server.Client();
+  auto res = client.Get("/v1/gamemode/status");
+  REQUIRE(res != nullptr);
+  CHECK(res->status == 200);
+  const auto body = nlohmann::json::parse(res->body, nullptr, false);
+  REQUIRE(body.contains("installed"));
+  REQUIRE(body.contains("daemon_running"));
+  CHECK(body["installed"].is_boolean());
+  CHECK(body["daemon_running"].is_boolean());
 }

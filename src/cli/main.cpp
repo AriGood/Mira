@@ -354,6 +354,25 @@ int CmdFlatpak(int argc, char** argv) {
   return 2;
 }
 
+int CmdGameModeStatus() {
+  auto client = Connect();
+  auto res = client.Get("/v1/gamemode/status");
+  if (!Ok(res)) {
+    PrintError(res);
+    return 1;
+  }
+  json status = json::parse(res->body);
+  std::printf("installed: %s  daemon running: %s\n", status.value("installed", false) ? "yes" : "no",
+             status.value("daemon_running", false) ? "yes" : "no");
+  return 0;
+}
+
+int CmdGameMode(int argc, char** argv) {
+  if (argc > 0 && std::string_view(argv[0]) == "status") return CmdGameModeStatus();
+  std::fprintf(stderr, "usage: mira gamemode status\n");
+  return 2;
+}
+
 int CmdTricks(int argc, char** argv) {
   if (argc < 2) {
     std::fprintf(stderr,
@@ -718,6 +737,7 @@ void PrintUsage() {
       "  steam scan             detect installed Steam games\n"
       "  lutris import          import games from Lutris's own database\n"
       "  flatpak scan           detect installed Flatpak apps\n"
+      "  gamemode status         check whether GameMode is installed/running\n"
       "  metadata <id> [--refresh]                cached cover-art/store info\n"
       "  tricks <id> <verb>     run a winetricks verb against this game's prefix\n"
       "  config get|set|list|reset [args...]\n"
@@ -750,6 +770,7 @@ int main(int argc, char** argv) {
   if (command == "steam") return CmdSteam(rest_argc, rest);
   if (command == "lutris") return CmdLutris(rest_argc, rest);
   if (command == "flatpak") return CmdFlatpak(rest_argc, rest);
+  if (command == "gamemode") return CmdGameMode(rest_argc, rest);
   if (command == "metadata") return CmdMetadata(rest_argc, rest);
   if (command == "tricks") return CmdTricks(rest_argc, rest);
   if (command == "daemon") return CmdDaemon(rest_argc, rest, argv[0]);

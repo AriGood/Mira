@@ -23,6 +23,7 @@
 #include "core/Result.h"
 #include "model/Types.h"
 #include "proc/Session.h"
+#include "runner/GameMode.h"
 
 using namespace mira;
 
@@ -38,6 +39,7 @@ struct Args {
   std::string post;
   int pre_timeout_s = 30;
   int post_timeout_s = 30;
+  bool gamemode = false;
   std::vector<std::string> game_argv;
 };
 
@@ -66,6 +68,8 @@ std::optional<Args> ParseArgs(int argc, char** argv) {
       auto v = next();
       if (!v) return std::nullopt;
       args.log_max_mb = std::atoi(v->c_str());
+    } else if (a == "--gamemode") {
+      args.gamemode = true;
     } else if (a == "--status-fd") {
       auto v = next();
       if (!v) return std::nullopt;
@@ -301,6 +305,8 @@ int main(int argc, char** argv) {
   // already running regardless of whether this succeeds.
   [[maybe_unused]] auto write_start = proc::WriteSessionRecord(session_path, record);
 
+  if (args.gamemode) gamemode::RegisterGame(game_pid);
+
   // No setpgid() above means the game shares mira-run's own process group
   // (mira-run is that group's leader — see runner::SpawnDetachedWithStatus),
   // so mirad's Stop() reaches the whole tree (mira-run included) with one
@@ -319,6 +325,8 @@ int main(int argc, char** argv) {
   do {
     waited = ::waitpid(game_pid, &status, 0);
   } while (waited < 0 && errno == EINTR);
+
+  if (args.gamemode) gamemode::UnregisterGame(game_pid);
 
   record.finished = true;
   record.ended_at = model::NowSeconds();
