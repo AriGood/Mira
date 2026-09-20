@@ -146,7 +146,13 @@ void FetchGriddbSlot(const config::Config& config, const std::string& auth_heade
   const json data = Value(response, "data", json::array());
   if (data.empty()) return;
 
-  json candidates = json::array();
+  // Appended, not assigned: a Steam-owned game seeds this slot with its own
+  // CDN image first, and that entry must survive so the picker can switch
+  // back to it, not just to a SteamGridDB alternate.
+  json candidates = (info.contains("art_candidates") && info["art_candidates"].contains(std::string(slot)))
+                        ? info["art_candidates"][std::string(slot)]
+                        : json::array();
+  bool found_any = false;
   for (const auto& item : data) {
     const std::string url = Value(item, "url", std::string());
     if (url.empty()) continue;
@@ -157,12 +163,16 @@ void FetchGriddbSlot(const config::Config& config, const std::string& auth_heade
         {"width", Value(item, "width", 0)},
         {"height", Value(item, "height", 0)},
         {"style", Value(item, "style", std::string())},
+        {"source", "steamgriddb"},
     });
+    found_any = true;
   }
-  if (candidates.empty()) return;
+  if (!found_any) return;
   info["art_candidates"][std::string(slot)] = candidates;
 
   const std::string key = slot == "cover" ? "artwork" : std::string(slot);
+  // Only missing here if the Steam CDN download failed -- no Steam entry
+  // was seeded above either then, so candidates[0] is SteamGridDB's own.
   if (info.contains(key)) return;
 
   // No credentials on the image download itself -- see FetchArtworkInto.
@@ -308,13 +318,34 @@ void FetchSteamOwned(const config::Config& config, const std::string& appid, con
                         {"total_reports", Value(proton, "total", 0)}};
   }
 
-  FetchArtworkInto(config, std::format("https://cdn.akamai.steamstatic.com/steam/apps/{}/library_600x900.jpg", appid),
-                   game_id, "steam_cdn", "cover", info);
+  // Steam's own cover/hero go into art_candidates too, as the first entry --
+  // otherwise there was no way back to it once you picked a SteamGridDB
+  // alternate. Negative id: a real SteamGridDB id is always positive.
+  constexpr std::int64_t kSteamCdnCandidateId = -1;
+
+  const std::string cover_url =
+      std::format("https://cdn.akamai.steamstatic.com/steam/apps/{}/library_600x900.jpg", appid);
+  if (FetchArtworkInto(config, cover_url, game_id, "steam_cdn", "cover", info, kSteamCdnCandidateId)) {
+    info["art_candidates"]["cover"] = json::array({{{"id", kSteamCdnCandidateId},
+                                                     {"url", cover_url},
+                                                     {"width", 600},
+                                                     {"height", 900},
+                                                     {"style", "steam"},
+                                                     {"source", "steam_cdn"}}});
+  }
   // Steam's own CDN serves this too, same appid, no key -- the wide banner
   // shown at the top of a game's store/library page, distinct from the
   // vertical library_600x900 cover above.
-  FetchArtworkInto(config, std::format("https://cdn.akamai.steamstatic.com/steam/apps/{}/library_hero.jpg", appid),
-                   game_id, "steam_cdn", "hero", info);
+  const std::string hero_url =
+      std::format("https://cdn.akamai.steamstatic.com/steam/apps/{}/library_hero.jpg", appid);
+  if (FetchArtworkInto(config, hero_url, game_id, "steam_cdn", "hero", info, kSteamCdnCandidateId)) {
+    info["art_candidates"]["hero"] = json::array({{{"id", kSteamCdnCandidateId},
+                                                    {"url", hero_url},
+                                                    {"width", 3840},
+                                                    {"height", 1240},
+                                                    {"style", "steam"},
+                                                    {"source", "steam_cdn"}}});
+  }
   // Small store-listing thumbnail and the classic top-of-page banner --
   // same CDN, same no-key pattern, just two more fixed filenames per appid.
   FetchArtworkInto(config, std::format("https://cdn.akamai.steamstatic.com/steam/apps/{}/capsule_231x87.jpg", appid),
@@ -323,9 +354,9 @@ void FetchSteamOwned(const config::Config& config, const std::string& appid, con
                    "steam_cdn", "header", info);
 
   // Steam's own art above is already the default; this only adds
-  // SteamGridDB's candidates as alternates to switch to, when a key is set.
-  // Never fails the fetch -- a Steam-owned game already has its cover either
-  // way.
+  // SteamGridDB's candidates as alternates, appended after the Steam entry
+  // already seeded above, so Steam's own image stays first. Never fails the
+  // fetch -- a Steam-owned game already has its cover either way.
   if (const std::string api_key = config.GetString("steamgriddb.api_key"); !api_key.empty()) {
     FetchGriddbCandidates(config, api_key, name, game_id, info);
   }
@@ -399,9 +430,14 @@ Result<void> SelectArtwork(const config::Config& config, const std::string& game
     return Err("no_candidates", "no candidate list cached for this slot");
   }
   std::string url;
+  // Cache entries written before candidates carried their own source (either
+  // this field, pre-dating it entirely) default to "steamgriddb" -- every
+  // candidate was one before the Steam CDN entry existed.
+  std::string source = "steamgriddb";
   for (const auto& candidate : info["art_candidates"][slot]) {
     if (Value(candidate, "id", std::int64_t{-1}) == candidate_id) {
       url = Value(candidate, "url", std::string());
+      source = Value(candidate, "source", std::string("steamgriddb"));
       break;
     }
   }
@@ -411,7 +447,7 @@ Result<void> SelectArtwork(const config::Config& config, const std::string& game
   // cached, rather than accepting a caller-supplied URL directly -- so the
   // daemon never ends up fetching an arbitrary URL on the API's behalf. No
   // credentials on the download itself -- see FetchArtworkInto.
-  if (!FetchArtworkInto(config, url, game_id, "steamgriddb", slot, info, candidate_id)) {
+  if (!FetchArtworkInto(config, url, game_id, source, slot, info, candidate_id)) {
     return Err("download_failed", "couldn't download the selected image");
   }
 
