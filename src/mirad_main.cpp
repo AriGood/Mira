@@ -56,7 +56,7 @@ int main(int argc, char** argv) {
       return 0;
     }
     if (arg == "--version") {
-      std::puts("mirad 0.5.0");
+      std::puts("mirad 0.7.0");
       return 0;
     }
     if (arg == "--socket" && i + 1 < argc) {
