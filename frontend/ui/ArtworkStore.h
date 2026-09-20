@@ -46,6 +46,15 @@ public:
   // wants: neither one has a cover to show.
   bool HasArtwork(const std::string& id) const;
 
+  // The unscaled artwork for this id, for a caller that wants to fit it
+  // itself rather than Cover()'s tile-shaped crop. Null until fetched —
+  // call EnsureRequested() first.
+  QPixmap RawArtwork(const std::string& id) const;
+
+  // Queues the fetch if this id hasn't been asked about yet, without also
+  // scaling/caching a Cover() for some tile size nobody asked for.
+  void EnsureRequested(const std::string& id);
+
   // Forget everything known about one game's artwork and fetch it again.
   // For `game.metadata_ready`, and for an explicit refresh.
   void Invalidate(const std::string& id);

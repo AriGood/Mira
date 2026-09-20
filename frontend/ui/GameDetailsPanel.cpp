@@ -6,6 +6,7 @@
 #include <QPainterPath>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QSizePolicy>
 #include <QStackedWidget>
 #include <QVBoxLayout>
 
@@ -21,7 +22,35 @@
 namespace mira_gui {
 namespace {
 
-constexpr QSize kCoverSize(140, 210);
+// The details panel's image area is hero-shaped: a game with a hero shows
+// it, one without shows its cover instead, but the box itself — and how a
+// mismatched source fits into it — doesn't change based on which. Scales
+// `source` down or up so it fits entirely inside `box` without being
+// cropped, then centers it on `background`. A null `source` just paints the
+// empty box, for a placeholder cover that's already drawn to fill it.
+QPixmap FitLetterboxed(const QPixmap& source, QSize box, int radius, const QColor& background) {
+  QPixmap canvas(box);
+  canvas.fill(Qt::transparent);
+  QPainter painter(&canvas);
+  painter.setRenderHint(QPainter::Antialiasing);
+  QPainterPath clip;
+  clip.addRoundedRect(QRectF(0, 0, box.width(), box.height()), radius, radius);
+  painter.setClipPath(clip);
+  painter.fillRect(QRectF(0, 0, box.width(), box.height()), background);
+
+  if (!source.isNull()) {
+    const qreal scale = qMin(static_cast<qreal>(box.width()) / source.width(),
+                             static_cast<qreal>(box.height()) / source.height());
+    const QSize fitted_size(qMax(1, qRound(source.width() * scale)),
+                            qMax(1, qRound(source.height() * scale)));
+    const QPixmap fitted =
+        source.scaled(fitted_size, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+    painter.drawPixmap((box.width() - fitted.width()) / 2, (box.height() - fitted.height()) / 2,
+                       fitted);
+  }
+  painter.end();
+  return canvas;
+}
 
 std::string Join(const std::vector<std::string>& values) {
   std::string joined;
@@ -32,10 +61,27 @@ std::string Join(const std::vector<std::string>& values) {
   return joined;
 }
 
+// QPushButton's own default horizontal size policy is Fixed — one of these,
+// with wording like "Refresh cover art & metadata", dictates a floor on the
+// sidebar's minimum width the same way an unwrappable label does (see
+// ValueLabel), and dragging the splitter narrower than that floor just left
+// its own text spilling past the panel instead of shrinking. Ignored fixes
+// it the same way: still full width when there's room, no longer a floor
+// when there isn't.
+QPushButton* ActionButton(const QString& text, QWidget* parent) {
+  auto* button = new QPushButton(text, parent);
+  button->setSizePolicy(QSizePolicy::Ignored, button->sizePolicy().verticalPolicy());
+  return button;
+}
+
 QLabel* ValueLabel(QWidget* parent) {
   auto* label = new QLabel(parent);
   label->setTextInteractionFlags(Qt::TextSelectableByMouse);
   label->setWordWrap(true);
+  // Ignored, not Preferred: word wrap can't break an unbroken string (a
+  // path, "proton:GE-Proton11-7"), so its minimumSizeHint was the sidebar's
+  // own floor, wider than the splitter was ever dragged to.
+  label->setSizePolicy(QSizePolicy::Ignored, label->sizePolicy().verticalPolicy());
   return label;
 }
 
@@ -55,16 +101,32 @@ GameDetailsPanel::GameDetailsPanel(QWidget* parent) : QWidget(parent) {
   layout->setContentsMargins(12, 12, 12, 12);
   layout->setSpacing(10);
 
-  // The wide hero art when mirad has it (Steam games do), the portrait cover
-  // otherwise — never both, which reads as two pictures of the same game.
+  // Exactly one of these three is ever visible (UpdateImageVisibility):
+  // hero, cover, or this placeholder while it's still unknown which — never
+  // the cover speculatively, to avoid a cover-then-hero flash.
+  // Ignored horizontally: a QLabel's sizeHint tracks its current pixmap, so
+  // last render's width would floor the panel's minimum and block shrinking
+  // to a smaller one. Same ratchet as ValueLabel's, for images not text.
   banner_ = new QLabel(panel);
+  banner_->setObjectName("game_details_banner");
   banner_->setAlignment(Qt::AlignCenter);
+  banner_->setSizePolicy(QSizePolicy::Ignored, banner_->sizePolicy().verticalPolicy());
   banner_->setVisible(false);
   layout->addWidget(banner_);
 
   cover_ = new QLabel(panel);
+  cover_->setObjectName("game_details_cover");
   cover_->setAlignment(Qt::AlignCenter);
+  cover_->setSizePolicy(QSizePolicy::Ignored, cover_->sizePolicy().verticalPolicy());
+  cover_->setVisible(false);
   layout->addWidget(cover_);
+
+  placeholder_ = new QLabel("No image yet", panel);
+  placeholder_->setObjectName("game_details_placeholder");
+  placeholder_->setAlignment(Qt::AlignCenter);
+  placeholder_->setProperty("role", "muted");
+  placeholder_->setFixedHeight(ImageBoxSize().height());
+  layout->addWidget(placeholder_);
 
   name_ = new QLabel(panel);
   name_->setWordWrap(true);
@@ -74,7 +136,7 @@ GameDetailsPanel::GameDetailsPanel(QWidget* parent) : QWidget(parent) {
   status_ = new QLabel(panel);
   layout->addWidget(status_);
 
-  play_ = new QPushButton("Play", panel);
+  play_ = ActionButton("Play", panel);
   play_->setMinimumHeight(34);
   connect(play_, &QPushButton::clicked, this, [this] {
     if (game_id_.empty()) return;
@@ -87,7 +149,7 @@ GameDetailsPanel::GameDetailsPanel(QWidget* parent) : QWidget(parent) {
   });
   layout->addWidget(play_);
 
-  auto* edit = new QPushButton("Details && settings…", panel);
+  auto* edit = ActionButton("Details && settings…", panel);
   connect(edit, &QPushButton::clicked, this, [this] {
     if (!game_id_.empty()) emit EditRequested(QString::fromStdString(game_id_));
   });
@@ -95,7 +157,7 @@ GameDetailsPanel::GameDetailsPanel(QWidget* parent) : QWidget(parent) {
 
   // Also on the tile's right-click menu, but a right-click menu is not
   // where anyone looks for "this game has the wrong picture".
-  auto* refresh_metadata = new QPushButton("Refresh cover art && metadata", panel);
+  auto* refresh_metadata = ActionButton("Refresh cover art && metadata", panel);
   refresh_metadata->setToolTip(
       "Re-fetch this game's cover and store info. Worth doing after setting a SteamGridDB key, "
       "which is what a non-Steam game needs before it can have artwork at all.");
@@ -104,7 +166,7 @@ GameDetailsPanel::GameDetailsPanel(QWidget* parent) : QWidget(parent) {
   });
   layout->addWidget(refresh_metadata);
 
-  auto* choose_artwork = new QPushButton("Choose cover art…", panel);
+  auto* choose_artwork = ActionButton("Choose cover art…", panel);
   choose_artwork->setToolTip(
       "Browse SteamGridDB's other results for this game's cover, if it has any cached.");
   connect(choose_artwork, &QPushButton::clicked, this, [this] {
@@ -112,7 +174,7 @@ GameDetailsPanel::GameDetailsPanel(QWidget* parent) : QWidget(parent) {
   });
   layout->addWidget(choose_artwork);
 
-  auto* choose_hero = new QPushButton("Choose hero art…", panel);
+  auto* choose_hero = ActionButton("Choose hero art…", panel);
   choose_hero->setToolTip(
       "Browse SteamGridDB's other results for this game's wide banner art, if it has any cached.");
   connect(choose_hero, &QPushButton::clicked, this, [this] {
@@ -164,24 +226,27 @@ GameDetailsPanel::GameDetailsPanel(QWidget* parent) : QWidget(parent) {
   scroll->setFrameShape(QFrame::NoFrame);
   stack_->addWidget(scroll);
 
-  // The banner is a painted pixmap, so the stylesheet cannot re-round it
-  // when the corner radius changes.
-  connect(theme::Notifier::Instance(), &theme::Notifier::Changed, this,
-          [this] { RenderBanner(); });
+  // The banner and cover are painted pixmaps, so the stylesheet cannot
+  // re-round or resize them itself when the corner radius or hero_height
+  // changes.
+  connect(theme::Notifier::Instance(), &theme::Notifier::Changed, this, [this] {
+    RenderBanner();
+    placeholder_->setFixedHeight(ImageBoxSize().height());
+    if (current_game_) RefreshCover(*current_game_);
+  });
 
   Clear();
 }
 
 void GameDetailsPanel::Clear() {
   game_id_.clear();
+  current_game_.reset();
   stack_->setCurrentIndex(0);
 }
 
 void GameDetailsPanel::ClearMetadata() {
   description_->setVisible(false);
-  banner_->setVisible(false);
   banner_source_ = QPixmap();
-  cover_->setVisible(true);
   for (QLabel* label : {released_, developer_, genres_, reviews_, protondb_}) {
     form_->setRowVisible(label, false);
   }
@@ -220,11 +285,22 @@ void GameDetailsPanel::ShowMetadata(const GameMetadata& metadata) {
 void GameDetailsPanel::LoadMetadata(const std::string& id) {
   MiradClient::GetMetadataAsync(this, id, [this, id](GameMetadataResult result) {
     if (game_id_ != id) return;  // the selection moved on while this was in flight
-    if (!result.ok) return;      // missing is the ordinary case, and says nothing to show
+    const QString key = QString::fromStdString(id);
+    if (!result.ok) {
+      // Missing is the ordinary case and says nothing to show, but
+      // hero_known_ still needs an answer -- otherwise placeholder_ (shown
+      // while ShowGame doesn't know yet) would never resolve to the cover.
+      hero_known_[key] = false;
+      UpdateImageVisibility();
+      return;
+    }
     ShowMetadata(result.metadata);
     // Not named `slots`: Qt's moc keywords define that as a macro.
     const std::vector<std::string>& art = result.metadata.art_slots;
-    if (std::find(art.begin(), art.end(), "hero") != art.end()) LoadBanner(id);
+    const bool has_hero = std::find(art.begin(), art.end(), "hero") != art.end();
+    hero_known_[key] = has_hero;
+    if (has_hero) LoadBanner(id);
+    UpdateImageVisibility();
   });
 }
 
@@ -249,33 +325,51 @@ void GameDetailsPanel::LoadBanner(const std::string& id) {
   });
 }
 
+QSize GameDetailsPanel::ImageBoxSize() const {
+  // The parent's width, not banner_'s own: banner_ starts hidden and never
+  // laid out, so its width can read stale/default while the panel around it
+  // is already the sidebar's real width. 24 is the panel's own margins.
+  const int width = qMax(120, banner_->parentWidget()->width() - 24);
+  // Height derived from width via SteamGridDB's own 1920x620 ratio, not
+  // just hero_height outright — a box whose shape doesn't match a real
+  // hero's pads even a correctly-sized one with empty bands. hero_height
+  // now only caps how tall that gets on a wide sidebar.
+  constexpr qreal kHeroAspect = 1920.0 / 620.0;
+  const int height = qMax(20, qMin(theme::Current().hero_height, qRound(width / kHeroAspect)));
+  return QSize(width, height);
+}
+
 void GameDetailsPanel::RenderBanner() {
   if (banner_source_.isNull()) return;
+  // Contain-fit, not cover: SteamGridDB's own hero shape is 1920x620, but a
+  // mismatched alternate should show whole and undistorted, not have its
+  // edges cut off — same treatment RefreshCover gives a game with no hero.
+  banner_->setPixmap(FitLetterboxed(banner_source_, ImageBoxSize(), theme::Current().radius_panel,
+                                    theme::Current().surface_alt));
+  UpdateImageVisibility();
+}
 
-  const int width = qMax(120, banner_->width());
-  const QPixmap scaled = banner_source_.scaledToWidth(width, Qt::SmoothTransformation);
+void GameDetailsPanel::UpdateImageVisibility() {
+  const QString key = QString::fromStdString(game_id_);
+  const auto known = hero_known_.constFind(key);
+  const bool confirmed_no_hero = known != hero_known_.constEnd() && !known.value();
+  const bool hero_ready = known != hero_known_.constEnd() && known.value() && banners_.contains(key);
 
-  // Rounded to the panel radius the theme asks for, which means painting it:
-  // a stylesheet cannot clip a pixmap inside a QLabel.
-  const int radius = theme::Current().radius_panel;
-  QPixmap rounded(scaled.size());
-  rounded.fill(Qt::transparent);
-  QPainter painter(&rounded);
-  painter.setRenderHint(QPainter::Antialiasing);
-  QPainterPath clip;
-  clip.addRoundedRect(QRectF(QPointF(0, 0), scaled.size()), radius, radius);
-  painter.setClipPath(clip);
-  painter.drawPixmap(0, 0, scaled);
-  painter.end();
-
-  banner_->setPixmap(rounded);
-  banner_->setVisible(true);
-  cover_->setVisible(false);
+  banner_->setVisible(hero_ready);
+  cover_->setVisible(confirmed_no_hero);
+  placeholder_->setVisible(!hero_ready && !confirmed_no_hero);
 }
 
 void GameDetailsPanel::resizeEvent(QResizeEvent* event) {
   QWidget::resizeEvent(event);
   RenderBanner();
+  // Kept in sync even while hidden, or its pixmap stays sized for whatever
+  // width the panel had the last time it was actually the visible one.
+  if (current_game_) RefreshCover(*current_game_);
+  // ImageBoxSize()'s height now tracks width (see its own comment), so the
+  // placeholder's fixed height is just as stale on a resize as the other
+  // two's pixmaps are.
+  placeholder_->setFixedHeight(ImageBoxSize().height());
 }
 
 void GameDetailsPanel::SetArtworkStore(ArtworkStore* store) { artwork_ = store; }
@@ -286,18 +380,36 @@ void GameDetailsPanel::RefreshBanner(const std::string& id) {
 }
 
 void GameDetailsPanel::RefreshCover(const GameSummary& game) {
-  cover_->setPixmap(artwork_ != nullptr
-                        ? artwork_->Cover(game, kCoverSize, devicePixelRatioF())
-                        : PlaceholderCover(QString::fromStdString(game.name),
-                                           QString::fromStdString(game.id), kCoverSize,
-                                           devicePixelRatioF()));
+  const QSize box = ImageBoxSize();
+  const QString name = QString::fromStdString(game.name);
+  const QString id = QString::fromStdString(game.id);
+
+  if (artwork_ != nullptr) artwork_->EnsureRequested(game.id);
+  if (artwork_ != nullptr && artwork_->HasArtwork(game.id)) {
+    // Real art: fit-and-letterbox it into the same box the hero banner
+    // gets, rather than the cover-crop Cover() itself would give a grid
+    // tile — a cover showing here at all means there's no hero, and this
+    // box is hero-shaped either way; never cropped, same as RenderBanner.
+    cover_->setPixmap(FitLetterboxed(artwork_->RawArtwork(game.id), box,
+                                     theme::Current().radius_panel, theme::Current().surface_alt));
+    return;
+  }
+  // No real art (yet, or ever) — the generated placeholder is drawn
+  // straight to the box's own size; nothing to letterbox since it's
+  // synthetic, not sourced from an image with its own aspect ratio.
+  cover_->setPixmap(PlaceholderCover(name, id, box, devicePixelRatioF()));
 }
 
 void GameDetailsPanel::ShowGame(const GameSummary& game, bool running) {
   const bool same_game = game_id_ == game.id;
   game_id_ = game.id;
   running_ = running;
+  current_game_ = game;
   stack_->setCurrentIndex(1);
+
+  // Applied immediately, before the metadata round trip below even starts —
+  // a repeat selection skips the placeholder and any cover-then-hero flash.
+  UpdateImageVisibility();
 
   // Only on a real change of selection: ShowGame also runs for a state event
   // on the game already shown, and clearing there would flicker.
