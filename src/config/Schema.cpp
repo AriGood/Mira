@@ -348,6 +348,10 @@ Schema::Schema() {
        "Override for where Lutris keeps pga.db and its per-game configs. "
        "Empty auto-detects $XDG_DATA_HOME/lutris, then ~/.local/share/lutris."},
 
+      {"flatpak.enabled", Type::Bool, true, Tier::Basic,
+       "Let \"mira flatpak scan\" / POST /v1/flatpak/scan list installed Flatpak apps "
+       "(via flatpak list) and add them alongside Mira's own library."},
+
       {"runner_sources.proton_ge.repo", Type::String, std::string(runner_sources::kProtonGERepo),
        Tier::Advanced, "GitHub \"owner/repo\" Proton-GE builds are downloaded from."},
 

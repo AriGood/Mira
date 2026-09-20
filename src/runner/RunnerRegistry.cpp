@@ -8,6 +8,7 @@
 #include <system_error>
 
 #include "core/Log.h"
+#include "runner/FlatpakRunner.h"
 #include "runner/NativeRunner.h"
 #include "runner/ProtonRunner.h"
 #include "runner/SteamRunner.h"
@@ -46,10 +47,12 @@ RunnerRegistry::RunnerRegistry(config::Config& config) : config_(config) {
   auto proton = std::make_unique<ProtonRunner>();
   auto wine = std::make_unique<WineRunner>();
   auto steam = std::make_unique<SteamRunner>();
+  auto flatpak = std::make_unique<FlatpakRunner>();
   runners_[native->kind()] = std::move(native);
   runners_[proton->kind()] = std::move(proton);
   runners_[wine->kind()] = std::move(wine);
   runners_[steam->kind()] = std::move(steam);
+  runners_[flatpak->kind()] = std::move(flatpak);
 }
 
 // One build, discovered once. On a normal Arch/Steam setup `~/.steam/steam`

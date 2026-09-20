@@ -336,6 +336,24 @@ int CmdLutris(int argc, char** argv) {
   return 2;
 }
 
+int CmdFlatpakScan() {
+  auto client = Connect();
+  auto res = client.Post("/v1/flatpak/scan");
+  if (!Ok(res)) {
+    PrintError(res);
+    return 1;
+  }
+  json summary = json::parse(res->body);
+  std::printf("added: %lld  updated: %lld\n", summary.value("added", 0LL), summary.value("updated", 0LL));
+  return 0;
+}
+
+int CmdFlatpak(int argc, char** argv) {
+  if (argc > 0 && std::string_view(argv[0]) == "scan") return CmdFlatpakScan();
+  std::fprintf(stderr, "usage: mira flatpak scan\n");
+  return 2;
+}
+
 int CmdTricks(int argc, char** argv) {
   if (argc < 2) {
     std::fprintf(stderr,
@@ -699,6 +717,7 @@ void PrintUsage() {
       "  remove <id> [--delete-files] [--delete-prefix]\n"
       "  steam scan             detect installed Steam games\n"
       "  lutris import          import games from Lutris's own database\n"
+      "  flatpak scan           detect installed Flatpak apps\n"
       "  metadata <id> [--refresh]                cached cover-art/store info\n"
       "  tricks <id> <verb>     run a winetricks verb against this game's prefix\n"
       "  config get|set|list|reset [args...]\n"
@@ -730,6 +749,7 @@ int main(int argc, char** argv) {
   if (command == "remove") return CmdRemove(rest_argc, rest);
   if (command == "steam") return CmdSteam(rest_argc, rest);
   if (command == "lutris") return CmdLutris(rest_argc, rest);
+  if (command == "flatpak") return CmdFlatpak(rest_argc, rest);
   if (command == "metadata") return CmdMetadata(rest_argc, rest);
   if (command == "tricks") return CmdTricks(rest_argc, rest);
   if (command == "daemon") return CmdDaemon(rest_argc, rest, argv[0]);

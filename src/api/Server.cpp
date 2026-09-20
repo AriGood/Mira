@@ -20,6 +20,7 @@
 #include "core/Log.h"
 #include "core/Strings.h"
 #include "desktop/DesktopEntries.h"
+#include "flatpak/FlatpakScanner.h"
 #include "library/Scanner.h"
 #include "lutris/LutrisImporter.h"
 #include "metadata/MetadataFetcher.h"
@@ -567,6 +568,15 @@ void Server::RegisterRoutes() {
     SyncDesktopEntries(config_, games_);
     for (const model::Game& game : summary->added_games) metadata_fetches_.Enqueue(config_, events_, game);
     SendJson(res, {{"added", summary->added}, {"updated", summary->updated}, {"skipped", summary->skipped}});
+  });
+
+  http_->Post("/v1/flatpak/scan", [this](const Request&, Response& res) {
+    flatpak::FlatpakScanner scanner(config_, games_, events_);
+    auto summary = scanner.Scan();
+    if (!summary) return SendError(res, 404, summary.error().code, summary.error().message);
+    SyncDesktopEntries(config_, games_);
+    for (const model::Game& game : summary->added_games) metadata_fetches_.Enqueue(config_, events_, game);
+    SendJson(res, {{"added", summary->added}, {"updated", summary->updated}});
   });
 
   // --- launching ------------------------------------------------------------
