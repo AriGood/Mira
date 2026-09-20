@@ -158,9 +158,18 @@ like `library_roots`, describe the daemon rather than a game, see
 
 ### `POST /v1/games/{id}/launch` — implemented
 Resolves `runner_ref` (defaulting to `native:native`) and execs the game,
-wrapped by `command_wrappers` in order (first entry outermost), tracked by
-`proc::ProcessSupervisor` for crash detection and playtime. 404 if unknown,
-409 if `needs_install` or not `ready`.
+wrapped by `command_wrappers` in order (first entry outermost), with
+`launch.env` applied under whatever env the runner itself set (the game's
+own `env` always wins over both), tracked by `proc::ProcessSupervisor` for
+crash detection and playtime. 404 if unknown, 409 if `needs_install` or not
+`ready`.
+
+Each `command_wrappers` entry is split on spaces before it's prepended (like
+a game's own `args` — no shell quoting), so `"gamescope -W 1920 -H 1080"` is
+one entry that expands to three argv tokens. Every wrapper's own binary is
+checked against `$PATH` before anything is spawned — `400 wrapper_not_found`
+names the missing one, rather than the launch failing invisibly with exit
+code 127 from inside the wrapper.
 
 `launch.pre_script` (global default, overridable per game via `.../config`)
 runs first, via `sh -c`, and blocks the request — a non-zero exit aborts

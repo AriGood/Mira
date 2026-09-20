@@ -70,6 +70,40 @@ private:
   std::thread thread_;
 };
 
+// Polling POST .../stop is the only externally-visible "has this launch
+// actually finished yet" signal available over the API (ProcessSupervisor's
+// own IsRunning() is test-only, not exposed to a client) — a 409 means
+// ProcessSupervisor no longer considers the game running, i.e. the watcher
+// thread already reaped it and recorded the outcome.
+bool WaitForExit(httplib::Client& client, const std::string& id,
+                 std::chrono::milliseconds timeout = std::chrono::milliseconds(3000)) {
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  while (std::chrono::steady_clock::now() < deadline) {
+    auto res = client.Post(std::format("/v1/games/{}/stop", id));
+    if (res && res->status == 409) return true;
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  }
+  return false;
+}
+
+std::string LastError(httplib::Client& client, const std::string& id) {
+  auto res = client.Get(std::format("/v1/games/{}", id));
+  if (!res) return "<no response>";
+  const auto body = nlohmann::json::parse(res->body, nullptr, false);
+  if (body.is_discarded()) return "<unparseable>";
+  return body.value("last_error", std::string());
+}
+
+// A small script, since command_wrappers/launch.env behavior needs actual
+// env vars visible to a real child process to verify against — not something
+// observable from argv alone over HTTP.
+fs::path WriteEnvCheckScript(const fs::path& dir, std::string_view expect_foo) {
+  fs::create_directories(dir);
+  const fs::path script = dir / "check.sh";
+  std::ofstream(script) << std::format("#!/bin/sh\n[ \"$FOO\" = \"{}\" ] && exit 0 || exit 9\n", expect_foo);
+  return script;
+}
+
 }  // namespace
 
 TEST_CASE("PATCH /v1/games/{id} env: per-key null removes just that key") {
@@ -142,6 +176,101 @@ TEST_CASE("GET /v1/games excludes hidden-tagged games by default; ?tag= filters,
   auto tool_list = client.Get("/v1/games?tag=tool");
   REQUIRE(tool_list != nullptr);
   CHECK(tool_list->body.find("\"umu-launcher\"") != std::string::npos);
+}
+
+TEST_CASE("POST /v1/games/{id}/launch refuses a command_wrappers entry that isn't on PATH") {
+  LiveServer server(TempDir("server-launch-bad-wrapper"));
+
+  model::Game game;
+  game.id = "true-game";
+  game.name = "true-game";
+  game.platform = model::Platform::Native;
+  game.status = model::GameStatus::Ready;
+  game.install_path = "/bin";
+  game.exe_path = "true";
+  game.overrides["command_wrappers"] = nlohmann::json::array({"this-wrapper-does-not-exist-anywhere-xyz"});
+  REQUIRE(server.games().Upsert(game).has_value());
+
+  httplib::Client client = server.Client();
+  auto res = client.Post("/v1/games/true-game/launch");
+  REQUIRE(res != nullptr);
+  CHECK(res->status == 400);
+  CHECK(res->body.find("wrapper_not_found") != std::string::npos);
+}
+
+TEST_CASE("POST /v1/games/{id}/launch splits a multi-token command_wrappers entry into separate argv") {
+  LiveServer server(TempDir("server-launch-wrapper-split"));
+
+  model::Game game;
+  game.id = "wrapped-game";
+  game.name = "wrapped-game";
+  game.platform = model::Platform::Native;
+  game.status = model::GameStatus::Ready;
+  game.install_path = "/bin";
+  game.exe_path = "true";
+  // If this weren't split on spaces, exec would look for a binary literally
+  // named "sh -c true" and fail with exit 127 — a passing "true" here is
+  // only possible if ApplyCommandWrappers actually split it into ["sh",
+  // "-c", "true"].
+  game.overrides["command_wrappers"] = nlohmann::json::array({"sh -c true"});
+  REQUIRE(server.games().Upsert(game).has_value());
+
+  httplib::Client client = server.Client();
+  auto launched = client.Post("/v1/games/wrapped-game/launch");
+  REQUIRE(launched != nullptr);
+  CHECK(launched->status == 200);
+
+  REQUIRE(WaitForExit(client, "wrapped-game"));
+  CHECK(LastError(client, "wrapped-game").empty());
+}
+
+TEST_CASE("POST /v1/games/{id}/launch applies launch.env under the resolved command's own env") {
+  LiveServer server(TempDir("server-launch-env"));
+  const fs::path install_dir = TempDir("server-launch-env-install");
+  WriteEnvCheckScript(install_dir, "from-launch-env");
+
+  model::Game game;
+  game.id = "env-game";
+  game.name = "env-game";
+  game.platform = model::Platform::Native;
+  game.status = model::GameStatus::Ready;
+  game.install_path = install_dir.string();
+  game.exe_path = "check.sh";  // no +x needed: NativeRunner always runs .sh through sh
+  game.overrides["launch.env"] = nlohmann::json::array({"FOO=from-launch-env"});
+  REQUIRE(server.games().Upsert(game).has_value());
+
+  httplib::Client client = server.Client();
+  auto launched = client.Post("/v1/games/env-game/launch");
+  REQUIRE(launched != nullptr);
+  CHECK(launched->status == 200);
+
+  REQUIRE(WaitForExit(client, "env-game"));
+  CHECK(LastError(client, "env-game").empty());
+}
+
+TEST_CASE("POST /v1/games/{id}/launch: a game's own env wins over launch.env") {
+  LiveServer server(TempDir("server-launch-env-precedence"));
+  const fs::path install_dir = TempDir("server-launch-env-precedence-install");
+  WriteEnvCheckScript(install_dir, "from-game-env");
+
+  model::Game game;
+  game.id = "env-precedence-game";
+  game.name = "env-precedence-game";
+  game.platform = model::Platform::Native;
+  game.status = model::GameStatus::Ready;
+  game.install_path = install_dir.string();
+  game.exe_path = "check.sh";
+  game.env = {{"FOO", "from-game-env"}};
+  game.overrides["launch.env"] = nlohmann::json::array({"FOO=from-launch-env"});  // must lose
+  REQUIRE(server.games().Upsert(game).has_value());
+
+  httplib::Client client = server.Client();
+  auto launched = client.Post("/v1/games/env-precedence-game/launch");
+  REQUIRE(launched != nullptr);
+  CHECK(launched->status == 200);
+
+  REQUIRE(WaitForExit(client, "env-precedence-game"));
+  CHECK(LastError(client, "env-precedence-game").empty());
 }
 
 TEST_CASE("PATCH /v1/games/{id} tags replaces the array wholesale") {

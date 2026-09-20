@@ -15,6 +15,7 @@
 #include "config/Resolver.h"
 #include "config/Schema.h"
 #include "core/Log.h"
+#include "core/Strings.h"
 #include "desktop/DesktopEntries.h"
 #include "library/Scanner.h"
 #include "lutris/LutrisImporter.h"
@@ -130,12 +131,42 @@ std::optional<std::string> ValidateOverridesPatch(const json& patch) {
 }
 
 // Wraps the launch command in each configured wrapper, in order: the first
-// entry ends up outermost, so ["gamescope", "mangohud"] runs
-// `gamescope mangohud <game>`.
+// entry ends up outermost, so ["gamemoderun", "gamescope -W 1920 -H 1080"]
+// runs `gamemoderun gamescope -W 1920 -H 1080 <game>`. Each entry is split on
+// spaces, like game.args (see NativeRunner.cpp) -- no shell quoting support.
 void ApplyCommandWrappers(Command& command, const std::vector<std::string>& wrappers) {
   for (auto it = wrappers.rbegin(); it != wrappers.rend(); ++it) {
     if (it->empty()) continue;
-    command.argv.insert(command.argv.begin(), *it);
+    const std::vector<std::string> tokens = strings::Split(*it, ' ');
+    command.argv.insert(command.argv.begin(), tokens.begin(), tokens.end());
+  }
+}
+
+// Checked before a launch actually spawns anything, so a wrapper that isn't
+// installed is a clear 400 naming it, instead of the whole launch silently
+// failing with exit code 127 from inside the outermost wrapper.
+Result<void> CheckCommandWrappers(const std::vector<std::string>& wrappers) {
+  for (const std::string& entry : wrappers) {
+    if (entry.empty()) continue;
+    const std::vector<std::string> tokens = strings::Split(entry, ' ');
+    if (tokens.empty()) continue;
+    if (!runner::FindOnPath(tokens[0])) {
+      return Err("wrapper_not_found",
+                std::format("command_wrappers entry \"{}\" is not on PATH", tokens[0]));
+    }
+  }
+  return {};
+}
+
+// launch.env, applied under whatever BuildCommand already set (game.env
+// merged in by the runner always wins, same "global default, per-game
+// override" contract command_wrappers already has).
+void ApplyLaunchEnv(Command& command, const std::vector<std::string>& entries) {
+  for (const std::string& entry : entries) {
+    const auto eq = entry.find('=');
+    if (eq == std::string::npos) continue;
+    const std::string key = entry.substr(0, eq);
+    if (!command.env.contains(key)) command.env[key] = entry.substr(eq + 1);
   }
 }
 
@@ -490,7 +521,12 @@ void Server::RegisterRoutes() {
     auto command = resolved->runner->BuildCommand(*game, resolved->build);
     if (!command) return SendError(res, 400, command.error().code, command.error().message);
 
-    ApplyCommandWrappers(*command, resolver.GetStringArray("command_wrappers"));
+    const std::vector<std::string> wrappers = resolver.GetStringArray("command_wrappers");
+    if (auto checked = CheckCommandWrappers(wrappers); !checked) {
+      return SendError(res, 400, checked.error().code, checked.error().message);
+    }
+    ApplyLaunchEnv(*command, resolver.GetStringArray("launch.env"));
+    ApplyCommandWrappers(*command, wrappers);
 
     if (auto launched = supervisor_.Launch(*game, *command, post_script); !launched) {
       return SendError(res, 409, launched.error().code, launched.error().message);
@@ -559,7 +595,12 @@ void Server::RegisterRoutes() {
     auto command = resolved->runner->BuildCommand(run_as, resolved->build);
     if (!command) return SendError(res, 400, command.error().code, command.error().message);
     const config::Resolver resolver(config_, game->overrides);
-    ApplyCommandWrappers(*command, resolver.GetStringArray("command_wrappers"));
+    const std::vector<std::string> wrappers = resolver.GetStringArray("command_wrappers");
+    if (auto checked = CheckCommandWrappers(wrappers); !checked) {
+      return SendError(res, 400, checked.error().code, checked.error().message);
+    }
+    ApplyLaunchEnv(*command, resolver.GetStringArray("launch.env"));
+    ApplyCommandWrappers(*command, wrappers);
 
     if (auto launched = supervisor_.Launch(*game, *command); !launched) {
       return SendError(res, 409, launched.error().code, launched.error().message);

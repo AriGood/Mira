@@ -180,15 +180,23 @@ Schema::Schema() {
        "Cloned with reflinks where the filesystem supports them."},
 
       {"command_wrappers", Type::StringArray, json::array(), Tier::Basic,
-       "Wrappers applied to the launch command in order, e.g. [\"gamescope\", \"mangohud\"]. "
-       "The first entry ends up outermost. Each receives the game's command line as its "
-       "arguments."},
+       "Wrappers applied to the launch command in order, e.g. [\"gamemoderun\", \"gamescope -W "
+       "1920 -H 1080\"]. The first entry ends up outermost. Each entry is split on spaces (like "
+       "a game's own args -- no shell quoting support), and receives the game's command line as "
+       "its arguments. A wrapper whose own binary isn't on PATH fails the launch with a clear "
+       "error instead of a mysterious \"exited with code 127\"."},
 
       {"launch.stop_timeout_s", Type::Int, 10, Tier::Advanced,
        "How long to give a game to quit after \"stop\" before it's killed outright. The "
        "whole process group is signalled, since a real launch is umu -> proton -> wine -> "
        "the game.",
        Range(0, 600)},
+
+      {"launch.env", Type::StringArray, json::array(), Tier::Basic,
+       "KEY=VALUE environment variables set for every launch, e.g. [\"MANGOHUD=1\", "
+       "\"DXVK_ASYNC=1\"]. A game's own env (per-game overrides) always wins over these. Not "
+       "applied to a Steam game launched via steam.launch_mode \"steam\" -- Mira only hands "
+       "off a steam:// URL there, it never builds the game's own command line."},
 
       {"launch.pre_script", Type::String, "", Tier::Advanced,
        "Shell command run (via sh -c) before POST /v1/games/{id}/launch actually starts the "
