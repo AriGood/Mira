@@ -307,10 +307,10 @@ decides which:
 
 `auto` is the one that matters. A background job finishing while you are
 looking at something else is exactly what the desktop's notification area
-is for — it survives Mira being minimised, lands in the shell's history
-(Plasma's, on KDE) and obeys Do Not Disturb. A system popup for something
-that just happened in the window under your cursor is noise the desktop
-then keeps a record of.
+is for — it survives Mira being minimised, lands in whatever notification
+history the desktop environment keeps, and obeys Do Not Disturb. A system
+popup for something that just happened in the window under your cursor is
+noise the desktop then keeps a record of.
 
 The system route is `org.freedesktop.Notifications` over the session bus
 (`ui/SystemNotifier`), with a `desktop-entry` hint of `mira` so the shell

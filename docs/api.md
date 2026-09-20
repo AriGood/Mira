@@ -177,9 +177,23 @@ the launch entirely with `409 pre_launch_failed` and the script's own
 output as the error, so a script that's supposed to prepare something the
 game needs (mount a drive, set a CPU governor) actually gets to finish
 before the game starts. `launch.post_script` runs once the game process
-exits (clean, crashed, or stopped, always) — in the background, so it
-never blocks anything, and its own exit code is only logged, never
-reflected in the recorded playtime/crash state.
+exits (clean, crashed, or stopped, always) — never blocking anything, and
+its own exit code is only logged, never reflected in the recorded
+playtime/crash state.
+
+The actual spawn goes through a small wrapper binary, `mira-run`, not mirad
+itself — it owns pre/post_script, the game process, and a session record
+(`~/.config/mira/sessions/`, rolled into `stats.toml` once mirad has seen
+it) end to end, so a session survives mirad dying or restarting mid-game;
+mirad reconciles anything it missed at its next startup. `mira-run` also
+owns the game's own stdout/stderr, tailable via
+`GET /v1/games/{id}/log`. If `mira-run` itself can't be found or spawned,
+mirad falls back to launching directly with none of the above (pre_script
+still runs inline, post_script still runs, but no session record and no
+log) rather than failing the launch — the wrapper is never a hard
+dependency. `launch.gamemode` (default off) registers the game with
+GameMode automatically via `mira-run`, around the exact same lifetime; see
+`GET /v1/gamemode/status`.
 
 The reply's `tracked` says whether `game.state` events are coming for this
 launch — see the Steam case below for the one time it isn't true.
@@ -200,6 +214,20 @@ game) to have Mira exec it itself instead, through the same Proton build
 and prefix Steam already set up — normal tracking applies, but `exe_path`
 has to be set manually first (see `POST /v1/steam/scan` below for why
 Mira can't determine it on its own).
+
+### `GET /v1/games/{id}/log?lines=` — implemented
+```json
+{ "lines": ["[mira-run] session start, game_id=celeste", "..."] }
+```
+The tail of `mira-run`'s own log for this game (default 200 lines, capped
+to the last 4MB of the file regardless of `launch.log_max_mb`): the game's
+own stdout/stderr, interleaved with `mira-run`'s own annotated lines
+(resolved argv, pre/post_script output, the exit summary) — one file that
+explains a whole session, not just a status badge. A game that's never
+been launched through the wrapper (or was launched via the Rule-2
+fallback) simply has no log yet — an empty list, not a 404 or 500. Rotated
+one generation deep at each new launch (`.log.1`), dropped instead of kept
+if it's already over `launch.log_max_mb` (default 64).
 
 ### `POST /v1/games/{id}/stop` — implemented
 Sends SIGTERM to the game's process group **and** every process running in

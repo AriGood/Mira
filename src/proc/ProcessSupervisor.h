@@ -38,10 +38,11 @@ public:
 
   // Starts the game and returns as soon as it's running. Publishes
   // game.state running now, and exited later, with playtime recorded.
-  // post_script (see launch.post_script) runs once the game exits, before
-  // playtime is finalized in the store. This is the Rule-2 fallback path —
-  // used only when mira-run itself couldn't be found or spawned (see
-  // api::Server); the normal path is LaunchWrapped below.
+  // post_script (see launch.post_script) runs once the game exits, after
+  // playtime is finalized in the store and the exit event published — its
+  // own exit code is only logged, never affects either. This is the Rule-2
+  // fallback path — used only when mira-run itself couldn't be found or
+  // spawned (see api::Server); the normal path is LaunchWrapped below.
   Result<void> Launch(const model::Game& game, const Command& command, std::string post_script = "");
 
   // The normal path: `wrapper_pid` is an already-running mira-run (spawned
