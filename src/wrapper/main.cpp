@@ -8,6 +8,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cerrno>
 #include <cstdint>
@@ -202,6 +203,27 @@ void WriteLogLine(int fd, std::string_view line) {
   }
 }
 
+// Without this, `ps`/htop shows the full --game-id/--session-dir/--status-fd
+// argv wall for every running game, which is exactly the kind of thing that
+// makes a launcher feel broken. Overwrites argv's own backing memory in
+// place (the classic setproctitle trick: argv[0..argc) is one contiguous
+// block on Linux, only ever shortened here, never written past its own
+// original end) -- so this only ever changes what /proc/<pid>/cmdline
+// reports, nothing else. Deliberately does *not* touch comm (no
+// prctl(PR_SET_NAME)): mira-run stays greppable as exactly "mira-run" via
+// `pgrep mira-run`, which reconciliation and the live tests both rely on.
+void SetProcessTitle(int argc, char** argv, const std::string& title) {
+  if (argc <= 0) return;
+  char* const start = argv[0];
+  char* const last_arg_end = argv[argc - 1] + std::strlen(argv[argc - 1]);
+  const auto available = static_cast<std::size_t>(last_arg_end - start);
+  if (available == 0) return;
+
+  const std::size_t to_copy = std::min(title.size(), available - 1);
+  std::memcpy(start, title.data(), to_copy);
+  std::memset(start + to_copy, 0, available - to_copy);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -212,6 +234,7 @@ int main(int argc, char** argv) {
     return 2;
   }
   const Args& args = *parsed;
+  SetProcessTitle(argc, argv, "mira-run: " + args.game_id);
 
   // Computed before --pre runs (not after), so the session path can ride
   // along on the same "ok" status message mirad is already blocking on —
