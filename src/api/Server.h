@@ -38,6 +38,12 @@ public:
   Result<void> Serve(const std::filesystem::path& socket_path);
   void Stop();
 
+  // Closes out any session a previous mirad left behind (see
+  // proc::ProcessSupervisor::Reconcile) — called once at startup, before
+  // Serve(), so a session already re-adopted is visible to the very first
+  // GET /v1/games a client makes.
+  void ReconcileSessions();
+
 private:
   void RegisterRoutes();
 

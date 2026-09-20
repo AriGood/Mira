@@ -85,6 +85,13 @@ int main(int argc, char** argv) {
   mira::api::EventBus events;
   mira::api::Server server(config, games, events);
 
+  // Before anything else: close out any session a previous mirad (crashed,
+  // killed, or just restarted) left behind — see
+  // proc::ProcessSupervisor::Reconcile and docs/architecture.md. Must run
+  // before Serve() so a re-adopted still-running game is already tracked by
+  // the time the very first client request arrives.
+  server.ReconcileSessions();
+
   const std::filesystem::path socket_path =
       socket_override.empty() ? mira::paths::Expand(config.GetString("socket_path")) : socket_override;
 

@@ -399,39 +399,40 @@ void ProcessSupervisor::Watch(std::string game_id, pid_t pid, std::int64_t start
 
 void ProcessSupervisor::WatchWrapped(std::string game_id, pid_t wrapper_pid,
                                      std::filesystem::path session_path) {
-  // A single blocking wait, not a WNOHANG poll loop: unlike Watch() above,
-  // there's no live checkpointing to do here — mira-run's own session
-  // record already survives mirad dying mid-session (the whole point of
-  // Part A), so mirad has nothing time-sensitive to accrue while this
-  // blocks. stopping_ isn't checked here for the same reason Watch() checks
-  // it: quitting mirad must not touch a still-running game, and mira-run
-  // (unlike a direct child) keeps running and finishing its own record
-  // regardless of whether this thread is even still around to see it -- so
-  // there's deliberately no early return on stopping_ here; on a real
-  // daemon shutdown this thread is simply detached along with the others
-  // (see the destructor) and the OS reaps mira-run once it exits.
+  // WNOHANG, not a single blocking wait: unlike playtime checkpointing (not
+  // needed here — mira-run's own session record already survives mirad
+  // dying mid-session, the whole point of Part A), Stop()'s SIGKILL
+  // escalation via kill_deadlines_ still has to be serviced from
+  // somewhere. A blocking waitpid() here would never notice a deadline
+  // passing for a game that ignores SIGTERM, silently making that
+  // escalation dead code for every wrapped launch. stopping_ isn't checked
+  // here for the same reason Watch() checks it there: quitting mirad must
+  // not touch a still-running game, and mira-run (unlike a direct child)
+  // keeps running and finishing its own record regardless of whether this
+  // thread is even still around to see it -- so there's deliberately no
+  // early return on stopping_; on a real daemon shutdown this thread is
+  // simply detached along with the others (see the destructor) and the OS
+  // reaps mira-run once it exits.
   int status = 0;
-  pid_t waited;
-  do {
-    waited = ::waitpid(wrapper_pid, &status, 0);
-  } while (waited < 0 && errno == EINTR);
+  while (true) {
+    const pid_t waited = ::waitpid(wrapper_pid, &status, WNOHANG);
+    if (waited == wrapper_pid) break;
+    if (waited < 0 && errno != EINTR) break;  // wrapper_pid vanished; treat as exited
 
-  auto record = ReadSessionRecord(session_path);
-  if (!record) {
-    // mira-run itself vanished without ever writing a record at all (killed
-    // before it could fork, or before the first write) -- not the same as
-    // "record read failed because it's mid-write", which can't happen: the
-    // write is temp-file-then-rename, so a reader only ever sees a complete
-    // file or none at all.
-    log::Warn("mira-run for {} exited with no session record ({})", game_id, record.error().message);
-    std::lock_guard lock(mutex_);
-    running_.erase(game_id);
-    prefixes_.erase(game_id);
-    kill_deadlines_.erase(game_id);
-    stop_requested_.erase(game_id);
-    return;
+    {
+      std::lock_guard lock(mutex_);
+      const auto deadline = kill_deadlines_.find(game_id);
+      if (deadline != kill_deadlines_.end() && model::NowSeconds() >= deadline->second) {
+        log::Warn("{} ignored SIGTERM; sending SIGKILL", game_id);
+        const auto prefix = prefixes_.find(game_id);
+        SignalGame(wrapper_pid, prefix == prefixes_.end() ? std::string() : prefix->second, SIGKILL);
+        kill_deadlines_.erase(deadline);
+      }
+    }
+    std::this_thread::sleep_for(kPollInterval);
   }
 
+  auto record = ReadSessionRecord(session_path);
   {
     std::lock_guard lock(mutex_);
     running_.erase(game_id);
@@ -439,28 +440,47 @@ void ProcessSupervisor::WatchWrapped(std::string game_id, pid_t wrapper_pid,
     kill_deadlines_.erase(game_id);
     stop_requested_.erase(game_id);
   }
+  if (!record) {
+    // mira-run itself vanished without ever writing a record at all (killed
+    // before it could fork, or before the first write) -- not the same as
+    // "record read failed because it's mid-write", which can't happen: the
+    // write is temp-file-then-rename, so a reader only ever sees a complete
+    // file or none at all.
+    log::Warn("mira-run for {} exited with no session record ({})", game_id, record.error().message);
+    return;
+  }
+  FinalizeWrappedSession(game_id, *record, session_path);
+}
 
+// Shared by WatchWrapped (a session mirad watched live end to end) and
+// Reconcile/WatchReconciledLive (a session left behind by, or re-adopted
+// from, a mirad that wasn't running to see all of it) — everything past
+// "here is a finished proc::SessionRecord" is identical either way: classify
+// it, update the store, publish the event, roll it into stats.toml, and
+// delete the session file.
+void ProcessSupervisor::FinalizeWrappedSession(const std::string& game_id, const proc::SessionRecord& record,
+                                               const std::filesystem::path& session_path) {
   // Mirrors Watch()'s classification: SIGTERM is how Stop() asks a game to
   // quit, so that's a stop, not a crash. A record with no exit info at all
   // (mira-run itself was SIGKILLed before finishing) can't be classified as
   // a crash or a clean exit either way -- left un-crashed rather than
   // guessed at; the incomplete flag is what actually flags it as suspect.
-  const bool crashed = !record->incomplete &&
-      ((record->signal != 0 && record->signal != SIGTERM) || (record->signal == 0 && record->exit_code > 0));
+  const bool crashed = !record.incomplete &&
+      ((record.signal != 0 && record.signal != SIGTERM) || (record.signal == 0 && record.exit_code > 0));
 
-  std::string error = record->launch_error;
+  std::string error = record.launch_error;
   if (error.empty() && crashed) {
-    error = record->signal != 0
-                ? std::format("Crashed on signal {} ({}) after {}s", record->signal, ::strsignal(record->signal),
-                              record->duration_seconds)
-                : std::format("Exited with code {} after {}s", record->exit_code, record->duration_seconds);
+    error = record.signal != 0
+                ? std::format("Crashed on signal {} ({}) after {}s", record.signal, ::strsignal(record.signal),
+                              record.duration_seconds)
+                : std::format("Exited with code {} after {}s", record.exit_code, record.duration_seconds);
   }
-  if (record->incomplete) {
+  if (record.incomplete) {
     error = "Mira restarted mid-session; this session's true ending was never observed.";
   }
 
   auto updated = games_.Update(game_id, [&](model::Game& game) {
-    game.play_seconds += record->duration_seconds;
+    game.play_seconds += record.duration_seconds;
     game.last_error = error;
   });
   if (!updated) {
@@ -470,14 +490,14 @@ void ProcessSupervisor::WatchWrapped(std::string game_id, pid_t wrapper_pid,
   if (crashed) {
     log::Warn("{} {}", game_id, error);
   } else {
-    log::Info("{} exited after {}s", game_id, record->duration_seconds);
+    log::Info("{} exited after {}s", game_id, record.duration_seconds);
   }
 
   json event = updated ? model::ToJson(*updated) : json{{"id", game_id}};
   event["state"] = crashed ? "crashed" : "exited";
-  event["exit_code"] = record->exit_code;
-  event["signal"] = record->signal;
-  event["played_seconds"] = record->duration_seconds;
+  event["exit_code"] = record.exit_code;
+  event["signal"] = record.signal;
+  event["played_seconds"] = record.duration_seconds;
   event["error"] = error;
   events_.Publish("game.state", std::move(event));
 
@@ -485,11 +505,83 @@ void ProcessSupervisor::WatchWrapped(std::string game_id, pid_t wrapper_pid,
   // was only ever meant to cover the window between "the game started" and
   // "mirad got a chance to see it finished", same as any other write-ahead
   // record.
-  if (auto appended = AppendSession(games_.Dir() / "stats.toml", *record); !appended) {
+  if (auto appended = AppendSession(games_.Dir() / "stats.toml", record); !appended) {
     log::Warn("failed to append session for {} to stats.toml: {}", game_id, appended.error().message);
   }
   std::error_code ec;
   std::filesystem::remove(session_path, ec);
+}
+
+void ProcessSupervisor::WatchReconciledLive(std::string game_id, pid_t wrapper_pid,
+                                            std::filesystem::path session_path) {
+  // wrapper_pid is not this mirad's child (the old one that spawned it is
+  // gone), so waitpid() can never work here — only a liveness poll can.
+  while (::kill(wrapper_pid, 0) == 0) {
+    std::this_thread::sleep_for(kPollInterval);
+  }
+
+  auto record = ReadSessionRecord(session_path);
+  {
+    std::lock_guard lock(mutex_);
+    running_.erase(game_id);
+    prefixes_.erase(game_id);
+    kill_deadlines_.erase(game_id);
+    stop_requested_.erase(game_id);
+  }
+  if (!record) {
+    log::Warn("re-adopted mira-run for {} exited with no readable session record ({})", game_id,
+             record.error().message);
+    return;
+  }
+  FinalizeWrappedSession(game_id, *record, session_path);
+}
+
+void ProcessSupervisor::Reconcile(const std::filesystem::path& sessions_dir) {
+  std::error_code ec;
+  if (!std::filesystem::exists(sessions_dir, ec)) return;
+
+  for (const auto& entry :
+       std::filesystem::directory_iterator(sessions_dir, std::filesystem::directory_options::skip_permission_denied,
+                                           ec)) {
+    if (ec) break;
+    if (!entry.is_regular_file(ec)) continue;
+    const std::filesystem::path path = entry.path();
+
+    auto record = ReadSessionRecord(path);
+    if (!record) {
+      // A truncated/corrupt leftover from a mirad that died mid-write of
+      // its own -- never block startup over it, just drop it and move on.
+      log::Warn("skipping unreadable session file {}: {}", path.string(), record.error().message);
+      std::error_code rm_ec;
+      std::filesystem::remove(path, rm_ec);
+      continue;
+    }
+
+    if (record->finished) {
+      // mira-run had already finished and written the final record, but
+      // the mirad that was supposed to notice and archive it died first.
+      // Nothing to watch — just finish the bookkeeping mira-run itself
+      // already completed the hard part of.
+      FinalizeWrappedSession(record->game_id, *record, path);
+      continue;
+    }
+
+    const bool wrapper_alive = record->wrapper_pid > 0 && ::kill(record->wrapper_pid, 0) == 0;
+    if (wrapper_alive) {
+      log::Info("re-adopting live session for {} (mira-run pid {})", record->game_id, record->wrapper_pid);
+      std::lock_guard lock(mutex_);
+      running_[record->game_id] = record->wrapper_pid;
+      watchers_[record->game_id] = std::thread(&ProcessSupervisor::WatchReconciledLive, this, record->game_id,
+                                               record->wrapper_pid, path);
+    } else {
+      log::Warn("session for {} was left behind by a mira-run (pid {}) that's no longer running; closing it out "
+               "as incomplete",
+               record->game_id, record->wrapper_pid);
+      record->incomplete = true;
+      record->finished = true;
+      FinalizeWrappedSession(record->game_id, *record, path);
+    }
+  }
 }
 
 Result<void> ProcessSupervisor::TrackSteamLaunch(const model::Game& game, const std::string& appid,

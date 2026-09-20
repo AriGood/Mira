@@ -304,6 +304,8 @@ Server::Server(config::Config& config, store::GameStore& games, EventBus& events
 
 Server::~Server() = default;
 
+void Server::ReconcileSessions() { supervisor_.Reconcile(games_.Dir() / "sessions"); }
+
 Result<void> Server::Serve(const std::filesystem::path& socket_path) {
   std::error_code ec;
   std::filesystem::create_directories(socket_path.parent_path(), ec);

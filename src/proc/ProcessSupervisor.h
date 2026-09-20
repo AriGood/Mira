@@ -13,6 +13,7 @@
 #include "api/EventBus.h"
 #include "core/Command.h"
 #include "core/Result.h"
+#include "proc/Session.h"
 #include "store/GameStore.h"
 
 namespace mira::proc {
@@ -51,6 +52,17 @@ public:
   // them, which is what makes them survive mirad dying mid-session.
   Result<void> LaunchWrapped(const model::Game& game, pid_t wrapper_pid, std::filesystem::path session_path);
 
+  // Called once at mirad startup, before serving: reads every leftover file
+  // in `sessions_dir` and closes out whatever a previous mirad (crashed,
+  // killed, or just restarted) didn't get to see finish. A finished record
+  // is archived immediately; a still-running mira-run is re-adopted with a
+  // liveness-polling watcher (see WatchReconciledLive) rather than
+  // dropped, so a second `POST .../launch` for the same game doesn't start
+  // a duplicate; anything else (mira-run itself is gone too) is closed out
+  // `incomplete`. Never fails outright — a corrupt or unreadable file is
+  // logged and skipped, not something that should block mirad starting.
+  void Reconcile(const std::filesystem::path& sessions_dir);
+
   // For a game Steam's own client launched (steam.launch_mode "steam"), which
   // Mira can't waitpid() on. Polls /proc for SteamAppId=<appid> or
   // SteamGameId=<appid> in a process's environment, since the actual game
@@ -71,6 +83,9 @@ public:
 private:
   void Watch(std::string game_id, pid_t pid, std::int64_t started_at, std::string post_script);
   void WatchWrapped(std::string game_id, pid_t wrapper_pid, std::filesystem::path session_path);
+  void WatchReconciledLive(std::string game_id, pid_t wrapper_pid, std::filesystem::path session_path);
+  void FinalizeWrappedSession(const std::string& game_id, const proc::SessionRecord& record,
+                              const std::filesystem::path& session_path);
   void WatchSteam(std::string game_id, std::string appid, std::int64_t requested_at,
                   std::string post_script);
 

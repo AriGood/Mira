@@ -12,6 +12,7 @@
 #include "api/EventBus.h"
 #include "core/Command.h"
 #include "proc/ProcessSupervisor.h"
+#include "proc/Session.h"
 #include "runner/Exec.h"
 #include "store/GameStore.h"
 
@@ -210,6 +211,120 @@ TEST_CASE("FindPrefixProcesses does not match a game whose prefix is a string pr
   ::kill(-*pid, SIGKILL);
   ::kill(*pid, SIGKILL);
   ::waitpid(*pid, nullptr, 0);
+}
+
+TEST_CASE("Reconcile archives a finished session a previous mirad never got to see") {
+  const fs::path state = TempDir("proc-reconcile-finished-state");
+  const fs::path sessions_dir = state / "sessions";
+
+  store::GameStore games(state / "games.toml");
+  games.Load();
+  model::Game game;
+  game.id = "celeste";
+  game.play_seconds = 100;
+  REQUIRE(games.Upsert(game).has_value());
+
+  proc::SessionRecord record;
+  record.game_id = "celeste";
+  record.wrapper_pid = 999999;  // long dead / never existed — irrelevant, record is already finished
+  record.started_at = 1700000000;
+  record.finished = true;
+  record.ended_at = 1700000042;
+  record.duration_seconds = 42;
+  record.exit_code = 0;
+  const auto session_path = proc::SessionFilePath(sessions_dir, "celeste", record.started_at);
+  REQUIRE(proc::WriteSessionRecord(session_path, record).has_value());
+
+  api::EventBus events;
+  proc::ProcessSupervisor supervisor(games, events);
+  supervisor.Reconcile(sessions_dir);
+
+  CHECK_FALSE(fs::exists(session_path));
+  auto stored = games.Find("celeste");
+  REQUIRE(stored.has_value());
+  CHECK(stored->play_seconds == 142);  // 100 already banked + 42 from the reconciled session
+  CHECK(fs::exists(state / "stats.toml"));
+}
+
+TEST_CASE("Reconcile closes out a session as incomplete when its wrapper is gone too") {
+  const fs::path state = TempDir("proc-reconcile-dead-state");
+  const fs::path sessions_dir = state / "sessions";
+
+  store::GameStore games(state / "games.toml");
+  games.Load();
+  model::Game game;
+  game.id = "celeste";
+  REQUIRE(games.Upsert(game).has_value());
+
+  proc::SessionRecord record;
+  record.game_id = "celeste";
+  record.wrapper_pid = 999999;  // not a real pid on any sane machine
+  record.started_at = 1700000000;
+  record.finished = false;  // still "in flight" as far as the file says
+  const auto session_path = proc::SessionFilePath(sessions_dir, "celeste", record.started_at);
+  REQUIRE(proc::WriteSessionRecord(session_path, record).has_value());
+
+  api::EventBus events;
+  proc::ProcessSupervisor supervisor(games, events);
+  supervisor.Reconcile(sessions_dir);
+
+  CHECK_FALSE(fs::exists(session_path));
+  auto stored = games.Find("celeste");
+  REQUIRE(stored.has_value());
+  CHECK(stored->last_error.find("restarted") != std::string::npos);
+  CHECK(fs::exists(state / "stats.toml"));
+}
+
+TEST_CASE("Reconcile re-adopts a session whose wrapper is still alive, tracking it as running") {
+  const fs::path state = TempDir("proc-reconcile-live-state");
+  const fs::path sessions_dir = state / "sessions";
+
+  store::GameStore games(state / "games.toml");
+  games.Load();
+  model::Game game;
+  game.id = "celeste";
+  REQUIRE(games.Upsert(game).has_value());
+
+  // Standing in for a real mira-run: a real process, so kill(pid, 0) has
+  // something genuine to answer about. Reconcile can never actually
+  // waitpid() this (it isn't this process's child), which is exactly the
+  // case it exists to handle.
+  Command command;
+  command.argv = {"sh", "-c", "sleep 2"};
+  auto pid = runner::SpawnDetached(command);
+  REQUIRE(pid.has_value());
+
+  proc::SessionRecord record;
+  record.game_id = "celeste";
+  record.wrapper_pid = *pid;
+  record.started_at = model::NowSeconds();
+  record.finished = false;
+  const auto session_path = proc::SessionFilePath(sessions_dir, "celeste", record.started_at);
+  REQUIRE(proc::WriteSessionRecord(session_path, record).has_value());
+
+  api::EventBus events;
+  proc::ProcessSupervisor supervisor(games, events);
+  supervisor.Reconcile(sessions_dir);
+
+  CHECK(supervisor.IsRunning("celeste"));
+
+  ::waitpid(*pid, nullptr, 0);  // reap it ourselves; Reconcile's watcher only polls kill(pid, 0)
+  CHECK(WaitFor([&] { return !supervisor.IsRunning("celeste"); }, std::chrono::seconds(5)));
+}
+
+TEST_CASE("Reconcile drops a corrupt session file instead of failing") {
+  const fs::path state = TempDir("proc-reconcile-corrupt-state");
+  const fs::path sessions_dir = state / "sessions";
+  fs::create_directories(sessions_dir);
+  std::ofstream(sessions_dir / "broken.toml") << "not valid toml {{{";
+
+  store::GameStore games(state / "games.toml");
+  games.Load();
+  api::EventBus events;
+  proc::ProcessSupervisor supervisor(games, events);
+  supervisor.Reconcile(sessions_dir);  // must not throw or hang
+
+  CHECK_FALSE(fs::exists(sessions_dir / "broken.toml"));
 }
 
 TEST_CASE("FindPrefixProcesses matches umu's rewritten WINEPREFIX and an empty one matches nothing") {
