@@ -3,6 +3,7 @@
 #include <fkYAML.hpp>
 #include <json.hpp>
 
+#include <algorithm>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -47,22 +48,16 @@ std::optional<fs::path> FindLutrisDataDir(const config::Config& config) {
 }
 
 struct LutrisRow {
+  int id = 0;
   std::string name;
   std::string slug;
   std::string runner;
   std::string configpath;
 };
 
-Result<std::vector<LutrisRow>> ReadCatalog(const fs::path& pga_db) {
-  const auto sqlite3 = runner::FindOnPath("sqlite3");
-  if (!sqlite3) {
-    return Err("sqlite3_missing",
-               "sqlite3 isn't installed — install it from your distro's package manager to read "
-               "Lutris's game database");
-  }
-
+Result<std::vector<LutrisRow>> ReadCatalog(const std::string& sqlite3_bin, const fs::path& pga_db) {
   Command command;
-  command.argv = {*sqlite3, "-json", pga_db.string(), "SELECT name, slug, runner, configpath FROM games;"};
+  command.argv = {sqlite3_bin, "-json", pga_db.string(), "SELECT id, name, slug, runner, configpath FROM games;"};
   const Result<runner::ExecResult> result = runner::RunAndWait(command);
   if (!result || result->exit_code != 0) {
     return Err("lutris_db_read_failed",
@@ -81,6 +76,7 @@ Result<std::vector<LutrisRow>> ReadCatalog(const fs::path& pga_db) {
   std::vector<LutrisRow> rows;
   for (const json& row : parsed) {
     rows.push_back(LutrisRow{
+        .id = row.value("id", 0),
         .name = row.value("name", ""),
         .slug = row.value("slug", ""),
         .runner = row.value("runner", ""),
@@ -88,6 +84,51 @@ Result<std::vector<LutrisRow>> ReadCatalog(const fs::path& pga_db) {
     });
   }
   return rows;
+}
+
+// Lutris's "hidden" is a category named ".hidden", and "favorite" is
+// "favorites" — both discovered from a real pga.db, not Lutris's docs (see
+// lutris/game.py's is_hidden/mark_as_hidden). Everything else maps straight
+// across as a same-named tag: a category is meant to organize games, which
+// is exactly what a tag already does in Mira.
+std::string TagForCategory(const std::string& category) {
+  if (category == ".hidden") return "hidden";
+  if (category == "favorites") return "favorite";
+  return category;
+}
+
+// categories/games_categories don't exist on every Lutris version — a
+// missing table degrades to "no categories" rather than failing the whole
+// import; only a real sqlite3 dependency failure (already reported by
+// ReadCatalog above) is worth surfacing loudly.
+std::map<int, std::vector<std::string>> ReadCategories(const std::string& sqlite3_bin, const fs::path& pga_db) {
+  Command command;
+  command.argv = {sqlite3_bin, "-json", pga_db.string(),
+                  "SELECT games_categories.game_id AS game_id, categories.name AS name FROM "
+                  "games_categories JOIN categories ON categories.id = games_categories.category_id;"};
+  const Result<runner::ExecResult> result = runner::RunAndWait(command);
+  std::map<int, std::vector<std::string>> by_game;
+  if (!result || result->exit_code != 0) return by_game;
+  if (result->output.find_first_not_of(" \t\r\n") == std::string::npos) return by_game;
+
+  const json parsed = json::parse(result->output, nullptr, false);
+  if (!parsed.is_array()) return by_game;
+  for (const json& row : parsed) {
+    const std::string category = row.value("name", "");
+    if (category.empty()) continue;
+    by_game[row.value("game_id", 0)].push_back(TagForCategory(category));
+  }
+  return by_game;
+}
+
+// Union, not replace — a re-import must keep tags the user added by hand,
+// same contract as every other field Lutris doesn't own (see Import()'s
+// comment below).
+std::vector<std::string> MergeTags(std::vector<std::string> existing, const std::vector<std::string>& lutris_tags) {
+  for (const std::string& tag : lutris_tags) {
+    if (std::ranges::find(existing, tag) == existing.end()) existing.push_back(tag);
+  }
+  return existing;
 }
 
 std::string NodeToString(const fkyaml::node& node) {
@@ -151,8 +192,17 @@ Result<LutrisImportSummary> LutrisImporter::Import() {
   const auto data_dir = FindLutrisDataDir(config_);
   if (!data_dir) return Err("lutris_not_found", "no Lutris installation found");
 
-  const auto rows = ReadCatalog(*data_dir / "pga.db");
+  const auto sqlite3 = runner::FindOnPath("sqlite3");
+  if (!sqlite3) {
+    return Err("sqlite3_missing",
+               "sqlite3 isn't installed — install it from your distro's package manager to read "
+               "Lutris's game database");
+  }
+  const fs::path pga_db = *data_dir / "pga.db";
+
+  const auto rows = ReadCatalog(*sqlite3, pga_db);
   if (!rows) return std::unexpected(rows.error());
+  const std::map<int, std::vector<std::string>> categories = ReadCategories(*sqlite3, pga_db);
 
   for (const LutrisRow& row : *rows) {
     // A Lutris row run through anything other than wine is a different,
@@ -216,6 +266,9 @@ Result<LutrisImportSummary> LutrisImporter::Import() {
     game.data_dir = data_dir_path;
     game.platform = model::Platform::Windows;
     game.env = cfg->env;
+    if (const auto it = categories.find(row.id); it != categories.end()) {
+      game.tags = MergeTags(game.tags, it->second);
+    }
     // Lutris's own wine.version is often a generic alias ("ge-proton"), not
     // an exact installed build name Mira can resolve — leave runner_ref
     // alone (empty for a new game) and let default_runner.windows pick one.

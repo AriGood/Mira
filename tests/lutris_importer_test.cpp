@@ -1,7 +1,9 @@
 #include <doctest.h>
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <map>
 
 #include "config/Config.h"
 #include "lutris/LutrisImporter.h"
@@ -33,14 +35,33 @@ struct FixtureRow {
   std::string slug;
   std::string runner;
   std::string configpath;
+  std::vector<std::string> categories;  // real Lutris category names, e.g. ".hidden"
 };
 
+// Schema matches a real pga.db exactly (confirmed via `.schema` against a
+// real Lutris install): categories.name is UNIQUE, games_categories is a
+// plain join table of game_id/category_id.
 Result<void> BuildFixtureDb(const fs::path& db_path, const std::vector<FixtureRow>& rows) {
   std::string sql = "CREATE TABLE games (id INTEGER PRIMARY KEY, name TEXT, slug TEXT, runner TEXT, "
-                    "configpath TEXT);";
+                    "configpath TEXT);"
+                    "CREATE TABLE categories (id INTEGER PRIMARY KEY, name TEXT UNIQUE);"
+                    "CREATE TABLE games_categories (game_id INTEGER, category_id INTEGER);";
+  std::map<std::string, int> category_ids;
+  int next_category_id = 1;
+  int game_id = 1;
   for (const FixtureRow& row : rows) {
-    sql += std::format("INSERT INTO games (name, slug, runner, configpath) VALUES ('{}', '{}', '{}', '{}');",
-                       row.name, row.slug, row.runner, row.configpath);
+    sql += std::format("INSERT INTO games (id, name, slug, runner, configpath) VALUES ({}, '{}', '{}', '{}', '{}');",
+                       game_id, row.name, row.slug, row.runner, row.configpath);
+    for (const std::string& category : row.categories) {
+      const auto [it, inserted] = category_ids.try_emplace(category, next_category_id);
+      if (inserted) {
+        sql += std::format("INSERT INTO categories (id, name) VALUES ({}, '{}');", next_category_id, category);
+        ++next_category_id;
+      }
+      sql +=
+          std::format("INSERT INTO games_categories (game_id, category_id) VALUES ({}, {});", game_id, it->second);
+    }
+    ++game_id;
   }
   const auto sqlite3 = runner::FindOnPath("sqlite3");
   if (!sqlite3) return Err("sqlite3_missing", "sqlite3 not found");
@@ -82,7 +103,7 @@ TEST_CASE("LutrisImporter derives install_path from the exe's own directory, dat
   fs::create_directories(game_dir / "Binaries");
 
   REQUIRE(BuildFixtureDb(fx.lutris_dir / "pga.db",
-                        {{"Batman: Arkham Asylum", "batman-arkham-asylum", "wine", "batman-123"}})
+                        {{"Batman: Arkham Asylum", "batman-arkham-asylum", "wine", "batman-123", {}}})
              .has_value());
   WriteFile(fx.lutris_dir / "games" / "batman-123.yml", std::format(R"(game:
   exe: {}/Binaries/BmLauncher.exe
@@ -112,7 +133,7 @@ TEST_CASE("LutrisImporter keeps a relative exe relative to prefix, per the yaml 
   const fs::path install_dir = prefix_dir / "drive_c" / "Program Files" / "Epic Games" / "Launcher";
   fs::create_directories(install_dir);
 
-  REQUIRE(BuildFixtureDb(fx.lutris_dir / "pga.db", {{"Epic Games Store", "epic-games-store", "wine", "egs-1"}})
+  REQUIRE(BuildFixtureDb(fx.lutris_dir / "pga.db", {{"Epic Games Store", "epic-games-store", "wine", "egs-1", {}}})
              .has_value());
   WriteFile(fx.lutris_dir / "games" / "egs-1.yml", std::format(R"(game:
   exe: drive_c/Program Files/Epic Games/Launcher/EpicGamesLauncher.exe
@@ -136,7 +157,7 @@ TEST_CASE("LutrisImporter skips a row with no prefix recorded in its yaml") {
   if (!runner::FindOnPath("sqlite3")) return;
 
   Fixture fx("lutris-no-prefix");
-  REQUIRE(BuildFixtureDb(fx.lutris_dir / "pga.db", {{"Celeste", "celeste", "wine", "celeste-456"}}).has_value());
+  REQUIRE(BuildFixtureDb(fx.lutris_dir / "pga.db", {{"Celeste", "celeste", "wine", "celeste-456", {}}}).has_value());
   WriteFile(fx.lutris_dir / "games" / "celeste-456.yml", "game:\n  exe: /home/exo/Games/Celeste/Celeste.exe\n");
 
   lutris::LutrisImporter importer(fx.config, fx.games, fx.events);
@@ -154,8 +175,8 @@ TEST_CASE("LutrisImporter skips non-wine runners and updates known games in plac
   fs::create_directories(game_dir);
 
   REQUIRE(BuildFixtureDb(fx.lutris_dir / "pga.db",
-                        {{"Celeste", "celeste", "wine", "celeste-1"},
-                         {"Half-Life", "half-life", "steam", "half-life-1"}})
+                        {{"Celeste", "celeste", "wine", "celeste-1", {}},
+                         {"Half-Life", "half-life", "steam", "half-life-1", {}}})
              .has_value());
   WriteFile(fx.lutris_dir / "games" / "celeste-1.yml", std::format(R"(game:
   exe: {}/Celeste.exe
@@ -186,7 +207,7 @@ TEST_CASE("LutrisImporter refuses an install_path that's really the whole shared
   const fs::path prefix_dir = fx.lutris_dir.parent_path() / "battlenet";
   fs::create_directories(prefix_dir / "drive_c");
 
-  REQUIRE(BuildFixtureDb(fx.lutris_dir / "pga.db", {{"Hearthstone", "hearthstone", "wine", "hs-1"}}).has_value());
+  REQUIRE(BuildFixtureDb(fx.lutris_dir / "pga.db", {{"Hearthstone", "hearthstone", "wine", "hs-1", {}}}).has_value());
   // A launcher script referenced with no subdirectory at all — install_path
   // would resolve to prefix/drive_c, the whole C: drive shared by every
   // other game in this prefix (Battle.net, HDT, ...). Must be refused, not
@@ -203,4 +224,64 @@ TEST_CASE("LutrisImporter refuses an install_path that's really the whole shared
   CHECK(summary->added == 0);
   CHECK(summary->skipped == 1);
   CHECK(fx.games.All().empty());
+}
+
+TEST_CASE("LutrisImporter maps .hidden to the hidden tag, favorites to favorite, and everything else verbatim") {
+  if (!runner::FindOnPath("sqlite3")) return;
+
+  Fixture fx("lutris-categories");
+  const fs::path game_dir = fx.lutris_dir.parent_path() / "Celeste";
+  fs::create_directories(game_dir);
+
+  REQUIRE(BuildFixtureDb(fx.lutris_dir / "pga.db",
+                        {{"Celeste", "celeste", "wine", "celeste-1", {".hidden", "favorites", "Platformer"}}})
+             .has_value());
+  WriteFile(fx.lutris_dir / "games" / "celeste-1.yml", std::format(R"(game:
+  exe: {}/Celeste.exe
+  prefix: {}
+)",
+                                                                   game_dir.string(), game_dir.string()));
+
+  lutris::LutrisImporter importer(fx.config, fx.games, fx.events);
+  const auto summary = importer.Import();
+  REQUIRE(summary.has_value());
+  CHECK(summary->added == 1);
+
+  const auto game = fx.games.Find("celeste");
+  REQUIRE(game.has_value());
+  CHECK(std::ranges::find(game->tags, "hidden") != game->tags.end());
+  CHECK(std::ranges::find(game->tags, "favorite") != game->tags.end());
+  CHECK(std::ranges::find(game->tags, "Platformer") != game->tags.end());
+}
+
+TEST_CASE("LutrisImporter merges Lutris categories with tags the user already added, on re-import") {
+  if (!runner::FindOnPath("sqlite3")) return;
+
+  Fixture fx("lutris-tag-merge");
+  const fs::path game_dir = fx.lutris_dir.parent_path() / "Celeste";
+  fs::create_directories(game_dir);
+
+  REQUIRE(
+      BuildFixtureDb(fx.lutris_dir / "pga.db", {{"Celeste", "celeste", "wine", "celeste-1", {".hidden"}}})
+          .has_value());
+  WriteFile(fx.lutris_dir / "games" / "celeste-1.yml", std::format(R"(game:
+  exe: {}/Celeste.exe
+  prefix: {}
+)",
+                                                                   game_dir.string(), game_dir.string()));
+
+  lutris::LutrisImporter importer(fx.config, fx.games, fx.events);
+  REQUIRE(importer.Import().has_value());
+
+  auto stored = fx.games.Find("celeste");
+  REQUIRE(stored.has_value());
+  stored->tags.push_back("my-own-tag");
+  REQUIRE(fx.games.Upsert(*stored).has_value());
+
+  REQUIRE(importer.Import().has_value());
+
+  const auto game = fx.games.Find("celeste");
+  REQUIRE(game.has_value());
+  CHECK(std::ranges::find(game->tags, "hidden") != game->tags.end());
+  CHECK(std::ranges::find(game->tags, "my-own-tag") != game->tags.end());
 }

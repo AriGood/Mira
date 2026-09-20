@@ -398,12 +398,21 @@ actually is (they don't have to be related at all — Lutris allows a prefix
 that lives nowhere near the game's files). Idempotent — rescanning updates
 Lutris-owned fields (`name`, `install_path`, `exe_path`, `data_dir`, `env`)
 without touching anything the user configured (`args` is Lutris-owned too,
-since it's Lutris's own launch argument, but `overrides`/`tags`/`reviewed`
-are left alone), matched by `install_path` rather than an id Lutris and
-Mira could agree on. `runner_ref` is never set by this import: Lutris's own
+since it's Lutris's own launch argument, but `overrides`/`reviewed` are left
+alone), matched by `install_path` rather than an id Lutris and Mira could
+agree on. `runner_ref` is never set by this import: Lutris's own
 `wine.version` is often a generic alias ("ge-proton"), not an exact
 installed build name Mira can resolve, so `default_runner.windows` picks
 one instead.
+
+Lutris's own categories are mapped onto `tags` (Lutris's `.hidden` becomes
+Mira's `hidden`, `favorites` becomes `favorite`, everything else carries
+over by name unchanged) and merged into whatever tags the game already has,
+never replacing them — a tag added by hand in Mira survives a re-import, and
+a game Lutris marks hidden stays out of the default `GET /v1/games` listing
+the same way a game Mira marked hidden by hand would. A Lutris install old
+enough to have no `categories`/`games_categories` tables degrades to "no
+categories" rather than failing the import.
 
 ---
 
