@@ -61,6 +61,8 @@ qt_add_executable(mira-gui
   ui/GameTileDelegate.h
   ui/Icons.cpp
   ui/Icons.h
+  ui/KeyBindings.cpp
+  ui/KeyBindings.h
   ui/Notify.cpp
   ui/Notify.h
   ui/PopupDialog.cpp
@@ -73,6 +75,8 @@ qt_add_executable(mira-gui
   ui/Theme.h
   ui/Tray.cpp
   ui/Tray.h
+  ui/SettingsNav.cpp
+  ui/SettingsNav.h
   ui/SettingsPanel.cpp
   ui/SettingsPanel.h
   ui/GameEditForm.cpp

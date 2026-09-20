@@ -494,6 +494,11 @@ struct FrontendPrefs {
   std::optional<int> tile_radius;
   std::optional<int> panel_radius;
   std::optional<int> control_radius;
+  std::optional<int> hero_height;
+  // Overridden keyboard shortcuts, id (ui/KeyBindings.h) -> a
+  // QKeySequence::toString(PortableText) string. An id absent here just
+  // means "whatever that action's own default is" -- see keybindings::All().
+  std::optional<std::map<std::string, std::string>> shortcut_overrides;
 };
 
 struct FrontendPrefsResult {

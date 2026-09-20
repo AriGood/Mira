@@ -1,5 +1,6 @@
 #include "Shortcuts.h"
 
+#include "KeyBindings.h"
 #include "Tray.h"
 
 #include <QAction>
@@ -42,7 +43,7 @@ Common Install(QMainWindow* window, const QList<Entry>& window_specific) {
   Common common;
 
   common.quit = new QAction("&Quit", window);
-  common.quit->setShortcut(kQuit);
+  common.quit->setShortcut(keybindings::Register(common.quit, "quit", "Quit Mira", kQuit));
   common.quit->setMenuRole(QAction::QuitRole);
   // tray::RequestQuit(), not closeAllWindows() directly: with a tray icon
   // attached, a window's closeEvent hides it instead of closing it unless
@@ -51,11 +52,13 @@ Common Install(QMainWindow* window, const QList<Entry>& window_specific) {
   QObject::connect(common.quit, &QAction::triggered, window, [] { tray::RequestQuit(); });
 
   common.close_window = new QAction("&Close window", window);
-  common.close_window->setShortcut(QKeySequence::Close);
+  common.close_window->setShortcut(keybindings::Register(
+      common.close_window, "close_window", "Close this window", QKeySequence::Close));
   QObject::connect(common.close_window, &QAction::triggered, window, [window] { window->close(); });
 
   common.reference = new QAction("&Keyboard shortcuts", window);
-  common.reference->setShortcut(QKeySequence::HelpContents);
+  common.reference->setShortcut(keybindings::Register(
+      common.reference, "shortcuts_reference", "Show this list", QKeySequence::HelpContents));
   QObject::connect(common.reference, &QAction::triggered, window,
                    [window, window_specific] { ShowReference(window, window_specific); });
 

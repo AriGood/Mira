@@ -18,6 +18,7 @@
 #include "../dialogs/SettingsDialog.h"
 #include "../ui/GameActions.h"
 #include "../ui/GamePresentation.h"
+#include "../ui/KeyBindings.h"
 #include "../ui/Notify.h"
 #include "../ui/Shortcuts.h"
 #include "../ui/Tray.h"
@@ -137,24 +138,36 @@ void MainWindow::BuildShortcuts() {
   // through the reference dialog F1 opens — which is why it lists them.
   mira_gui::shortcuts::Install(this, {
                                         {"F5, Ctrl+R", "Refresh the library"},
-                                        {"Enter", "Details & settings for the selected row"},
+                                        {"Enter", "Details && settings for the selected row"},
                                         {"Delete", "Remove the selected game"},
                                         {"Ctrl+,", "Settings"},
                                     });
 
-  auto window_action = [this](std::initializer_list<QKeySequence> keys, auto slot) {
+  // "refresh" and "settings" share their ids with LibraryWindow's own copies
+  // of the same actions -- editing either in Settings updates both windows.
+  // Enter/Delete below stay fixed: separate ids from the grid's
+  // Alt+Enter/Delete, for two rows of limited value on the fallback view.
+  auto window_action = [this](const QString& id, const QString& label, QKeySequence default_keys,
+                              QList<QKeySequence> extra_aliases, auto slot) {
     auto* action = new QAction(this);
-    action->setShortcuts(QList<QKeySequence>(keys));
+    const QKeySequence primary =
+        mira_gui::keybindings::Register(action, id, label, default_keys, extra_aliases);
+    QList<QKeySequence> keys{primary};
+    keys.append(extra_aliases);
+    action->setShortcuts(keys);
     connect(action, &QAction::triggered, this, slot);
     addAction(action);
   };
 
-  window_action({QKeySequence(QKeySequence::Refresh), QKeySequence(Qt::CTRL | Qt::Key_R)}, [this] {
-    // Through the button so its disabled-while-checking state still holds,
-    // else this key could fire a second health check mid-flight.
-    if (refresh_button_->isEnabled()) RefreshHealth();
-  });
-  window_action({QKeySequence(Qt::CTRL | Qt::Key_Comma)}, [this] { OpenSettings(); });
+  window_action("refresh", "Refresh the library", QKeySequence(QKeySequence::Refresh),
+               {QKeySequence(Qt::CTRL | Qt::Key_R)}, [this] {
+                 // Through the button so its disabled-while-checking state
+                 // still holds, else this key could fire a second health
+                 // check mid-flight.
+                 if (refresh_button_->isEnabled()) RefreshHealth();
+               });
+  window_action("settings", "Settings", QKeySequence(Qt::CTRL | Qt::Key_Comma), {},
+               [this] { OpenSettings(); });
 
   // Scoped to the table, so Enter and Delete keep their normal meaning in
   // the status filter's popup and anywhere else focus can land.
