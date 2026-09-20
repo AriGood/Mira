@@ -48,6 +48,13 @@ GameEditForm::GameEditForm(std::string id, QWidget* parent) : QWidget(parent), i
   last_error_label_->setProperty("role", "error");
   last_error_label_->hide();
 
+  // Set from game.source in Populate() -- hidden for an ordinary scan,
+  // where exe_path really is what runs. For Steam it usually isn't.
+  source_note_label_ = new QLabel(this);
+  source_note_label_->setWordWrap(true);
+  source_note_label_->setProperty("role", "muted");
+  source_note_label_->hide();
+
   name_edit_ = new QLineEdit(this);
   args_edit_ = new QLineEdit(this);
   working_dir_edit_ = new QLineEdit(this);
@@ -113,6 +120,7 @@ GameEditForm::GameEditForm(std::string id, QWidget* parent) : QWidget(parent), i
   add_row("Status:", status_label_);
   add_row("Install path:", install_path_label_);
   add_row("Name:", name_edit_);
+  form->addRow(source_note_label_);
   add_row("Executable:", exe_row_widget);
   add_row("Arguments:", args_edit_);
   add_row("Working directory:", working_dir_edit_);
@@ -193,6 +201,18 @@ void GameEditForm::Populate(const mira_gui::GameDetail& game) {
   install_path_ = game.install_path;
   install_path_label_->setText(QString::fromStdString(game.install_path));
   install_path_label_->setToolTip(install_path_label_->text());
+
+  if (game.source == "steam") {
+    source_note_label_->setText(
+        "Imported from Steam. Steam launches this game itself, using its own record of the "
+        "executable — the Executable field below isn't what runs it, and editing it won't "
+        "change how it launches.");
+  } else if (game.source == "lutris") {
+    source_note_label_->setText(
+        "Imported from Lutris. The executable below came from Lutris's own config, not from "
+        "scanning the install folder, so there's no list of alternates to pick from here.");
+  }
+  form_->setRowVisible(source_note_label_, game.source == "steam" || game.source == "lutris");
 
   if (game.last_error.empty()) {
     last_error_label_->hide();

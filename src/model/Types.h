@@ -53,6 +53,9 @@ struct Game {
   double confidence = 0.0;
   bool reviewed = false;
   Platform platform = Platform::Unknown;
+  // Who found this game: "scan", "steam", or "lutris". Lets a frontend warn
+  // when exe_path isn't what actually launches it (true for "steam").
+  std::string source = "scan";
   std::string exe_path;      // relative to install_path
   std::string args;
   std::string working_dir;   // relative to install_path; empty means the exe's directory

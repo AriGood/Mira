@@ -259,6 +259,7 @@ Result<LutrisImportSummary> LutrisImporter::Import() {
     // SteamScanner::Scan.
     model::Game game = existing.value_or(model::Game{});
     game.id = existing ? game.id : games_.NextId(row.slug.empty() ? row.name : row.slug);
+    game.source = "lutris";
     game.name = row.name;
     game.install_path = install_path;
     game.exe_path = exe_path;

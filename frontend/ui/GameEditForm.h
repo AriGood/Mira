@@ -63,6 +63,7 @@ private:
   QFormLayout* form_ = nullptr;
   QLabel* status_label_;
   QLabel* install_path_label_;
+  QLabel* source_note_label_;
   QLabel* last_error_label_;
   QLineEdit* name_edit_;
   QComboBox* exe_combo_;

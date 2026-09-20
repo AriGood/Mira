@@ -76,6 +76,7 @@ json ToJson(const Game& game) {
       {"confidence", game.confidence},
       {"reviewed", game.reviewed},
       {"platform", ToString(game.platform)},
+      {"source", game.source},
       {"exe_path", game.exe_path},
       {"args", game.args},
       {"working_dir", game.working_dir},
@@ -121,6 +122,10 @@ Game GameFromJson(const json& document) {
   game.confidence = document.value("confidence", 0.0);
   game.reviewed = document.value("reviewed", false);
   game.platform = PlatformFromString(document.value("platform", "unknown"));
+  // "scan", not empty: an old games.toml written before this field existed
+  // was necessarily a folder scan — Steam/Lutris imports are new enough
+  // that every row they ever wrote already carries their own source.
+  game.source = document.value("source", "scan");
   game.exe_path = document.value("exe_path", std::string());
   game.args = document.value("args", std::string());
   game.working_dir = document.value("working_dir", std::string());

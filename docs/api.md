@@ -104,7 +104,7 @@ The full stored record for one game:
 {
   "id": "celeste", "install_path": "/home/x/Games/Celeste", "name": "Celeste",
   "status": "ready", "confidence": 0.9, "reviewed": false, "platform": "native",
-  "exe_path": "Celeste", "args": "", "working_dir": "", "runner_ref": "",
+  "source": "scan", "exe_path": "Celeste", "args": "", "working_dir": "", "runner_ref": "",
   "data_dir": "", "runner_config": {}, "overrides": {}, "last_error": "",
   "created_at": 0, "updated_at": 0, "last_played_at": null, "play_seconds": 0,
   "env": {}, "candidates": [], "tags": []
@@ -116,6 +116,11 @@ sort "nobody has double-checked this" to the top rather than gating on it.
 `candidates` lists every executable the detector considered, so the frontend
 can offer "use this one instead" without a re-scan. `runner_config` is
 opaque here — owned by whichever runner `runner_ref` names, never by core.
+`source` is `"scan"` (a library root, `exe_path` picked from `candidates`),
+`"steam"`, or `"lutris"` — which of the three ever writes this game's own
+fields on a rescan/re-import, and, for `"steam"` specifically, a hint that
+`exe_path` isn't what launches it: the default `steam.launch_mode` hands
+launching off to the Steam client instead of ever reading it.
 
 ### `PATCH /v1/games/{id}` — implemented
 Corrects the game's own fields: any of `name`, `exe_path`, `args`,
