@@ -237,6 +237,12 @@ WrapperStatus ReadWrapperStatus(int fd, int timeout_s) {
   }
   result.code = buffer.substr(0, newline);
   result.detail = buffer.substr(newline + 1);
+  // For "ok" this is the session path mira-run wrote, itself followed by
+  // its own trailing newline (src/wrapper/main.cpp writes "ok\n{path}\n") --
+  // strip it, or a path built from `detail` never matches the real file.
+  while (!result.detail.empty() && (result.detail.back() == '\n' || result.detail.back() == '\r')) {
+    result.detail.pop_back();
+  }
   result.ok = (result.code == "ok");
   return result;
 }
@@ -410,6 +416,43 @@ void Server::RegisterRoutes() {
     auto game = games_.Find(req.matches[1]);
     if (!game) return SendError(res, 404, "game_not_found", "no such game");
     SendJson(res, model::ToJson(*game));
+  });
+
+  // The tail of the log mira-run writes for this game (src/wrapper/main.cpp):
+  // the game's own stdout/stderr, plus mira-run's own annotated pre/post
+  // script output and exit summary — one file that explains a session, not
+  // just a status badge. A game that's never been launched through the
+  // wrapper (or was launched via the Rule-2 fallback with no mira-run
+  // available) simply has no log file yet — reported as an empty list, not
+  // a 404 or 500, since "no log" is a completely ordinary state.
+  http_->Get(R"(/v1/games/([^/]+)/log)", [this](const Request& req, Response& res) {
+    auto game = games_.Find(req.matches[1]);
+    if (!game) return SendError(res, 404, "game_not_found", "no such game");
+
+    int requested_lines = 200;
+    if (auto it = req.params.find("lines"); it != req.params.end()) {
+      requested_lines = std::max(1, std::atoi(it->second.c_str()));
+    }
+
+    const std::filesystem::path log_file = games_.Dir() / "logs" / std::format("{}.log", game->id);
+    std::ifstream in(log_file, std::ios::binary);
+    if (!in) return SendJson(res, {{"lines", json::array()}});
+
+    // Bounded read from the end, not the whole file -- launch.log_max_mb
+    // can be configured up to 1GB, and this endpoint only ever needs a
+    // handful of recent lines.
+    constexpr std::streamoff kMaxTailBytes = 4 * 1024 * 1024;
+    in.seekg(0, std::ios::end);
+    const std::streamoff size = in.tellg();
+    in.seekg(size > kMaxTailBytes ? size - kMaxTailBytes : 0);
+    const std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+
+    std::vector<std::string> all_lines = strings::Split(content, '\n');
+    if (!all_lines.empty() && all_lines.back().empty()) all_lines.pop_back();  // trailing newline
+    const std::size_t take = std::min(all_lines.size(), static_cast<std::size_t>(requested_lines));
+    json out = json::array();
+    for (std::size_t i = all_lines.size() - take; i < all_lines.size(); ++i) out.push_back(all_lines[i]);
+    SendJson(res, {{"lines", out}});
   });
 
   http_->Patch(R"(/v1/games/([^/]+))", [this](const Request& req, Response& res) {
@@ -612,12 +655,15 @@ void Server::RegisterRoutes() {
 
     const int pre_timeout_s = static_cast<int>(resolver.GetInt("launch.pre_timeout_s"));
     const std::filesystem::path sessions_dir = games_.Dir() / "sessions";
+    const std::filesystem::path log_file = games_.Dir() / "logs" / std::format("{}.log", game->id);
     Command wrapped;
     wrapped.env = command->env;
     wrapped.cwd = command->cwd;
-    wrapped.argv = {*mira_run,        "--game-id",   game->id,
-                    "--session-dir", sessions_dir.string(), "--status-fd", "3",
-                    "--pre-timeout", std::to_string(pre_timeout_s),
+    wrapped.argv = {*mira_run,         "--game-id",       game->id,
+                    "--session-dir",  sessions_dir.string(), "--log-file", log_file.string(),
+                    "--log-max-mb",   std::to_string(resolver.GetInt("launch.log_max_mb")),
+                    "--status-fd",    "3",
+                    "--pre-timeout",  std::to_string(pre_timeout_s),
                     "--post-timeout", std::to_string(resolver.GetInt("launch.post_timeout_s"))};
     if (!pre_script.empty()) {
       wrapped.argv.push_back("--pre");

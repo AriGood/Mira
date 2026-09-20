@@ -10,6 +10,7 @@
 
 #include <chrono>
 #include <cerrno>
+#include <cstdint>
 #include <cstring>
 #include <format>
 #include <iostream>
@@ -30,6 +31,8 @@ namespace {
 struct Args {
   std::string game_id;
   std::filesystem::path session_dir;
+  std::filesystem::path log_file;  // empty disables per-game logging entirely
+  int log_max_mb = 64;
   int status_fd = -1;
   std::string pre;
   std::string post;
@@ -55,6 +58,14 @@ std::optional<Args> ParseArgs(int argc, char** argv) {
       auto v = next();
       if (!v) return std::nullopt;
       args.session_dir = *v;
+    } else if (a == "--log-file") {
+      auto v = next();
+      if (!v) return std::nullopt;
+      args.log_file = *v;
+    } else if (a == "--log-max-mb") {
+      auto v = next();
+      if (!v) return std::nullopt;
+      args.log_max_mb = std::atoi(v->c_str());
     } else if (a == "--status-fd") {
       auto v = next();
       if (!v) return std::nullopt;
@@ -159,6 +170,34 @@ ScriptResult RunScriptWithTimeout(const std::string& script, int timeout_s) {
   return result;
 }
 
+// Rotates at session start, not live: renames the existing log to .1,
+// dropping whatever .1 was already there, unless the file that would become
+// .1 is already over the cap -- then it's just dropped instead of kept
+// forever. Caps total disk use at roughly 2x log_max_mb per game without
+// needing a live-truncation pass while the game is writing to it.
+void RotateLog(const std::filesystem::path& log_path, int max_mb) {
+  std::error_code ec;
+  if (!std::filesystem::exists(log_path, ec)) return;
+  const auto size = std::filesystem::file_size(log_path, ec);
+  const std::string previous = log_path.string() + ".1";
+  std::filesystem::remove(previous, ec);
+  if (!ec && size <= static_cast<std::uintmax_t>(max_mb) * 1024 * 1024) {
+    std::filesystem::rename(log_path, previous, ec);
+  } else {
+    std::filesystem::remove(log_path, ec);
+  }
+}
+
+void WriteLogLine(int fd, std::string_view line) {
+  if (fd < 0) return;
+  std::size_t written = 0;
+  while (written < line.size()) {
+    const ssize_t n = ::write(fd, line.data() + written, line.size() - written);
+    if (n <= 0) return;
+    written += static_cast<std::size_t>(n);
+  }
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -178,8 +217,29 @@ int main(int argc, char** argv) {
   const std::int64_t started_at = model::NowSeconds();
   const auto session_path = proc::SessionFilePath(args.session_dir, args.game_id, started_at);
 
+  // Opened before --pre runs so its output lands in the same file as
+  // everything else about this session -- one file that explains the whole
+  // thing, not a fragment of it. Rule 1 (bookkeeping never blocks play): a
+  // log that can't be opened just means no logging this session, not a
+  // failed launch.
+  int log_fd = -1;
+  if (!args.log_file.empty()) {
+    std::error_code ec;
+    std::filesystem::create_directories(args.log_file.parent_path(), ec);
+    RotateLog(args.log_file, args.log_max_mb);
+    log_fd = ::open(args.log_file.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_APPEND, 0644);
+    if (log_fd < 0) {
+      std::cerr << "mira-run: could not open log file " << args.log_file << ": " << std::strerror(errno) << "\n";
+    } else {
+      WriteLogLine(log_fd, std::format("[mira-run] session start, game_id={}\n", args.game_id));
+    }
+  }
+
   if (!args.pre.empty()) {
     const ScriptResult pre = RunScriptWithTimeout(args.pre, args.pre_timeout_s);
+    if (log_fd >= 0) {
+      WriteLogLine(log_fd, std::format("[mira-run] pre_script (exit {}):\n{}\n", pre.exit_code, pre.output));
+    }
     if (pre.timed_out) {
       WriteStatus(args.status_fd, "pre_timeout\n");
       return 1;
@@ -196,6 +256,13 @@ int main(int argc, char** argv) {
   record.game_id = args.game_id;
   record.wrapper_pid = ::getpid();
   record.started_at = started_at;
+
+  if (log_fd >= 0) {
+    std::string argv_line = "[mira-run] launching:";
+    for (const std::string& a : args.game_argv) argv_line += " " + a;
+    argv_line += "\n";
+    WriteLogLine(log_fd, argv_line);
+  }
 
   std::vector<char*> game_argv;
   game_argv.reserve(args.game_argv.size() + 1);
@@ -221,6 +288,10 @@ int main(int argc, char** argv) {
     // that group, not start a new one -- Stop()'s kill(-pid) targets that
     // one shared group to reach the whole umu -> proton -> wine -> game
     // tree, mira-run included.
+    if (log_fd >= 0) {
+      ::dup2(log_fd, STDOUT_FILENO);
+      ::dup2(log_fd, STDERR_FILENO);
+    }
     ::execvp(game_argv[0], game_argv.data());
     _exit(127);  // only reached if exec itself failed
   }
@@ -265,12 +336,21 @@ int main(int argc, char** argv) {
     record.signal = WTERMSIG(status);
   }
 
+  if (log_fd >= 0) {
+    WriteLogLine(log_fd, std::format("[mira-run] game exited: exit_code={} signal={} duration={}s\n",
+                                     record.exit_code, record.signal, record.duration_seconds));
+  }
+
   if (!args.post.empty()) {
     const ScriptResult post = RunScriptWithTimeout(args.post, args.post_timeout_s);
     record.post_exit_code = post.exit_code;
     record.post_timed_out = post.timed_out;
+    if (log_fd >= 0) {
+      WriteLogLine(log_fd, std::format("[mira-run] post_script (exit {}):\n{}\n", post.exit_code, post.output));
+    }
   }
 
   [[maybe_unused]] auto write_end = proc::WriteSessionRecord(session_path, record);
+  if (log_fd >= 0) ::close(log_fd);
   return 0;
 }

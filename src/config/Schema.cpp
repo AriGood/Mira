@@ -192,6 +192,12 @@ Schema::Schema() {
        "the game.",
        Range(0, 600)},
 
+      {"launch.log_max_mb", Type::Int, 64, Tier::Advanced,
+       "Cap on a game's own log file (see GET /v1/games/{id}/log), applied when a new session "
+       "rotates the previous one out -- an oversized previous log is dropped instead of kept, "
+       "so this bounds disk use to roughly 2x this value per game.",
+       Range(1, 1024)},
+
       {"launch.env", Type::StringArray, json::array(), Tier::Basic,
        "KEY=VALUE environment variables set for every launch, e.g. [\"MANGOHUD=1\", "
        "\"DXVK_ASYNC=1\"]. A game's own env (per-game overrides) always wins over these. Not "

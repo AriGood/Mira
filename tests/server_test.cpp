@@ -86,6 +86,21 @@ bool WaitForExit(httplib::Client& client, const std::string& id,
   return false;
 }
 
+// Unlike WaitForExit, this never calls stop -- for a test that cares about
+// the game's actual output, repeatedly SIGTERMing it as a polling mechanism
+// (WaitForExit's approach) races the signal against a fast script's own
+// completion and can kill it before it finishes writing anything.
+bool WaitForLogContains(httplib::Client& client, const std::string& id, std::string_view needle,
+                        std::chrono::milliseconds timeout = std::chrono::milliseconds(3000)) {
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  while (std::chrono::steady_clock::now() < deadline) {
+    auto res = client.Get(std::format("/v1/games/{}/log?lines=50", id));
+    if (res && res->status == 200 && res->body.find(needle) != std::string::npos) return true;
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  }
+  return false;
+}
+
 std::string LastError(httplib::Client& client, const std::string& id) {
   auto res = client.Get(std::format("/v1/games/{}", id));
   if (!res) return "<no response>";
@@ -453,4 +468,56 @@ TEST_CASE("DELETE /v1/runners/{reference} rejects a kind with no separate builds
   REQUIRE(auto_ref != nullptr);
   CHECK(auto_ref->status == 400);
   CHECK(auto_ref->body.find("invalid_reference") != std::string::npos);
+}
+
+TEST_CASE("GET /v1/games/{id}/log is an empty list before any launch, not a 404 or 500") {
+  LiveServer server(TempDir("server-log-empty"));
+
+  model::Game game;
+  game.id = "never-launched";
+  game.name = "never-launched";
+  REQUIRE(server.games().Upsert(game).has_value());
+
+  httplib::Client client = server.Client();
+  auto res = client.Get("/v1/games/never-launched/log");
+  REQUIRE(res != nullptr);
+  CHECK(res->status == 200);
+  const auto body = nlohmann::json::parse(res->body, nullptr, false);
+  REQUIRE(body.contains("lines"));
+  CHECK(body["lines"].empty());
+}
+
+TEST_CASE("GET /v1/games/{id}/log 404s for an unknown game") {
+  LiveServer server(TempDir("server-log-404"));
+  httplib::Client client = server.Client();
+  auto res = client.Get("/v1/games/does-not-exist/log");
+  REQUIRE(res != nullptr);
+  CHECK(res->status == 404);
+}
+
+TEST_CASE("POST /v1/games/{id}/launch through mira-run populates GET .../log with the game's own output") {
+  LiveServer server(TempDir("server-log-populated"));
+  const fs::path install_dir = TempDir("server-log-populated-install");
+  const fs::path script = install_dir / "run.sh";
+  std::ofstream(script) << "#!/bin/sh\necho hello-from-the-game\n";
+
+  model::Game game;
+  game.id = "logged-game";
+  game.name = "logged-game";
+  game.platform = model::Platform::Native;
+  game.status = model::GameStatus::Ready;
+  game.install_path = install_dir.string();
+  game.exe_path = "run.sh";  // no +x needed, see NativeRunner's .sh handling
+  REQUIRE(server.games().Upsert(game).has_value());
+
+  httplib::Client client = server.Client();
+  auto launched = client.Post("/v1/games/logged-game/launch");
+  REQUIRE(launched != nullptr);
+  CHECK(launched->status == 200);
+
+  REQUIRE(WaitForLogContains(client, "logged-game", "hello-from-the-game"));
+  auto res = client.Get("/v1/games/logged-game/log?lines=50");
+  REQUIRE(res != nullptr);
+  CHECK(res->status == 200);
+  CHECK(res->body.find("mira-run") != std::string::npos);
 }
