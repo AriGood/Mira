@@ -119,10 +119,9 @@ struct ScriptResult {
   std::string output;
 };
 
-// Runs `sh -c script` with a wall-clock timeout, SIGKILLing the whole group
-// if it hangs — pre/post must never be able to wedge mira-run forever, since
-// that would wedge the launch (pre) or the game's own exit bookkeeping
-// (post). Separate from runner::RunAndWait, which has no timeout at all.
+// Runs `sh -c script` with a wall-clock timeout, SIGKILLing the group if it
+// hangs -- pre/post must never wedge the launch or the game's exit.
+// Separate from runner::RunAndWait, which has no timeout.
 ScriptResult RunScriptWithTimeout(const std::string& script, int timeout_s) {
   ScriptResult result;
   int pipe_fds[2];
@@ -176,10 +175,8 @@ ScriptResult RunScriptWithTimeout(const std::string& script, int timeout_s) {
 }
 
 // Rotates at session start, not live: renames the existing log to .1,
-// dropping whatever .1 was already there, unless the file that would become
-// .1 is already over the cap -- then it's just dropped instead of kept
-// forever. Caps total disk use at roughly 2x log_max_mb per game without
-// needing a live-truncation pass while the game is writing to it.
+// dropping whatever .1 was already there -- or dropping the current log
+// outright if it's already over the cap. Caps disk use at ~2x max_mb.
 void RotateLog(const std::filesystem::path& log_path, int max_mb) {
   std::error_code ec;
   if (!std::filesystem::exists(log_path, ec)) return;
@@ -203,15 +200,10 @@ void WriteLogLine(int fd, std::string_view line) {
   }
 }
 
-// Without this, `ps`/htop shows the full --game-id/--session-dir/--status-fd
-// argv wall for every running game, which is exactly the kind of thing that
-// makes a launcher feel broken. Overwrites argv's own backing memory in
-// place (the classic setproctitle trick: argv[0..argc) is one contiguous
-// block on Linux, only ever shortened here, never written past its own
-// original end) -- so this only ever changes what /proc/<pid>/cmdline
-// reports, nothing else. Deliberately does *not* touch comm (no
-// prctl(PR_SET_NAME)): mira-run stays greppable as exactly "mira-run" via
-// `pgrep mira-run`, which reconciliation and the live tests both rely on.
+// Classic setproctitle trick: overwrites argv's own backing memory (one
+// contiguous block on Linux, never written past its original end), so
+// `ps`/htop show the game instead of the full flag wall. Doesn't touch comm
+// (no prctl(PR_SET_NAME)) -- mira-run stays greppable via `pgrep mira-run`.
 void SetProcessTitle(int argc, char** argv, const std::string& title) {
   if (argc <= 0) return;
   char* const start = argv[0];
@@ -236,19 +228,16 @@ int main(int argc, char** argv) {
   const Args& args = *parsed;
   SetProcessTitle(argc, argv, "mira-run: " + args.game_id);
 
-  // Computed before --pre runs (not after), so the session path can ride
-  // along on the same "ok" status message mirad is already blocking on —
-  // mirad otherwise has no way to know which of possibly several files in
-  // --session-dir belongs to this particular launch.
+  // Computed before --pre runs so the session path can ride along on the
+  // "ok" status message -- otherwise mirad has no way to know which file in
+  // --session-dir belongs to this launch.
   const auto monotonic_start = std::chrono::steady_clock::now();
   const std::int64_t started_at = model::NowSeconds();
   const auto session_path = proc::SessionFilePath(args.session_dir, args.game_id, started_at);
 
-  // Opened before --pre runs so its output lands in the same file as
-  // everything else about this session -- one file that explains the whole
-  // thing, not a fragment of it. Rule 1 (bookkeeping never blocks play): a
-  // log that can't be opened just means no logging this session, not a
-  // failed launch.
+  // Opened before --pre runs so its output lands in the same file. A log
+  // that can't be opened just means no logging this session, not a failed
+  // launch.
   int log_fd = -1;
   if (!args.log_file.empty()) {
     std::error_code ec;
@@ -298,8 +287,7 @@ int main(int argc, char** argv) {
 
   const pid_t game_pid = fork();
   if (game_pid < 0) {
-    // Bookkeeping never blocks play, but there's no play possible here at
-    // all — fork() itself failed, so this is a genuine launch failure.
+    // fork() itself failed -- a genuine launch failure, not a bookkeeping one.
     record.finished = true;
     record.launch_error = std::strerror(errno);
     record.exit_code = 127;
@@ -309,12 +297,9 @@ int main(int argc, char** argv) {
     return 1;
   }
   if (game_pid == 0) {
-    // Deliberately no setpgid(0, 0) here: mirad's own spawn of mira-run
-    // already made mira-run the leader of a fresh process group (see
-    // runner::SpawnDetachedWithStatus), and the game is meant to inherit
-    // that group, not start a new one -- Stop()'s kill(-pid) targets that
-    // one shared group to reach the whole umu -> proton -> wine -> game
-    // tree, mira-run included.
+    // No setpgid(0, 0) here: the game inherits mira-run's own process group
+    // (set by mirad's spawn -- see runner::SpawnDetachedWithStatus), so
+    // Stop()'s kill(-pid) reaches the whole tree, mira-run included.
     if (log_fd >= 0) {
       ::dup2(log_fd, STDOUT_FILENO);
       ::dup2(log_fd, STDERR_FILENO);
@@ -324,19 +309,15 @@ int main(int argc, char** argv) {
   }
 
   record.game_pid = game_pid;
-  // Best-effort (Rule 1: bookkeeping never blocks play) — the game is
-  // already running regardless of whether this succeeds.
+  // Best-effort: the game is already running regardless of whether this
+  // write succeeds.
   [[maybe_unused]] auto write_start = proc::WriteSessionRecord(session_path, record);
 
   if (args.gamemode) gamemode::RegisterGame(game_pid);
 
-  // No setpgid() above means the game shares mira-run's own process group
-  // (mira-run is that group's leader — see runner::SpawnDetachedWithStatus),
-  // so mirad's Stop() reaches the whole tree (mira-run included) with one
-  // external kill(-pid). mira-run must survive that to still run --post and
-  // write the final record, so SIGTERM/SIGINT are ignored here rather than
-  // handled — no forwarding needed, the game gets the same signal directly
-  // from mirad's own kill(-pid) call, at the same moment mira-run does.
+  // mira-run must survive mirad's group-wide kill(-pid) to still run --post
+  // and write the final record -- the game gets the same signal directly
+  // (same shared group), so no forwarding needed here, just surviving it.
   struct sigaction sa {};
   sa.sa_handler = SIG_IGN;
   ::sigemptyset(&sa.sa_mask);
@@ -353,9 +334,7 @@ int main(int argc, char** argv) {
 
   record.finished = true;
   record.ended_at = model::NowSeconds();
-  // A monotonic clock, not the wall-clock started_at/ended_at pair above:
-  // immune to a system clock jump mid-session, which would otherwise
-  // silently produce a nonsensical or negative duration.
+  // Monotonic, not wall-clock: immune to a clock jump mid-session.
   record.duration_seconds =
       std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - monotonic_start).count();
   if (WIFEXITED(status)) {

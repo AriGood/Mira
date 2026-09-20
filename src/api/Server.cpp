@@ -177,9 +177,9 @@ void ApplyLaunchEnv(Command& command, const std::vector<std::string>& entries) {
 }
 
 // Runs launch.pre_script synchronously and blocks the request -- the Steam
-// URL-handoff branch and the Rule-2 (no mira-run) fallback both still need
-// this; the normal wrapped path runs it inside mira-run instead, which is
-// what lets it survive mirad dying mid-launch.
+// URL-handoff branch and the no-mira-run fallback both still need this; the
+// normal wrapped path runs it inside mira-run instead, which is what lets
+// it survive mirad dying mid-launch.
 Result<void> RunPreScriptInline(const std::string& pre_script) {
   if (pre_script.empty()) return {};
   Command script;
@@ -193,9 +193,7 @@ Result<void> RunPreScriptInline(const std::string& pre_script) {
   return {};
 }
 
-// mirad's own binary directory, the way frontend/ui/DaemonSupervisor.cpp
-// resolves its own (via QCoreApplication::applicationDirPath() there) --
-// here via /proc/self/exe, the daemon's own equivalent. Empty on failure;
+// mirad's own binary directory, via /proc/self/exe. Empty on failure;
 // runner::ResolveSiblingBinary falls back to $PATH in that case.
 std::filesystem::path OwnBinaryDir() {
   std::error_code ec;
@@ -210,13 +208,10 @@ struct WrapperStatus {
   std::string detail;           // session path (ok) or the pre script's captured output (pre_failed)
 };
 
-// Blocks on mira-run's status pipe until it writes something and closes it
-// (which it always does, whichever way the launch goes -- see
-// src/wrapper/main.cpp) or `timeout_s` passes. A read timeout here is not
-// the same thing as launch.pre_timeout_s expiring: that's mira-run's own
-// budget for the script itself and is reported as the "pre_timeout" code
-// below; this is a hard ceiling on mira-run answering at all, generous
-// enough it should never fire in practice.
+// Blocks on mira-run's status pipe until it writes something and closes it,
+// or `timeout_s` passes. Distinct from launch.pre_timeout_s expiring
+// (mira-run's own budget for the script, reported as "pre_timeout" below);
+// this is a hard ceiling on mira-run answering at all.
 WrapperStatus ReadWrapperStatus(int fd, int timeout_s) {
   WrapperStatus result;
   std::string buffer;
@@ -239,9 +234,8 @@ WrapperStatus ReadWrapperStatus(int fd, int timeout_s) {
   }
   result.code = buffer.substr(0, newline);
   result.detail = buffer.substr(newline + 1);
-  // For "ok" this is the session path mira-run wrote, itself followed by
-  // its own trailing newline (src/wrapper/main.cpp writes "ok\n{path}\n") --
-  // strip it, or a path built from `detail` never matches the real file.
+  // For "ok" this is the session path, itself followed by mira-run's own
+  // trailing newline -- strip it, or the path never matches the real file.
   while (!result.detail.empty() && (result.detail.back() == '\n' || result.detail.back() == '\r')) {
     result.detail.pop_back();
   }
@@ -434,9 +428,9 @@ void Server::RegisterRoutes() {
   // the game's own stdout/stderr, plus mira-run's own annotated pre/post
   // script output and exit summary — one file that explains a session, not
   // just a status badge. A game that's never been launched through the
-  // wrapper (or was launched via the Rule-2 fallback with no mira-run
-  // available) simply has no log file yet — reported as an empty list, not
-  // a 404 or 500, since "no log" is a completely ordinary state.
+  // wrapper (or was launched via the no-mira-run fallback) simply has no
+  // log file yet — reported as an empty list, not a 404 or 500, since "no
+  // log" is a completely ordinary state.
   http_->Get(R"(/v1/games/([^/]+)/log)", [this](const Request& req, Response& res) {
     auto game = games_.Find(req.matches[1]);
     if (!game) return SendError(res, 404, "game_not_found", "no such game");
@@ -659,9 +653,10 @@ void Server::RegisterRoutes() {
 
     // mira-run owns the whole session end to end (pre/post script, the
     // session record) so it survives mirad dying mid-launch — see
-    // proc/Session.h, docs/architecture.md. mirad never fails a launch just
-    // because the wrapper itself is unavailable (Rule 2): that falls back to
-    // exactly today's behavior, pre_script run inline and no session record.
+    // proc/Session.h, docs/architecture.md. The wrapper is never a hard
+    // dependency: if it can't be found or spawned, mirad falls back to
+    // exactly today's behavior (pre_script run inline, no session record)
+    // rather than failing the launch.
     const auto mira_run = runner::ResolveSiblingBinary(OwnBinaryDir(), "mira-run");
     if (!mira_run) {
       log::Warn("mira-run not found; launching {} directly with no session recording", game->id);

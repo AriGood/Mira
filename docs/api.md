@@ -224,7 +224,7 @@ to the last 4MB of the file regardless of `launch.log_max_mb`): the game's
 own stdout/stderr, interleaved with `mira-run`'s own annotated lines
 (resolved argv, pre/post_script output, the exit summary) — one file that
 explains a whole session, not just a status badge. A game that's never
-been launched through the wrapper (or was launched via the Rule-2
+been launched through the wrapper (or was launched via the no-mira-run
 fallback) simply has no log yet — an empty list, not a 404 or 500. Rotated
 one generation deep at each new launch (`.log.1`), dropped instead of kept
 if it's already over `launch.log_max_mb` (default 64).

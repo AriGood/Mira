@@ -38,30 +38,23 @@ public:
 
   // Starts the game and returns as soon as it's running. Publishes
   // game.state running now, and exited later, with playtime recorded.
-  // post_script (see launch.post_script) runs once the game exits, after
-  // playtime is finalized in the store and the exit event published — its
-  // own exit code is only logged, never affects either. This is the Rule-2
-  // fallback path — used only when mira-run itself couldn't be found or
-  // spawned (see api::Server); the normal path is LaunchWrapped below.
+  // post_script runs after the store/event are finalized. Fallback path
+  // used only when mira-run couldn't be found or spawned (see api::Server);
+  // the normal path is LaunchWrapped below.
   Result<void> Launch(const model::Game& game, const Command& command, std::string post_script = "");
 
-  // The normal path: `wrapper_pid` is an already-running mira-run (spawned
-  // by the caller via runner::SpawnDetachedWithStatus, after a successful
-  // "ok" on its status pipe — see api::Server), and `session_path` is where
-  // it will write the session record proc::Session.h describes. Unlike
-  // Launch(), pre/post_script are not passed here — mira-run itself owns
+  // The normal path: `wrapper_pid` is an already-running mira-run, spawned
+  // by the caller after a successful "ok" on its status pipe (see
+  // api::Server); `session_path` is where it writes the session record
+  // (proc::Session.h). pre/post_script aren't passed here -- mira-run owns
   // them, which is what makes them survive mirad dying mid-session.
   Result<void> LaunchWrapped(const model::Game& game, pid_t wrapper_pid, std::filesystem::path session_path);
 
-  // Called once at mirad startup, before serving: reads every leftover file
-  // in `sessions_dir` and closes out whatever a previous mirad (crashed,
-  // killed, or just restarted) didn't get to see finish. A finished record
-  // is archived immediately; a still-running mira-run is re-adopted with a
-  // liveness-polling watcher (see WatchReconciledLive) rather than
-  // dropped, so a second `POST .../launch` for the same game doesn't start
-  // a duplicate; anything else (mira-run itself is gone too) is closed out
-  // `incomplete`. Never fails outright — a corrupt or unreadable file is
-  // logged and skipped, not something that should block mirad starting.
+  // Called once at mirad startup, before serving: closes out whatever a
+  // previous mirad didn't get to see finish. A finished record is archived
+  // immediately; a still-running mira-run is re-adopted (WatchReconciledLive)
+  // so a relaunch can't duplicate it; anything else is closed out
+  // `incomplete`. Never fails outright -- a bad file is logged and skipped.
   void Reconcile(const std::filesystem::path& sessions_dir);
 
   // For a game Steam's own client launched (steam.launch_mode "steam"), which
