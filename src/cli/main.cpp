@@ -451,6 +451,22 @@ int CmdEpicLogout() {
   return 0;
 }
 
+int CmdEpicInstallOrUpdate(int argc, char** argv, bool is_update) {
+  if (argc < 1) {
+    std::fprintf(stderr, "usage: mira epic %s <id>\n", is_update ? "update" : "install");
+    return 2;
+  }
+  auto client = Connect();
+  json body = {{"game_id", argv[0]}};
+  auto res = client.Post(is_update ? "/v1/epic/update" : "/v1/epic/install", body.dump(), "application/json");
+  if (!Ok(res)) {
+    PrintError(res);
+    return 1;
+  }
+  std::printf("%s — watch `mira watch` for epic.install.finished\n", is_update ? "updating" : "installing");
+  return 0;
+}
+
 int CmdEpicImport() {
   auto client = Connect();
   auto res = client.Post("/v1/epic/import");
@@ -469,7 +485,9 @@ int CmdEpic(int argc, char** argv) {
   if (argc > 0 && std::string_view(argv[0]) == "login") return CmdEpicLogin();
   if (argc > 0 && std::string_view(argv[0]) == "logout") return CmdEpicLogout();
   if (argc > 0 && std::string_view(argv[0]) == "import") return CmdEpicImport();
-  std::fprintf(stderr, "usage: mira epic setup|status|login|logout|import\n");
+  if (argc > 0 && std::string_view(argv[0]) == "install") return CmdEpicInstallOrUpdate(argc - 1, argv + 1, false);
+  if (argc > 0 && std::string_view(argv[0]) == "update") return CmdEpicInstallOrUpdate(argc - 1, argv + 1, true);
+  std::fprintf(stderr, "usage: mira epic setup|status|login|logout|import|install <id>|update <id>\n");
   return 2;
 }
 

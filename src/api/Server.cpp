@@ -23,6 +23,7 @@
 #include "library/Scanner.h"
 #include "desktop/DesktopEntryScanner.h"
 #include "epic/EpicImporter.h"
+#include "epic/EpicInstaller.h"
 #include "epic/Legendary.h"
 #include "lutris/LutrisImporter.h"
 #include "metadata/MetadataFetcher.h"
@@ -521,7 +522,15 @@ void Server::RegisterRoutes() {
     // own record points at, and only if that path is really inside a
     // configured root — never wherever install_path/data_dir happen to say,
     // in case a hand-edited games.toml points somewhere it shouldn't.
-    if (delete_files) {
+    if (delete_files && game->source == "epic" && !game->source_ref.empty()) {
+      // Legendary owns this install's manifest bookkeeping — uninstalling
+      // through it instead of a plain directory delete keeps that manifest
+      // in sync, so a later `legendary list-installed` doesn't still think
+      // this title is here (and broken).
+      if (auto uninstalled = epic::RunLegendary(config_, {"uninstall", game->source_ref, "-y"}); !uninstalled) {
+        return SendError(res, 400, uninstalled.error().code, uninstalled.error().message);
+      }
+    } else if (delete_files) {
       if (auto deleted = DeleteUnderRoot(game->install_path, config_.GetPathArray("library_roots")); !deleted) {
         return SendError(res, 400, deleted.error().code, deleted.error().message);
       }
@@ -681,6 +690,64 @@ void Server::RegisterRoutes() {
     for (const model::Game& game : summary->added_games) metadata_fetches_.Enqueue(config_, events_, game);
     SendJson(res, {{"added", summary->added}, {"updated", summary->updated}});
   });
+
+  // Installs/updates run detached, same reasoning as POST
+  // /v1/runners/download above — a game download is easily minutes long.
+  // epic.install.started/finished/failed on the event stream is how a
+  // caller finds out it's done; "update": true on the payload is the only
+  // difference between the two verbs, rather than a parallel event
+  // namespace.
+  auto epic_install_or_update = [this](const Request& req, Response& res, bool is_update) {
+    json body = json::parse(req.body, nullptr, false);
+    if (body.is_discarded() || !body.contains("game_id") || !body["game_id"].is_string()) {
+      return SendError(res, 400, "invalid_body", R"(expected {"game_id": "..."})");
+    }
+    const std::string game_id = body["game_id"];
+    auto game = games_.Find(game_id);
+    if (!game) return SendError(res, 404, "game_not_found", "no such game");
+    if (game->source != "epic" || game->source_ref.empty()) {
+      return SendError(res, 400, "not_an_epic_game", "not an Epic-sourced game");
+    }
+
+    const epic::EpicAuthStatus auth = epic::Status(config_);
+    if (!auth.legendary.installed) {
+      return SendError(res, 409, "legendary_missing", "run \"mira epic setup\" first");
+    }
+    if (!auth.authenticated) {
+      return SendError(res, 409, "not_authenticated", "run \"mira epic login\" first");
+    }
+
+    const std::string app_name = game->source_ref;
+    [[maybe_unused]] auto _ = games_.Update(game_id, [](model::Game& g) {
+      g.status = model::GameStatus::SettingUp;
+      g.last_error.clear();
+    });
+    events_.Publish("epic.install.started", {{"id", game_id}, {"app_name", app_name}, {"update", is_update}});
+
+    std::thread([this, game_id, app_name, is_update] {
+      epic::EpicInstaller installer(config_, games_, events_);
+      const Result<void> result = is_update ? installer.Update(app_name) : installer.Install(app_name);
+      if (!result) {
+        log::Error("epic {} failed ({}): {}", is_update ? "update" : "install", game_id, result.error().message);
+        [[maybe_unused]] auto _ = games_.Update(game_id, [&](model::Game& g) {
+          g.status = model::GameStatus::Broken;
+          g.last_error = result.error().message;
+        });
+        events_.Publish("epic.install.failed",
+                       {{"id", game_id}, {"update", is_update}, {"error", result.error().message}});
+      } else {
+        log::Info("epic {} finished: {}", is_update ? "update" : "install", game_id);
+        SyncDesktopEntries(config_, games_);
+        events_.Publish("epic.install.finished", {{"id", game_id}, {"update", is_update}});
+      }
+    }).detach();
+
+    SendJson(res, {{"status", is_update ? "updating" : "installing"}}, 202);
+  };
+  http_->Post("/v1/epic/install",
+             [epic_install_or_update](const Request& req, Response& res) { epic_install_or_update(req, res, false); });
+  http_->Post("/v1/epic/update",
+             [epic_install_or_update](const Request& req, Response& res) { epic_install_or_update(req, res, true); });
 
   // --- desktop entries (importing someone else's, not writing ours) -----
 
