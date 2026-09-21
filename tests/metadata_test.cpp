@@ -27,9 +27,11 @@ fs::path TempDir(const char* name) {
 
 // Everything here deliberately exercises only the non-Steam path with no
 // steamgriddb.api_key set: that's the one branch that's fully offline (see
-// MetadataFetcher.cpp's FetchNonSteam), so these stay hermetic without
-// mocking curl. The Steam/ProtonDB/SteamGridDB paths themselves were
-// verified live against real APIs during development, not here.
+// MetadataFetcher.cpp's FetchNonSteam — metadata.protondb_for_non_steam
+// defaults to false for the same reason, so it adds no network call here
+// either), so these stay hermetic without mocking curl. The
+// Steam/ProtonDB/SteamGridDB paths themselves were verified live against
+// real APIs during development, not here.
 
 TEST_CASE("Fetch on a non-Steam game with no SteamGridDB key fails, and caches nothing") {
   // SteamGridDB is the only free cover source for a non-Steam game, so with
