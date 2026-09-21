@@ -381,6 +381,25 @@ int CmdLutris(int argc, char** argv) {
   return 2;
 }
 
+int CmdEpicSetup() {
+  auto client = Connect();
+  auto res = client.Post("/v1/epic/legendary/install");
+  if (!Ok(res)) {
+    PrintError(res);
+    return 1;
+  }
+  json body = json::parse(res->body);
+  std::printf("downloading legendary %s — watch `mira watch` for epic.legendary.install.finished\n",
+             body.value("tag", std::string()).c_str());
+  return 0;
+}
+
+int CmdEpic(int argc, char** argv) {
+  if (argc > 0 && std::string_view(argv[0]) == "setup") return CmdEpicSetup();
+  std::fprintf(stderr, "usage: mira epic setup\n");
+  return 2;
+}
+
 int CmdDesktopEntriesList() {
   auto client = Connect();
   auto res = client.Get("/v1/desktop-entries/candidates");
@@ -844,6 +863,7 @@ int main(int argc, char** argv) {
   if (command == "add") return CmdAdd(rest_argc, rest);
   if (command == "steam") return CmdSteam(rest_argc, rest);
   if (command == "lutris") return CmdLutris(rest_argc, rest);
+  if (command == "epic") return CmdEpic(rest_argc, rest);
   if (command == "desktop-entries") return CmdDesktopEntries(rest_argc, rest);
   if (command == "gamemode") return CmdGameMode(rest_argc, rest);
   if (command == "metadata") return CmdMetadata(rest_argc, rest);

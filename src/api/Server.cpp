@@ -22,6 +22,7 @@
 #include "desktop/DesktopEntries.h"
 #include "library/Scanner.h"
 #include "desktop/DesktopEntryScanner.h"
+#include "epic/Legendary.h"
 #include "lutris/LutrisImporter.h"
 #include "metadata/MetadataFetcher.h"
 #include "proc/Session.h"
@@ -590,6 +591,50 @@ void Server::RegisterRoutes() {
     SyncDesktopEntries(config_, games_);
     for (const model::Game& game : summary->added_games) metadata_fetches_.Enqueue(config_, events_, game);
     SendJson(res, {{"added", summary->added}, {"updated", summary->updated}, {"skipped", summary->skipped}});
+  });
+
+  // --- epic -------------------------------------------------------------
+  //
+  // Wraps Legendary, a native-Linux Epic Games Store CLI client, for
+  // everything protocol-shaped (auth, catalog, install/update). Mira never
+  // runs Legendary's own `legendary launch` — an installed Epic game is
+  // launched through Mira's own Wine/Proton runners like any other Windows
+  // game (see docs/architecture.md). Nothing here assumes legendary is
+  // already on the system — GET .../legendary/status is always safe to
+  // call first, and POST .../legendary/install is how Mira gets it there.
+
+  http_->Get("/v1/epic/legendary/status", [this](const Request&, Response& res) {
+    const epic::LegendaryStatus status = epic::DetectLegendary(config_);
+    SendJson(res, {{"installed", status.installed},
+                  {"source", status.source},
+                  {"path", status.path},
+                  {"version", status.version}});
+  });
+
+  // Downloads and installs Legendary's latest matching GitHub release —
+  // detached, same "don't block the request thread on a slow download"
+  // pattern as POST /v1/runners/download above; epic.legendary.install.*
+  // on the event stream is how a caller finds out it's done. Re-running
+  // this later re-fetches the latest release, which is also how staying
+  // up to date works — no separate update endpoint.
+  http_->Post("/v1/epic/legendary/install", [this](const Request&, Response& res) {
+    auto releases = runner::ListReleases(config_, "legendary");
+    if (!releases) return SendError(res, 502, releases.error().code, releases.error().message);
+    if (releases->empty()) return SendError(res, 404, "no_release_found", "no matching legendary release found");
+
+    const runner::ReleaseAsset asset = releases->front();  // newest first
+    events_.Publish("epic.legendary.install.started", {{"tag", asset.tag}});
+    std::thread([this, asset] {
+      if (auto installed = epic::InstallLegendaryBinary(config_, asset); !installed) {
+        log::Error("legendary install failed ({}): {}", asset.tag, installed.error().message);
+        events_.Publish("epic.legendary.install.failed", {{"tag", asset.tag}, {"error", installed.error().message}});
+      } else {
+        log::Info("installed legendary {}", asset.tag);
+        events_.Publish("epic.legendary.install.finished", {{"tag", asset.tag}});
+      }
+    }).detach();
+
+    SendJson(res, {{"status", "downloading"}, {"tag", asset.tag}}, 202);
   });
 
   // --- desktop entries (importing someone else's, not writing ours) -----

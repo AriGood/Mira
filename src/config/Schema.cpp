@@ -353,6 +353,22 @@ Schema::Schema() {
        "Override for where Lutris keeps pga.db and its per-game configs. "
        "Empty auto-detects $XDG_DATA_HOME/lutris, then ~/.local/share/lutris."},
 
+      {"epic.enabled", Type::Bool, true, Tier::Basic,
+       "Use Legendary (a native Epic Games Store CLI client) to authenticate, "
+       "import already-installed Epic titles, and install/update new ones. The "
+       "installed game itself still runs through Mira's own Wine/Proton runner, "
+       "never through Legendary or Epic's own client. See \"mira epic setup\" "
+       "if Legendary isn't already installed."},
+
+      {"epic.import_uninstalled", Type::Bool, true, Tier::Basic,
+       "Also add catalog titles Legendary knows about but hasn't installed yet, "
+       "as needs_install placeholders, so they show up ready to install from "
+       "Mira."},
+
+      {"epic.legendary_bin", Type::String, "", Tier::Advanced,
+       "Path to the legendary binary. Empty tries Mira's own managed download "
+       "(see \"mira epic setup\"), then $PATH."},
+
       {"desktop_import.enabled", Type::Bool, true, Tier::Basic,
        "Let \"mira desktop-entries list\"/\"import\" and the matching REST "
        "endpoints read already-installed application-menu (.desktop) entries "
@@ -379,6 +395,14 @@ Schema::Schema() {
       {"runner_sources.wine_ge.asset_pattern", Type::String,
        std::string(runner_sources::kWineGEAssetPattern), Tier::Expert,
        "Glob a release's assets are filtered to before offering one to download."},
+
+      {"runner_sources.legendary.repo", Type::String, std::string(runner_sources::kLegendaryRepo),
+       Tier::Advanced, "GitHub \"owner/repo\" Legendary (the Epic Games Store CLI client) is downloaded from."},
+
+      {"runner_sources.legendary.asset_pattern", Type::String,
+       std::string(runner_sources::kLegendaryAssetPattern), Tier::Expert,
+       "Glob a release's assets are filtered to before offering one to download — "
+       "Legendary ships one standalone Linux binary per release, not an archive."},
 
       {"metadata.enabled", Type::Bool, true, Tier::Basic,
        "Fetch cover art and store metadata (description, genre, ProtonDB compatibility "
