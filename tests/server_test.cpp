@@ -460,6 +460,23 @@ TEST_CASE("DELETE /v1/runners/{reference} removes an installed build's directory
   CHECK_FALSE(fs::exists(build_dir));
 }
 
+TEST_CASE("GET /v1/runners lists native:native but never lists installed Flatpak apps as builds") {
+  LiveServer server(TempDir("server-runners-native-flatpak"));
+  httplib::Client client = server.Client();
+
+  auto listed = client.Get("/v1/runners");
+  REQUIRE(listed != nullptr);
+  CHECK(listed->status == 200);
+  CHECK(listed->body.find("\"native:native\"") != std::string::npos);
+  // Would fail if any Flatpak app happens to be installed on the machine
+  // running this test and FlatpakRunner regresses back to listing them.
+  const auto body = nlohmann::json::parse(listed->body, nullptr, false);
+  REQUIRE(body.is_array());
+  for (const auto& build : body) {
+    CHECK(build.value("kind", "") != "flatpak");
+  }
+}
+
 TEST_CASE("DELETE /v1/runners/{reference} refuses a path outside every configured search root") {
   LiveServer server(TempDir("server-runner-delete-outside"));
   httplib::Client client = server.Client();
