@@ -353,6 +353,18 @@ Schema::Schema() {
        "Override for where Lutris keeps pga.db and its per-game configs. "
        "Empty auto-detects $XDG_DATA_HOME/lutris, then ~/.local/share/lutris."},
 
+      {"desktop_import.enabled", Type::Bool, true, Tier::Basic,
+       "Let \"mira desktop-entries list\"/\"import\" and the matching REST "
+       "endpoints read already-installed application-menu (.desktop) entries "
+       "and add them as games — this is how a Flatpak app gets added, since "
+       "every Flatpak-exported entry already carries the app id needed to "
+       "relaunch it. Manual: nothing is added until you pick which ones."},
+
+      {"desktop_import.extra_dirs", Type::StringArray, json::array(), Tier::Advanced,
+       "Extra directories to search for .desktop files, beyond the standard "
+       "$XDG_DATA_HOME/applications, $XDG_DATA_DIRS entries, and the two "
+       "well-known Flatpak export directories."},
+
       {"runner_sources.proton_ge.repo", Type::String, std::string(runner_sources::kProtonGERepo),
        Tier::Advanced, "GitHub \"owner/repo\" Proton-GE builds are downloaded from."},
 

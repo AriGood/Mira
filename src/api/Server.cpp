@@ -21,6 +21,7 @@
 #include "core/Strings.h"
 #include "desktop/DesktopEntries.h"
 #include "library/Scanner.h"
+#include "desktop/DesktopEntryScanner.h"
 #include "lutris/LutrisImporter.h"
 #include "metadata/MetadataFetcher.h"
 #include "proc/Session.h"
@@ -570,6 +571,37 @@ void Server::RegisterRoutes() {
     SyncDesktopEntries(config_, games_);
     for (const model::Game& game : summary->added_games) metadata_fetches_.Enqueue(config_, events_, game);
     SendJson(res, {{"added", summary->added}, {"updated", summary->updated}, {"skipped", summary->skipped}});
+  });
+
+  // --- desktop entries (importing someone else's, not writing ours) -----
+
+  http_->Get("/v1/desktop-entries/candidates", [this](const Request&, Response& res) {
+    desktop::DesktopEntryScanner scanner(config_, games_, events_);
+    auto candidates = scanner.ListCandidates();
+    if (!candidates) return SendError(res, 404, candidates.error().code, candidates.error().message);
+    json out = json::array();
+    for (const auto& c : *candidates) out.push_back({{"id", c.id}, {"name", c.name}, {"icon", c.icon}});
+    SendJson(res, std::move(out));
+  });
+
+  http_->Post("/v1/desktop-entries/import", [this](const Request& req, Response& res) {
+    json body = json::parse(req.body, nullptr, false);
+    if (body.is_discarded() || !body.contains("ids") || !body["ids"].is_array()) {
+      return SendError(res, 400, "invalid_body", R"(expected {"ids": ["..."]})");
+    }
+    const std::vector<std::string> ids = body["ids"];
+
+    desktop::DesktopEntryScanner scanner(config_, games_, events_);
+    auto summary = scanner.Import(ids);
+    if (!summary) return SendError(res, 404, summary.error().code, summary.error().message);
+    SyncDesktopEntries(config_, games_);
+    for (const model::Game& game : summary->added_games) metadata_fetches_.Enqueue(config_, events_, game);
+    SendJson(res, {{"added", summary->added}, {"updated", summary->updated}});
+  });
+
+  http_->Post("/v1/desktop-entries/sync", [this](const Request&, Response& res) {
+    SyncDesktopEntries(config_, games_);
+    SendJson(res, {{"ok", true}});
   });
 
   // --- launching ------------------------------------------------------------

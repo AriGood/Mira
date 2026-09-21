@@ -457,6 +457,65 @@ categories" rather than failing the import.
 
 ---
 
+## Desktop entries
+
+Two directions, both covered here: reading someone else's already-installed
+`.desktop` entries and offering them as games (this section), vs. writing
+Mira's own `mira-<id>.desktop` entries for its games (the `desktop_entries.*`
+settings, applied on every library change — see `GET /v1/config/schema`).
+This is deliberately how a Flatpak app gets added: every Flatpak-exported
+entry already carries an `X-Flatpak=<app-id>` key, which is enough to
+relaunch it exactly, with no Flatpak-specific runner needed at all.
+
+Manual, not auto-import, on purpose: `GET .../candidates` only lists, and
+nothing is added to the library until `POST .../import` is called with
+specific ids a human picked.
+
+### `GET /v1/desktop-entries/candidates` — implemented
+Walks `$XDG_DATA_HOME/applications`, every `$XDG_DATA_DIRS` entry, the two
+well-known Flatpak export directories, and `desktop_import.extra_dirs`, and
+lists every `.desktop` entry that could reasonably become a game:
+```json
+[{ "id": "com.spotify.Client", "name": "Spotify", "icon": "com.spotify.Client" }]
+```
+`id` is the entry's freedesktop "desktop file ID" (its path relative to
+whichever `applications/` dir it's under, `/` replaced with `-`, `.desktop`
+stripped) — stable across calls, so nothing needs to be remembered between
+listing and importing. An entry is left out when: it has no
+`[Desktop Entry]` section or a `Type=` other than `Application`;
+`NoDisplay=true` or `Hidden=true`; it carries `X-Mira-Game-Id` (it's Mira's
+own, generated entry — importing it back would loop); its `Exec=` looks like
+Steam's own launcher (`steam steam://rungameid/...` — already covered,
+better, by `POST /v1/steam/scan`); or its resolved install path already
+matches an existing game. No filtering on `Categories=` — the picker is
+manual, so nothing is auto-excluded by guessing at what "is a game."
+
+### `POST /v1/desktop-entries/import` — implemented
+Body: `{"ids": ["com.spotify.Client", ...]}` — ids as returned by
+`GET .../candidates`. Re-scans (stateless; no caching between the two calls)
+and, for each requested id: an `X-Flatpak=<app-id>` entry becomes
+`exe_path: "flatpak"`, `args: "run <app-id>"`, `install_path:
+"~/.var/app/<app-id>"` (Exec= itself is ignored entirely — parsing Flatpak's
+own `flatpak run --branch=... --command=... <id> @@u %u @@` line isn't worth
+it when the app id alone relaunches it exactly). Anything else is resolved
+from `Exec=` directly: field codes (`%f %u ...`) and `@@...@@` forwarding
+brackets are dropped, the first remaining token becomes `exe_path` (absolute
+→ split into `install_path`/`exe_path`; bare name → `install_path` empty,
+resolved via `$PATH` at launch same as `flatpak`/`steam`/`wine` already are),
+the rest joined into `args`. `platform` is always `"native"`; `runner_ref` is
+left empty (`native:native` resolves by default). Matched by `install_path`
+— importing an id a second time updates rather than duplicates. Response:
+```json
+{ "added": 1, "updated": 0 }
+```
+
+### `POST /v1/desktop-entries/sync` — implemented
+Regenerates Mira's own `mira-<id>.desktop` entries immediately, without
+needing to touch an unrelated game first — useful right after changing
+`desktop_entries.*` settings.
+
+---
+
 ## GameMode
 
 ### `GET /v1/gamemode/status` — implemented

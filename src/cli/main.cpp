@@ -336,6 +336,51 @@ int CmdLutris(int argc, char** argv) {
   return 2;
 }
 
+int CmdDesktopEntriesList() {
+  auto client = Connect();
+  auto res = client.Get("/v1/desktop-entries/candidates");
+  if (!Ok(res)) {
+    PrintError(res);
+    return 1;
+  }
+  json candidates = json::parse(res->body);
+  if (candidates.empty()) {
+    std::puts("(no candidates — every already-installed .desktop entry is either already a game, "
+              "Mira's own, or covered by another importer)");
+    return 0;
+  }
+  for (const json& c : candidates) {
+    std::printf("%-40s %s\n", c.value("id", "").c_str(), c.value("name", "").c_str());
+  }
+  return 0;
+}
+
+int CmdDesktopEntriesImport(int argc, char** argv) {
+  if (argc < 1) {
+    std::fprintf(stderr, "usage: mira desktop-entries import <id> [<id>...]\n");
+    return 2;
+  }
+  json ids = json::array();
+  for (int i = 0; i < argc; ++i) ids.push_back(argv[i]);
+
+  auto client = Connect();
+  auto res = client.Post("/v1/desktop-entries/import", json{{"ids", ids}}.dump(), "application/json");
+  if (!Ok(res)) {
+    PrintError(res);
+    return 1;
+  }
+  json summary = json::parse(res->body);
+  std::printf("added: %lld  updated: %lld\n", summary.value("added", 0LL), summary.value("updated", 0LL));
+  return 0;
+}
+
+int CmdDesktopEntries(int argc, char** argv) {
+  if (argc > 0 && std::string_view(argv[0]) == "list") return CmdDesktopEntriesList();
+  if (argc > 0 && std::string_view(argv[0]) == "import") return CmdDesktopEntriesImport(argc - 1, argv + 1);
+  std::fprintf(stderr, "usage: mira desktop-entries [list | import <id> [<id>...]]\n");
+  return 2;
+}
+
 int CmdGameModeStatus() {
   auto client = Connect();
   auto res = client.Get("/v1/gamemode/status");
@@ -718,6 +763,8 @@ void PrintUsage() {
       "  remove <id> [--delete-files] [--delete-prefix]\n"
       "  steam scan             detect installed Steam games\n"
       "  lutris import          import games from Lutris's own database\n"
+      "  desktop-entries list    list already-installed .desktop entries that could become games\n"
+      "  desktop-entries import <id> [<id>...]   add the picked ones (covers Flatpak apps too)\n"
       "  gamemode status         check whether GameMode is installed/running\n"
       "  metadata <id> [--refresh]                cached cover-art/store info\n"
       "  tricks <id> <verb>     run a winetricks verb against this game's prefix\n"
@@ -750,6 +797,7 @@ int main(int argc, char** argv) {
   if (command == "remove") return CmdRemove(rest_argc, rest);
   if (command == "steam") return CmdSteam(rest_argc, rest);
   if (command == "lutris") return CmdLutris(rest_argc, rest);
+  if (command == "desktop-entries") return CmdDesktopEntries(rest_argc, rest);
   if (command == "gamemode") return CmdGameMode(rest_argc, rest);
   if (command == "metadata") return CmdMetadata(rest_argc, rest);
   if (command == "tricks") return CmdTricks(rest_argc, rest);
