@@ -8,11 +8,12 @@ that decision is load-bearing and is not restated here.
 ## Two views, both kept
 
 `mira-gui` opens on **the grid** (`views/LibraryWindow`): cover tiles and a
-details panel, with a custom top bar in place of a native titlebar — filter
-and sort controls, search, tile size, and window controls (minimize/
-maximize/close), inspired by Lutris. It is modelled on Playnite's shelf for
-the tile browsing itself, which is the interaction most people arriving at a
-Linux game launcher already know.
+left sidebar (filters, sort, search, Library/Classic-view navigation,
+Settings, and a status line), with a custom top bar in place of a native
+titlebar — Add Games, tile size, and window controls (minimize/maximize/
+close), inspired by Lutris. It is modelled on Playnite's shelf for the tile
+browsing itself, which is the interaction most people arriving at a Linux
+game launcher already know.
 
 The window is frameless (`Qt::FramelessWindowHint`): the top bar owns
 move (`QWindow::startSystemMove`, dragging its own empty background) and
@@ -22,8 +23,8 @@ compositor rather than repositioning the window by hand, which is what makes
 them work under Wayland as well as X11.
 
 **The table** (`views/MainWindow`) shows every field of every game at once.
-It is reachable as `mira-gui --classic`, or from the grid's *View → Open
-classic table view*, which opens it as a second top-level window rather than
+It is reachable as `mira-gui --classic`, or from the grid sidebar's *Classic
+table view* row, which opens it as a second top-level window rather than
 swapping the grid out.
 
 Neither is a fallback for the other. The grid is the better browser; the
@@ -102,9 +103,9 @@ have to stay writable to be cleared again, and a merge patch cannot drop one.
 
 Four things the stylesheet cannot reach read the tokens directly instead:
 `ui/GameTileDelegate` and `ui/CoverArt`, which paint with `QPainter`,
-`ui/Notify`'s toasts, and `ui/GameDetailsPanel`'s hero banner, which is
-clipped to `radius_panel` by hand because a stylesheet cannot round a pixmap
-inside a `QLabel`. They repaint on `theme::Notifier::Changed`.
+`ui/Notify`'s toasts, and `ui/HeroArtWidget`'s banner, which is clipped to
+`radius_panel` by hand because a stylesheet cannot round a pixmap inside a
+`QLabel`. They repaint on `theme::Notifier::Changed`.
 
 Two conventions keep colors out of the widgets themselves:
 
@@ -175,7 +176,7 @@ This matters more than it looks:
   frontend. Adding a backend setting requires no frontend change.
 - **`frontend.toml`** holds the frontend's own state and preferences:
   window size, tile size, which filter and sort were selected,
-  the details panel's splitter width, and whether to scan the library on
+  the left sidebar's splitter width, and whether to scan the library on
   startup. The backend stores it verbatim and never validates it, reachable
   as the opaque `frontend` key of `GET`/`PATCH /v1/config` (see
   `FrontendPrefs`).
@@ -183,7 +184,7 @@ This matters more than it looks:
   | key | what it does |
   |---|---|
   | `window_width`, `window_height` | remembered window size |
-  | `details_width` | remembered splitter width for the details panel |
+  | `sidebar_width` | remembered splitter width for the left sidebar |
   | `tile_width` | cover tile size (clamped to the zoom slider's range) |
   | `library_filter` | which filter was selected |
   | `sort_by`, `sort_descending` | grid order — see `ui/LibrarySort` |
@@ -226,14 +227,14 @@ Everything `api.md` marks implemented has a path through the UI:
 |---|---|
 | `GET /v1/health` | the Online/Offline badge |
 | `GET /v1/games[?status=]` | both library views |
-| `GET`/`PATCH /v1/games/{id}` | `GameDetailDialog` |
+| `GET`/`PATCH /v1/games/{id}` | `GameDetailDialog`, `ui/GameEditForm` |
 | `DELETE /v1/games/{id}` | `DeleteGameDialog`, including `delete_files`/`delete_prefix` |
 | `GET`/`PATCH /v1/games/{id}/config` | `OverridesEditor` |
 | `POST /v1/games/{id}/launch`, `/stop` | Play/Stop, tile double-click, context menu |
-| `GET /v1/games/{id}/artwork` | `ui/ArtworkStore` — grid tiles and the details panel |
-| `GET /v1/games/{id}/artwork?type=hero` | the details panel's banner, in place of the cover when a game has one |
-| `GET /v1/games/{id}/metadata` | the details panel — release date, developer, genres, review summary, ProtonDB tier; also `art_candidates.cover`/`.hero` for `ArtworkPickerDialog` |
-| `POST /v1/games/{id}/metadata/refresh` | the details panel's button, the tile context menu, and *Library → Fetch missing cover art* |
+| `GET /v1/games/{id}/artwork` | `ui/ArtworkStore` — grid tiles and `ui/GameEditForm`'s hero/cover box |
+| `GET /v1/games/{id}/artwork?type=hero` | `ui/GameEditForm`'s banner, in place of the cover when a game has one |
+| `GET /v1/games/{id}/metadata` | `GameDetailPageDialog` (context menu → *More details…*) — screenshots, trailers, requirements, DLC, content descriptors, achievements; also `art_candidates.cover`/`.hero` for `ArtworkPickerDialog` |
+| `POST /v1/games/{id}/metadata/refresh` | the tile context menu's *Refresh metadata && cover art*, and *Library → Fetch missing cover art* |
 | `POST /v1/games/{id}/artwork?type=` | *Choose cover art…* / *Choose hero art…* (`ArtworkPickerDialog`) |
 | `POST /v1/games/{id}/run` | *Run in prefix…* (`RunInPrefixDialog`) |
 | `POST /v1/games/{id}/finish-install` | *Mark as installed* |

@@ -7,8 +7,9 @@
 
 namespace mira_gui {
 
-// The wider store-info page GameDetailsPanel's sidebar has no room for:
-// screenshots, trailers, requirements, DLC, content descriptors, achievements.
+// The wider store-info page that has no room anywhere else in the library
+// view: screenshots, trailers, requirements, DLC, content descriptors,
+// achievements. Reached from the grid's right-click "More details…".
 class GameDetailPageDialog : public QDialog {
   Q_OBJECT
 

@@ -483,7 +483,7 @@ struct FrontendPrefs {
   std::optional<int> window_height;
   std::optional<int> tile_width;
   std::optional<std::string> library_filter;  // a filter key
-  std::optional<int> details_width;
+  std::optional<int> sidebar_width;
   std::optional<std::string> sort_by;  // "name" | "last_played" | "playtime" | "status"
   std::optional<bool> sort_descending;
   // Whether opening the frontend also kicks off POST /v1/library/scan.

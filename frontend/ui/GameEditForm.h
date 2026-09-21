@@ -26,7 +26,7 @@ namespace mira_gui {
 
 // One game's editable record (GET/PATCH /v1/games/{id}), with no QDialog
 // machinery — embeddable in a dialog shell (dialogs/GameDetailDialog) or
-// directly in a window (GameDetailsPanel, taking over the sidebar).
+// directly in a window (LibraryWindow, full-width).
 class GameEditForm : public QWidget {
   Q_OBJECT
 
@@ -35,8 +35,8 @@ public:
 
   const std::string& id() const { return id_; }
 
-  // Same store the sidebar's own hero/cover box uses. Without one this
-  // form's own copy still works and shows placeholders.
+  // Same store the grid's own tiles use. Without one this form's own copy
+  // still works and shows placeholders.
   void SetArtworkStore(ArtworkStore* store);
 
   void Save();
@@ -45,10 +45,18 @@ public:
   // last confirmed — the signal a caller uses to warn before discarding.
   bool IsDirty() const;
 
+  // For game.artwork_selected/a fresh cover fetch to reach this form's own
+  // hero/cover box while it's open — both are safe no-ops if this isn't the
+  // game currently on screen (HeroArtWidget's own concern, see its header).
+  void RefreshCover();
+  void RefreshBanner(const std::string& id);
+
 signals:
   void Loaded(QString name);
   void LoadFailed(QString error);
   void SaveFinished(bool ok, QString error);
+  // "cover" or "hero" — a caller opens ArtworkPickerDialog for it.
+  void ArtworkPickRequested(QString slot);
 
 private:
   void Load();

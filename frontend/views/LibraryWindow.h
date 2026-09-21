@@ -35,7 +35,6 @@ class QListWidgetItem;
 class LibraryGrid;
 
 namespace mira_gui {
-class GameDetailsPanel;
 class GameEditForm;
 class GameTileDelegate;
 class SettingsPanel;
@@ -60,6 +59,7 @@ public:
 
 private:
   QWidget* BuildTopBar();
+  QWidget* BuildSidebar();
   QWidget* BuildGrid();
   QWidget* BuildSettingsPage();
   void BuildMenus();
@@ -100,7 +100,6 @@ private:
   QSize TileSize() const;
 
   void SelectionChanged();
-  void SelectGridItem(const std::string& id);
   void ShowContextMenu(const QPoint& pos);
   // More than one tile selected — a reduced set of actions applied to all
   // of them at once, chosen at the pos the right-click landed on.
@@ -114,6 +113,9 @@ private:
   void OpenGameDialog(const std::string& id);
   QWidget* BuildGameEditPage(const std::string& id);
   void CloseGameEdit();
+  // Confirms first if game_edit_form_ is dirty — the edit page's own Back
+  // button, and the sidebar's Library nav row.
+  void RequestCloseGameEdit();
   // `focus_key` jumps straight to that schema field once loaded.
   void OpenSettings(const QString& focus_key = QString());
   void CloseSettings();
@@ -122,7 +124,14 @@ private:
   bool SettingsOpen() const;
   // Gear <-> Back/Save, and greys out the library controls either way.
   void SetSettingsChromeVisible(bool settings_open);
+  // Shared by SetSettingsChromeVisible and the per-game edit page: neither
+  // filtering nor sorting means anything while the grid isn't on screen.
+  void SetGridControlsEnabled(bool enabled);
+  // Highlights the sidebar's "Library" row exactly when the grid is the
+  // visible content (not Settings, not a game's edit page).
+  void UpdateLibraryNavActive();
   void OpenRunners();
+  void OpenAbout();
   void OpenGameDetailPage(const std::string& id);
   void ScanLibrary();
   void ImportSteamLibrary();
@@ -154,9 +163,10 @@ private:
   QComboBox* sort_ = nullptr;
   QToolButton* sort_direction_ = nullptr;
   QToolButton* add_games_ = nullptr;
-  // The gear and the Back/Save pair are siblings, one shown at a time — see
-  // SetSettingsChromeVisible.
-  QToolButton* settings_button_ = nullptr;
+  // Sidebar row now, styled like library_nav_/classic_view_nav_ — see
+  // SetSettingsChromeVisible for how it and the top bar's Back/Save pair
+  // (still shown/hidden together) coordinate.
+  QPushButton* settings_button_ = nullptr;
   QWidget* settings_actions_widget_ = nullptr;
   QPushButton* settings_back_button_ = nullptr;
   QPushButton* settings_reset_button_ = nullptr;
@@ -165,24 +175,27 @@ private:
   QToolButton* maximize_button_ = nullptr;
   QToolButton* close_button_ = nullptr;
 
+  // The left sidebar's two nav rows — Library is checked/highlighted
+  // whenever content_stack_ shows splitter_ (see UpdateLibraryNavActive).
+  QPushButton* library_nav_ = nullptr;
+  QPushButton* classic_view_nav_ = nullptr;
+
   QSplitter* splitter_ = nullptr;
-  // Swaps the whole splitter (grid + sidebar) out for settings, full-screen
-  // — there's no left sidebar left to keep visible next to it.
+  // Swaps the whole splitter (sidebar + grid) out for settings or a game's
+  // edit page, full-screen — neither has anywhere else to go now that
+  // there's no right sidebar to hold the edit page narrow next to the grid.
   QStackedWidget* content_stack_ = nullptr;
   // Rebuilt on every OpenSettings() so it starts synced to what's actually
   // saved, not stale edits left over from a discarded previous open.
   QWidget* settings_page_ = nullptr;
   mira_gui::SettingsPanel* settings_panel_ = nullptr;
-  // The splitter's right slot: page 0 is details_, page 1 is a game's
-  // editable form taking over that space (game_settings_in_sidebar pref).
-  QStackedWidget* sidebar_stack_ = nullptr;
+  // A game's editable form, full-width in content_stack_ (game_settings_in_sidebar_
+  // pref) or a modal dialog instead — see OpenGameDialog.
   QWidget* game_edit_page_ = nullptr;
   mira_gui::GameEditForm* game_edit_form_ = nullptr;
   bool game_settings_in_sidebar_ = true;
-  bool restoring_selection_ = false;  // re-entrancy guard for SelectGridItem's own selection change
   QLabel* footer_ = nullptr;
   QLabel* empty_hint_ = nullptr;
-  mira_gui::GameDetailsPanel* details_ = nullptr;
 
   std::vector<mira_gui::GameSummary> games_;
   std::set<std::string> running_ids_;

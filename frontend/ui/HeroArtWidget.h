@@ -18,9 +18,8 @@ namespace mira_gui {
 class ArtworkStore;
 
 // A game's hero banner when mirad has one, its cover otherwise, or a
-// placeholder while that's still unknown -- shared by GameDetailsPanel's
-// sidebar and GameEditForm's own page so both show the same picture, sized
-// the same way, kept in sync with each other's fetches for free.
+// placeholder while that's still unknown -- GameEditForm's own page embeds
+// one, sized to fill it.
 class HeroArtWidget : public QWidget {
   Q_OBJECT
 

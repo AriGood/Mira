@@ -12,10 +12,10 @@ class GameEditForm;
 class QPushButton;
 
 // A thin QDialog shell around ui/GameEditForm — the modal route to editing
-// a game (MainWindow's classic view, or the grid's fallback when
-// game_settings_in_sidebar is off). The embedded route is
-// GameDetailsPanel swapping GameEditForm into the sidebar directly; both
-// share the one form implementation.
+// a game (MainWindow's classic view, or LibraryWindow's fallback when
+// game_settings_in_sidebar is off). The embedded route is LibraryWindow
+// swapping GameEditForm in full-width instead; both share the one form
+// implementation.
 class GameDetailDialog : public QDialog {
   Q_OBJECT
 
