@@ -30,6 +30,8 @@ private:
   void RefreshInstalled();
   void RefreshCatalog();
   void DownloadSelected();
+  void RemoveSelected();
+  void ShowSchema();
   void HandleEvent(const std::string& type, const std::string& data);
   void SetStatus(const QString& text, bool error = false);
   std::string CurrentKind() const;
@@ -38,6 +40,8 @@ private:
   QTreeWidget* installed_ = nullptr;
   QTreeWidget* catalog_ = nullptr;
   QPushButton* download_ = nullptr;
+  QPushButton* remove_ = nullptr;
+  QPushButton* schema_ = nullptr;
   QPushButton* refresh_ = nullptr;
   QLabel* status_ = nullptr;
 
