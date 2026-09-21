@@ -561,6 +561,219 @@ int CmdEpic(int argc, char** argv) {
   return 2;
 }
 
+int CmdGogSetup() {
+  auto client = Connect();
+  auto res = client.Post("/v1/gog/setup");
+  if (!Ok(res)) {
+    PrintError(res);
+    return 1;
+  }
+  json body = json::parse(res->body);
+  std::printf("downloading gogdl %s — watch `mira watch` for gog.setup.finished\n",
+             body.value("tag", std::string()).c_str());
+  return 0;
+}
+
+int CmdGogStatus() {
+  auto client = Connect();
+  auto res = client.Get("/v1/gog/status");
+  if (!Ok(res)) {
+    PrintError(res);
+    return 1;
+  }
+  json status = json::parse(res->body);
+  const json& gogdl = status["gogdl"];
+  if (!gogdl.value("installed", false)) {
+    std::puts("gogdl: not installed — run \"mira gog setup\"");
+    return 0;
+  }
+  std::printf("gogdl: installed (%s, %s) at %s\n", gogdl.value("source", "").c_str(),
+             gogdl.value("version", "").c_str(), gogdl.value("path", "").c_str());
+  std::puts(status.value("authenticated", false) ? "authenticated" : "not authenticated — run \"mira gog login\"");
+  return 0;
+}
+
+int CmdGogLogin() {
+  {
+    auto client = Connect();
+    auto res = client.Get("/v1/gog/status");
+    if (!Ok(res)) {
+      PrintError(res);
+      return 1;
+    }
+    json status = json::parse(res->body);
+    if (!status["gogdl"].value("installed", false)) {
+      std::fprintf(stderr, "mira: gogdl isn't installed — run \"mira gog setup\" first\n");
+      return 1;
+    }
+  }
+
+  std::printf(
+      "Visit https://auth.gog.com/auth?client_id=46899977096215655&redirect_uri=https%%3A%%2F%%2Fembed.gog.com"
+      "%%2Fon_login_success%%3Forigin%%3Dclient&response_type=code&layout=client2, log in, and paste back the "
+      "\"code\" query param from the page it redirects to:\ncode: ");
+  std::string code;
+  std::getline(std::cin, code);
+  while (!code.empty() && std::isspace(static_cast<unsigned char>(code.back()))) code.pop_back();
+  size_t start = 0;
+  while (start < code.size() && std::isspace(static_cast<unsigned char>(code[start]))) ++start;
+  code.erase(0, start);
+  if (code.empty()) {
+    std::fprintf(stderr, "mira: nothing entered\n");
+    return 2;
+  }
+
+  auto client = Connect();
+  json body = {{"code", code}};
+  auto res = client.Post("/v1/gog/auth", body.dump(), "application/json");
+  if (!Ok(res)) {
+    PrintError(res);
+    return 1;
+  }
+  std::puts("authenticated");
+  return 0;
+}
+
+int CmdGogLogout() {
+  auto client = Connect();
+  auto res = client.Post("/v1/gog/logout");
+  if (!Ok(res)) {
+    PrintError(res);
+    return 1;
+  }
+  std::puts("logged out");
+  return 0;
+}
+
+int CmdGogImport() {
+  auto client = Connect();
+  auto res = client.Post("/v1/gog/import");
+  if (!Ok(res)) {
+    PrintError(res);
+    return 1;
+  }
+  json summary = json::parse(res->body);
+  std::printf("added: %lld  updated: %lld\n", summary.value("added", 0LL), summary.value("updated", 0LL));
+  return 0;
+}
+
+int CmdGog(int argc, char** argv) {
+  if (argc > 0 && std::string_view(argv[0]) == "setup") return CmdGogSetup();
+  if (argc > 0 && std::string_view(argv[0]) == "status") return CmdGogStatus();
+  if (argc > 0 && std::string_view(argv[0]) == "login") return CmdGogLogin();
+  if (argc > 0 && std::string_view(argv[0]) == "logout") return CmdGogLogout();
+  if (argc > 0 && std::string_view(argv[0]) == "import") return CmdGogImport();
+  std::fprintf(stderr,
+              "usage: mira gog setup|status|login|logout|import\n"
+              "       (installing is source-generic: mira library install gog <id>)\n");
+  return 2;
+}
+
+int CmdItchSetup() {
+  auto client = Connect();
+  auto res = client.Post("/v1/itch/setup");
+  if (!Ok(res)) {
+    PrintError(res);
+    return 1;
+  }
+  json body = json::parse(res->body);
+  std::printf("downloading butler %s — watch `mira watch` for itch.setup.finished\n",
+             body.value("tag", std::string()).c_str());
+  return 0;
+}
+
+int CmdItchStatus() {
+  auto client = Connect();
+  auto res = client.Get("/v1/itch/status");
+  if (!Ok(res)) {
+    PrintError(res);
+    return 1;
+  }
+  json status = json::parse(res->body);
+  const json& butler = status["butler"];
+  if (!butler.value("installed", false)) {
+    std::puts("butler: not installed — run \"mira itch setup\"");
+    return 0;
+  }
+  std::printf("butler: installed (%s, %s) at %s\n", butler.value("source", "").c_str(),
+             butler.value("version", "").c_str(), butler.value("path", "").c_str());
+  std::puts(status.value("authenticated", false) ? "authenticated" : "not authenticated — run \"mira itch login\"");
+  return 0;
+}
+
+int CmdItchLogin() {
+  {
+    auto client = Connect();
+    auto res = client.Get("/v1/itch/status");
+    if (!Ok(res)) {
+      PrintError(res);
+      return 1;
+    }
+    json status = json::parse(res->body);
+    if (!status["butler"].value("installed", false)) {
+      std::fprintf(stderr, "mira: butler isn't installed — run \"mira itch setup\" first\n");
+      return 1;
+    }
+  }
+
+  std::printf("Paste an API key from https://itch.io/user/settings/api-keys:\napi key: ");
+  std::string key;
+  std::getline(std::cin, key);
+  while (!key.empty() && std::isspace(static_cast<unsigned char>(key.back()))) key.pop_back();
+  size_t start = 0;
+  while (start < key.size() && std::isspace(static_cast<unsigned char>(key[start]))) ++start;
+  key.erase(0, start);
+  if (key.empty()) {
+    std::fprintf(stderr, "mira: nothing entered\n");
+    return 2;
+  }
+
+  auto client = Connect();
+  json body = {{"api_key", key}};
+  auto res = client.Post("/v1/itch/auth", body.dump(), "application/json");
+  if (!Ok(res)) {
+    PrintError(res);
+    return 1;
+  }
+  std::puts("authenticated");
+  return 0;
+}
+
+int CmdItchLogout() {
+  auto client = Connect();
+  auto res = client.Post("/v1/itch/logout");
+  if (!Ok(res)) {
+    PrintError(res);
+    return 1;
+  }
+  std::puts("logged out");
+  return 0;
+}
+
+int CmdItchImport() {
+  auto client = Connect();
+  auto res = client.Post("/v1/itch/import");
+  if (!Ok(res)) {
+    PrintError(res);
+    return 1;
+  }
+  json summary = json::parse(res->body);
+  std::printf("added: %lld  updated: %lld\n", summary.value("added", 0LL), summary.value("updated", 0LL));
+  return 0;
+}
+
+int CmdItch(int argc, char** argv) {
+  if (argc > 0 && std::string_view(argv[0]) == "setup") return CmdItchSetup();
+  if (argc > 0 && std::string_view(argv[0]) == "status") return CmdItchStatus();
+  if (argc > 0 && std::string_view(argv[0]) == "login") return CmdItchLogin();
+  if (argc > 0 && std::string_view(argv[0]) == "logout") return CmdItchLogout();
+  if (argc > 0 && std::string_view(argv[0]) == "import") return CmdItchImport();
+  std::fprintf(stderr,
+              "usage: mira itch setup|status|login|logout|import\n"
+              "       (installing is source-generic: mira library install itch <id>)\n");
+  return 2;
+}
+
 int CmdDesktopEntriesList() {
   auto client = Connect();
   auto res = client.Get("/v1/desktop-entries/candidates");
@@ -1025,6 +1238,8 @@ int main(int argc, char** argv) {
   if (command == "steam") return CmdSteam(rest_argc, rest);
   if (command == "lutris") return CmdLutris(rest_argc, rest);
   if (command == "epic") return CmdEpic(rest_argc, rest);
+  if (command == "gog") return CmdGog(rest_argc, rest);
+  if (command == "itch") return CmdItch(rest_argc, rest);
   if (command == "library") return CmdLibrary(rest_argc, rest);
   if (command == "desktop-entries") return CmdDesktopEntries(rest_argc, rest);
   if (command == "gamemode") return CmdGameMode(rest_argc, rest);

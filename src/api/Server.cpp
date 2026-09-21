@@ -27,6 +27,12 @@
 #include "epic/EpicImporter.h"
 #include "epic/EpicInstaller.h"
 #include "epic/Legendary.h"
+#include "gog/Gog.h"
+#include "gog/GogImporter.h"
+#include "gog/GogInstaller.h"
+#include "itch/Itch.h"
+#include "itch/ItchImporter.h"
+#include "itch/ItchInstaller.h"
 #include "lutris/LutrisImporter.h"
 #include "metadata/MetadataFetcher.h"
 #include "proc/Session.h"
@@ -692,6 +698,148 @@ void Server::RegisterRoutes() {
   // separate GET endpoint needed, they just show up in GET /v1/games.
   http_->Post("/v1/epic/import", [this](const Request&, Response& res) {
     epic::EpicImporter importer(config_, games_, events_);
+    auto summary = importer.Import();
+    if (!summary) return SendError(res, 404, summary.error().code, summary.error().message);
+    SyncDesktopEntries(config_, games_);
+    for (const model::Game& game : summary->added_games) metadata_fetches_.Enqueue(config_, events_, game);
+    SendJson(res, {{"added", summary->added}, {"updated", summary->updated}});
+  });
+
+  // --- gog ----------------------------------------------------------------
+  //
+  // Wraps gogdl (Heroic's GOG downloader) for auth and install/update.
+  // Unlike Legendary, gogdl has no catalog/status subcommand of its own —
+  // GET /v1/gog/status only ever reports whether gogdl itself is
+  // installed and whether Mira has a stored, unexpired token; catalog
+  // listing (GET /v1/library?source=gog) talks to GOG's own embed.gog.com
+  // API directly (see src/gog/GogSource.cpp). Mira never runs GOG Galaxy —
+  // an installed GOG game launches through Mira's own Wine/Proton runners
+  // like any other Windows game, or natively when GOG shipped a Linux
+  // build.
+
+  http_->Get("/v1/gog/status", [this](const Request&, Response& res) {
+    const gog::GogAuthStatus status = gog::Status(config_);
+    SendJson(res, {{"gogdl", {{"installed", status.gogdl.installed},
+                              {"source", status.gogdl.source},
+                              {"path", status.gogdl.path},
+                              {"version", status.gogdl.version}}},
+                  {"authenticated", status.authenticated}});
+  });
+
+  http_->Post("/v1/gog/setup", [this](const Request&, Response& res) {
+    auto releases = runner::ListReleases(config_, "gog");
+    if (!releases) return SendError(res, 502, releases.error().code, releases.error().message);
+    if (releases->empty()) return SendError(res, 404, "no_release_found", "no matching gogdl release found");
+
+    const runner::ReleaseAsset asset = releases->front();
+    events_.Publish("gog.setup.started", {{"tag", asset.tag}});
+    std::thread([this, asset] {
+      if (auto installed = gog::InstallGogBinary(config_, asset); !installed) {
+        log::Error("gogdl install failed ({}): {}", asset.tag, installed.error().message);
+        events_.Publish("gog.setup.failed", {{"tag", asset.tag}, {"error", installed.error().message}});
+      } else {
+        log::Info("installed gogdl {}", asset.tag);
+        events_.Publish("gog.setup.finished", {{"tag", asset.tag}});
+      }
+    }).detach();
+
+    SendJson(res, {{"status", "downloading"}, {"tag", asset.tag}}, 202);
+  });
+
+  // The user pastes back the "code" query param from the GOG login-success
+  // redirect URL — mirad itself never opens a browser (same posture as
+  // /v1/epic/auth).
+  http_->Post("/v1/gog/auth", [this](const Request& req, Response& res) {
+    json body = json::parse(req.body, nullptr, false);
+    if (body.is_discarded() || !body.contains("code") || !body["code"].is_string()) {
+      return SendError(res, 400, "invalid_body", R"(expected {"code": "..."})");
+    }
+    if (auto logged_in = gog::Login(config_, body["code"]); !logged_in) {
+      return SendError(res, 400, logged_in.error().code, logged_in.error().message);
+    }
+    const gog::GogAuthStatus status = gog::Status(config_);
+    SendJson(res, {{"authenticated", status.authenticated}});
+  });
+
+  http_->Post("/v1/gog/logout", [this](const Request&, Response& res) {
+    if (auto logged_out = gog::Logout(config_); !logged_out) {
+      return SendError(res, 400, logged_out.error().code, logged_out.error().message);
+    }
+    SendJson(res, {{"status", "logged_out"}});
+  });
+
+  // Unlike epic/steam/itch, this doesn't scan for already-installed
+  // titles system-wide — gogdl has no such concept (see gog/Gog.h's class
+  // comment). It re-identifies whatever's already under gog.install_root,
+  // which is what GogInstaller itself installs into.
+  http_->Post("/v1/gog/import", [this](const Request&, Response& res) {
+    gog::GogImporter importer(config_, games_, events_);
+    auto summary = importer.Import();
+    if (!summary) return SendError(res, 404, summary.error().code, summary.error().message);
+    SyncDesktopEntries(config_, games_);
+    for (const model::Game& game : summary->added_games) metadata_fetches_.Enqueue(config_, events_, game);
+    SendJson(res, {{"added", summary->added}, {"updated", summary->updated}});
+  });
+
+  // --- itch -----------------------------------------------------------
+  //
+  // Wraps butlerd (itch.io's own launcher-integration daemon) for auth,
+  // catalog, and install/update. Mira never runs the itch app — an
+  // installed title launches through Mira's own Wine/Proton runners, or
+  // natively for the many itch.io titles that ship a Linux build.
+
+  http_->Get("/v1/itch/status", [this](const Request&, Response& res) {
+    const itch::ItchAuthStatus status = itch::Status(config_);
+    SendJson(res, {{"butler", {{"installed", status.butler.installed},
+                               {"source", status.butler.source},
+                               {"path", status.butler.path},
+                               {"version", status.butler.version}}},
+                  {"authenticated", status.authenticated}});
+  });
+
+  http_->Post("/v1/itch/setup", [this](const Request&, Response& res) {
+    auto releases = runner::ListReleases(config_, "itch");
+    if (!releases) return SendError(res, 502, releases.error().code, releases.error().message);
+    if (releases->empty()) return SendError(res, 404, "no_release_found", "no matching butler release found");
+
+    const runner::ReleaseAsset asset = releases->front();
+    events_.Publish("itch.setup.started", {{"tag", asset.tag}});
+    std::thread([this, asset] {
+      if (auto installed = itch::InstallButlerBinary(config_, asset); !installed) {
+        log::Error("butler install failed ({}): {}", asset.tag, installed.error().message);
+        events_.Publish("itch.setup.failed", {{"tag", asset.tag}, {"error", installed.error().message}});
+      } else {
+        log::Info("installed butler {}", asset.tag);
+        events_.Publish("itch.setup.finished", {{"tag", asset.tag}});
+      }
+    }).detach();
+
+    SendJson(res, {{"status", "downloading"}, {"tag", asset.tag}}, 202);
+  });
+
+  // The user's itch.io API key (itch.io/user/settings/api-keys) — unlike
+  // Epic/GOG this isn't a pasted redirect code, so there's no login URL to
+  // print (see CmdItchLogin in the CLI).
+  http_->Post("/v1/itch/auth", [this](const Request& req, Response& res) {
+    json body = json::parse(req.body, nullptr, false);
+    if (body.is_discarded() || !body.contains("api_key") || !body["api_key"].is_string()) {
+      return SendError(res, 400, "invalid_body", R"(expected {"api_key": "..."})");
+    }
+    if (auto logged_in = itch::Login(config_, body["api_key"]); !logged_in) {
+      return SendError(res, 400, logged_in.error().code, logged_in.error().message);
+    }
+    SendJson(res, {{"authenticated", true}});
+  });
+
+  http_->Post("/v1/itch/logout", [this](const Request&, Response& res) {
+    if (auto logged_out = itch::Logout(config_); !logged_out) {
+      return SendError(res, 400, logged_out.error().code, logged_out.error().message);
+    }
+    SendJson(res, {{"status", "logged_out"}});
+  });
+
+  http_->Post("/v1/itch/import", [this](const Request&, Response& res) {
+    itch::ItchImporter importer(config_, games_, events_);
     auto summary = importer.Import();
     if (!summary) return SendError(res, 404, summary.error().code, summary.error().message);
     SyncDesktopEntries(config_, games_);

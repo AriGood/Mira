@@ -1,0 +1,117 @@
+#include "itch/ItchImporter.h"
+
+#include <algorithm>
+
+#include <json.hpp>
+
+#include "core/Log.h"
+#include "itch/Butlerd.h"
+#include "runner/RunnerRegistry.h"
+
+namespace mira::itch {
+namespace {
+using nlohmann::json;
+
+void AddTag(std::vector<std::string>& tags, const std::string& tag) {
+  if (std::ranges::find(tags, tag) == tags.end()) tags.push_back(tag);
+}
+
+struct Cave {
+  std::string cave_id;
+  std::string game_id;
+  std::string title;
+  std::string install_folder;
+  bool is_linux_native = false;
+};
+
+// butlerd's documented Cave shape (itch.io/docs/butler/launcher-
+// integration.html) nests the owning game under "game" and the on-disk
+// location under "installInfo" -- not yet confirmed against a real
+// logged-in account, so every field here is read defensively
+// (json::value with a fallback) rather than assumed present; a field
+// that's actually named differently just leaves that one piece blank
+// instead of failing the whole import.
+std::vector<Cave> ParseCaves(const json& items) {
+  std::vector<Cave> out;
+  if (!items.is_array()) return out;
+  for (const json& item : items) {
+    Cave cave;
+    cave.cave_id = item.value("id", std::string());
+    if (cave.cave_id.empty()) continue;
+
+    const json& game = item.value("game", json::object());
+    cave.game_id = std::to_string(game.value("id", std::int64_t{0}));
+    cave.title = game.value("title", std::string());
+
+    const json& install_info = item.value("installInfo", json::object());
+    cave.install_folder = install_info.value("installFolder", std::string());
+
+    const json& upload = item.value("upload", json::object());
+    cave.is_linux_native = upload.value("platforms", json::object()).value("linux", false);
+
+    out.push_back(std::move(cave));
+  }
+  return out;
+}
+
+}  // namespace
+
+ItchImporter::ItchImporter(config::Config& config, store::GameStore& games, api::EventBus& events)
+    : config_(config), games_(games), events_(events) {}
+
+Result<ItchImportSummary> ItchImporter::Import() {
+  ItchImportSummary summary;
+  if (!config_.GetBool("itch.enabled")) return summary;
+
+  const Result<json> caves_json = Call(config_, "Fetch.Caves", {{"fresh", true}});
+  if (!caves_json) return std::unexpected(caves_json.error());
+
+  const json items = caves_json->value("items", json::array());
+  const runner::RunnerRegistry provisioner(config_);
+
+  for (const Cave& cave : ParseCaves(items)) {
+    if (cave.game_id.empty() || cave.game_id == "0") continue;
+    const std::string id = "itch-" + cave.game_id;
+    const auto existing = games_.Find(id);
+
+    model::Game game = existing.value_or(model::Game{});
+    game.id = id;
+    game.source = "itch";
+    game.source_ref = cave.game_id;
+    game.name = cave.title.empty() ? cave.game_id : cave.title;
+    game.install_path = cave.install_folder;
+    game.platform = cave.is_linux_native ? model::Platform::Native : model::Platform::Windows;
+    game.last_error.clear();
+    game.updated_at = model::NowSeconds();
+    if (!existing) game.created_at = game.updated_at;
+    AddTag(game.tags, "itch");
+
+    if (game.platform == model::Platform::Windows &&
+        (!existing || existing->runner_ref.empty() || existing->data_dir.empty())) {
+      game.data_dir = (config_.GetPath("prefix_root") / game.id).string();
+      const model::Game provisioned = provisioner.ProvisionGame(game);
+      game.runner_ref = provisioned.runner_ref;
+      game.data_dir = provisioned.data_dir;
+      game.status = provisioned.status;
+      game.last_error = provisioned.last_error;
+    } else {
+      game.status = model::GameStatus::Ready;
+    }
+
+    auto result = games_.Upsert(game);
+    if (!result) {
+      log::Error("failed to save itch game {}: {}", id, result.error().message);
+      continue;
+    }
+    if (existing) {
+      ++summary.updated;
+    } else {
+      ++summary.added;
+      summary.added_games.push_back(game);
+    }
+    events_.Publish(existing ? "game.updated" : "game.added", model::ToJson(game));
+  }
+  return summary;
+}
+
+}  // namespace mira::itch

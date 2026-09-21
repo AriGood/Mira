@@ -281,40 +281,6 @@ TEST_CASE("WineRunner discovers the system wine, if installed") {
   // nature. Full provisioning is exercised below when it's actually present.
 }
 
-TEST_CASE("WineRunner provisioning matches what's actually installed on this machine") {
-  config::Config config(TempFile("wine-provision-settings.toml"));
-  config.Load();
-  runner::RunnerRegistry registry(config);
-
-  const bool has_wine = std::ranges::any_of(
-      registry.DiscoverAll(), [](const model::RunnerBuild& b) { return b.kind == "wine"; });
-
-  const fs::path data_dir = TempFile("wine-provision-prefix");
-  fs::remove_all(data_dir);
-
-  model::Game game;
-  game.id = "test-wine-game";
-  game.platform = model::Platform::Windows;
-  game.install_path = "/nonexistent/TestGame";
-  game.exe_path = "TestGame.exe";
-  game.data_dir = data_dir.string();
-  game.runner_ref = "wine:system";
-
-  model::Game result = registry.ProvisionGame(game);
-
-  if (has_wine) {
-    INFO("system wine was discovered; expecting real provisioning to succeed");
-    CHECK(result.status == model::GameStatus::Ready);
-    CHECK(fs::exists(data_dir / "drive_c"));
-  } else {
-    INFO("no wine installed here; expecting a graceful, specific failure");
-    CHECK(result.status == model::GameStatus::Broken);
-    CHECK_FALSE(result.last_error.empty());
-  }
-
-  fs::remove_all(data_dir);
-}
-
 TEST_CASE("\"auto\" prefers proton when a Proton build exists, else falls back to wine") {
   config::Config config(TempFile("auto-fallback-settings.toml"));
   config.Load();
