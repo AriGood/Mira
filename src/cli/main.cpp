@@ -394,9 +394,22 @@ int CmdEpicSetup() {
   return 0;
 }
 
+int CmdEpicImport() {
+  auto client = Connect();
+  auto res = client.Post("/v1/epic/import");
+  if (!Ok(res)) {
+    PrintError(res);
+    return 1;
+  }
+  json summary = json::parse(res->body);
+  std::printf("added: %lld  updated: %lld\n", summary.value("added", 0LL), summary.value("updated", 0LL));
+  return 0;
+}
+
 int CmdEpic(int argc, char** argv) {
   if (argc > 0 && std::string_view(argv[0]) == "setup") return CmdEpicSetup();
-  std::fprintf(stderr, "usage: mira epic setup\n");
+  if (argc > 0 && std::string_view(argv[0]) == "import") return CmdEpicImport();
+  std::fprintf(stderr, "usage: mira epic setup|import\n");
   return 2;
 }
 

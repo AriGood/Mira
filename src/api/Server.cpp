@@ -22,6 +22,7 @@
 #include "desktop/DesktopEntries.h"
 #include "library/Scanner.h"
 #include "desktop/DesktopEntryScanner.h"
+#include "epic/EpicImporter.h"
 #include "epic/Legendary.h"
 #include "lutris/LutrisImporter.h"
 #include "metadata/MetadataFetcher.h"
@@ -635,6 +636,17 @@ void Server::RegisterRoutes() {
     }).detach();
 
     SendJson(res, {{"status", "downloading"}, {"tag", asset.tag}}, 202);
+  });
+
+  // Imported games land in the same GameStore as everything else — no
+  // separate GET endpoint needed, they just show up in GET /v1/games.
+  http_->Post("/v1/epic/import", [this](const Request&, Response& res) {
+    epic::EpicImporter importer(config_, games_, events_);
+    auto summary = importer.Import();
+    if (!summary) return SendError(res, 404, summary.error().code, summary.error().message);
+    SyncDesktopEntries(config_, games_);
+    for (const model::Game& game : summary->added_games) metadata_fetches_.Enqueue(config_, events_, game);
+    SendJson(res, {{"added", summary->added}, {"updated", summary->updated}});
   });
 
   // --- desktop entries (importing someone else's, not writing ours) -----
