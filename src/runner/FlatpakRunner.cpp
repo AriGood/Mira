@@ -8,6 +8,16 @@
 #include "runner/Exec.h"
 
 namespace mira::runner {
+namespace {
+
+// game.runner_ref is "flatpak:<app-id>" -- extracted directly rather than
+// via a resolved build, since UsesBuilds() is false (see FlatpakRunner.h).
+std::string AppIdFromRef(std::string_view runner_ref) {
+  constexpr std::string_view kPrefix = "flatpak:";
+  return runner_ref.starts_with(kPrefix) ? std::string(runner_ref.substr(kPrefix.size())) : std::string();
+}
+
+}  // namespace
 
 Result<std::vector<FlatpakApp>> ListInstalledFlatpakApps() {
   const auto flatpak_bin = FindOnPath("flatpak");
@@ -38,23 +48,15 @@ Result<std::vector<FlatpakApp>> ListInstalledFlatpakApps() {
 }
 
 std::vector<model::RunnerBuild> FlatpakRunner::Discover(const config::Config&) const {
-  const auto apps = ListInstalledFlatpakApps();
-  if (!apps) return {};
-
-  std::vector<model::RunnerBuild> builds;
-  builds.reserve(apps->size());
-  for (const FlatpakApp& app : *apps) {
-    model::RunnerBuild build;
-    build.kind = "flatpak";
-    build.name = app.app_id;  // also what forms runner_ref, see FlatpakRunner.h
-    build.version = app.version;
-    builds.push_back(std::move(build));
-  }
-  return builds;
+  // Always empty -- see the UsesBuilds() comment in FlatpakRunner.h.
+  // FlatpakScanner lists installed apps directly via
+  // ListInstalledFlatpakApps, not through this.
+  return {};
 }
 
-Result<void> FlatpakRunner::Provision(const model::Game&, const std::optional<model::RunnerBuild>& build) const {
-  if (!build) return Err("no_runner_build", "no Flatpak app resolved for this game");
+Result<void> FlatpakRunner::Provision(const model::Game& game, const std::optional<model::RunnerBuild>&) const {
+  const std::string app_id = AppIdFromRef(game.runner_ref);
+  if (app_id.empty()) return Err("no_runner_build", "no Flatpak app id in this game's runner_ref");
   const auto flatpak_bin = FindOnPath("flatpak");
   if (!flatpak_bin) return Err("flatpak_missing", "flatpak isn't installed");
 
@@ -62,18 +64,17 @@ Result<void> FlatpakRunner::Provision(const model::Game&, const std::optional<mo
   // Just confirm it's still actually there, since Mira's own record of it
   // (game.runner_ref) can go stale if it's uninstalled behind Mira's back.
   Command command;
-  command.argv = {*flatpak_bin, "info", build->name};
+  command.argv = {*flatpak_bin, "info", app_id};
   const Result<ExecResult> result = RunAndWait(command);
   if (!result || result->exit_code != 0) {
-    return Err("flatpak_app_missing",
-              std::format("flatpak app \"{}\" is no longer installed", build->name));
+    return Err("flatpak_app_missing", std::format("flatpak app \"{}\" is no longer installed", app_id));
   }
   return {};
 }
 
-Result<Command> FlatpakRunner::BuildCommand(const model::Game& game,
-                                            const std::optional<model::RunnerBuild>& build) const {
-  if (!build) return Err("no_runner_build", "no Flatpak app resolved for this game");
+Result<Command> FlatpakRunner::BuildCommand(const model::Game& game, const std::optional<model::RunnerBuild>&) const {
+  const std::string app_id = AppIdFromRef(game.runner_ref);
+  if (app_id.empty()) return Err("no_runner_build", "no Flatpak app id in this game's runner_ref");
 
   Command command;
   command.argv = {"flatpak", "run"};
@@ -81,7 +82,7 @@ Result<Command> FlatpakRunner::BuildCommand(const model::Game& game,
   // plain exec does (see runner::Exec.cpp's MergedEnv) -- env has to be
   // handed to flatpak explicitly, as its own --env= flags.
   for (const auto& [key, value] : game.env) command.argv.push_back(std::format("--env={}={}", key, value));
-  command.argv.push_back(build->name);
+  command.argv.push_back(app_id);
 
   // strings::Split("", ' ') returns one empty element, not an empty vector —
   // filter blanks out first, or an unset game.args still adds a pointless

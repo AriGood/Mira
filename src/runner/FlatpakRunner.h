@@ -22,17 +22,21 @@ struct FlatpakApp {
 // ProtonRunner::Discover gating on umu-run.
 Result<std::vector<FlatpakApp>> ListInstalledFlatpakApps();
 
-// Runs a Flatpak app by ref. The installed app *is* the build — there's no
-// separate "which build" choice the way Proton/Wine have (see
-// docs/architecture.md, Replaceability) — so a build's `name` is the app id
-// itself and `runner_ref` ends up "flatpak:<app-id>", e.g.
-// "flatpak:org.libretro.RetroArch".
+// Runs a Flatpak app by ref, "flatpak:<app-id>". Like SteamRunner, doesn't
+// fit the "installed build you choose" model the other runners share:
+// UsesBuilds() is false and Discover() is always empty, so installed
+// Flatpak apps never show up polluting a runner-build picker meant for
+// Proton/Wine versions -- FlatpakScanner lists them (via
+// ListInstalledFlatpakApps below) for the library, not as runner choices.
+// The app id itself comes straight from runner_ref, same as SteamRunner
+// reads its appid from "steam:<appid>".
 //
 // Unlike every other runner, exe_path is never required: a Flatpak app has
 // no separate executable to point at, just its own app id.
 class FlatpakRunner final : public IRunner {
 public:
   std::string kind() const override { return "flatpak"; }
+  bool UsesBuilds() const override { return false; }
 
   std::vector<model::RunnerBuild> Discover(const config::Config& config) const override;
 

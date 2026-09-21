@@ -12,13 +12,10 @@ using namespace mira;
 TEST_CASE("FlatpakRunner::BuildCommand: no args means no trailing --") {
   model::Game game;
   game.id = "flatpak-org.example.App";
-
-  model::RunnerBuild build;
-  build.kind = "flatpak";
-  build.name = "org.example.App";
+  game.runner_ref = "flatpak:org.example.App";
 
   runner::FlatpakRunner flatpak;
-  auto command = flatpak.BuildCommand(game, build);
+  auto command = flatpak.BuildCommand(game, std::nullopt);
   REQUIRE(command.has_value());
   CHECK(command->argv == std::vector<std::string>{"flatpak", "run", "org.example.App"});
 }
@@ -26,15 +23,12 @@ TEST_CASE("FlatpakRunner::BuildCommand: no args means no trailing --") {
 TEST_CASE("FlatpakRunner::BuildCommand translates game.env into --env= flags, and args after --") {
   model::Game game;
   game.id = "flatpak-org.example.App";
+  game.runner_ref = "flatpak:org.example.App";
   game.args = "--fullscreen --no-splash";
   game.env["FOO"] = "bar";
 
-  model::RunnerBuild build;
-  build.kind = "flatpak";
-  build.name = "org.example.App";
-
   runner::FlatpakRunner flatpak;
-  auto command = flatpak.BuildCommand(game, build);
+  auto command = flatpak.BuildCommand(game, std::nullopt);
   REQUIRE(command.has_value());
   CHECK(command->argv == std::vector<std::string>{"flatpak", "run", "--env=FOO=bar", "org.example.App", "--",
                                                    "--fullscreen", "--no-splash"});
@@ -43,7 +37,7 @@ TEST_CASE("FlatpakRunner::BuildCommand translates game.env into --env= flags, an
   CHECK(command->env.empty());
 }
 
-TEST_CASE("FlatpakRunner::BuildCommand rejects an unresolved build") {
+TEST_CASE("FlatpakRunner::BuildCommand rejects a game with no flatpak: runner_ref") {
   model::Game game;
   game.id = "flatpak-org.example.App";
   runner::FlatpakRunner flatpak;
@@ -57,18 +51,13 @@ TEST_CASE("ListInstalledFlatpakApps degrades to an empty list, never an error, w
   CHECK(apps.has_value());
 }
 
-TEST_CASE("FlatpakRunner::Discover reflects what's actually installed on this machine") {
-  if (!runner::FindOnPath("flatpak")) return;  // soft dependency, same posture as sqlite3/wine elsewhere
-
+TEST_CASE("FlatpakRunner::Discover is always empty -- installed apps aren't runner builds") {
+  // Confirmed against this machine's real installed apps (several) as well
+  // as a config with none discoverable -- either way this must never list
+  // them, or every installed Flatpak app pollutes a runner-build picker
+  // meant for Proton/Wine versions. See FlatpakRunner.h's UsesBuilds().
   config::Config config(std::filesystem::temp_directory_path() / "mira-tests" / "flatpak-discover-settings.toml");
   config.Load();
   runner::FlatpakRunner flatpak;
-  const auto builds = flatpak.Discover(config);
-  // Nothing to assert unconditionally beyond "it doesn't crash and every
-  // build looks like a real one" -- environment-dependent by nature, same
-  // posture as the Proton/Wine discovery tests in runner_test.cpp.
-  for (const auto& build : builds) {
-    CHECK(build.kind == "flatpak");
-    CHECK_FALSE(build.name.empty());
-  }
+  CHECK(flatpak.Discover(config).empty());
 }
