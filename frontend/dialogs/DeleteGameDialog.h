@@ -24,4 +24,9 @@ struct DeleteChoice {
 DeleteChoice AskDeleteGame(QWidget* parent, const QString& name, const QString& install_path,
                            const QString& data_dir, const QString& source);
 
+// Same choice, for a batch of games at once. There's no single path to show,
+// so this warns in words instead: files/prefix deletion is skipped
+// per-game for a desktop-entry-sourced one, same as the single-game dialog.
+DeleteChoice AskDeleteGames(QWidget* parent, int count);
+
 }  // namespace mira_gui

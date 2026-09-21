@@ -1,9 +1,11 @@
 #include "GameActions.h"
 
 #include <QDesktopServices>
+#include <QStringList>
 #include <QUrl>
 #include <QWidget>
 
+#include <memory>
 #include <utility>
 
 #include "../client/MiradClient.h"
@@ -128,6 +130,60 @@ void ToggleDesktopEntry(QWidget* parent, const std::string& id, bool currently_e
                       currently_enabled ? "Removed from the application menu."
                                         : "Added to the application menu.");
       });
+}
+
+void BatchDelete(QWidget* parent, const std::vector<std::pair<std::string, QString>>& games,
+                 std::function<void()> on_done) {
+  if (games.empty()) return;
+  const DeleteChoice choice = AskDeleteGames(parent, static_cast<int>(games.size()));
+  if (!choice.confirmed) return;
+
+  auto remaining = std::make_shared<int>(static_cast<int>(games.size()));
+  auto failed = std::make_shared<QStringList>();
+
+  for (const auto& [id, name] : games) {
+    MiradClient::GetGameAsync(parent, id, [parent, id, name, choice, remaining, failed,
+                                           on_done](GameDetailResult detail) {
+      const bool linked_only = detail.ok && detail.game.source == "desktop-entry";
+      MiradClient::DeleteGameAsync(
+          parent, id, choice.delete_files && !linked_only, choice.delete_prefix && !linked_only,
+          choice.delete_metadata, [parent, name, remaining, failed, on_done](DeleteResult result) {
+            if (!result.ok) *failed << name;
+            if (--*remaining > 0) return;
+            if (!failed->isEmpty()) {
+              notify::Failed(parent, QString("Could not remove %1 game(s).").arg(failed->size()),
+                             failed->join(", "));
+            } else {
+              notify::Toast(parent, notify::Level::Success, "Games removed.");
+            }
+            if (on_done) on_done();
+          });
+    });
+  }
+}
+
+void BatchSetDesktopEntry(QWidget* parent, const std::vector<std::string>& ids, bool enabled) {
+  if (ids.empty()) return;
+  const GameConfigEdit edit{"desktop_entries.enabled", "a boolean", enabled ? "true" : "false",
+                            false};
+  auto remaining = std::make_shared<int>(static_cast<int>(ids.size()));
+  auto failures = std::make_shared<int>(0);
+
+  for (const std::string& id : ids) {
+    MiradClient::PatchGameConfigAsync(
+        parent, id, {edit}, [parent, enabled, remaining, failures](PatchGameConfigResult result) {
+          if (!result.ok) ++*failures;
+          if (--*remaining > 0) return;
+          if (*failures > 0) {
+            notify::Failed(parent, QString("Could not update %1 game(s).").arg(*failures),
+                           "See each game's own Advanced settings to retry.");
+          } else {
+            notify::Toast(parent, notify::Level::Success,
+                          enabled ? "Added to the application menu."
+                                  : "Removed from the application menu.");
+          }
+        });
+  }
 }
 
 }  // namespace mira_gui::actions

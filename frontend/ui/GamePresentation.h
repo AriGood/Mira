@@ -26,6 +26,18 @@ inline QColor StatusColor(const std::string& status) {
   return tokens.text_muted;
 }
 
+// ProtonDB's site groups its finer tiers onto a rough good-to-bad scale;
+// reusing our own semantic tokens here keeps a tier badge in sync with theme
+// switches instead of hardcoding ProtonDB's own brand hex.
+inline QColor ProtonDbTierColor(const std::string& tier) {
+  const theme::Tokens& tokens = theme::Current();
+  if (tier == "native" || tier == "platinum" || tier == "gold") return tokens.success;
+  if (tier == "silver") return tokens.info;
+  if (tier == "bronze") return tokens.warning;
+  if (tier == "garbage" || tier == "borked") return tokens.error;
+  return tokens.text_muted;  // "pending", or a future tier ProtonDB adds
+}
+
 // Shared by both library views so the same game reads identically in the
 // grid, its details panel, and the classic table.
 inline QString StatusLabel(const std::string& status) {

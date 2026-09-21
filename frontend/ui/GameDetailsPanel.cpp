@@ -155,6 +155,9 @@ GameDetailsPanel::GameDetailsPanel(QWidget* parent) : QWidget(parent) {
   genres_ = ValueLabel(panel);
   reviews_ = ValueLabel(panel);
   protondb_ = ValueLabel(panel);
+  // A colored pill, not a plain value: fixed size policy so it hugs its own
+  // text instead of stretching across the row like every other value here.
+  protondb_->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
   form->addRow("Released", released_);
   form->addRow("Developer", developer_);
   form->addRow("Genres", genres_);
@@ -215,9 +218,18 @@ void GameDetailsPanel::ShowMetadata(const GameMetadata& metadata) {
   row(reviews_, reviews);
 
   // ProtonDB's own wording, capitalized: "platinum" is a tier name, not a
-  // sentence, and its meaning is the site's rather than ours to restate.
+  // sentence, and its meaning is the site's rather than ours to restate. A
+  // colored pill (see ProtonDbTierColor) reads faster than plain text next
+  // to every other plain-text row here.
   QString tier = QString::fromStdString(metadata.protondb_tier);
-  if (!tier.isEmpty()) tier[0] = tier[0].toUpper();
+  if (!tier.isEmpty()) {
+    tier[0] = tier[0].toUpper();
+    const QColor background = ProtonDbTierColor(metadata.protondb_tier);
+    protondb_->setStyleSheet(QString("QLabel { background-color: %1; color: %2; "
+                                     "padding: 2px 10px; border-radius: %3px; font-weight: 600; }")
+                                 .arg(background.name(), theme::Current().on_accent.name())
+                                 .arg(theme::Current().radius_control));
+  }
   row(protondb_, tier);
 }
 

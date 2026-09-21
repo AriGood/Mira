@@ -4,6 +4,8 @@
 
 #include <functional>
 #include <string>
+#include <utility>
+#include <vector>
 
 class QWidget;
 
@@ -59,5 +61,18 @@ void RunWinetricks(QWidget* parent, const std::string& id, const QString& name);
 // `currently_enabled` (the caller already resolved it to label the menu
 // item "Add"/"Remove", so this doesn't re-fetch).
 void ToggleDesktopEntry(QWidget* parent, const std::string& id, bool currently_enabled);
+
+// Confirms once for the whole batch (see AskDeleteGames), then DELETEs each
+// game — file/prefix flags are skipped per-game for a desktop-entry source,
+// same rule as the single-game Delete, checked with one GetGameAsync per
+// game first since `source` isn't on GameSummary. `on_done` runs once, after
+// every request settles.
+void BatchDelete(QWidget* parent, const std::vector<std::pair<std::string, QString>>& games,
+                 std::function<void()> on_done);
+
+// PATCHes desktop_entries.enabled = `enabled` for every id. Unlike
+// ToggleDesktopEntry this doesn't flip each game's own current value — a
+// batch is an explicit "set them all to X" from a submenu, not a toggle.
+void BatchSetDesktopEntry(QWidget* parent, const std::vector<std::string>& ids, bool enabled);
 
 }  // namespace mira_gui::actions

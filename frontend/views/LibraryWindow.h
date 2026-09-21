@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QHash>
+#include <QList>
 #include <QMainWindow>
 #include <QPixmap>
 #include <QSize>
@@ -26,6 +27,7 @@ class QStackedWidget;
 class QVBoxLayout;
 class QAction;
 class QToolButton;
+class QListWidgetItem;
 
 // QListWidget with setViewportMargins made public — Qt keeps it protected on
 // QAbstractScrollArea. Defined in LibraryWindow.cpp; this file only ever
@@ -100,8 +102,14 @@ private:
   void SelectionChanged();
   void SelectGridItem(const std::string& id);
   void ShowContextMenu(const QPoint& pos);
+  // More than one tile selected — a reduced set of actions applied to all
+  // of them at once, chosen at the pos the right-click landed on.
+  void ShowBatchContextMenu(const QList<QListWidgetItem*>& items, const QPoint& pos);
   void ToggleRunning(const std::string& id);
   void ToggleHidden(const std::string& id);
+  // Adds the hidden tag to each id that doesn't already have it — batch
+  // "Hide" only ever hides, unlike the single-game toggle.
+  void BatchHide(const std::vector<std::string>& ids);
   void LaunchGame(const std::string& id);
   void OpenGameDialog(const std::string& id);
   QWidget* BuildGameEditPage(const std::string& id);
@@ -127,6 +135,8 @@ private:
   void RefreshMetadata(const std::string& id, bool announce = true);
   void OpenArtworkPicker(const std::string& id, const std::string& slot);
   void FetchMissingArtwork();
+  void SyncDesktopEntries();
+  void RemoveAllDesktopEntries();
   void ShowSteamGridDbNotice(bool asked_for);
   void UpdateTileCover(const QString& id);
 

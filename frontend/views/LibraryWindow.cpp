@@ -271,6 +271,14 @@ void LibraryWindow::BuildMenus() {
           "Re-fetch metadata for every game with no cover. mirad only fetches automatically for a "
           "newly detected game, so a game that failed once — or a non-Steam game from before a "
           "SteamGridDB key was set — stays without one until asked again.");
+  library_menu->addSeparator();
+  library_menu->addAction("Regenerate desktop entries", this, &LibraryWindow::SyncDesktopEntries)
+      ->setToolTip(
+          "Rewrites Mira's own mira-<id>.desktop entries immediately, without waiting for the "
+          "next library change to pick up a desktop_entries.* setting edit.");
+  library_menu->addAction("Remove all desktop entries…", this,
+                          &LibraryWindow::RemoveAllDesktopEntries)
+      ->setToolTip("Turns off desktop entries and deletes every one Mira generated.");
 
   auto* tools_menu = menu->addMenu("&Tools");
   tools_menu->addAction("&Runners…", this, &LibraryWindow::OpenRunners);
@@ -675,6 +683,50 @@ void LibraryWindow::AddGameManually() {
   if (dialog.exec() == QDialog::Accepted) RefreshGames();
 }
 
+void LibraryWindow::SyncDesktopEntries() {
+  mira_gui::MiradClient::SyncDesktopEntriesAsync(this, [this](mira_gui::DesktopEntrySyncResult result) {
+    if (!result.ok) {
+      mira_gui::notify::Failed(this, "Could not regenerate desktop entries.",
+                               QString::fromStdString(result.error));
+      return;
+    }
+    mira_gui::notify::Toast(this, mira_gui::notify::Level::Success, "Desktop entries regenerated.");
+  });
+}
+
+void LibraryWindow::RemoveAllDesktopEntries() {
+  // desktop_entries.enabled is the only lever that actually makes Sync()
+  // remove every mira-<id>.desktop entry rather than immediately rewriting
+  // them (see desktop::DesktopEntries::Sync) — there's no "wipe once, stay
+  // enabled" concept, so this is honest about turning the setting off too.
+  if (!mira_gui::notify::Confirm(
+          this, "Remove all desktop entries",
+          "This turns off desktop entries and deletes every one Mira generated. "
+          "Re-enable them any time in Settings → Desktop Entries.",
+          "Remove all", /*destructive=*/true)) {
+    return;
+  }
+  const mira_gui::ConfigEdit edit{"desktop_entries.enabled", "a boolean", "false"};
+  mira_gui::MiradClient::PatchConfigAsync(
+      this, {edit}, [this](mira_gui::PatchConfigResult patch_result) {
+        if (!patch_result.ok) {
+          mira_gui::notify::Failed(this, "Could not turn off desktop entries.",
+                                   QString::fromStdString(patch_result.error));
+          return;
+        }
+        mira_gui::MiradClient::SyncDesktopEntriesAsync(
+            this, [this](mira_gui::DesktopEntrySyncResult sync_result) {
+              if (!sync_result.ok) {
+                mira_gui::notify::Failed(this, "Could not remove the desktop entries.",
+                                         QString::fromStdString(sync_result.error));
+                return;
+              }
+              mira_gui::notify::Toast(this, mira_gui::notify::Level::Success,
+                                     "Desktop entries removed.");
+            });
+      });
+}
+
 QWidget* LibraryWindow::BuildTopBar() {
   top_bar_ = new QWidget(this);
   top_bar_->setObjectName("top_bar");
@@ -834,7 +886,10 @@ QWidget* LibraryWindow::BuildGrid() {
   grid_->setUniformItemSizes(true);
   grid_->setSpacing(0);
   grid_->setGridSize(TileSize());
-  grid_->setSelectionMode(QAbstractItemView::SingleSelection);
+  // Extended, not Single: ctrl/shift-click and a drag over empty space
+  // (rubber-band, built into QAbstractItemView for this mode) both select
+  // more than one tile, for the batch actions in ShowContextMenu.
+  grid_->setSelectionMode(QAbstractItemView::ExtendedSelection);
   grid_->setEditTriggers(QAbstractItemView::NoEditTriggers);
   grid_->setMouseTracking(true);
   grid_->setFrameShape(QFrame::NoFrame);
@@ -1202,7 +1257,19 @@ void LibraryWindow::SelectionChanged() {
 void LibraryWindow::ShowContextMenu(const QPoint& pos) {
   QListWidgetItem* item = grid_->itemAt(pos);
   if (item == nullptr) return;
+  // Right-clicking outside the current selection replaces it, same as most
+  // file managers; right-clicking inside a multi-selection keeps it so the
+  // batch menu below applies to everything that was selected.
+  if (!item->isSelected()) {
+    grid_->clearSelection();
+    item->setSelected(true);
+  }
   grid_->setCurrentItem(item);
+
+  if (grid_->selectedItems().size() > 1) {
+    ShowBatchContextMenu(grid_->selectedItems(), pos);
+    return;
+  }
 
   const std::string id = item->data(mira_gui::GameTileDelegate::IdRole).toString().toStdString();
   const QString name = item->data(mira_gui::GameTileDelegate::NameRole).toString();
@@ -1292,6 +1359,73 @@ void LibraryWindow::ShowContextMenu(const QPoint& pos) {
     ToggleHidden(id);
   } else if (chosen == remove) {
     mira_gui::actions::Delete(this, id, name, [this] { RefreshGames(); });
+  }
+}
+
+void LibraryWindow::ShowBatchContextMenu(const QList<QListWidgetItem*>& items, const QPoint& pos) {
+  const int count = items.size();
+
+  QMenu menu(this);
+  QAction* refresh_metadata = menu.addAction(QString("Refresh metadata && cover art (%1)").arg(count));
+  QAction* hide = menu.addAction(QString("Hide (%1)").arg(count));
+  hide->setToolTip(
+      "Keep these games out of the library until asked for (Ctrl+H, or the Hidden filter)");
+  auto* desktop_menu = menu.addMenu("Desktop entry");
+  QAction* add_desktop_entry = desktop_menu->addAction("Add to application menu");
+  QAction* remove_desktop_entry = desktop_menu->addAction("Remove from application menu");
+  menu.addSeparator();
+  QAction* remove = menu.addAction(QString("Remove from library… (%1)").arg(count));
+
+  QAction* chosen = menu.exec(grid_->viewport()->mapToGlobal(pos));
+
+  std::vector<std::string> ids;
+  std::vector<std::pair<std::string, QString>> named;
+  ids.reserve(count);
+  named.reserve(count);
+  for (QListWidgetItem* item : items) {
+    ids.push_back(item->data(mira_gui::GameTileDelegate::IdRole).toString().toStdString());
+    named.emplace_back(ids.back(), item->data(mira_gui::GameTileDelegate::NameRole).toString());
+  }
+
+  if (chosen == refresh_metadata) {
+    for (const std::string& game_id : ids) RefreshMetadata(game_id, /*announce=*/false);
+    mira_gui::notify::Toast(this, mira_gui::notify::Level::Info,
+                            QString("Refreshing metadata for %1 game(s)…").arg(count));
+  } else if (chosen == hide) {
+    BatchHide(ids);
+  } else if (chosen == add_desktop_entry) {
+    mira_gui::actions::BatchSetDesktopEntry(this, ids, /*enabled=*/true);
+  } else if (chosen == remove_desktop_entry) {
+    mira_gui::actions::BatchSetDesktopEntry(this, ids, /*enabled=*/false);
+  } else if (chosen == remove) {
+    mira_gui::actions::BatchDelete(this, named, [this] { RefreshGames(); });
+  }
+}
+
+void LibraryWindow::BatchHide(const std::vector<std::string>& ids) {
+  for (const std::string& id : ids) {
+    const mira_gui::GameSummary* game = FindGame(id);
+    if (game == nullptr || HasTag(*game, "hidden")) continue;
+
+    std::vector<std::string> tags = game->tags;
+    tags.push_back("hidden");
+    mira_gui::GamePatch patch;
+    patch.tags = tags;
+    mira_gui::MiradClient::PatchGameAsync(
+        this, id, patch, [this, id, tags](mira_gui::PatchGameResult result) {
+          if (!result.ok) {
+            mira_gui::notify::Failed(this, "Could not hide a game.",
+                                     QString::fromStdString(result.error));
+            return;
+          }
+          for (mira_gui::GameSummary& stored : games_) {
+            if (stored.id == id) {
+              stored.tags = tags;
+              break;
+            }
+          }
+          ApplyFilter();
+        });
   }
 }
 
