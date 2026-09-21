@@ -64,8 +64,8 @@ src/
             WinePrefix (shared prefix-directory detection, used by both
             Detector and Scanner so neither re-discovers the other's
             prefixes as games).
-  runner/   IRunner + NativeRunner/ProtonRunner/WineRunner/SteamRunner/
-            FlatpakRunner, RunnerRegistry (resolves "kind:name" -> a
+  runner/   IRunner + NativeRunner/ProtonRunner/WineRunner/SteamRunner,
+            RunnerRegistry (resolves "kind:name" -> a
             concrete runner + build), Exec (RunAndWait for provisioning/
             downloads, SpawnDetached/SpawnDetachedWithStatus for an actual
             game launch), Downloader (lists/installs Proton-GE/Wine-GE
@@ -79,14 +79,15 @@ src/
             stats.toml) are its own small modules, shared with mira-run.
   desktop/  DesktopEntries — generates/syncs .desktop menu entries for
             ready games, always launching back through Mira so playtime
-            is never bypassed by a menu launch.
+            is never bypassed by a menu launch. DesktopEntryScanner —
+            the reverse direction: lists/imports already-installed
+            .desktop entries (covers Flatpak apps for free, since every
+            Flatpak-exported entry carries X-Flatpak=<app-id>) as games.
   steam/    Vdf (a from-scratch parser for Valve's KeyValues/VDF text
             format), SteamDetector (reads Steam's own files directly:
             library folders, installed apps, which Proton build/prefix an
             app uses), SteamScanner (detect -> upsert into GameStore, the
             Steam equivalent of library::Scanner).
-  flatpak/  FlatpakScanner — detect -> upsert into GameStore, mirroring
-            SteamScanner/lutris::LutrisImporter.
   wrapper/  main.cpp for `mira-run` — the process mirad actually spawns
             for a direct launch; see "Built: launching a game" below.
   api/      EventBus (in-memory pub/sub) and Server (the REST routes) —
@@ -251,13 +252,18 @@ needs to also start the daemon. There is no separate desktop entry for
 Separately, `desktop::DesktopEntries` (`src/desktop/DesktopEntries.cpp`)
 gives *each ready game* its own menu entry (`mira-<id>.desktop`), synced
 after every scan and every change to a game or to `desktop_entries.*`
-settings. Its `Exec=` line is always `mira launch <id>` (or the frontend,
+settings. `desktop_entries.enabled`/`.categories`/`.exec_mode` are resolved
+per game through `config::Resolver`, not read straight off the global
+config, so a game's own override (`PATCH .../config`) actually takes effect
+— excluding just that one game from the menu, or filing it under different
+categories. Its `Exec=` line is always `mira launch <id>` (or the frontend,
 if `desktop_entries.exec_mode` is `"frontend"`) — never the game's own
 executable directly, no matter how tempting that shortcut looks, because
 that's exactly what would make a menu launch invisible to
-`proc::ProcessSupervisor`'s playtime/crash tracking. Only ever creates or
-removes files it created itself (`mira-<id>.desktop`) in the configured
-directory.
+`proc::ProcessSupervisor`'s playtime/crash tracking. `Icon=` uses the
+game's cached cover art when one is on disk, falling back to a generic icon
+otherwise. Only ever creates or removes files it created itself
+(`mira-<id>.desktop`) in the configured directory.
 
 ## Idle cost
 
@@ -291,15 +297,13 @@ doesn't:
 - **Runners** (`runner/IRunner.h`) — `umu-run` is a means to a working
   Proton launch, not a permanent dependency. Validated, not just asserted:
   `NativeRunner`, `ProtonRunner`, `WineRunner` (plain system Wine, no
-  Proton), `SteamRunner`, and `FlatpakRunner` are five real implementations
+  Proton), and `SteamRunner` are four real implementations
   of the same interface, and CI runs `grep -rniE
   'umu|protonpath|gameid|steam_compat' src/ --exclude-dir=runner` — every
   umu/Proton-specific token is still contained to
   `runner/ProtonRunner.{h,cpp}` (a couple of explanatory comments elsewhere
   just name the tool; none encode its env vars or behavior). A future custom
-  Proton runner replacing umu is one more file, not a redesign — exactly
-  what `FlatpakRunner` already was, added with zero changes to any other
-  runner.
+  Proton runner replacing umu is one more file, not a redesign.
 - **Detection rules** — per-user heuristics that are certain to need
   retuning; `config/Schema.cpp`'s `detect.*` keys already externalize the
   weights this will use.
@@ -413,12 +417,6 @@ time, exactly matching whatever Steam itself already set that prefix up
 with. See `docs/api.md`'s Steam section for the full picture, including
 why the *default* way to launch a Steam game (`steam.launch_mode:
 "steam"`) never calls `BuildCommand` at all.
-
-A fifth, `FlatpakRunner` (`src/runner/FlatpakRunner.cpp`), doesn't fit
-either, differently: the installed app *is* the build (`UsesBuilds()` is
-`true`, but a build's `name` is just the app id — there's no separate
-"which build" choice the way Proton/Wine have), and `exe_path` is never
-required, unlike every other runner. See `docs/api.md`'s Flatpak section.
 
 ## Built: the frontend
 

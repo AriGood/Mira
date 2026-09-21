@@ -3,6 +3,7 @@
 #include <cctype>
 #include <filesystem>
 #include <format>
+#include <vector>
 
 #include "core/Strings.h"
 #include "runner/Exec.h"
@@ -33,6 +34,18 @@ bool HasFuse() {
   return std::filesystem::exists("/dev/fuse") || FindOnPath("fusermount") || FindOnPath("fusermount3");
 }
 
+// Downloaded AppImages routinely lose their executable bit (a browser
+// download strips it) -- every AppImage-aware launcher chmods it before
+// running rather than erroring out over something this routine to fix.
+// Best-effort: MissingExecuteBit below still catches a filesystem that
+// won't allow it (read-only, no permission).
+void MakeExecutable(const fs::path& path) {
+  std::error_code ec;
+  const auto current = fs::status(path, ec).permissions();
+  if (ec) return;
+  fs::permissions(path, current | fs::perms::owner_exec | fs::perms::group_exec | fs::perms::others_exec, ec);
+}
+
 }  // namespace
 
 Result<Command> NativeRunner::BuildCommand(const model::Game& game,
@@ -49,8 +62,20 @@ Result<Command> NativeRunner::BuildCommand(const model::Game& game,
     // accepted as a candidate without one (see library::Detector) — run it
     // through sh explicitly instead of relying on exec's own +x check.
     command.argv = {"sh", exe.string()};
-  } else if (ext == ".appimage" && !HasFuse()) {
-    command.argv = {exe.string(), "--appimage-extract-and-run"};
+  } else if (ext == ".appimage") {
+    // Downloaded AppImages routinely lose their executable bit too (a
+    // browser download strips it) -- an AppImage execs itself either way
+    // (--appimage-extract-and-run is still argv[0] = the AppImage, just
+    // telling its own embedded runtime not to need FUSE), so the bit is
+    // required regardless of which branch below runs.
+    if (MissingExecuteBit(exe)) MakeExecutable(exe);
+    if (MissingExecuteBit(exe)) {
+      return Err("not_executable",
+                std::format("\"{}\" is not executable and could not be made so — chmod +x it manually",
+                            exe.string()));
+    }
+    command.argv = HasFuse() ? std::vector<std::string>{exe.string()}
+                             : std::vector<std::string>{exe.string(), "--appimage-extract-and-run"};
   } else {
     if (MissingExecuteBit(exe)) {
       return Err("not_executable",

@@ -248,6 +248,42 @@ int CmdRun(int argc, char** argv) {
   return 0;
 }
 
+int CmdAdd(int argc, char** argv) {
+  std::string install_path, exe_path, name, platform;
+  bool is_installer = false;
+  std::vector<std::string> positional;
+  for (int i = 0; i < argc; ++i) {
+    const std::string_view arg = argv[i];
+    if (arg == "--name" && i + 1 < argc) name = argv[++i];
+    else if (arg == "--platform" && i + 1 < argc) platform = argv[++i];
+    else if (arg == "--installer") is_installer = true;
+    else positional.push_back(std::string(arg));
+  }
+  if (positional.size() < 2) {
+    std::fprintf(stderr,
+                 "usage: mira add <install_path> <exe_path> [--name N] "
+                 "[--platform windows|native] [--installer]\n"
+                 "  creates a game record for a path outside anywhere Mira already scans --\n"
+                 "  point it at an installer with --installer, run it with `mira run`, then\n"
+                 "  `mira finish-install` once it's actually installed.\n");
+    return 2;
+  }
+  json body = {{"install_path", positional[0]}, {"exe_path", positional[1]}};
+  if (!name.empty()) body["name"] = name;
+  if (!platform.empty()) body["platform"] = platform;
+  if (is_installer) body["is_installer"] = true;
+
+  auto client = Connect();
+  auto res = client.Post("/v1/games/manual", body.dump(), "application/json");
+  if (!Ok(res)) {
+    PrintError(res);
+    return 1;
+  }
+  json game = json::parse(res->body);
+  std::printf("%s: %s\n", game.value("id", "").c_str(), game.value("status", "").c_str());
+  return 0;
+}
+
 int CmdFinishInstall(int argc, char** argv) {
   if (argc < 1) {
     std::fprintf(stderr,
@@ -270,24 +306,33 @@ int CmdFinishInstall(int argc, char** argv) {
 int CmdRemove(int argc, char** argv) {
   if (argc < 1) {
     std::fprintf(stderr,
-                 "usage: mira remove <id> [--delete-files] [--delete-prefix]\n"
-                 "  forgets the game; its files are only deleted if you ask for that\n"
-                 "  explicitly, and only if they're really inside a configured root.\n");
+                 "usage: mira remove <id> [--delete-files] [--delete-prefix] [--delete-metadata] [--purge]\n"
+                 "  forgets the game; nothing on disk is touched unless you ask for it\n"
+                 "  explicitly, and only paths that are really inside a configured root.\n"
+                 "  --delete-files     removes the game's own install folder\n"
+                 "  --delete-prefix    removes its Wine/Proton prefix — use --delete-files\n"
+                 "                     alone to remove the game but leave the prefix in place\n"
+                 "  --delete-metadata  removes cached cover art / store info\n"
+                 "  --purge            shorthand for all three of the above\n");
     return 2;
   }
   const std::string id = argv[0];
-  bool delete_files = false, delete_prefix = false;
+  bool delete_files = false, delete_prefix = false, delete_metadata = false, purge = false;
   for (int i = 1; i < argc; ++i) {
     const std::string_view arg = argv[i];
     if (arg == "--delete-files") delete_files = true;
     else if (arg == "--delete-prefix") delete_prefix = true;
+    else if (arg == "--delete-metadata") delete_metadata = true;
+    else if (arg == "--purge") purge = true;
   }
   auto client = Connect();
   std::string path = std::format("/v1/games/{}", id);
-  if (delete_files || delete_prefix) {
+  if (delete_files || delete_prefix || delete_metadata || purge) {
     path += "?";
     if (delete_files) path += "delete_files=true&";
     if (delete_prefix) path += "delete_prefix=true&";
+    if (delete_metadata) path += "delete_metadata=true&";
+    if (purge) path += "purge=true&";
     path.pop_back();  // trailing '&' or '?'
   }
   auto res = client.Delete(path);
@@ -336,9 +381,35 @@ int CmdLutris(int argc, char** argv) {
   return 2;
 }
 
-int CmdFlatpakScan() {
+int CmdDesktopEntriesList() {
   auto client = Connect();
-  auto res = client.Post("/v1/flatpak/scan");
+  auto res = client.Get("/v1/desktop-entries/candidates");
+  if (!Ok(res)) {
+    PrintError(res);
+    return 1;
+  }
+  json candidates = json::parse(res->body);
+  if (candidates.empty()) {
+    std::puts("(no candidates — every already-installed .desktop entry is either already a game, "
+              "Mira's own, or covered by another importer)");
+    return 0;
+  }
+  for (const json& c : candidates) {
+    std::printf("%-40s %s\n", c.value("id", "").c_str(), c.value("name", "").c_str());
+  }
+  return 0;
+}
+
+int CmdDesktopEntriesImport(int argc, char** argv) {
+  if (argc < 1) {
+    std::fprintf(stderr, "usage: mira desktop-entries import <id> [<id>...]\n");
+    return 2;
+  }
+  json ids = json::array();
+  for (int i = 0; i < argc; ++i) ids.push_back(argv[i]);
+
+  auto client = Connect();
+  auto res = client.Post("/v1/desktop-entries/import", json{{"ids", ids}}.dump(), "application/json");
   if (!Ok(res)) {
     PrintError(res);
     return 1;
@@ -348,9 +419,10 @@ int CmdFlatpakScan() {
   return 0;
 }
 
-int CmdFlatpak(int argc, char** argv) {
-  if (argc > 0 && std::string_view(argv[0]) == "scan") return CmdFlatpakScan();
-  std::fprintf(stderr, "usage: mira flatpak scan\n");
+int CmdDesktopEntries(int argc, char** argv) {
+  if (argc > 0 && std::string_view(argv[0]) == "list") return CmdDesktopEntriesList();
+  if (argc > 0 && std::string_view(argv[0]) == "import") return CmdDesktopEntriesImport(argc - 1, argv + 1);
+  std::fprintf(stderr, "usage: mira desktop-entries [list | import <id> [<id>...]]\n");
   return 2;
 }
 
@@ -733,10 +805,12 @@ void PrintUsage() {
       "                         by default; --tag hidden lists exactly those)\n"
       "  show <id> [--effective] show one game, or its resolved settings\n"
       "  set <id> [flags...]    correct a game's auto-detected configuration\n"
-      "  remove <id> [--delete-files] [--delete-prefix]\n"
+      "  remove <id> [--delete-files] [--delete-prefix] [--delete-metadata] [--purge]\n"
+      "  add <install_path> <exe_path> [--name N] [--platform windows|native] [--installer]\n"
       "  steam scan             detect installed Steam games\n"
       "  lutris import          import games from Lutris's own database\n"
-      "  flatpak scan           detect installed Flatpak apps\n"
+      "  desktop-entries list    list already-installed .desktop entries that could become games\n"
+      "  desktop-entries import <id> [<id>...]   add the picked ones (covers Flatpak apps too)\n"
       "  gamemode status         check whether GameMode is installed/running\n"
       "  metadata <id> [--refresh]                cached cover-art/store info\n"
       "  tricks <id> <verb>     run a winetricks verb against this game's prefix\n"
@@ -767,9 +841,10 @@ int main(int argc, char** argv) {
   if (command == "run") return CmdRun(rest_argc, rest);
   if (command == "finish-install") return CmdFinishInstall(rest_argc, rest);
   if (command == "remove") return CmdRemove(rest_argc, rest);
+  if (command == "add") return CmdAdd(rest_argc, rest);
   if (command == "steam") return CmdSteam(rest_argc, rest);
   if (command == "lutris") return CmdLutris(rest_argc, rest);
-  if (command == "flatpak") return CmdFlatpak(rest_argc, rest);
+  if (command == "desktop-entries") return CmdDesktopEntries(rest_argc, rest);
   if (command == "gamemode") return CmdGameMode(rest_argc, rest);
   if (command == "metadata") return CmdMetadata(rest_argc, rest);
   if (command == "tricks") return CmdTricks(rest_argc, rest);

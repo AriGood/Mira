@@ -135,13 +135,47 @@ below — a game's own fields and its overrides of unrelated global settings
 are different concerns and don't share a request body). Publishes
 `game.updated`. 404 if the id is unknown.
 
-### `DELETE /v1/games/{id}[?delete_files=true][?delete_prefix=true]` — implemented
-Forgets the game. By default never touches disk. `delete_files=true` also
-removes `install_path` (the game's own folder); `delete_prefix=true` also
-removes `data_dir` (its Wine/Proton prefix, if any). Both are restricted to
-paths that actually resolve inside a configured `library_roots`/
-`prefix_root` — never wherever a hand-edited `games.toml` happens to say.
-Publishes `game.removed`.
+### `POST /v1/games/manual` — implemented
+The one place a game record can be created directly, rather than as a side
+effect of a scan/Steam/Lutris/desktop-entry import discovering something
+Mira already knew to look for — for a path outside every configured
+`library_roots` entry (pointing Mira at an installer, or a folder it
+wouldn't otherwise scan). Body:
+```json
+{ "install_path": "/abs/path/to/folder", "exe_path": "relative/or/Installer.exe",
+  "name": "My Game", "platform": "windows", "is_installer": true }
+```
+`install_path` and `exe_path` (relative to `install_path`, same as every
+other game record) are required. `name` defaults to `install_path`'s folder
+name, cleaned the same way a library scan cleans one. `platform` defaults
+from `exe_path`'s extension (`.exe` → `"windows"`, else `"native"`).
+`is_installer` (default `false`) creates the game `needs_install` instead of
+`ready`, with a `last_error` pointing at `POST .../run` +
+`POST .../finish-install` — the same pair an auto-detected installer already
+uses, so a manually-added one is picked up by the exact same flow. A ready
+Windows game is provisioned immediately, same as one a scan just found.
+Matched by `install_path` — a second manual add to the same path updates
+rather than duplicates. Publishes `game.added`/`game.updated`. Response is
+the full game record, same shape as `GET /v1/games/{id}`.
+
+### `DELETE /v1/games/{id}[?delete_files=true][?delete_prefix=true][?delete_metadata=true][?purge=true]` — implemented
+Forgets the game. By default never touches disk — every one of the four
+flags below is independent and opt-in.
+
+- `delete_files=true` — removes `install_path` (the game's own folder).
+  This alone is how to remove the game but leave its prefix in place — it
+  never touches `data_dir` unless `delete_prefix` is also given.
+- `delete_prefix=true` — removes `data_dir` (its Wine/Proton prefix, if any).
+- `delete_metadata=true` — removes cached metadata/cover art
+  (`metadata::MetadataFile`/`ArtworkDir`), which otherwise stay orphaned on
+  disk forever, keyed by an id nothing points at anymore.
+- `purge=true` — shorthand for all three of the above together.
+
+`delete_files`/`delete_prefix` are restricted to paths that actually resolve
+inside a configured `library_roots`/`prefix_root` — never wherever a
+hand-edited `games.toml` happens to say. `delete_metadata` has no such check:
+metadata/artwork live under Mira's own state directory, keyed by game id, not
+a user-configured root. Publishes `game.removed`.
 
 ### `GET /v1/games/{id}/config` — implemented
 Every schema key resolved through `default -> settings.toml -> this game's
@@ -407,36 +441,44 @@ only covers what's actually Lutris-specific.
 
 ### `POST /v1/lutris/import` — implemented
 Reads Lutris's own game database (`pga.db`, sqlite, via the `sqlite3` CLI —
-not a bundled sqlite library) and each `runner: wine` game's per-game YAML
-config (`~/.local/share/lutris/games/<configpath>.yml`, or
+not a bundled sqlite library) and, for each `runner: wine` or `runner:
+linux` game, its per-game YAML config
+(`~/.local/share/lutris/games/<configpath>.yml`, or
 `~/.config/lutris/games/` if that's where Lutris's `CONFIG_DIR` actually
 resolves to — see `lutris.data_dir` for an explicit override) and upserts
 them:
 ```json
 { "added": 3, "updated": 1, "skipped": 2 }
 ```
-`skipped` counts Lutris rows this import can't use: anything not run
-through `runner: wine` (a `steam`-runner row is already covered by
-`POST /v1/steam/scan`), and any wine-runner row whose YAML has no `prefix`
-recorded — Lutris itself falls back to a filesystem heuristic in that case
-(walking up from the exe looking for something that looks like a prefix),
-which isn't something read from the yaml tree, so it's left alone rather
-than guessed at.
+`runner: linux` is Lutris's own native-Linux runner — a `.sh` script or an
+AppImage, pointed at directly with no prefix involved at all; imported as
+`platform: "native"`, `data_dir` empty. `skipped` counts Lutris rows this
+import can't use: anything not run through `wine` or `linux` (a
+`steam`-runner row is already covered by `POST /v1/steam/scan`, a
+`flatpak`-runner row's app already has its own real `.desktop` entry,
+covered by `## Desktop entries` below), a wine-runner row whose YAML has no
+`prefix` recorded — Lutris
+itself falls back to a filesystem heuristic in that case (walking up from
+the exe looking for something that looks like a prefix), which isn't
+something read from the yaml tree, so it's left alone rather than guessed
+at — and a linux-runner row whose `exe` isn't given as an absolute path,
+since there's no prefix to resolve a relative one against.
 
 Nothing here moves or renames anything on disk, in Lutris's data or Mira's
 library roots — this only reads Lutris's config and writes Mira's own
 `games.toml`. `install_path` is always the exe's own directory and
 `data_dir` is always exactly the yaml's `prefix`, verbatim, wherever it
 actually is (they don't have to be related at all — Lutris allows a prefix
-that lives nowhere near the game's files). Idempotent — rescanning updates
-Lutris-owned fields (`name`, `install_path`, `exe_path`, `data_dir`, `env`)
-without touching anything the user configured (`args` is Lutris-owned too,
-since it's Lutris's own launch argument, but `overrides`/`reviewed` are left
-alone), matched by `install_path` rather than an id Lutris and Mira could
-agree on. `runner_ref` is never set by this import: Lutris's own
-`wine.version` is often a generic alias ("ge-proton"), not an exact
-installed build name Mira can resolve, so `default_runner.windows` picks
-one instead.
+that lives nowhere near the game's files), or empty for a native-Linux row.
+Idempotent — rescanning updates Lutris-owned fields (`name`, `install_path`,
+`exe_path`, `data_dir`, `env`) without touching anything the user configured
+(`args` is Lutris-owned too, since it's Lutris's own launch argument, but
+`overrides`/`reviewed` are left alone), matched by `install_path` rather
+than an id Lutris and Mira could agree on. `runner_ref` is never set by
+this import: Lutris's own `wine.version` is often a generic alias
+("ge-proton"), not an exact installed build name Mira can resolve, so
+`default_runner.windows` picks one instead (a native row needs no
+`runner_ref` resolution at all).
 
 Lutris's own categories are mapped onto `tags` (Lutris's `.hidden` becomes
 Mira's `hidden`, `favorites` becomes `favorite`, everything else carries
@@ -449,19 +491,62 @@ categories" rather than failing the import.
 
 ---
 
-## Flatpak
+## Desktop entries
 
-### `POST /v1/flatpak/scan` — implemented
-Lists installed Flatpak apps (`flatpak list --app`) and upserts them, same
-`{ "added": N, "updated": N }` shape as `POST /v1/steam/scan`. `runner_ref`
-is `flatpak:<app-id>`, resolved by the fifth `IRunner`, `FlatpakRunner` — the
-installed app *is* the build, there's no separate "which build" choice the
-way Proton/Wine have. `exe_path` is never required for a Flatpak game,
-unlike every other runner. `install_path` points at the app's own
-`~/.var/app/<app-id>` data directory — the closest real on-disk stand-in
-Flatpak has to an install folder, for `DELETE`'s containment check and
-`FindByInstallPath`'s idempotence on rescan. Requires `flatpak.enabled`
-(default on).
+Two directions, both covered here: reading someone else's already-installed
+`.desktop` entries and offering them as games (this section), vs. writing
+Mira's own `mira-<id>.desktop` entries for its games (the `desktop_entries.*`
+settings, applied on every library change — see `GET /v1/config/schema`).
+This is deliberately how a Flatpak app gets added: every Flatpak-exported
+entry already carries an `X-Flatpak=<app-id>` key, which is enough to
+relaunch it exactly, with no Flatpak-specific runner needed at all.
+
+Manual, not auto-import, on purpose: `GET .../candidates` only lists, and
+nothing is added to the library until `POST .../import` is called with
+specific ids a human picked.
+
+### `GET /v1/desktop-entries/candidates` — implemented
+Walks `$XDG_DATA_HOME/applications`, every `$XDG_DATA_DIRS` entry, the two
+well-known Flatpak export directories, and `desktop_import.extra_dirs`, and
+lists every `.desktop` entry that could reasonably become a game:
+```json
+[{ "id": "com.spotify.Client", "name": "Spotify", "icon": "com.spotify.Client" }]
+```
+`id` is the entry's freedesktop "desktop file ID" (its path relative to
+whichever `applications/` dir it's under, `/` replaced with `-`, `.desktop`
+stripped) — stable across calls, so nothing needs to be remembered between
+listing and importing. An entry is left out when: it has no
+`[Desktop Entry]` section or a `Type=` other than `Application`;
+`NoDisplay=true` or `Hidden=true`; it carries `X-Mira-Game-Id` (it's Mira's
+own, generated entry — importing it back would loop); its `Exec=` looks like
+Steam's own launcher (`steam steam://rungameid/...` — already covered,
+better, by `POST /v1/steam/scan`); or its resolved install path already
+matches an existing game. No filtering on `Categories=` — the picker is
+manual, so nothing is auto-excluded by guessing at what "is a game."
+
+### `POST /v1/desktop-entries/import` — implemented
+Body: `{"ids": ["com.spotify.Client", ...]}` — ids as returned by
+`GET .../candidates`. Re-scans (stateless; no caching between the two calls)
+and, for each requested id: an `X-Flatpak=<app-id>` entry becomes
+`exe_path: "flatpak"`, `args: "run <app-id>"`, `install_path:
+"~/.var/app/<app-id>"` (Exec= itself is ignored entirely — parsing Flatpak's
+own `flatpak run --branch=... --command=... <id> @@u %u @@` line isn't worth
+it when the app id alone relaunches it exactly). Anything else is resolved
+from `Exec=` directly: field codes (`%f %u ...`) and `@@...@@` forwarding
+brackets are dropped, the first remaining token becomes `exe_path` (absolute
+→ split into `install_path`/`exe_path`; bare name → `install_path` empty,
+resolved via `$PATH` at launch same as `flatpak`/`steam`/`wine` already are),
+the rest joined into `args`. `platform` is always `"native"`; `runner_ref` is
+left empty (`native:native` resolves by default). Matched by `install_path`
+— importing an id a second time updates rather than duplicates. Response:
+```json
+{ "added": 1, "updated": 0 }
+```
+
+### `POST /v1/desktop-entries/sync` — implemented
+Regenerates Mira's own `mira-<id>.desktop` entries immediately, without
+needing to touch an unrelated game first — useful right after changing
+`desktop_entries.*` settings.
 
 ---
 

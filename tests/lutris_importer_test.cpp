@@ -285,3 +285,50 @@ TEST_CASE("LutrisImporter merges Lutris categories with tags the user already ad
   CHECK(std::ranges::find(game->tags, "hidden") != game->tags.end());
   CHECK(std::ranges::find(game->tags, "my-own-tag") != game->tags.end());
 }
+
+TEST_CASE("LutrisImporter imports a native (\"linux\" runner) game with no prefix at all") {
+  if (!runner::FindOnPath("sqlite3")) return;
+
+  Fixture fx("lutris-native");
+  const fs::path game_dir = fx.lutris_dir.parent_path() / "MyAppImageGame";
+  fs::create_directories(game_dir);
+
+  REQUIRE(BuildFixtureDb(fx.lutris_dir / "pga.db",
+                        {{"My AppImage Game", "my-appimage-game", "linux", "native-1", {}}})
+             .has_value());
+  WriteFile(fx.lutris_dir / "games" / "native-1.yml", std::format(R"(game:
+  exe: {}/MyGame.AppImage
+  args: --fullscreen
+)",
+                                                                   game_dir.string()));
+
+  lutris::LutrisImporter importer(fx.config, fx.games, fx.events);
+  const auto summary = importer.Import();
+  REQUIRE(summary.has_value());
+  CHECK(summary->added == 1);
+  CHECK(summary->skipped == 0);
+
+  const auto game = fx.games.Find("my-appimage-game");
+  REQUIRE(game.has_value());
+  CHECK(game->platform == model::Platform::Native);
+  CHECK(game->install_path == game_dir.string());
+  CHECK(game->exe_path == "MyGame.AppImage");
+  CHECK(game->args == "--fullscreen");
+  CHECK(game->data_dir.empty());
+  CHECK(game->status == model::GameStatus::Ready);
+}
+
+TEST_CASE("LutrisImporter skips a \"linux\" row whose exe is relative -- nothing to resolve it against") {
+  if (!runner::FindOnPath("sqlite3")) return;
+
+  Fixture fx("lutris-native-relative-exe");
+  REQUIRE(
+      BuildFixtureDb(fx.lutris_dir / "pga.db", {{"Broken", "broken", "linux", "native-2", {}}}).has_value());
+  WriteFile(fx.lutris_dir / "games" / "native-2.yml", "game:\n  exe: MyGame.AppImage\n");
+
+  lutris::LutrisImporter importer(fx.config, fx.games, fx.events);
+  const auto summary = importer.Import();
+  REQUIRE(summary.has_value());
+  CHECK(summary->added == 0);
+  CHECK(summary->skipped == 1);
+}

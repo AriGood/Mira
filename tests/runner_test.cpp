@@ -123,6 +123,27 @@ TEST_CASE("NativeRunner runs an executable AppImage directly when FUSE is availa
   fs::remove_all(dir);
 }
 
+TEST_CASE("NativeRunner auto-chmods an AppImage missing its execute bit instead of failing") {
+  const fs::path dir = fs::temp_directory_path() / "mira-tests" / "native-appimage-noexec";
+  fs::remove_all(dir);
+  fs::create_directories(dir);
+  const fs::path exe = dir / "Game.AppImage";
+  std::ofstream(exe) << "not a real appimage, doesn't matter here";
+  fs::permissions(exe, fs::perms::owner_read | fs::perms::owner_write);  // no +x -- as a browser download leaves it
+
+  model::Game game;
+  game.install_path = dir.string();
+  game.exe_path = "Game.AppImage";
+  runner::NativeRunner native;
+  auto command = native.BuildCommand(game, std::nullopt);
+  REQUIRE(command.has_value());
+  CHECK(command->argv[0] == exe.string());
+
+  std::error_code ec;
+  CHECK((fs::status(exe, ec).permissions() & fs::perms::owner_exec) != fs::perms::none);
+  fs::remove_all(dir);
+}
+
 TEST_CASE("RunnerRegistry resolves native:native with no build required") {
   config::Config config(TempFile("runner-registry-settings.toml"));
   config.Load();

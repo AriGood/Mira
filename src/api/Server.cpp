@@ -20,8 +20,8 @@
 #include "core/Log.h"
 #include "core/Strings.h"
 #include "desktop/DesktopEntries.h"
-#include "flatpak/FlatpakScanner.h"
 #include "library/Scanner.h"
+#include "desktop/DesktopEntryScanner.h"
 #include "lutris/LutrisImporter.h"
 #include "metadata/MetadataFetcher.h"
 #include "proc/Session.h"
@@ -507,19 +507,38 @@ void Server::RegisterRoutes() {
     auto game = games_.Find(req.matches[1]);
     if (!game) return SendError(res, 404, "game_not_found", "no such game");
 
+    const bool purge = req.has_param("purge") && req.get_param_value("purge") == "true";
+    const bool delete_files =
+        purge || (req.has_param("delete_files") && req.get_param_value("delete_files") == "true");
+    const bool delete_prefix =
+        purge || (req.has_param("delete_prefix") && req.get_param_value("delete_prefix") == "true");
+    const bool delete_metadata =
+        purge || (req.has_param("delete_metadata") && req.get_param_value("delete_metadata") == "true");
+
     // Opt-in, and deliberately narrow: only ever deletes a path this game's
     // own record points at, and only if that path is really inside a
     // configured root — never wherever install_path/data_dir happen to say,
     // in case a hand-edited games.toml points somewhere it shouldn't.
-    if (req.has_param("delete_files") && req.get_param_value("delete_files") == "true") {
+    if (delete_files) {
       if (auto deleted = DeleteUnderRoot(game->install_path, config_.GetPathArray("library_roots")); !deleted) {
         return SendError(res, 400, deleted.error().code, deleted.error().message);
       }
     }
-    if (req.has_param("delete_prefix") && req.get_param_value("delete_prefix") == "true") {
+    if (delete_prefix) {
       if (auto deleted = DeleteUnderRoot(game->data_dir, {config_.GetPath("prefix_root")}); !deleted) {
         return SendError(res, 400, deleted.error().code, deleted.error().message);
       }
+    }
+    if (delete_metadata) {
+      // Metadata/artwork live under Mira's own ~/.config/mira tree, keyed
+      // by game id — not a user-configured root, so no containment check
+      // is needed the way library_roots/prefix_root's is. Best effort: a
+      // cache file that was never written or already gone isn't an error.
+      std::error_code ec;
+      std::filesystem::remove(metadata::MetadataFile(config_, game->id), ec);
+      if (ec) log::Warn("could not remove metadata for {}: {}", game->id, ec.message());
+      std::filesystem::remove_all(metadata::ArtworkDir(config_, game->id), ec);
+      if (ec) log::Warn("could not remove artwork for {}: {}", game->id, ec.message());
     }
 
     auto result = games_.Remove(req.matches[1]);
@@ -573,13 +592,110 @@ void Server::RegisterRoutes() {
     SendJson(res, {{"added", summary->added}, {"updated", summary->updated}, {"skipped", summary->skipped}});
   });
 
-  http_->Post("/v1/flatpak/scan", [this](const Request&, Response& res) {
-    flatpak::FlatpakScanner scanner(config_, games_, events_);
-    auto summary = scanner.Scan();
+  // --- desktop entries (importing someone else's, not writing ours) -----
+
+  http_->Get("/v1/desktop-entries/candidates", [this](const Request&, Response& res) {
+    desktop::DesktopEntryScanner scanner(config_, games_, events_);
+    auto candidates = scanner.ListCandidates();
+    if (!candidates) return SendError(res, 404, candidates.error().code, candidates.error().message);
+    json out = json::array();
+    for (const auto& c : *candidates) out.push_back({{"id", c.id}, {"name", c.name}, {"icon", c.icon}});
+    SendJson(res, std::move(out));
+  });
+
+  http_->Post("/v1/desktop-entries/import", [this](const Request& req, Response& res) {
+    json body = json::parse(req.body, nullptr, false);
+    if (body.is_discarded() || !body.contains("ids") || !body["ids"].is_array()) {
+      return SendError(res, 400, "invalid_body", R"(expected {"ids": ["..."]})");
+    }
+    const std::vector<std::string> ids = body["ids"];
+
+    desktop::DesktopEntryScanner scanner(config_, games_, events_);
+    auto summary = scanner.Import(ids);
     if (!summary) return SendError(res, 404, summary.error().code, summary.error().message);
     SyncDesktopEntries(config_, games_);
     for (const model::Game& game : summary->added_games) metadata_fetches_.Enqueue(config_, events_, game);
     SendJson(res, {{"added", summary->added}, {"updated", summary->updated}});
+  });
+
+  http_->Post("/v1/desktop-entries/sync", [this](const Request&, Response& res) {
+    SyncDesktopEntries(config_, games_);
+    SendJson(res, {{"ok", true}});
+  });
+
+  // --- manual add -----------------------------------------------------------
+
+  // The primitive every other "add a game" path (a library scan,
+  // SteamScanner, LutrisImporter, DesktopEntryScanner) only ever exercises
+  // as a side effect of discovering something Mira already knew to look
+  // for. This is the one place a game record can be created directly, for
+  // a path outside every configured library root -- e.g. pointing Mira at
+  // an installer or a folder it wouldn't otherwise scan.
+  http_->Post("/v1/games/manual", [this](const Request& req, Response& res) {
+    json body = json::parse(req.body, nullptr, false);
+    if (body.is_discarded() || !body.contains("install_path") || !body["install_path"].is_string() ||
+        !body.contains("exe_path") || !body["exe_path"].is_string()) {
+      return SendError(res, 400, "invalid_body",
+                       R"(expected {"install_path": "...", "exe_path": "...", "name"?, "platform"?, "is_installer"?})");
+    }
+    const std::filesystem::path install_path = body["install_path"].get<std::string>();
+    const std::string exe_path = body["exe_path"];
+    const bool is_installer = body.value("is_installer", false);
+
+    model::Platform platform;
+    if (body.contains("platform") && body["platform"].is_string()) {
+      platform = model::PlatformFromString(body["platform"].get<std::string>());
+    } else {
+      const std::string ext = strings::ToLower(std::filesystem::path(exe_path).extension().string());
+      platform = ext == ".exe" ? model::Platform::Windows : model::Platform::Native;
+    }
+
+    model::Game game;
+    const auto existing = games_.FindByInstallPath(install_path.string());
+    if (existing) game = *existing;
+    game.name = body.value("name", strings::CleanGameName(install_path.filename().string()));
+    game.id = existing ? game.id : games_.NextId(game.name);
+    game.source = "manual";
+    game.install_path = install_path.string();
+    game.exe_path = exe_path;
+    game.args = body.value("args", std::string());
+    game.platform = platform;
+    game.updated_at = model::NowSeconds();
+    if (!existing) game.created_at = game.updated_at;
+
+    if (is_installer) {
+      // Matches AutoSetup's own installer flagging -- running it isn't
+      // running the game, and no prefix is provisioned yet for something
+      // that can't be launched.
+      game.status = model::GameStatus::NeedsInstall;
+      game.last_error = "This is an installer, not the game itself — run it first, then point Mira at the "
+                        "installed game.";
+    } else {
+      game.data_dir = platform == model::Platform::Windows
+                          ? (config_.GetPath("prefix_root") / game.id).string()
+                          : std::string();
+      game.status = model::GameStatus::Ready;
+      game.last_error.clear();
+    }
+
+    auto result = games_.Upsert(game);
+    if (!result) return SendError(res, 500, result.error().code, result.error().message);
+
+    if (game.status == model::GameStatus::Ready && game.platform == model::Platform::Windows) {
+      const runner::RunnerRegistry provisioner(config_);
+      const model::Game provisioned = provisioner.ProvisionGame(game);
+      auto saved = games_.Update(game.id, [&](model::Game& g) {
+        g.runner_ref = provisioned.runner_ref;
+        g.status = provisioned.status;
+        g.last_error = provisioned.last_error;
+      });
+      if (saved) game = *saved;
+    }
+
+    SyncDesktopEntries(config_, games_);
+    if (!existing) metadata_fetches_.Enqueue(config_, events_, game);
+    events_.Publish(existing ? "game.updated" : "game.added", model::ToJson(game));
+    SendJson(res, model::ToJson(game));
   });
 
   // --- launching ------------------------------------------------------------
