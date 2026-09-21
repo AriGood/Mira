@@ -22,6 +22,7 @@
 #include "desktop/DesktopEntries.h"
 #include "library/Catalog.h"
 #include "library/Scanner.h"
+#include "library/SourceRegistry.h"
 #include "desktop/DesktopEntryScanner.h"
 #include "epic/EpicImporter.h"
 #include "epic/EpicInstaller.h"
@@ -732,49 +733,26 @@ void Server::RegisterRoutes() {
     json body = json::parse(req.body, nullptr, false);
     if (body.is_discarded() || !body.contains("source") || !body["source"].is_string() ||
         !body.contains("ref") || !body["ref"].is_string()) {
-      return SendError(res, 400, "invalid_body", R"(expected {"source": "epic"|"steam", "ref": "..."})");
+      return SendError(res, 400, "invalid_body", R"(expected {"source": "epic"|"steam"|"gog"|"itch", "ref": "..."})");
     }
     const std::string source = body["source"];
     const std::string ref = body["ref"];
 
-    if (source == "steam") {
-      // Steam's own client owns downloading — same handoff posture as
-      // steam.launch_mode "steam" (see /launch above). Nothing to track
-      // here: the game shows up in POST /v1/steam/scan once Steam has
-      // actually put it on disk.
-      if (is_update) {
-        return SendError(res, 400, "unsupported", "Steam updates its own games; nothing for Mira to do");
-      }
-      Command command;
-      command.argv = {"steam", std::format("steam://install/{}", ref)};
-      if (auto spawned = runner::SpawnDetached(command); !spawned) {
-        return SendError(res, 500, spawned.error().code, spawned.error().message);
-      }
-      return SendJson(res, {{"status", "handed_off_to_steam"}, {"ref", ref}}, 202);
-    }
-
-    if (source != "epic") {
+    library::ILibrarySource* src = library::FindSource(source);
+    if (src == nullptr) {
       return SendError(res, 400, "unknown_source", std::format("no installable source named \"{}\"", source));
     }
 
-    const epic::EpicAuthStatus auth = epic::Status(config_);
-    if (!auth.legendary.installed) {
-      return SendError(res, 409, "legendary_missing", "run \"mira epic setup\" first");
-    }
-    if (!auth.authenticated) {
-      return SendError(res, 409, "not_authenticated", "run \"mira epic login\" first");
-    }
-
     events_.Publish("library.install.started", {{"source", source}, {"ref", ref}, {"update", is_update}});
-    std::thread([this, source, ref, is_update] {
-      epic::EpicInstaller installer(config_, games_, events_);
-      const Result<void> result = is_update ? installer.Update(ref) : installer.Install(ref);
+    std::thread([this, src, source, ref, is_update] {
+      const Result<void> result = is_update ? src->Update(config_, games_, events_, ref)
+                                            : src->Install(config_, games_, events_, ref);
       if (!result) {
-        log::Error("epic {} failed ({}): {}", is_update ? "update" : "install", ref, result.error().message);
+        log::Error("{} {} failed ({}): {}", source, is_update ? "update" : "install", ref, result.error().message);
         events_.Publish("library.install.failed",
                        {{"source", source}, {"ref", ref}, {"update", is_update}, {"error", result.error().message}});
       } else {
-        log::Info("epic {} finished: {}", is_update ? "update" : "install", ref);
+        log::Info("{} {} finished: {}", source, is_update ? "update" : "install", ref);
         SyncDesktopEntries(config_, games_);
         events_.Publish("library.install.finished", {{"source", source}, {"ref", ref}, {"update", is_update}});
       }

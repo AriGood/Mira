@@ -38,4 +38,10 @@ struct CatalogEntry {
 Result<std::vector<CatalogEntry>> ListCatalog(const config::Config& config, const store::GameStore& games,
                                              const std::string& source);
 
+// Marks `entry` as already-tracked if Mira has a game for it. Every
+// ILibrarySource::Catalog implementation derives a tracked game's id the
+// same way ("<source>-<ref>"), so this is a direct lookup rather than a
+// scan -- shared here so each source's Catalog() doesn't reimplement it.
+void MarkTracked(const store::GameStore& games, CatalogEntry& entry);
+
 }  // namespace mira::library
