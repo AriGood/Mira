@@ -140,6 +140,13 @@ GameDetailsPanel::GameDetailsPanel(QWidget* parent) : QWidget(parent) {
   QFormLayout* form = form_;
   form->setLabelAlignment(Qt::AlignLeft);
   form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+  protondb_ = ValueLabel(panel);
+  // A colored pill, not a plain value: fixed size policy so it hugs its own
+  // text instead of stretching across the row like every other value here.
+  protondb_->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+  // First row, ahead of Platform: whether a Windows game even runs matters
+  // more than its release date, and this is the row that answers that.
+  form->addRow("ProtonDB", protondb_);
   platform_ = ValueLabel(panel);
   runner_ = ValueLabel(panel);
   last_played_ = ValueLabel(panel);
@@ -154,15 +161,10 @@ GameDetailsPanel::GameDetailsPanel(QWidget* parent) : QWidget(parent) {
   developer_ = ValueLabel(panel);
   genres_ = ValueLabel(panel);
   reviews_ = ValueLabel(panel);
-  protondb_ = ValueLabel(panel);
-  // A colored pill, not a plain value: fixed size policy so it hugs its own
-  // text instead of stretching across the row like every other value here.
-  protondb_->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
   form->addRow("Released", released_);
   form->addRow("Developer", developer_);
   form->addRow("Genres", genres_);
   form->addRow("Reviews", reviews_);
-  form->addRow("ProtonDB", protondb_);
   layout->addLayout(form);
 
   error_ = ValueLabel(panel);
@@ -178,7 +180,32 @@ GameDetailsPanel::GameDetailsPanel(QWidget* parent) : QWidget(parent) {
   scroll->setFrameShape(QFrame::NoFrame);
   stack_->addWidget(scroll);
 
+  auto* multi_page = new QWidget(stack_);
+  auto* multi_layout = new QVBoxLayout(multi_page);
+  multi_layout->setContentsMargins(12, 12, 12, 12);
+  multi_layout->setSpacing(8);
+  multi_select_heading_ = new QLabel(multi_page);
+  multi_select_heading_->setProperty("role", "heading");
+  multi_select_heading_->setWordWrap(true);
+  multi_layout->addWidget(multi_select_heading_);
+  multi_select_names_ = ValueLabel(multi_page);
+  multi_select_names_->setProperty("role", "muted");
+  multi_layout->addWidget(multi_select_names_);
+  multi_layout->addStretch(1);
+  auto* multi_scroll = new QScrollArea(stack_);
+  multi_scroll->setWidget(multi_page);
+  multi_scroll->setWidgetResizable(true);
+  multi_scroll->setFrameShape(QFrame::NoFrame);
+  stack_->addWidget(multi_scroll);
+
   Clear();
+}
+
+void GameDetailsPanel::ShowMultiSelection(const QStringList& names) {
+  game_id_.clear();
+  multi_select_heading_->setText(QString("Selecting %1 games").arg(names.size()));
+  multi_select_names_->setText(names.join('\n'));
+  stack_->setCurrentIndex(2);
 }
 
 void GameDetailsPanel::Clear() {
@@ -218,17 +245,21 @@ void GameDetailsPanel::ShowMetadata(const GameMetadata& metadata) {
   row(reviews_, reviews);
 
   // ProtonDB's own wording, capitalized: "platinum" is a tier name, not a
-  // sentence, and its meaning is the site's rather than ours to restate. A
-  // colored pill (see ProtonDbTierColor) reads faster than plain text next
-  // to every other plain-text row here.
+  // sentence, and its meaning is the site's rather than ours to restate. The
+  // pill's colors are ProtonDB's own (see ProtonDbTierColor) — a fixed brand
+  // color, not a theme token, same reason Steam's own blue doesn't recolor
+  // with the app theme either.
   QString tier = QString::fromStdString(metadata.protondb_tier);
   if (!tier.isEmpty()) {
     tier[0] = tier[0].toUpper();
     const QColor background = ProtonDbTierColor(metadata.protondb_tier);
     protondb_->setStyleSheet(QString("QLabel { background-color: %1; color: %2; "
-                                     "padding: 2px 10px; border-radius: %3px; font-weight: 600; }")
-                                 .arg(background.name(), theme::Current().on_accent.name())
+                                     "padding: 2px 10px; border-radius: %3px; font-weight: 700; }")
+                                 .arg(background.name(), ContrastingTextColor(background).name())
                                  .arg(theme::Current().radius_control));
+    protondb_->setToolTip(ProtonDbTierIsNative(metadata.protondb_tier)
+                              ? "Runs natively on Linux — no Proton compatibility layer involved."
+                              : QString("ProtonDB: %1").arg(tier));
   }
   row(protondb_, tier);
 }

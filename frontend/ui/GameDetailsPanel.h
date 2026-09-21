@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QString>
+#include <QStringList>
 #include <QWidget>
 
 #include <string>
@@ -36,6 +37,10 @@ public:
   void SetArtworkStore(ArtworkStore* store);
 
   void ShowGame(const GameSummary& game, bool running);
+  // More than one tile selected: nothing single-game makes sense here (no
+  // cover, no play button), so this swaps in a plain count-and-names summary
+  // instead of showing whichever game happens to be the view's "current" one.
+  void ShowMultiSelection(const QStringList& names);
   void Clear();
 
   // Re-draw the cover for the game currently on screen. For when artwork
@@ -81,6 +86,8 @@ private:
   QLabel* path_ = nullptr;
   QLabel* error_ = nullptr;
   QPushButton* play_ = nullptr;
+  QLabel* multi_select_heading_ = nullptr;
+  QLabel* multi_select_names_ = nullptr;
 
   std::string game_id_;
   bool running_ = false;

@@ -26,16 +26,31 @@ inline QColor StatusColor(const std::string& status) {
   return tokens.text_muted;
 }
 
-// ProtonDB's site groups its finer tiers onto a rough good-to-bad scale;
-// reusing our own semantic tokens here keeps a tier badge in sync with theme
-// switches instead of hardcoding ProtonDB's own brand hex.
+// ProtonDB's own tier colors, read out of their production site's own
+// bundle (head.protondb.pages.dev/static/js/main.*.js, theme.colors.medals)
+// rather than approximated. "native" is deliberately not part of that
+// `medals` map on their side either — it lives as its own top-level
+// `native: "green"` entry in the same object, because it means "doesn't
+// touch Proton at all" rather than grading how well Proton runs it, which
+// is the distinction ProtonDbTierIsNative below exists to carry into ours.
 inline QColor ProtonDbTierColor(const std::string& tier) {
-  const theme::Tokens& tokens = theme::Current();
-  if (tier == "native" || tier == "platinum" || tier == "gold") return tokens.success;
-  if (tier == "silver") return tokens.info;
-  if (tier == "bronze") return tokens.warning;
-  if (tier == "garbage" || tier == "borked") return tokens.error;
-  return tokens.text_muted;  // "pending", or a future tier ProtonDB adds
+  if (tier == "platinum") return QColor("#b4c7dc");
+  if (tier == "gold") return QColor("#cfb53b");
+  if (tier == "silver") return QColor("#a6a6a6");
+  if (tier == "bronze") return QColor("#cd7f32");
+  if (tier == "borked" || tier == "garbage") return QColor("#ff0000");
+  if (tier == "native") return QColor("#008000");
+  return QColor("#444444");  // "pending"
+}
+
+inline bool ProtonDbTierIsNative(const std::string& tier) { return tier == "native"; }
+
+// Platinum/gold/silver are light enough that white text on them would wash
+// out; the rest are dark enough that black text would.
+inline QColor ContrastingTextColor(const QColor& background) {
+  const double luminance =
+      0.299 * background.red() + 0.587 * background.green() + 0.114 * background.blue();
+  return luminance > 140 ? QColor("#1c1f25") : QColor("#ffffff");
 }
 
 // Shared by both library views so the same game reads identically in the

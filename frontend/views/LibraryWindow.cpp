@@ -17,10 +17,13 @@
 #include <QComboBox>
 #include <QEventLoop>
 #include <QPushButton>
+#include <QRubberBand>
 #include <QScrollArea>
+#include <QSet>
 #include <QSlider>
 #include <QSplitter>
 #include <QStackedWidget>
+#include <QStringList>
 #include <QStyle>
 #include <QToolButton>
 #include <QVBoxLayout>
@@ -55,10 +58,76 @@
 // setViewportMargins is protected on QAbstractScrollArea; this just republishes
 // it so ApplyLayoutTokens() can pad the tiles without also inseting the
 // scrollbar (a container's own contents margins would do both).
+//
+// Also implements its own drag-to-select rather than relying on
+// QAbstractItemView's built-in rubber band: that only starts when the press
+// lands on genuinely empty viewport space, but every tile here fills its
+// whole grid cell (setSpacing(0), the visual gap between tiles is the
+// delegate's own padding within each cell, not real space between cells) —
+// so there is no pixel left to start Qt's own rubber band from.
 class LibraryGrid : public QListWidget {
 public:
   using QListWidget::QListWidget;
   using QListWidget::setViewportMargins;
+
+protected:
+  void mousePressEvent(QMouseEvent* event) override {
+    if (event->button() == Qt::LeftButton) {
+      drag_origin_ = event->pos();
+      tracking_drag_ = true;
+    }
+    QListWidget::mousePressEvent(event);
+  }
+
+  void mouseMoveEvent(QMouseEvent* event) override {
+    if (tracking_drag_ && (event->buttons() & Qt::LeftButton)) {
+      if (rubber_band_ == nullptr) {
+        constexpr int kDragThreshold = 6;
+        if ((event->pos() - drag_origin_).manhattanLength() < kDragThreshold) {
+          QListWidget::mouseMoveEvent(event);
+          return;
+        }
+        // A fresh drag replaces the selection unless it started with a
+        // modifier held, matching plain-click behavior; either way, what's
+        // selected right now (including whatever the initiating press
+        // already selected) is the additive floor a shrinking rect won't
+        // clear again below.
+        if (!(event->modifiers() & (Qt::ControlModifier | Qt::ShiftModifier))) {
+          clearSelection();
+        }
+        base_selection_.clear();
+        for (QListWidgetItem* selected : selectedItems()) base_selection_.insert(selected);
+        rubber_band_ = new QRubberBand(QRubberBand::Rectangle, viewport());
+        rubber_band_->setGeometry(QRect(drag_origin_, QSize()));
+        rubber_band_->show();
+      }
+      const QRect rect = QRect(drag_origin_, event->pos()).normalized();
+      rubber_band_->setGeometry(rect);
+      for (int row = 0; row < count(); ++row) {
+        QListWidgetItem* it = item(row);
+        it->setSelected(base_selection_.contains(it) || rect.intersects(visualItemRect(it)));
+      }
+      return;
+    }
+    QListWidget::mouseMoveEvent(event);
+  }
+
+  void mouseReleaseEvent(QMouseEvent* event) override {
+    tracking_drag_ = false;
+    if (rubber_band_ != nullptr) {
+      rubber_band_->deleteLater();
+      rubber_band_ = nullptr;
+      base_selection_.clear();
+      return;  // the drag already applied the selection; not a click
+    }
+    QListWidget::mouseReleaseEvent(event);
+  }
+
+private:
+  QPoint drag_origin_;
+  bool tracking_drag_ = false;
+  QRubberBand* rubber_band_ = nullptr;
+  QSet<QListWidgetItem*> base_selection_;
 };
 
 namespace {
@@ -1238,6 +1307,21 @@ void LibraryWindow::SelectionChanged() {
         sidebar_stack_->setCurrentWidget(details_);
         break;
     }
+  }
+
+  const QList<QListWidgetItem*> selected = grid_->selectedItems();
+  if (selected.size() > 1) {
+    // More than one game selected: nothing single-game (cover, play button,
+    // per-game metadata) makes sense here, so the panel switches to a plain
+    // summary instead of just showing whichever one happens to be "current".
+    selected_id_.clear();
+    QStringList names;
+    names.reserve(selected.size());
+    for (QListWidgetItem* selected_item : selected) {
+      names << selected_item->data(mira_gui::GameTileDelegate::NameRole).toString();
+    }
+    details_->ShowMultiSelection(names);
+    return;
   }
 
   auto* item = grid_->currentItem();
