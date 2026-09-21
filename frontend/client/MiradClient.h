@@ -185,6 +185,31 @@ public:
                                    const std::vector<GameConfigEdit>& edits,
                                    std::function<void(PatchGameConfigResult)> callback);
 
+  // GET /v1/games/{id}/log?lines=. `lines` is how many trailing lines to ask
+  // for; an empty result means nothing has ever been logged, not a failure.
+  static void GetGameLogAsync(QObject* context, const std::string& id, int lines,
+                              std::function<void(GameLogResult)> callback);
+
+  // GET /v1/gamemode/status — whether the Feral GameMode daemon is installed
+  // and reachable. Purely a status check; see GameModeStatusResult.
+  static void GetGameModeStatusAsync(QObject* context,
+                                     std::function<void(GameModeStatusResult)> callback);
+
+  // POST /v1/games/{id}/tricks. Returns 202; watch for
+  // tricks.started/.finished/.failed via ParseTricksEvent.
+  static void RunWinetricksAsync(QObject* context, const std::string& id, const std::string& verb,
+                                 std::function<void(TricksResult)> callback);
+
+  // DELETE /v1/runners/{kind}:{name}. Synchronous — 200 once the build's
+  // files are actually gone.
+  static void DeleteRunnerAsync(QObject* context, const std::string& kind, const std::string& name,
+                                std::function<void(RunnerRemoveResult)> callback);
+
+  // GET /v1/runners/{kind}/schema — the config keys that runner kind accepts
+  // in a game's runner_config. 404 for an unknown kind surfaces as !ok.
+  static void GetRunnerSchemaAsync(QObject* context, const std::string& kind,
+                                   std::function<void(RunnerSchemaResult)> callback);
+
   // --- SSE payload parsing -------------------------------------------------
   //
   // These take a `data:` line's raw JSON rather than making a request, since
@@ -230,6 +255,11 @@ public:
   // repeat.
   static bool ParseRunnerDownload(const std::string& event_type, const std::string& data,
                                   RunnerDownloadEvent* out);
+
+  // Parses a `tricks.started`/`.finished`/`.failed` payload. `state` comes
+  // from the event type, prefix-matched the same way ParseRunnerDownload is.
+  static bool ParseTricksEvent(const std::string& event_type, const std::string& data,
+                               TricksEvent* out);
 };
 
 }  // namespace mira_gui

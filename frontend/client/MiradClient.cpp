@@ -410,6 +410,20 @@ GameMetadataResult GetMetadataSync(const std::string& id) {
     out.price = steam.value("price", std::string());
     out.metacritic_score = steam.value("metacritic_score", 0);
     out.website = steam.value("website", std::string());
+    if (steam.contains("pc_requirements") && steam["pc_requirements"].is_object()) {
+      const json& requirements = steam["pc_requirements"];
+      out.requirements_min = requirements.value("minimum", std::string());
+      out.requirements_rec = requirements.value("recommended", std::string());
+    }
+    if (steam.contains("dlc") && steam["dlc"].is_array()) {
+      for (const json& item : steam["dlc"]) {
+        if (item.is_number_integer()) out.dlc_ids.push_back(item.get<std::int64_t>());
+      }
+    }
+    out.content_descriptors = strings(steam.value("content_descriptors", json::array()));
+    out.achievements_total = steam.value("achievements_total", 0);
+    out.screenshots = strings(steam.value("screenshots", json::array()));
+    out.trailers = strings(steam.value("movies", json::array()));
   }
   if (reply.body.contains("steam_reviews") && reply.body["steam_reviews"].is_object()) {
     const json& reviews = reply.body["steam_reviews"];
@@ -573,6 +587,75 @@ PatchGameConfigResult PatchGameConfigSync(const std::string& id,
   return {reply.ok, reply.error};
 }
 
+GameLogResult GetGameLogSync(const std::string& id, int lines) {
+  GameLogResult result;
+  const transport::Reply reply =
+      transport::Get("/v1/games/" + id + "/log?lines=" + std::to_string(lines));
+  if (!reply.ok) {
+    result.error = reply.error;
+    return result;
+  }
+  if (!reply.body.is_object()) {
+    result.error = transport::UnexpectedResponse("GET /v1/games/" + id + "/log");
+    return result;
+  }
+
+  result.ok = true;
+  if (reply.body.contains("lines") && reply.body["lines"].is_array()) {
+    for (const json& line : reply.body["lines"]) {
+      if (line.is_string()) result.lines.push_back(line.get<std::string>());
+    }
+  }
+  return result;
+}
+
+GameModeStatusResult GetGameModeStatusSync() {
+  GameModeStatusResult result;
+  const transport::Reply reply = transport::Get("/v1/gamemode/status");
+  if (!reply.ok) {
+    result.error = reply.error;
+    return result;
+  }
+  result.ok = true;
+  result.installed = reply.body.value("installed", false);
+  result.daemon_running = reply.body.value("daemon_running", false);
+  return result;
+}
+
+TricksResult RunWinetricksSync(const std::string& id, const std::string& verb) {
+  const transport::Reply reply =
+      transport::PostJson("/v1/games/" + id + "/tricks", json{{"verb", verb}});
+  return {reply.ok, reply.error};
+}
+
+RunnerRemoveResult DeleteRunnerSync(const std::string& kind, const std::string& name) {
+  const transport::Reply reply = transport::Delete("/v1/runners/" + kind + ":" + name);
+  return {reply.ok, reply.error};
+}
+
+RunnerSchemaResult GetRunnerSchemaSync(const std::string& kind) {
+  RunnerSchemaResult result;
+  const transport::Reply reply = transport::Get("/v1/runners/" + kind + "/schema");
+  if (!reply.ok) {
+    result.error = reply.error;
+    return result;
+  }
+  if (!reply.body.is_array()) {
+    result.error = transport::UnexpectedResponse("GET /v1/runners/" + kind + "/schema");
+    return result;
+  }
+
+  result.ok = true;
+  for (const json& entry : reply.body) {
+    RunnerSchemaEntry e;
+    e.key = entry.value("key", std::string());
+    e.type = entry.value("type", std::string());
+    e.doc = entry.value("doc", std::string());
+    result.entries.push_back(std::move(e));
+  }
+  return result;
+}
+
 }  // namespace
 
 std::string MiradClient::ResolveSocketPath() { return transport::SocketPath(); }
@@ -734,6 +817,33 @@ void MiradClient::PatchGameConfigAsync(QObject* context, const std::string& id,
   async::Run(context, [id, edits] { return PatchGameConfigSync(id, edits); }, std::move(callback));
 }
 
+void MiradClient::GetGameLogAsync(QObject* context, const std::string& id, int lines,
+                                  std::function<void(GameLogResult)> callback) {
+  async::Run(context, [id, lines] { return GetGameLogSync(id, lines); }, std::move(callback));
+}
+
+void MiradClient::GetGameModeStatusAsync(QObject* context,
+                                         std::function<void(GameModeStatusResult)> callback) {
+  async::Run(context, [] { return GetGameModeStatusSync(); }, std::move(callback));
+}
+
+void MiradClient::RunWinetricksAsync(QObject* context, const std::string& id,
+                                     const std::string& verb,
+                                     std::function<void(TricksResult)> callback) {
+  async::Run(context, [id, verb] { return RunWinetricksSync(id, verb); }, std::move(callback));
+}
+
+void MiradClient::DeleteRunnerAsync(QObject* context, const std::string& kind,
+                                    const std::string& name,
+                                    std::function<void(RunnerRemoveResult)> callback) {
+  async::Run(context, [kind, name] { return DeleteRunnerSync(kind, name); }, std::move(callback));
+}
+
+void MiradClient::GetRunnerSchemaAsync(QObject* context, const std::string& kind,
+                                       std::function<void(RunnerSchemaResult)> callback) {
+  async::Run(context, [kind] { return GetRunnerSchemaSync(kind); }, std::move(callback));
+}
+
 bool MiradClient::ParseGameSummary(const std::string& data, GameSummary* out) {
   const json entry = json::parse(data, nullptr, false);
   if (entry.is_discarded() || !entry.is_object()) return false;
@@ -810,6 +920,20 @@ bool MiradClient::ParseRunnerDownload(const std::string& event_type, const std::
   out->state = event_type.substr(kPrefix.size());
   out->kind = entry.value("kind", std::string());
   out->tag = entry.value("tag", std::string());
+  out->error = entry.value("error", std::string());
+  return true;
+}
+
+bool MiradClient::ParseTricksEvent(const std::string& event_type, const std::string& data,
+                                   TricksEvent* out) {
+  constexpr std::string_view kPrefix = "tricks.";
+  if (!event_type.starts_with(kPrefix)) return false;
+
+  const json entry = json::parse(data, nullptr, false);
+  if (entry.is_discarded() || !entry.is_object()) return false;
+  out->state = event_type.substr(kPrefix.size());
+  out->id = entry.value("id", std::string());
+  out->verb = entry.value("verb", std::string());
   out->error = entry.value("error", std::string());
   return true;
 }

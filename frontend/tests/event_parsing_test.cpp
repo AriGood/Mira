@@ -94,3 +94,28 @@ TEST_CASE("ParseRunnerDownload ignores unrelated event types") {
   CHECK_FALSE(MiradClient::ParseRunnerDownload("runners.updated", R"({})", &event));
   CHECK(MiradClient::ParseRunnerDownload("runners.download.started", R"({})", &event));
 }
+
+TEST_CASE("ParseTricksEvent ignores unrelated event types") {
+  // Same shared-stream hazard as runner downloads: a WinetricksDialog must
+  // not mistake a game.updated (or someone else's tricks event) for its own.
+  TricksEvent event;
+  CHECK_FALSE(MiradClient::ParseTricksEvent("game.added", R"({"id": "x"})", &event));
+  CHECK_FALSE(MiradClient::ParseTricksEvent("runners.download.started", R"({})", &event));
+  CHECK(MiradClient::ParseTricksEvent("tricks.started", R"({})", &event));
+}
+
+TEST_CASE("ParseTricksEvent extracts id, verb, state and error") {
+  TricksEvent event;
+  REQUIRE(MiradClient::ParseTricksEvent("tricks.failed",
+                                        R"({"id": "x", "verb": "corefonts", "error": "winetricks not found"})",
+                                        &event));
+  CHECK(event.id == "x");
+  CHECK(event.verb == "corefonts");
+  CHECK(event.state == "failed");
+  CHECK(event.error == "winetricks not found");
+
+  REQUIRE(MiradClient::ParseTricksEvent("tricks.finished", R"({"id": "x", "verb": "corefonts"})",
+                                        &event));
+  CHECK(event.state == "finished");
+  CHECK(event.error.empty());
+}
