@@ -111,4 +111,41 @@ Result<json> RunLegendaryJson(const config::Config& config, std::vector<std::str
   return parsed;
 }
 
+EpicAuthStatus Status(const config::Config& config) {
+  EpicAuthStatus status;
+  status.legendary = DetectLegendary(config);
+  if (!status.legendary.installed) return status;  // authenticated=false, no subprocess needed
+
+  // Not RunLegendaryJson: "not logged in" is an ordinary result of this
+  // specific call, not an error to propagate — a failed/unparseable run
+  // just leaves authenticated=false rather than failing the whole status
+  // call the way every other legendary invocation here does.
+  Command command;
+  command.argv = {status.legendary.path, "status", "--json"};
+  const Result<runner::ExecResult> result = runner::RunAndWait(command);
+  if (!result) return status;
+
+  const json parsed = json::parse(result->output, nullptr, false);
+  if (parsed.is_discarded() || !parsed.is_object()) return status;
+
+  const std::string account = parsed.value("account", std::string());
+  if (!account.empty()) {
+    status.authenticated = true;
+    status.account = account;
+  }
+  return status;
+}
+
+Result<void> Login(const config::Config& config, const std::string& code) {
+  const Result<std::string> output = RunLegendary(config, {"auth", "--code", code});
+  if (!output) return std::unexpected(output.error());
+  return {};
+}
+
+Result<void> Logout(const config::Config& config) {
+  const Result<std::string> output = RunLegendary(config, {"auth", "--delete"});
+  if (!output) return std::unexpected(output.error());
+  return {};
+}
+
 }  // namespace mira::epic

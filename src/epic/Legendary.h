@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <json.hpp>
@@ -51,5 +52,34 @@ Result<std::string> RunLegendary(const config::Config& config, std::vector<std::
 
 // Like RunLegendary, but appends --json and parses stdout as JSON.
 Result<nlohmann::json> RunLegendaryJson(const config::Config& config, std::vector<std::string> args);
+
+// Legendary's own documented manual-login URL (its README's instructions for
+// an environment with no browser legendary itself can open — the case here,
+// since RunLegendary always executes on mirad's side, headless). A fixed,
+// public URL, not a secret; only changes if Epic ever rotates the OAuth
+// client id legendary itself uses.
+inline constexpr std::string_view kLoginUrl =
+    "https://www.epicgames.com/id/login?redirectUrl=https%3A%2F%2Fwww.epicgames.com%2Fid%2Fapi%2Fredirect%3FclientId"
+    "%3D34a02cf8f4414e29b15921876da36f9a%26responseType%3Dcode";
+
+struct EpicAuthStatus {
+  LegendaryStatus legendary;
+  bool authenticated = false;
+  std::string account;
+};
+
+// The layered "don't assume setup" status call: checks legendary is
+// installed first (no subprocess if not), only runs `legendary status
+// --json` if it is. Never itself errors — "not installed" and "not
+// authenticated" are both just fields on the result, not failures.
+EpicAuthStatus Status(const config::Config& config);
+
+// Runs `legendary auth --code <code>` — the headless login path (see
+// kLoginUrl's comment): the user visits kLoginUrl in their own browser,
+// pastes back the code it shows. Err("legendary_missing", ...) if legendary
+// isn't installed, same as everything else here.
+Result<void> Login(const config::Config& config, const std::string& code);
+
+Result<void> Logout(const config::Config& config);
 
 }  // namespace mira::epic

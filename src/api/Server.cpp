@@ -638,6 +638,39 @@ void Server::RegisterRoutes() {
     SendJson(res, {{"status", "downloading"}, {"tag", asset.tag}}, 202);
   });
 
+  // The one call to know the whole picture: is legendary installed, and are
+  // we authenticated. Never errors — both are just fields on the result.
+  http_->Get("/v1/epic/status", [this](const Request&, Response& res) {
+    const epic::EpicAuthStatus status = epic::Status(config_);
+    SendJson(res, {{"legendary", {{"installed", status.legendary.installed},
+                                  {"source", status.legendary.source},
+                                  {"path", status.legendary.path},
+                                  {"version", status.legendary.version}}},
+                  {"authenticated", status.authenticated},
+                  {"account", status.account}});
+  });
+
+  // The user pastes back the code shown at epic::kLoginUrl, visited in
+  // their own browser -- mirad itself never opens one (see Legendary.h).
+  http_->Post("/v1/epic/auth", [this](const Request& req, Response& res) {
+    json body = json::parse(req.body, nullptr, false);
+    if (body.is_discarded() || !body.contains("code") || !body["code"].is_string()) {
+      return SendError(res, 400, "invalid_body", R"(expected {"code": "..."})");
+    }
+    if (auto logged_in = epic::Login(config_, body["code"]); !logged_in) {
+      return SendError(res, 400, logged_in.error().code, logged_in.error().message);
+    }
+    const epic::EpicAuthStatus status = epic::Status(config_);
+    SendJson(res, {{"authenticated", status.authenticated}, {"account", status.account}});
+  });
+
+  http_->Post("/v1/epic/logout", [this](const Request&, Response& res) {
+    if (auto logged_out = epic::Logout(config_); !logged_out) {
+      return SendError(res, 400, logged_out.error().code, logged_out.error().message);
+    }
+    SendJson(res, {{"status", "logged_out"}});
+  });
+
   // Imported games land in the same GameStore as everything else — no
   // separate GET endpoint needed, they just show up in GET /v1/games.
   http_->Post("/v1/epic/import", [this](const Request&, Response& res) {

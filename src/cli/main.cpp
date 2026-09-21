@@ -20,6 +20,7 @@
 
 #include "config/Config.h"
 #include "core/Paths.h"
+#include "epic/Legendary.h"
 
 namespace {
 using nlohmann::json;
@@ -394,6 +395,62 @@ int CmdEpicSetup() {
   return 0;
 }
 
+int CmdEpicStatus() {
+  auto client = Connect();
+  auto res = client.Get("/v1/epic/status");
+  if (!Ok(res)) {
+    PrintError(res);
+    return 1;
+  }
+  json status = json::parse(res->body);
+  const json& legendary = status["legendary"];
+  if (!legendary.value("installed", false)) {
+    std::puts("legendary: not installed — run \"mira epic setup\"");
+    return 0;
+  }
+  std::printf("legendary: installed (%s, %s) at %s\n", legendary.value("source", "").c_str(),
+             legendary.value("version", "").c_str(), legendary.value("path", "").c_str());
+  if (status.value("authenticated", false)) {
+    std::printf("authenticated as %s\n", status.value("account", "").c_str());
+  } else {
+    std::puts("not authenticated — run \"mira epic login\"");
+  }
+  return 0;
+}
+
+int CmdEpicLogin() {
+  std::printf("Visit this URL, log in, and paste the code it shows:\n%s\n\ncode: ",
+             std::string(mira::epic::kLoginUrl).c_str());
+  std::string code;
+  std::getline(std::cin, code);
+  if (code.empty()) {
+    std::fprintf(stderr, "mira: no code entered\n");
+    return 2;
+  }
+
+  auto client = Connect();
+  json body = {{"code", code}};
+  auto res = client.Post("/v1/epic/auth", body.dump(), "application/json");
+  if (!Ok(res)) {
+    PrintError(res);
+    return 1;
+  }
+  json status = json::parse(res->body);
+  std::printf("authenticated as %s\n", status.value("account", "").c_str());
+  return 0;
+}
+
+int CmdEpicLogout() {
+  auto client = Connect();
+  auto res = client.Post("/v1/epic/logout");
+  if (!Ok(res)) {
+    PrintError(res);
+    return 1;
+  }
+  std::puts("logged out");
+  return 0;
+}
+
 int CmdEpicImport() {
   auto client = Connect();
   auto res = client.Post("/v1/epic/import");
@@ -408,8 +465,11 @@ int CmdEpicImport() {
 
 int CmdEpic(int argc, char** argv) {
   if (argc > 0 && std::string_view(argv[0]) == "setup") return CmdEpicSetup();
+  if (argc > 0 && std::string_view(argv[0]) == "status") return CmdEpicStatus();
+  if (argc > 0 && std::string_view(argv[0]) == "login") return CmdEpicLogin();
+  if (argc > 0 && std::string_view(argv[0]) == "logout") return CmdEpicLogout();
   if (argc > 0 && std::string_view(argv[0]) == "import") return CmdEpicImport();
-  std::fprintf(stderr, "usage: mira epic setup|import\n");
+  std::fprintf(stderr, "usage: mira epic setup|status|login|logout|import\n");
   return 2;
 }
 
