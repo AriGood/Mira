@@ -447,19 +447,11 @@ is visible rather than assumed.
 
 ## Not built yet
 
-Everything here exists in the API and has no path through the UI:
-
-- **`POST /v1/games/{id}/tricks`** — winetricks verbs. No catalog endpoint
-  exists, so this wants a free-text verb field (plus, perhaps, a short list
-  of common ones) shaped like `RunInPrefixDialog`, and it 404s for a native
-  game or a prefix that was never provisioned, so the menu entry should be
-  disabled with the reason rather than hidden.
-- **`tricks.started`/`.finished`/`.failed`** — unhandled. They are the only
-  report a verb ever makes, since the endpoint returns 202.
-- **`DELETE /v1/runners/{kind}:{name}`** and **`GET /v1/runners/{kind}/
-  schema`** — `RunnerDialog` installs and lists, but never removes a build
-  or shows what a runner accepts.
-- The details panel shows the cached store info but not everything in it:
-  screenshots, trailers, PC requirements, DLC ids, content descriptors and
-  the achievement count are all fetched and cached, and none of them fit a
-  narrow sidebar. They want the wider game page that does not exist yet.
+Nothing outstanding right now: winetricks (`WinetricksDialog`), runner
+delete/schema (`RunnerDialog`), the wider game detail page
+(`GameDetailPageDialog`), the per-game log viewer (`LogViewerDialog`), a
+GameMode status indicator (Settings, Launching category), manual single-game
+add (`AddManualGameDialog`), the desktop-entries import picker
+(`DesktopEntryImportDialog` — this is now how a Flatpak app gets added, since
+the Flatpak runner itself was removed backend-side) and the `delete_metadata`
+remove-game option are all in.

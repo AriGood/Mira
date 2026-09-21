@@ -50,10 +50,6 @@ struct Tokens {
   int tile_spacing = 5;  // gap between two tiles in the grid
   int grid_margin = 6;   // padding between the grid and the panels around it
 
-  // Ceiling on the details panel's image box height; its real height and
-  // width stay locked to a hero's own 1920x620 ratio (GameDetailsPanel).
-  int hero_height = 210;
-
   // Only the two sizes the UI actually names. The base size is left to the
   // desktop's own font setting, which is an accessibility setting.
   int font_size_small = 11;
@@ -85,7 +81,6 @@ struct Overrides {
   std::optional<int> radius_tile;
   std::optional<int> radius_panel;
   std::optional<int> radius_control;
-  std::optional<int> hero_height;
 };
 
 // Re-applies the current theme, so a change shows without a restart.

@@ -124,6 +124,13 @@ GameDetailsPanel::GameDetailsPanel(QWidget* parent) : QWidget(parent) {
   });
   layout->addWidget(choose_hero);
 
+  // Grouped with the other action buttons, not stranded below the form.
+  auto* more_details = ActionButton("More details…", panel);
+  connect(more_details, &QPushButton::clicked, this, [this] {
+    if (!game_id_.empty()) emit MoreDetailsRequested(QString::fromStdString(game_id_));
+  });
+  layout->addWidget(more_details);
+
   description_ = ValueLabel(panel);
   description_->setProperty("role", "muted");
   description_->setVisible(false);

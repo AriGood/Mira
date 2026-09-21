@@ -53,6 +53,7 @@ signals:
   void MetadataRefreshRequested(const QString& id);
   // `slot` is "cover" or "hero".
   void ArtworkPickRequested(const QString& id, const QString& slot);
+  void MoreDetailsRequested(const QString& id);
 
 private:
   // GET /v1/games/{id}/metadata, once per selection. What comes back is

@@ -32,17 +32,27 @@ void Delete(QWidget* parent, const std::string& id, const QString& name,
             std::function<void()> on_deleted);
 
 // Runs an executable inside the game's own prefix, asking which one first.
-// Needs the full record for its candidate list, so it fetches before
-// prompting.
-void RunInPrefix(QWidget* parent, const std::string& id);
+// Takes install_path/name directly — both already on GameSummary, so no
+// fetch is needed just to open the dialog.
+void RunInPrefix(QWidget* parent, const std::string& id, const std::string& install_path,
+                 const QString& name);
 
 // Flips a needs_install game to ready. 409s while exe_path is still empty,
 // the normal case until the user points it at the installed program — so
 // the failure message matters more here than elsewhere.
 void FinishInstall(QWidget* parent, const std::string& id, std::function<void()> on_finished);
 
-// Opens the game's install_path in the desktop's file manager. Needs a
-// detail fetch first — install_path isn't in the list summary.
-void OpenInstallFolder(QWidget* parent, const std::string& id);
+// Opens install_path in the desktop's file manager. Takes the path directly
+// rather than an id — GameSummary already carries it, so no fetch is needed.
+void OpenInstallFolder(QWidget* parent, const std::string& install_path);
+
+// Opens a LogViewerDialog for the game. Unlike RunInPrefix/Delete, no detail
+// fetch is needed first — id/name are already known from the tile/row.
+void ViewLog(QWidget* parent, const std::string& id, const QString& name);
+
+// Opens WinetricksDialog. Fetches the full record first to check data_dir
+// (not in the list summary) before opening — mirad only rejects "no
+// prefix" asynchronously, so this catches it up front instead.
+void RunWinetricks(QWidget* parent, const std::string& id, const QString& name);
 
 }  // namespace mira_gui::actions

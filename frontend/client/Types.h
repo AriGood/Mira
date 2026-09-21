@@ -141,6 +141,16 @@ struct GameMetadata {
   // candidate. What ArtworkPickerDialog marks "(current)".
   std::optional<std::int64_t> cover_active_candidate_id;
   std::optional<std::int64_t> hero_active_candidate_id;
+
+  // The wider store info that doesn't fit the sidebar — see
+  // GameDetailPageDialog. requirements_min/rec are HTML, not plain text.
+  std::string requirements_min;
+  std::string requirements_rec;
+  std::vector<std::int64_t> dlc_ids;
+  std::vector<std::string> content_descriptors;
+  int achievements_total = 0;
+  std::vector<std::string> screenshots;  // URLs, opened externally
+  std::vector<std::string> trailers;     // mp4 URLs, opened externally
 };
 
 struct GameMetadataResult {
@@ -498,7 +508,6 @@ struct FrontendPrefs {
   std::optional<int> tile_radius;
   std::optional<int> panel_radius;
   std::optional<int> control_radius;
-  std::optional<int> hero_height;
   // Overridden keyboard shortcuts, id (ui/KeyBindings.h) -> a
   // QKeySequence::toString(PortableText) string. An id absent here just
   // means "whatever that action's own default is" -- see keybindings::All().
@@ -509,6 +518,87 @@ struct FrontendPrefsResult {
   bool ok = false;
   std::string error;
   FrontendPrefs prefs;
+};
+
+// GET /v1/games/{id}/log?lines= — the game's own log tail. An empty
+// `lines` means nothing was ever logged, not an error.
+struct GameLogResult {
+  bool ok = false;
+  std::string error;
+  std::vector<std::string> lines;
+};
+
+// GET /v1/gamemode/status — is Feral GameMode's daemon installed/reachable.
+// Purely informational; `launch.gamemode` (a plain config key) is the toggle.
+struct GameModeStatusResult {
+  bool ok = false;
+  std::string error;
+  bool installed = false;
+  bool daemon_running = false;
+};
+
+// POST /v1/games/{id}/tricks — 202, so this only means "accepted". The
+// outcome arrives as a tricks.started/.finished/.failed event.
+struct TricksResult {
+  bool ok = false;
+  std::string error;
+};
+
+// A tricks.started / .finished / .failed payload.
+struct TricksEvent {
+  std::string id;
+  std::string verb;
+  std::string state;  // "started" | "finished" | "failed"
+  std::string error;  // only on "failed"
+};
+
+// One accepted config key for a runner kind. Informational only — no
+// structured editor exists; runner_config stays free-text JSON.
+struct RunnerSchemaEntry {
+  std::string key;
+  std::string type;
+  std::string doc;
+};
+
+struct RunnerSchemaResult {
+  bool ok = false;
+  std::string error;
+  std::vector<RunnerSchemaEntry> entries;
+};
+
+// DELETE /v1/runners/{kind}:{name} — synchronous, 200 on success.
+struct RunnerRemoveResult {
+  bool ok = false;
+  std::string error;
+};
+
+// GET /v1/desktop-entries/candidates — an already-installed .desktop entry
+// (Flatpak or otherwise) that could become a game. `icon` is a theme icon
+// name/path, not image bytes.
+struct DesktopEntryCandidate {
+  std::string id;
+  std::string name;
+  std::string icon;
+};
+
+struct DesktopEntryCandidatesResult {
+  bool ok = false;
+  std::string error;
+  std::vector<DesktopEntryCandidate> candidates;
+};
+
+// POST /v1/desktop-entries/import.
+struct DesktopEntryImportResult {
+  bool ok = false;
+  std::string error;
+  int added = 0;
+  int updated = 0;
+};
+
+// POST /v1/desktop-entries/sync — regenerates Mira's own desktop entries.
+struct DesktopEntrySyncResult {
+  bool ok = false;
+  std::string error;
 };
 
 }  // namespace mira_gui

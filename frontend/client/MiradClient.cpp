@@ -52,16 +52,21 @@ GamesResult GetGamesSync(const std::string& status_filter, const std::string& ta
   return result;
 }
 
-DeleteResult DeleteGameSync(const std::string& id, bool delete_files, bool delete_prefix) {
-  // Both flags are opt-in server-side too (docs/api.md): the bare DELETE
-  // never touches disk, so an omitted param and "false" mean the same thing.
+DeleteResult DeleteGameSync(const std::string& id, bool delete_files, bool delete_prefix,
+                            bool delete_metadata) {
+  // Every flag is opt-in server-side too: the bare DELETE never touches
+  // disk, so an omitted param and "false" mean the same thing.
   std::string path = "/v1/games/" + id;
   std::string separator = "?";
   if (delete_files) {
     path += separator + "delete_files=true";
     separator = "&";
   }
-  if (delete_prefix) path += separator + "delete_prefix=true";
+  if (delete_prefix) {
+    path += separator + "delete_prefix=true";
+    separator = "&";
+  }
+  if (delete_metadata) path += separator + "delete_metadata=true";
 
   const transport::Reply reply = transport::Delete(path);
   return {reply.ok, reply.error};
@@ -309,7 +314,6 @@ FrontendPrefsResult GetFrontendPrefsSync() {
   read_int("tile_radius", result.prefs.tile_radius);
   read_int("panel_radius", result.prefs.panel_radius);
   read_int("control_radius", result.prefs.control_radius);
-  read_int("hero_height", result.prefs.hero_height);
   if (table.contains("shortcuts") && table["shortcuts"].is_object()) {
     std::map<std::string, std::string> overrides;
     for (const auto& [id, keys] : table["shortcuts"].items()) {
@@ -342,7 +346,6 @@ PatchConfigResult SaveFrontendPrefsSync(const FrontendPrefs& prefs) {
   if (prefs.tile_radius) table["tile_radius"] = *prefs.tile_radius;
   if (prefs.panel_radius) table["panel_radius"] = *prefs.panel_radius;
   if (prefs.control_radius) table["control_radius"] = *prefs.control_radius;
-  if (prefs.hero_height) table["hero_height"] = *prefs.hero_height;
   if (prefs.shortcut_overrides) {
     json shortcuts = json::object();
     for (const auto& [id, keys] : *prefs.shortcut_overrides) shortcuts[id] = keys;
@@ -410,6 +413,20 @@ GameMetadataResult GetMetadataSync(const std::string& id) {
     out.price = steam.value("price", std::string());
     out.metacritic_score = steam.value("metacritic_score", 0);
     out.website = steam.value("website", std::string());
+    if (steam.contains("pc_requirements") && steam["pc_requirements"].is_object()) {
+      const json& requirements = steam["pc_requirements"];
+      out.requirements_min = requirements.value("minimum", std::string());
+      out.requirements_rec = requirements.value("recommended", std::string());
+    }
+    if (steam.contains("dlc") && steam["dlc"].is_array()) {
+      for (const json& item : steam["dlc"]) {
+        if (item.is_number_integer()) out.dlc_ids.push_back(item.get<std::int64_t>());
+      }
+    }
+    out.content_descriptors = strings(steam.value("content_descriptors", json::array()));
+    out.achievements_total = steam.value("achievements_total", 0);
+    out.screenshots = strings(steam.value("screenshots", json::array()));
+    out.trailers = strings(steam.value("movies", json::array()));
   }
   if (reply.body.contains("steam_reviews") && reply.body["steam_reviews"].is_object()) {
     const json& reviews = reply.body["steam_reviews"];
@@ -573,6 +590,140 @@ PatchGameConfigResult PatchGameConfigSync(const std::string& id,
   return {reply.ok, reply.error};
 }
 
+GameLogResult GetGameLogSync(const std::string& id, int lines) {
+  GameLogResult result;
+  const transport::Reply reply =
+      transport::Get("/v1/games/" + id + "/log?lines=" + std::to_string(lines));
+  if (!reply.ok) {
+    result.error = reply.error;
+    return result;
+  }
+  if (!reply.body.is_object()) {
+    result.error = transport::UnexpectedResponse("GET /v1/games/" + id + "/log");
+    return result;
+  }
+
+  result.ok = true;
+  if (reply.body.contains("lines") && reply.body["lines"].is_array()) {
+    for (const json& line : reply.body["lines"]) {
+      if (line.is_string()) result.lines.push_back(line.get<std::string>());
+    }
+  }
+  return result;
+}
+
+GameModeStatusResult GetGameModeStatusSync() {
+  GameModeStatusResult result;
+  const transport::Reply reply = transport::Get("/v1/gamemode/status");
+  if (!reply.ok) {
+    result.error = reply.error;
+    return result;
+  }
+  result.ok = true;
+  result.installed = reply.body.value("installed", false);
+  result.daemon_running = reply.body.value("daemon_running", false);
+  return result;
+}
+
+TricksResult RunWinetricksSync(const std::string& id, const std::string& verb) {
+  const transport::Reply reply =
+      transport::PostJson("/v1/games/" + id + "/tricks", json{{"verb", verb}});
+  return {reply.ok, reply.error};
+}
+
+RunnerRemoveResult DeleteRunnerSync(const std::string& kind, const std::string& name) {
+  const transport::Reply reply = transport::Delete("/v1/runners/" + kind + ":" + name);
+  return {reply.ok, reply.error};
+}
+
+RunnerSchemaResult GetRunnerSchemaSync(const std::string& kind) {
+  RunnerSchemaResult result;
+  const transport::Reply reply = transport::Get("/v1/runners/" + kind + "/schema");
+  if (!reply.ok) {
+    result.error = reply.error;
+    return result;
+  }
+  if (!reply.body.is_array()) {
+    result.error = transport::UnexpectedResponse("GET /v1/runners/" + kind + "/schema");
+    return result;
+  }
+
+  result.ok = true;
+  for (const json& entry : reply.body) {
+    RunnerSchemaEntry e;
+    e.key = entry.value("key", std::string());
+    e.type = entry.value("type", std::string());
+    e.doc = entry.value("doc", std::string());
+    result.entries.push_back(std::move(e));
+  }
+  return result;
+}
+
+GameDetailResult AddManualGameSync(const std::string& install_path, const std::string& exe_path,
+                                   const std::string& name, const std::string& platform,
+                                   bool is_installer) {
+  json body{{"install_path", install_path}, {"exe_path", exe_path}, {"is_installer", is_installer}};
+  if (!name.empty()) body["name"] = name;
+  if (!platform.empty()) body["platform"] = platform;
+
+  GameDetailResult result;
+  const transport::Reply reply = transport::PostJson("/v1/games/manual", body);
+  if (!reply.ok) {
+    result.error = reply.error;
+    return result;
+  }
+  if (!reply.body.is_object()) {
+    result.error = transport::UnexpectedResponse("POST /v1/games/manual");
+    return result;
+  }
+
+  result.ok = true;
+  result.game = mapping::ToGameDetail(reply.body);
+  return result;
+}
+
+DesktopEntryCandidatesResult GetDesktopEntryCandidatesSync() {
+  DesktopEntryCandidatesResult result;
+  const transport::Reply reply = transport::Get("/v1/desktop-entries/candidates");
+  if (!reply.ok) {
+    result.error = reply.error;
+    return result;
+  }
+  if (!reply.body.is_array()) {
+    result.error = transport::UnexpectedResponse("GET /v1/desktop-entries/candidates");
+    return result;
+  }
+
+  result.ok = true;
+  for (const json& entry : reply.body) {
+    DesktopEntryCandidate c;
+    c.id = entry.value("id", std::string());
+    c.name = entry.value("name", std::string());
+    c.icon = entry.value("icon", std::string());
+    result.candidates.push_back(std::move(c));
+  }
+  return result;
+}
+
+DesktopEntryImportResult ImportDesktopEntriesSync(const std::vector<std::string>& ids) {
+  DesktopEntryImportResult result;
+  const transport::Reply reply =
+      transport::PostJson("/v1/desktop-entries/import", json{{"ids", ids}});
+  if (!reply.ok) {
+    result.error = reply.error;
+    return result;
+  }
+  result.ok = true;
+  result.added = reply.body.value("added", 0);
+  result.updated = reply.body.value("updated", 0);
+  return result;
+}
+
+DesktopEntrySyncResult SyncDesktopEntriesSync() {
+  const transport::Reply reply = transport::Post("/v1/desktop-entries/sync");
+  return {reply.ok, reply.error};
+}
+
 }  // namespace
 
 std::string MiradClient::ResolveSocketPath() { return transport::SocketPath(); }
@@ -588,11 +739,11 @@ void MiradClient::ListGamesAsync(QObject* context, std::function<void(GamesResul
 }
 
 void MiradClient::DeleteGameAsync(QObject* context, const std::string& id, bool delete_files,
-                                  bool delete_prefix,
+                                  bool delete_prefix, bool delete_metadata,
                                   std::function<void(DeleteResult)> callback) {
   async::Run(
-      context, [id, delete_files, delete_prefix] {
-        return DeleteGameSync(id, delete_files, delete_prefix);
+      context, [id, delete_files, delete_prefix, delete_metadata] {
+        return DeleteGameSync(id, delete_files, delete_prefix, delete_metadata);
       },
       std::move(callback));
 }
@@ -734,6 +885,60 @@ void MiradClient::PatchGameConfigAsync(QObject* context, const std::string& id,
   async::Run(context, [id, edits] { return PatchGameConfigSync(id, edits); }, std::move(callback));
 }
 
+void MiradClient::GetGameLogAsync(QObject* context, const std::string& id, int lines,
+                                  std::function<void(GameLogResult)> callback) {
+  async::Run(context, [id, lines] { return GetGameLogSync(id, lines); }, std::move(callback));
+}
+
+void MiradClient::GetGameModeStatusAsync(QObject* context,
+                                         std::function<void(GameModeStatusResult)> callback) {
+  async::Run(context, [] { return GetGameModeStatusSync(); }, std::move(callback));
+}
+
+void MiradClient::RunWinetricksAsync(QObject* context, const std::string& id,
+                                     const std::string& verb,
+                                     std::function<void(TricksResult)> callback) {
+  async::Run(context, [id, verb] { return RunWinetricksSync(id, verb); }, std::move(callback));
+}
+
+void MiradClient::DeleteRunnerAsync(QObject* context, const std::string& kind,
+                                    const std::string& name,
+                                    std::function<void(RunnerRemoveResult)> callback) {
+  async::Run(context, [kind, name] { return DeleteRunnerSync(kind, name); }, std::move(callback));
+}
+
+void MiradClient::GetRunnerSchemaAsync(QObject* context, const std::string& kind,
+                                       std::function<void(RunnerSchemaResult)> callback) {
+  async::Run(context, [kind] { return GetRunnerSchemaSync(kind); }, std::move(callback));
+}
+
+void MiradClient::AddManualGameAsync(QObject* context, const std::string& install_path,
+                                     const std::string& exe_path, const std::string& name,
+                                     const std::string& platform, bool is_installer,
+                                     std::function<void(GameDetailResult)> callback) {
+  async::Run(
+      context,
+      [install_path, exe_path, name, platform, is_installer] {
+        return AddManualGameSync(install_path, exe_path, name, platform, is_installer);
+      },
+      std::move(callback));
+}
+
+void MiradClient::GetDesktopEntryCandidatesAsync(
+    QObject* context, std::function<void(DesktopEntryCandidatesResult)> callback) {
+  async::Run(context, [] { return GetDesktopEntryCandidatesSync(); }, std::move(callback));
+}
+
+void MiradClient::ImportDesktopEntriesAsync(QObject* context, const std::vector<std::string>& ids,
+                                            std::function<void(DesktopEntryImportResult)> callback) {
+  async::Run(context, [ids] { return ImportDesktopEntriesSync(ids); }, std::move(callback));
+}
+
+void MiradClient::SyncDesktopEntriesAsync(QObject* context,
+                                          std::function<void(DesktopEntrySyncResult)> callback) {
+  async::Run(context, [] { return SyncDesktopEntriesSync(); }, std::move(callback));
+}
+
 bool MiradClient::ParseGameSummary(const std::string& data, GameSummary* out) {
   const json entry = json::parse(data, nullptr, false);
   if (entry.is_discarded() || !entry.is_object()) return false;
@@ -810,6 +1015,20 @@ bool MiradClient::ParseRunnerDownload(const std::string& event_type, const std::
   out->state = event_type.substr(kPrefix.size());
   out->kind = entry.value("kind", std::string());
   out->tag = entry.value("tag", std::string());
+  out->error = entry.value("error", std::string());
+  return true;
+}
+
+bool MiradClient::ParseTricksEvent(const std::string& event_type, const std::string& data,
+                                   TricksEvent* out) {
+  constexpr std::string_view kPrefix = "tricks.";
+  if (!event_type.starts_with(kPrefix)) return false;
+
+  const json entry = json::parse(data, nullptr, false);
+  if (entry.is_discarded() || !entry.is_object()) return false;
+  out->state = event_type.substr(kPrefix.size());
+  out->id = entry.value("id", std::string());
+  out->verb = entry.value("verb", std::string());
   out->error = entry.value("error", std::string());
   return true;
 }

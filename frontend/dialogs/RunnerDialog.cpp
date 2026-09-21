@@ -11,6 +11,7 @@
 
 #include "../client/MiradClient.h"
 #include "../ui/GamePresentation.h"
+#include "../ui/Notify.h"
 #include "../ui/Theme.h"
 
 namespace {
@@ -63,9 +64,15 @@ RunnerDialog::RunnerDialog(QWidget* parent) : QDialog(parent) {
   header->addWidget(refresh_);
   layout->addLayout(header);
 
+  auto* installed_header = new QHBoxLayout();
   auto* installed_label = new QLabel("Installed", this);
   installed_label->setProperty("role", "section");
-  layout->addWidget(installed_label);
+  installed_header->addWidget(installed_label);
+  installed_header->addStretch(1);
+  schema_ = new QPushButton("Accepted config keys…", this);
+  connect(schema_, &QPushButton::clicked, this, &RunnerDialog::ShowSchema);
+  installed_header->addWidget(schema_);
+  layout->addLayout(installed_header);
 
   installed_ = new QTreeWidget(this);
   installed_->setColumnCount(3);
@@ -73,6 +80,10 @@ RunnerDialog::RunnerDialog(QWidget* parent) : QDialog(parent) {
   installed_->setRootIsDecorated(false);
   installed_->setAlternatingRowColors(true);
   installed_->header()->setSectionResizeMode(0, QHeaderView::Stretch);
+  connect(installed_, &QTreeWidget::itemSelectionChanged, this, [this] {
+    QTreeWidgetItem* item = installed_->currentItem();
+    remove_->setEnabled(item != nullptr && (item->flags() & Qt::ItemIsSelectable));
+  });
   layout->addWidget(installed_, /*stretch=*/1);
 
   auto* catalog_label = new QLabel("Available to install", this);
@@ -96,6 +107,9 @@ RunnerDialog::RunnerDialog(QWidget* parent) : QDialog(parent) {
   layout->addWidget(status_);
 
   auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close, this);
+  remove_ = buttons->addButton("Remove", QDialogButtonBox::ActionRole);
+  remove_->setEnabled(false);
+  connect(remove_, &QPushButton::clicked, this, &RunnerDialog::RemoveSelected);
   download_ = buttons->addButton("Download", QDialogButtonBox::ActionRole);
   download_->setEnabled(false);
   connect(download_, &QPushButton::clicked, this, &RunnerDialog::DownloadSelected);
@@ -120,6 +134,7 @@ void RunnerDialog::RefreshInstalled() {
   const std::string kind = CurrentKind();
   mira_gui::MiradClient::ListRunnersAsync(this, [this, kind](mira_gui::RunnersResult result) {
     installed_->clear();
+    remove_->setEnabled(false);
     if (!result.ok) {
       SetStatus(QString::fromStdString(result.error), /*error=*/true);
       return;
@@ -191,6 +206,57 @@ void RunnerDialog::DownloadSelected() {
         SetStatus(QString("Download failed to start: %1")
                       .arg(QString::fromStdString(result.error)),
                   /*error=*/true);
+      });
+}
+
+void RunnerDialog::RemoveSelected() {
+  QTreeWidgetItem* item = installed_->currentItem();
+  if (item == nullptr) return;
+
+  const std::string kind = CurrentKind();
+  const std::string name = item->text(0).toStdString();
+  if (!mira_gui::notify::Confirm(
+          this, "Remove runner",
+          QString("Remove \"%1\"? This deletes its installed files.").arg(item->text(0)), "Remove",
+          /*destructive=*/true)) {
+    return;
+  }
+
+  mira_gui::MiradClient::DeleteRunnerAsync(
+      this, kind, name, [this](mira_gui::RunnerRemoveResult result) {
+        if (!result.ok) {
+          SetStatus(QString("Could not remove that runner: %1")
+                        .arg(QString::fromStdString(result.error)),
+                    /*error=*/true);
+          return;
+        }
+        RefreshInstalled();
+      });
+}
+
+void RunnerDialog::ShowSchema() {
+  const std::string kind = CurrentKind();
+  mira_gui::MiradClient::GetRunnerSchemaAsync(
+      this, kind, [this, kind](mira_gui::RunnerSchemaResult result) {
+        if (!result.ok) {
+          mira_gui::notify::Failed(this, "Could not read this runner kind's config schema.",
+                                   QString::fromStdString(result.error));
+          return;
+        }
+        if (result.entries.empty()) {
+          mira_gui::notify::Info(this, "Accepted config keys",
+                                 "This runner kind takes no extra config keys.");
+          return;
+        }
+        QString text;
+        for (const mira_gui::RunnerSchemaEntry& entry : result.entries) {
+          if (!text.isEmpty()) text += '\n';
+          text += QString("%1 (%2) — %3")
+                      .arg(QString::fromStdString(entry.key), QString::fromStdString(entry.type),
+                           QString::fromStdString(entry.doc));
+        }
+        mira_gui::notify::Info(
+            this, QString("Accepted config keys (%1)").arg(QString::fromStdString(kind)), text);
       });
 }
 

@@ -29,8 +29,11 @@
 #include <optional>
 
 #include "../client/MiradClient.h"
+#include "../dialogs/AddManualGameDialog.h"
 #include "../dialogs/ArtworkPickerDialog.h"
+#include "../dialogs/DesktopEntryImportDialog.h"
 #include "../dialogs/GameDetailDialog.h"
+#include "../dialogs/GameDetailPageDialog.h"
 #include "../dialogs/RunnerDialog.h"
 
 #include "../ui/CoverArt.h"
@@ -179,6 +182,8 @@ LibraryWindow::LibraryWindow(QWidget* parent) : QMainWindow(parent) {
           [this](const QString& id, const QString& slot) {
             OpenArtworkPicker(id.toStdString(), slot.toStdString());
           });
+  connect(details_, &mira_gui::GameDetailsPanel::MoreDetailsRequested, this,
+          [this](const QString& id) { OpenGameDetailPage(id.toStdString()); });
 
   // page 1 (game_edit_page_) is built lazily by OpenGameDialog.
   sidebar_stack_ = new QStackedWidget(this);
@@ -594,6 +599,31 @@ void LibraryWindow::OpenRunners() {
   dialog.exec();
 }
 
+void LibraryWindow::OpenGameDetailPage(const std::string& id) {
+  const mira_gui::GameSummary* game = FindGame(id);
+  const QString name = game != nullptr ? QString::fromStdString(game->name) : QString();
+  const std::string runner_ref = game != nullptr ? game->runner_ref : std::string();
+  mira_gui::GameDetailPageDialog dialog(id, name, runner_ref, this);
+  dialog.exec();
+}
+
+void LibraryWindow::ScanLibrary() {
+  mira_gui::MiradClient::ScanLibraryAsync(this, [this](mira_gui::ScanResult result) {
+    if (!result.ok) {
+      mira_gui::notify::Failed(this, "Could not scan the library.",
+                               QString::fromStdString(result.error));
+      return;
+    }
+    mira_gui::notify::Toast(
+        this, result.added > 0 ? mira_gui::notify::Level::Success : mira_gui::notify::Level::Info,
+        QString("Scan: %1 added, %2 missing, %3 restored.")
+            .arg(result.added)
+            .arg(result.missing)
+            .arg(result.restored));
+    RefreshGames();
+  });
+}
+
 void LibraryWindow::ImportSteamLibrary() {
   mira_gui::MiradClient::ScanSteamAsync(this, [this](mira_gui::SteamScanResult result) {
     if (!result.ok) {
@@ -632,6 +662,16 @@ void LibraryWindow::ImportLutrisLibrary() {
         message);
     RefreshGames();
   });
+}
+
+void LibraryWindow::ImportDesktopEntries() {
+  mira_gui::DesktopEntryImportDialog dialog(this);
+  if (dialog.exec() == QDialog::Accepted) RefreshGames();
+}
+
+void LibraryWindow::AddGameManually() {
+  mira_gui::AddManualGameDialog dialog(this);
+  if (dialog.exec() == QDialog::Accepted) RefreshGames();
 }
 
 QWidget* LibraryWindow::BuildTopBar() {
@@ -682,6 +722,30 @@ QWidget* LibraryWindow::BuildTopBar() {
   layout->addWidget(sort_direction_);
 
   layout->addStretch(1);
+
+  add_games_ = new QToolButton(top_bar_);
+  add_games_->setObjectName("add_games");
+  add_games_->setText("Add Games");
+  add_games_->setToolButtonStyle(Qt::ToolButtonTextOnly);
+  add_games_->setPopupMode(QToolButton::InstantPopup);
+  add_games_->setAutoRaise(true);
+  auto* add_games_menu = new QMenu(add_games_);
+  add_games_menu->addAction("Scan library folders", this, &LibraryWindow::ScanLibrary);
+  add_games_menu->addAction("Import Steam library", this, &LibraryWindow::ImportSteamLibrary);
+  add_games_menu
+      ->addAction("Import Lutris games", this, &LibraryWindow::ImportLutrisLibrary)
+      ->setToolTip(
+          "Read Lutris's own database and add its Wine games here. Nothing is moved or renamed, "
+          "in either launcher's files — a game stays playable in Lutris too.");
+  add_games_menu
+      ->addAction("Import desktop entries…", this, &LibraryWindow::ImportDesktopEntries)
+      ->setToolTip(
+          "Pick from already-installed application-menu entries — including Flatpak apps, via "
+          "their own X-Flatpak key.");
+  add_games_menu->addSeparator();
+  add_games_menu->addAction("Add game manually…", this, &LibraryWindow::AddGameManually);
+  add_games_->setMenu(add_games_menu);
+  layout->addWidget(add_games_);
 
   search_ = new QLineEdit(top_bar_);
   search_->setObjectName("library_search");
@@ -782,7 +846,14 @@ QWidget* LibraryWindow::BuildGrid() {
   connect(grid_, &QListWidget::itemSelectionChanged, this, &LibraryWindow::SelectionChanged);
   connect(grid_, &QListWidget::customContextMenuRequested, this, &LibraryWindow::ShowContextMenu);
   connect(grid_, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem* item) {
-    ToggleRunning(item->data(mira_gui::GameTileDelegate::IdRole).toString().toStdString());
+    const std::string id = item->data(mira_gui::GameTileDelegate::IdRole).toString().toStdString();
+    const std::string status =
+        item->data(mira_gui::GameTileDelegate::StatusRole).toString().toStdString();
+    // Same rule as the context menu's Play entry and the Enter shortcut: a
+    // game that isn't ready has nothing to launch, and /launch would just
+    // 409. Stop needs no such guard — running_ids_ already reflects reality.
+    if (!running_ids_.contains(id) && status != "ready") return;
+    ToggleRunning(id);
   });
   layout->addWidget(grid_, /*stretch=*/1);
   ApplyLayoutTokens();  // needs grid_ to already exist
@@ -1137,6 +1208,7 @@ void LibraryWindow::ShowContextMenu(const QPoint& pos) {
   const std::string status =
       item->data(mira_gui::GameTileDelegate::StatusRole).toString().toStdString();
   const bool running = running_ids_.contains(id);
+  const mira_gui::GameSummary* current_game = FindGame(id);
 
   QMenu menu(this);
   QAction* play = menu.addAction(running ? "Stop" : "Play");
@@ -1155,8 +1227,12 @@ void LibraryWindow::ShowContextMenu(const QPoint& pos) {
                                    "installed program"
                                  : "Only applies to a game that still needs installing");
   QAction* refresh_metadata = menu.addAction("Refresh metadata && cover art");
+  QAction* view_log = menu.addAction("View log…");
+  QAction* winetricks = menu.addAction("Run winetricks…");
+  const bool native = current_game != nullptr && current_game->platform == "native";
+  winetricks->setEnabled(!native);
+  winetricks->setToolTip(native ? "Native game — no Wine/Proton prefix." : QString());
   menu.addSeparator();
-  const mira_gui::GameSummary* current_game = FindGame(id);
   const bool hidden = current_game != nullptr && HasTag(*current_game, "hidden");
   QAction* toggle_hidden = menu.addAction(hidden ? "Unhide" : "Hide");
   toggle_hidden->setToolTip(hidden
@@ -1172,13 +1248,19 @@ void LibraryWindow::ShowContextMenu(const QPoint& pos) {
   } else if (chosen == details) {
     OpenGameDialog(id);
   } else if (chosen == folder) {
-    mira_gui::actions::OpenInstallFolder(this, id);
+    mira_gui::actions::OpenInstallFolder(
+        this, current_game != nullptr ? current_game->install_path : std::string());
   } else if (chosen == run_in_prefix) {
-    mira_gui::actions::RunInPrefix(this, id);
+    mira_gui::actions::RunInPrefix(
+        this, id, current_game != nullptr ? current_game->install_path : std::string(), name);
   } else if (chosen == finish_install) {
     mira_gui::actions::FinishInstall(this, id, [this] { RefreshGames(); });
   } else if (chosen == refresh_metadata) {
     RefreshMetadata(id);
+  } else if (chosen == view_log) {
+    mira_gui::actions::ViewLog(this, id, name);
+  } else if (chosen == winetricks) {
+    mira_gui::actions::RunWinetricks(this, id, name);
   } else if (chosen == toggle_hidden) {
     ToggleHidden(id);
   } else if (chosen == remove) {
@@ -1313,8 +1395,8 @@ void LibraryWindow::SetSettingsChromeVisible(bool settings_open) {
   settings_actions_widget_->setVisible(settings_open);
   // These act on a grid that isn't on screen while settings covers it.
   for (QWidget* control : {static_cast<QWidget*>(filters_), static_cast<QWidget*>(sort_),
-                           static_cast<QWidget*>(sort_direction_), static_cast<QWidget*>(search_),
-                           static_cast<QWidget*>(zoom_)}) {
+                           static_cast<QWidget*>(sort_direction_), static_cast<QWidget*>(add_games_),
+                           static_cast<QWidget*>(search_), static_cast<QWidget*>(zoom_)}) {
     control->setEnabled(!settings_open);
   }
 }

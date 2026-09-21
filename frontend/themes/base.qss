@@ -85,6 +85,10 @@ QWidget#top_bar QToolButton#close_button:hover {
   background: @error;
 }
 
+QWidget#top_bar QToolButton#add_games {
+  border: 1px solid @border;
+}
+
 /* --- Buttons ------------------------------------------------------------- */
 
 QPushButton {

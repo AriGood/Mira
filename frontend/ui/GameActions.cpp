@@ -8,7 +8,9 @@
 
 #include "../client/MiradClient.h"
 #include "../dialogs/DeleteGameDialog.h"
+#include "../dialogs/LogViewerDialog.h"
 #include "../dialogs/RunInPrefixDialog.h"
+#include "../dialogs/WinetricksDialog.h"
 #include "Notify.h"
 
 namespace mira_gui::actions {
@@ -47,7 +49,7 @@ void Delete(QWidget* parent, const std::string& id, const QString& name,
     if (!choice.confirmed) return;
 
     MiradClient::DeleteGameAsync(
-        parent, id, choice.delete_files, choice.delete_prefix,
+        parent, id, choice.delete_files, choice.delete_prefix, choice.delete_metadata,
         [parent, name, on_deleted](DeleteResult result) {
           if (!result.ok) {
             notify::Failed(parent, QString("Could not remove \"%1\".").arg(name),
@@ -59,16 +61,10 @@ void Delete(QWidget* parent, const std::string& id, const QString& name,
   });
 }
 
-void RunInPrefix(QWidget* parent, const std::string& id) {
-  MiradClient::GetGameAsync(parent, id, [parent, id](GameDetailResult result) {
-    if (!result.ok) {
-      notify::Failed(parent, "Could not open this game's prefix.",
-                     QString::fromStdString(result.error));
-      return;
-    }
-    RunInPrefixDialog dialog(id, result.game, parent);
-    dialog.exec();
-  });
+void RunInPrefix(QWidget* parent, const std::string& id, const std::string& install_path,
+                 const QString& name) {
+  RunInPrefixDialog dialog(id, install_path, name, parent);
+  dialog.exec();
 }
 
 void FinishInstall(QWidget* parent, const std::string& id, std::function<void()> on_finished) {
@@ -84,15 +80,36 @@ void FinishInstall(QWidget* parent, const std::string& id, std::function<void()>
   });
 }
 
-void OpenInstallFolder(QWidget* parent, const std::string& id) {
-  MiradClient::GetGameAsync(parent, id, [parent](GameDetailResult result) {
-    if (!result.ok || result.game.install_path.empty()) {
-      notify::Failed(parent, "Could not open the install folder.",
-                     result.ok ? QString("This game has no install path.")
-                               : QString::fromStdString(result.error));
+void OpenInstallFolder(QWidget* parent, const std::string& install_path) {
+  // install_path is already on GameSummary, so a fetch here would only ever
+  // reproduce what the caller already has.
+  if (install_path.empty()) {
+    notify::Failed(parent, "Could not open the install folder.", "This game has no install path.");
+    return;
+  }
+  QDesktopServices::openUrl(QUrl::fromLocalFile(QString::fromStdString(install_path)));
+}
+
+void ViewLog(QWidget* parent, const std::string& id, const QString& name) {
+  LogViewerDialog dialog(id, name, parent);
+  dialog.exec();
+}
+
+void RunWinetricks(QWidget* parent, const std::string& id, const QString& name) {
+  MiradClient::GetGameAsync(parent, id, [parent, id, name](GameDetailResult result) {
+    if (!result.ok) {
+      notify::Failed(parent, "Could not run winetricks.", QString::fromStdString(result.error));
       return;
     }
-    QDesktopServices::openUrl(QUrl::fromLocalFile(QString::fromStdString(result.game.install_path)));
+    if (result.game.data_dir.empty()) {
+      notify::FailedWithHint(parent, "Can't run winetricks yet.",
+                             "This game has no Wine/Proton prefix provisioned.",
+                             "Run something in its prefix first (\"Run in prefix…\"), which "
+                             "provisions one on demand.");
+      return;
+    }
+    WinetricksDialog dialog(id, name, parent);
+    dialog.exec();
   });
 }
 

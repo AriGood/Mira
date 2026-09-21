@@ -43,6 +43,9 @@ packaging/src/
 packaging/*.tar.gz
 packaging/*.pkg.tar.zst
 
+# VSCode
+.vscode/
+
 # Temporary files
 *.tmp
 *.log
