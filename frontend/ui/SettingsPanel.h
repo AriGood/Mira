@@ -116,7 +116,6 @@ private:
   ShapeField tile_radius_;
   ShapeField panel_radius_;
   ShapeField control_radius_;
-  ShapeField hero_height_;
   std::vector<ShortcutField> shortcuts_;
   std::vector<Field> fields_;
   QString pending_focus_key_;  // FocusKey called before the schema arrived

@@ -127,17 +127,10 @@ void SettingsPanel::BuildInterfaceGroup() {
       MakeShapeControl(control_radius_, "Control rounding", 20,
                        "Corner radius of buttons, inputs and dropdowns."),
       2, 0);
-  shape_grid->addWidget(
-      MakeShapeControl(hero_height_, "Hero height", 400,
-                       "Height of the details panel's image area — hero banner, or the cover for "
-                       "a game with none. Fixed rather than following each image's own aspect "
-                       "ratio, so it doesn't change size from game to game and the Play button "
-                       "underneath always lands in the same place."),
-      2, 1);
   form->addRow(shape_grid_widget);
   nav_->RegisterRow(form, shape_grid_widget,
                     "tile gap grid padding cover rounding panel rounding control rounding "
-                    "hero height banner corner radius spacing layout");
+                    "corner radius spacing layout");
   RefreshShapeDefaults();
   connect(mira_gui::theme::Notifier::Instance(), &mira_gui::theme::Notifier::Changed, this,
           &SettingsPanel::RefreshShapeDefaults);
@@ -187,7 +180,6 @@ void SettingsPanel::RefreshShapeDefaults() {
   set(tile_radius_, defaults.radius_tile);
   set(panel_radius_, defaults.radius_panel);
   set(control_radius_, defaults.radius_control);
-  set(hero_height_, defaults.hero_height);
 }
 
 void SettingsPanel::BuildShortcutsGroup() {
@@ -274,7 +266,6 @@ void SettingsPanel::LoadFrontendPrefs() {
     shape(tile_radius_, result.prefs.tile_radius);
     shape(panel_radius_, result.prefs.panel_radius);
     shape(control_radius_, result.prefs.control_radius);
-    shape(hero_height_, result.prefs.hero_height);
   });
 }
 
@@ -534,7 +525,7 @@ bool SettingsPanel::IsDirty() const {
   if (theme_->currentData().toString() != theme_original_) return true;
   if (game_settings_in_sidebar_->isChecked() != game_settings_in_sidebar_original_) return true;
   for (const ShapeField* field :
-       {&tile_spacing_, &grid_margin_, &tile_radius_, &panel_radius_, &control_radius_, &hero_height_}) {
+       {&tile_spacing_, &grid_margin_, &tile_radius_, &panel_radius_, &control_radius_}) {
     if (field->spin->value() != field->original) return true;
   }
   for (const ShortcutField& field : shortcuts_) {
@@ -553,7 +544,7 @@ void SettingsPanel::DiscardChanges() {
   if (theme_index >= 0) theme_->setCurrentIndex(theme_index);
   game_settings_in_sidebar_->setChecked(game_settings_in_sidebar_original_);
   for (ShapeField* field :
-       {&tile_spacing_, &grid_margin_, &tile_radius_, &panel_radius_, &control_radius_, &hero_height_}) {
+       {&tile_spacing_, &grid_margin_, &tile_radius_, &panel_radius_, &control_radius_}) {
     field->spin->setValue(field->original);
   }
   for (ShortcutField& field : shortcuts_) field.edit->setKeySequence(field.original);
@@ -566,7 +557,7 @@ void SettingsPanel::Save() {
   const bool game_settings_in_sidebar = game_settings_in_sidebar_->isChecked();
   bool shapes_changed = false;
   for (const ShapeField* field :
-       {&tile_spacing_, &grid_margin_, &tile_radius_, &panel_radius_, &control_radius_, &hero_height_}) {
+       {&tile_spacing_, &grid_margin_, &tile_radius_, &panel_radius_, &control_radius_}) {
     if (field->spin->value() != field->original) shapes_changed = true;
   }
   bool shortcuts_changed = false;
@@ -589,9 +580,8 @@ void SettingsPanel::Save() {
     prefs.tile_radius = tile_radius_.spin->value();
     prefs.panel_radius = panel_radius_.spin->value();
     prefs.control_radius = control_radius_.spin->value();
-    prefs.hero_height = hero_height_.spin->value();
     for (ShapeField* field :
-         {&tile_spacing_, &grid_margin_, &tile_radius_, &panel_radius_, &control_radius_, &hero_height_}) {
+         {&tile_spacing_, &grid_margin_, &tile_radius_, &panel_radius_, &control_radius_}) {
       field->original = field->spin->value();
     }
     if (shapes_changed) {
@@ -605,7 +595,6 @@ void SettingsPanel::Save() {
       overrides.radius_tile = shape(tile_radius_);
       overrides.radius_panel = shape(panel_radius_);
       overrides.radius_control = shape(control_radius_);
-      overrides.hero_height = shape(hero_height_);
       mira_gui::theme::SetOverrides(overrides);
     }
     if (shortcuts_changed) {

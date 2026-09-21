@@ -309,7 +309,6 @@ FrontendPrefsResult GetFrontendPrefsSync() {
   read_int("tile_radius", result.prefs.tile_radius);
   read_int("panel_radius", result.prefs.panel_radius);
   read_int("control_radius", result.prefs.control_radius);
-  read_int("hero_height", result.prefs.hero_height);
   if (table.contains("shortcuts") && table["shortcuts"].is_object()) {
     std::map<std::string, std::string> overrides;
     for (const auto& [id, keys] : table["shortcuts"].items()) {
@@ -342,7 +341,6 @@ PatchConfigResult SaveFrontendPrefsSync(const FrontendPrefs& prefs) {
   if (prefs.tile_radius) table["tile_radius"] = *prefs.tile_radius;
   if (prefs.panel_radius) table["panel_radius"] = *prefs.panel_radius;
   if (prefs.control_radius) table["control_radius"] = *prefs.control_radius;
-  if (prefs.hero_height) table["hero_height"] = *prefs.hero_height;
   if (prefs.shortcut_overrides) {
     json shortcuts = json::object();
     for (const auto& [id, keys] : *prefs.shortcut_overrides) shortcuts[id] = keys;

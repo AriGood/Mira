@@ -80,8 +80,7 @@ HeroArtWidget::HeroArtWidget(QWidget* parent) : QWidget(parent) {
   layout->addWidget(placeholder_);
 
   // The banner and cover are painted pixmaps, so the stylesheet cannot
-  // re-round or resize them itself when the corner radius or hero_height
-  // changes.
+  // re-round or resize them itself when the corner radius changes.
   connect(theme::Notifier::Instance(), &theme::Notifier::Changed, this, [this] {
     RenderBanner();
     placeholder_->setFixedHeight(ImageBoxSize().height());
@@ -154,12 +153,11 @@ QSize HeroArtWidget::ImageBoxSize() const {
   // laid out, so its width can read stale/default while this widget is
   // already the sidebar's real width.
   const int width = qMax(120, this->width());
-  // Height derived from width via SteamGridDB's own 1920x620 ratio, not
-  // just hero_height outright — a box whose shape doesn't match a real
-  // hero's pads even a correctly-sized one with empty bands. hero_height
-  // now only caps how tall that gets on a wide sidebar.
+  // Height derived from width via SteamGridDB's own 1920x620 ratio, not a
+  // fixed number — a box whose shape doesn't match a real hero's pads even
+  // a correctly-sized one with empty bands.
   constexpr qreal kHeroAspect = 1920.0 / 620.0;
-  const int height = qMax(20, qMin(theme::Current().hero_height, qRound(width / kHeroAspect)));
+  const int height = qMax(20, qRound(width / kHeroAspect));
   return QSize(width, height);
 }
 
