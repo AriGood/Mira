@@ -571,6 +571,68 @@ TEST_CASE("DELETE /v1/runners/{reference} rejects a kind with no separate builds
   CHECK(auto_ref->body.find("invalid_reference") != std::string::npos);
 }
 
+TEST_CASE("POST /v1/games/manual adds a ready native game outside any configured library root") {
+  LiveServer server(TempDir("server-manual-add-state"));
+  const fs::path outside_dir = TempDir("server-manual-add-outside");
+  std::ofstream(outside_dir / "game") << "not really an exe";
+
+  httplib::Client client = server.Client();
+  const nlohmann::json body = {{"install_path", outside_dir.string()}, {"exe_path", "game"}};
+  auto res = client.Post("/v1/games/manual", body.dump(), "application/json");
+  REQUIRE(res != nullptr);
+  REQUIRE(res->status == 200);
+
+  const auto parsed = nlohmann::json::parse(res->body, nullptr, false);
+  CHECK(parsed.value("status", "") == "ready");
+  CHECK(parsed.value("platform", "") == "native");
+  CHECK(parsed.value("install_path", "") == outside_dir.string());
+  CHECK(parsed.value("exe_path", "") == "game");
+  CHECK(parsed.value("source", "") == "manual");
+
+  const std::string id = parsed.value("id", "");
+  REQUIRE_FALSE(id.empty());
+  CHECK(server.games().Find(id).has_value());
+}
+
+TEST_CASE("POST /v1/games/manual with is_installer=true creates a needs_install game") {
+  LiveServer server(TempDir("server-manual-add-installer-state"));
+  const fs::path outside_dir = TempDir("server-manual-add-installer-outside");
+  std::ofstream(outside_dir / "Setup.exe") << "not really an installer";
+
+  httplib::Client client = server.Client();
+  const nlohmann::json body = {{"install_path", outside_dir.string()}, {"exe_path", "Setup.exe"}, {"is_installer", true}};
+  auto res = client.Post("/v1/games/manual", body.dump(), "application/json");
+  REQUIRE(res != nullptr);
+  REQUIRE(res->status == 200);
+
+  const auto parsed = nlohmann::json::parse(res->body, nullptr, false);
+  CHECK(parsed.value("status", "") == "needs_install");
+  CHECK(parsed.value("platform", "") == "windows");
+  CHECK_FALSE(parsed.value("last_error", "").empty());
+}
+
+TEST_CASE("POST /v1/games/manual to the same install_path updates rather than duplicates") {
+  LiveServer server(TempDir("server-manual-add-dup-state"));
+  const fs::path outside_dir = TempDir("server-manual-add-dup-outside");
+  std::ofstream(outside_dir / "game") << "not really an exe";
+
+  httplib::Client client = server.Client();
+  const nlohmann::json body = {{"install_path", outside_dir.string()}, {"exe_path", "game"}, {"name", "First Name"}};
+  auto first = client.Post("/v1/games/manual", body.dump(), "application/json");
+  REQUIRE(first != nullptr);
+  REQUIRE(first->status == 200);
+  const std::string id = nlohmann::json::parse(first->body).value("id", "");
+
+  const nlohmann::json second_body = {{"install_path", outside_dir.string()}, {"exe_path", "game"}, {"name", "Second Name"}};
+  auto second = client.Post("/v1/games/manual", second_body.dump(), "application/json");
+  REQUIRE(second != nullptr);
+  REQUIRE(second->status == 200);
+  const auto parsed = nlohmann::json::parse(second->body, nullptr, false);
+  CHECK(parsed.value("id", "") == id);
+  CHECK(parsed.value("name", "") == "Second Name");
+  CHECK(server.games().All().size() == 1);
+}
+
 TEST_CASE("GET /v1/games/{id}/log is an empty list before any launch, not a 404 or 500") {
   LiveServer server(TempDir("server-log-empty"));
 

@@ -623,6 +623,81 @@ void Server::RegisterRoutes() {
     SendJson(res, {{"ok", true}});
   });
 
+  // --- manual add -----------------------------------------------------------
+
+  // The primitive every other "add a game" path (a library scan,
+  // SteamScanner, LutrisImporter, DesktopEntryScanner) only ever exercises
+  // as a side effect of discovering something Mira already knew to look
+  // for. This is the one place a game record can be created directly, for
+  // a path outside every configured library root -- e.g. pointing Mira at
+  // an installer or a folder it wouldn't otherwise scan.
+  http_->Post("/v1/games/manual", [this](const Request& req, Response& res) {
+    json body = json::parse(req.body, nullptr, false);
+    if (body.is_discarded() || !body.contains("install_path") || !body["install_path"].is_string() ||
+        !body.contains("exe_path") || !body["exe_path"].is_string()) {
+      return SendError(res, 400, "invalid_body",
+                       R"(expected {"install_path": "...", "exe_path": "...", "name"?, "platform"?, "is_installer"?})");
+    }
+    const std::filesystem::path install_path = body["install_path"].get<std::string>();
+    const std::string exe_path = body["exe_path"];
+    const bool is_installer = body.value("is_installer", false);
+
+    model::Platform platform;
+    if (body.contains("platform") && body["platform"].is_string()) {
+      platform = model::PlatformFromString(body["platform"].get<std::string>());
+    } else {
+      const std::string ext = strings::ToLower(std::filesystem::path(exe_path).extension().string());
+      platform = ext == ".exe" ? model::Platform::Windows : model::Platform::Native;
+    }
+
+    model::Game game;
+    const auto existing = games_.FindByInstallPath(install_path.string());
+    if (existing) game = *existing;
+    game.name = body.value("name", strings::CleanGameName(install_path.filename().string()));
+    game.id = existing ? game.id : games_.NextId(game.name);
+    game.source = "manual";
+    game.install_path = install_path.string();
+    game.exe_path = exe_path;
+    game.args = body.value("args", std::string());
+    game.platform = platform;
+    game.updated_at = model::NowSeconds();
+    if (!existing) game.created_at = game.updated_at;
+
+    if (is_installer) {
+      // Matches AutoSetup's own installer flagging -- running it isn't
+      // running the game, and no prefix is provisioned yet for something
+      // that can't be launched.
+      game.status = model::GameStatus::NeedsInstall;
+      game.last_error = "This is an installer, not the game itself — run it first, then point Mira at the "
+                        "installed game.";
+    } else {
+      game.data_dir = platform == model::Platform::Windows
+                          ? (config_.GetPath("prefix_root") / game.id).string()
+                          : std::string();
+      game.status = model::GameStatus::Ready;
+      game.last_error.clear();
+    }
+
+    auto result = games_.Upsert(game);
+    if (!result) return SendError(res, 500, result.error().code, result.error().message);
+
+    if (game.status == model::GameStatus::Ready && game.platform == model::Platform::Windows) {
+      const runner::RunnerRegistry provisioner(config_);
+      const model::Game provisioned = provisioner.ProvisionGame(game);
+      auto saved = games_.Update(game.id, [&](model::Game& g) {
+        g.runner_ref = provisioned.runner_ref;
+        g.status = provisioned.status;
+        g.last_error = provisioned.last_error;
+      });
+      if (saved) game = *saved;
+    }
+
+    SyncDesktopEntries(config_, games_);
+    if (!existing) metadata_fetches_.Enqueue(config_, events_, game);
+    events_.Publish(existing ? "game.updated" : "game.added", model::ToJson(game));
+    SendJson(res, model::ToJson(game));
+  });
+
   // --- launching ------------------------------------------------------------
 
   http_->Post(R"(/v1/games/([^/]+)/launch)", [this](const Request& req, Response& res) {

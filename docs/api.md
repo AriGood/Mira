@@ -135,6 +135,29 @@ below — a game's own fields and its overrides of unrelated global settings
 are different concerns and don't share a request body). Publishes
 `game.updated`. 404 if the id is unknown.
 
+### `POST /v1/games/manual` — implemented
+The one place a game record can be created directly, rather than as a side
+effect of a scan/Steam/Lutris/desktop-entry import discovering something
+Mira already knew to look for — for a path outside every configured
+`library_roots` entry (pointing Mira at an installer, or a folder it
+wouldn't otherwise scan). Body:
+```json
+{ "install_path": "/abs/path/to/folder", "exe_path": "relative/or/Installer.exe",
+  "name": "My Game", "platform": "windows", "is_installer": true }
+```
+`install_path` and `exe_path` (relative to `install_path`, same as every
+other game record) are required. `name` defaults to `install_path`'s folder
+name, cleaned the same way a library scan cleans one. `platform` defaults
+from `exe_path`'s extension (`.exe` → `"windows"`, else `"native"`).
+`is_installer` (default `false`) creates the game `needs_install` instead of
+`ready`, with a `last_error` pointing at `POST .../run` +
+`POST .../finish-install` — the same pair an auto-detected installer already
+uses, so a manually-added one is picked up by the exact same flow. A ready
+Windows game is provisioned immediately, same as one a scan just found.
+Matched by `install_path` — a second manual add to the same path updates
+rather than duplicates. Publishes `game.added`/`game.updated`. Response is
+the full game record, same shape as `GET /v1/games/{id}`.
+
 ### `DELETE /v1/games/{id}[?delete_files=true][?delete_prefix=true][?delete_metadata=true][?purge=true]` — implemented
 Forgets the game. By default never touches disk — every one of the four
 flags below is independent and opt-in.

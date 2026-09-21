@@ -248,6 +248,42 @@ int CmdRun(int argc, char** argv) {
   return 0;
 }
 
+int CmdAdd(int argc, char** argv) {
+  std::string install_path, exe_path, name, platform;
+  bool is_installer = false;
+  std::vector<std::string> positional;
+  for (int i = 0; i < argc; ++i) {
+    const std::string_view arg = argv[i];
+    if (arg == "--name" && i + 1 < argc) name = argv[++i];
+    else if (arg == "--platform" && i + 1 < argc) platform = argv[++i];
+    else if (arg == "--installer") is_installer = true;
+    else positional.push_back(std::string(arg));
+  }
+  if (positional.size() < 2) {
+    std::fprintf(stderr,
+                 "usage: mira add <install_path> <exe_path> [--name N] "
+                 "[--platform windows|native] [--installer]\n"
+                 "  creates a game record for a path outside anywhere Mira already scans --\n"
+                 "  point it at an installer with --installer, run it with `mira run`, then\n"
+                 "  `mira finish-install` once it's actually installed.\n");
+    return 2;
+  }
+  json body = {{"install_path", positional[0]}, {"exe_path", positional[1]}};
+  if (!name.empty()) body["name"] = name;
+  if (!platform.empty()) body["platform"] = platform;
+  if (is_installer) body["is_installer"] = true;
+
+  auto client = Connect();
+  auto res = client.Post("/v1/games/manual", body.dump(), "application/json");
+  if (!Ok(res)) {
+    PrintError(res);
+    return 1;
+  }
+  json game = json::parse(res->body);
+  std::printf("%s: %s\n", game.value("id", "").c_str(), game.value("status", "").c_str());
+  return 0;
+}
+
 int CmdFinishInstall(int argc, char** argv) {
   if (argc < 1) {
     std::fprintf(stderr,
@@ -769,7 +805,8 @@ void PrintUsage() {
       "                         by default; --tag hidden lists exactly those)\n"
       "  show <id> [--effective] show one game, or its resolved settings\n"
       "  set <id> [flags...]    correct a game's auto-detected configuration\n"
-      "  remove <id> [--delete-files] [--delete-prefix]\n"
+      "  remove <id> [--delete-files] [--delete-prefix] [--delete-metadata] [--purge]\n"
+      "  add <install_path> <exe_path> [--name N] [--platform windows|native] [--installer]\n"
       "  steam scan             detect installed Steam games\n"
       "  lutris import          import games from Lutris's own database\n"
       "  desktop-entries list    list already-installed .desktop entries that could become games\n"
@@ -804,6 +841,7 @@ int main(int argc, char** argv) {
   if (command == "run") return CmdRun(rest_argc, rest);
   if (command == "finish-install") return CmdFinishInstall(rest_argc, rest);
   if (command == "remove") return CmdRemove(rest_argc, rest);
+  if (command == "add") return CmdAdd(rest_argc, rest);
   if (command == "steam") return CmdSteam(rest_argc, rest);
   if (command == "lutris") return CmdLutris(rest_argc, rest);
   if (command == "desktop-entries") return CmdDesktopEntries(rest_argc, rest);
