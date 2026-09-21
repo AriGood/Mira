@@ -487,20 +487,54 @@ int CmdEpicLogout() {
   return 0;
 }
 
-int CmdEpicInstallOrUpdate(int argc, char** argv, bool is_update) {
-  if (argc < 1) {
-    std::fprintf(stderr, "usage: mira epic %s <id>\n", is_update ? "update" : "install");
-    return 2;
-  }
+int CmdLibraryList(int argc, char** argv) {
   auto client = Connect();
-  json body = {{"game_id", argv[0]}};
-  auto res = client.Post(is_update ? "/v1/epic/update" : "/v1/epic/install", body.dump(), "application/json");
+  const std::string path =
+      argc > 0 ? std::format("/v1/library?source={}", argv[0]) : std::string("/v1/library");
+  auto res = client.Get(path.c_str());
   if (!Ok(res)) {
     PrintError(res);
     return 1;
   }
-  std::printf("%s — watch `mira watch` for epic.install.finished\n", is_update ? "updating" : "installing");
+  json entries = json::parse(res->body);
+  if (entries.empty()) {
+    std::puts("(nothing — is the source configured and authenticated? try `mira epic status`)");
+    return 0;
+  }
+  for (const json& entry : entries) {
+    std::printf("%-8s %-40s %-12s %s\n", entry.value("source", "").c_str(),
+               entry.value("ref", "").c_str(),
+               entry.value("installed", false) ? "[installed]" : "",
+               entry.value("title", "").c_str());
+  }
   return 0;
+}
+
+int CmdLibraryInstallOrUpdate(int argc, char** argv, bool is_update) {
+  if (argc < 2) {
+    std::fprintf(stderr, "usage: mira library %s <source> <ref>\n", is_update ? "update" : "install");
+    return 2;
+  }
+  auto client = Connect();
+  json body = {{"source", argv[0]}, {"ref", argv[1]}};
+  auto res = client.Post(is_update ? "/v1/library/update" : "/v1/library/install", body.dump(), "application/json");
+  if (!Ok(res)) {
+    PrintError(res);
+    return 1;
+  }
+  std::printf("%s — watch `mira watch` for library.install.finished\n", is_update ? "updating" : "installing");
+  return 0;
+}
+
+int CmdLibrary(int argc, char** argv) {
+  if (argc > 0 && std::string_view(argv[0]) == "install") {
+    return CmdLibraryInstallOrUpdate(argc - 1, argv + 1, false);
+  }
+  if (argc > 0 && std::string_view(argv[0]) == "update") {
+    return CmdLibraryInstallOrUpdate(argc - 1, argv + 1, true);
+  }
+  // `mira library` / `mira library <source>` both list.
+  return CmdLibraryList(argc, argv);
 }
 
 int CmdEpicImport() {
@@ -521,9 +555,9 @@ int CmdEpic(int argc, char** argv) {
   if (argc > 0 && std::string_view(argv[0]) == "login") return CmdEpicLogin();
   if (argc > 0 && std::string_view(argv[0]) == "logout") return CmdEpicLogout();
   if (argc > 0 && std::string_view(argv[0]) == "import") return CmdEpicImport();
-  if (argc > 0 && std::string_view(argv[0]) == "install") return CmdEpicInstallOrUpdate(argc - 1, argv + 1, false);
-  if (argc > 0 && std::string_view(argv[0]) == "update") return CmdEpicInstallOrUpdate(argc - 1, argv + 1, true);
-  std::fprintf(stderr, "usage: mira epic setup|status|login|logout|import|install <id>|update <id>\n");
+  std::fprintf(stderr,
+              "usage: mira epic setup|status|login|logout|import\n"
+              "       (installing is source-generic: mira library install epic <app_name>)\n");
   return 2;
 }
 
@@ -991,6 +1025,7 @@ int main(int argc, char** argv) {
   if (command == "steam") return CmdSteam(rest_argc, rest);
   if (command == "lutris") return CmdLutris(rest_argc, rest);
   if (command == "epic") return CmdEpic(rest_argc, rest);
+  if (command == "library") return CmdLibrary(rest_argc, rest);
   if (command == "desktop-entries") return CmdDesktopEntries(rest_argc, rest);
   if (command == "gamemode") return CmdGameMode(rest_argc, rest);
   if (command == "metadata") return CmdMetadata(rest_argc, rest);

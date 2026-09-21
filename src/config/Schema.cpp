@@ -344,6 +344,25 @@ Schema::Schema() {
        "way — that's Steam's own client's job. Off disables the /proc scan "
        "entirely; launching still works, Mira just won't show it running."},
 
+      {"steam.web_api_key", Type::String, "", Tier::Basic,
+       "Free API key from steamcommunity.com/dev/apikey. Steam's on-disk files only "
+       "describe games that are actually installed, so listing everything the account "
+       "owns (GET /v1/library) and importing Steam's own playtime totals both need this "
+       "plus steam.steamid64. Left empty, Steam simply contributes nothing to the "
+       "library listing and playtime stays whatever Mira itself measured."},
+
+      {"steam.steamid64", Type::String, "", Tier::Basic,
+       "The account's 64-bit Steam ID (steamcommunity.com profile URL, or a lookup "
+       "site). Needed alongside steam.web_api_key — Steam's Web API identifies the "
+       "account by this, not by the key."},
+
+      {"steam.import_playtime", Type::Bool, true, Tier::Advanced,
+       "On a Steam scan, adopt Steam's own playtime_forever total for a game when it's "
+       "higher than what Mira recorded itself. Steam counts time played on any machine "
+       "and long before Mira existed, so it's usually the larger and more complete "
+       "number; the max of the two is kept so a Mira-tracked session is never lost to a "
+       "stale Steam total. Needs steam.web_api_key + steam.steamid64."},
+
       {"lutris.enabled", Type::Bool, true, Tier::Basic,
        "Let \"mira lutris import\" / POST /v1/lutris/import read Lutris's own "
        "game database (pga.db) and per-game configs and add them alongside "
@@ -359,11 +378,6 @@ Schema::Schema() {
        "installed game itself still runs through Mira's own Wine/Proton runner, "
        "never through Legendary or Epic's own client. See \"mira epic setup\" "
        "if Legendary isn't already installed."},
-
-      {"epic.import_uninstalled", Type::Bool, true, Tier::Basic,
-       "Also add catalog titles Legendary knows about but hasn't installed yet, "
-       "as needs_install placeholders, so they show up ready to install from "
-       "Mira."},
 
       {"epic.legendary_bin", Type::String, "", Tier::Advanced,
        "Path to the legendary binary. Empty tries Mira's own managed download "

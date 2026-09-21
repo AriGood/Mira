@@ -20,6 +20,7 @@
 #include "core/Log.h"
 #include "core/Strings.h"
 #include "desktop/DesktopEntries.h"
+#include "library/Catalog.h"
 #include "library/Scanner.h"
 #include "desktop/DesktopEntryScanner.h"
 #include "epic/EpicImporter.h"
@@ -697,22 +698,63 @@ void Server::RegisterRoutes() {
     SendJson(res, {{"added", summary->added}, {"updated", summary->updated}});
   });
 
+  // --- library (what the account owns, across sources) ------------------
+  //
+  // Distinct from GET /v1/games, which is what Mira *tracks*. An
+  // entitlement isn't a tracked game (see library/Catalog.h): these are
+  // read through live from each source rather than persisted, and a title
+  // becomes a model::Game only once it's installed.
+
+  http_->Get("/v1/library", [this](const Request& req, Response& res) {
+    const std::string source = req.has_param("source") ? req.get_param_value("source") : "";
+    auto entries = library::ListCatalog(config_, games_, source);
+    if (!entries) return SendError(res, 400, entries.error().code, entries.error().message);
+    json out = json::array();
+    for (const library::CatalogEntry& entry : *entries) {
+      out.push_back({{"source", entry.source},
+                     {"ref", entry.ref},
+                     {"title", entry.title},
+                     {"installed", entry.installed},
+                     {"game_id", entry.game_id},
+                     {"play_seconds", entry.play_seconds}});
+    }
+    SendJson(res, std::move(out));
+  });
+
   // Installs/updates run detached, same reasoning as POST
   // /v1/runners/download above — a game download is easily minutes long.
-  // epic.install.started/finished/failed on the event stream is how a
+  // library.install.started/finished/failed on the event stream is how a
   // caller finds out it's done; "update": true on the payload is the only
   // difference between the two verbs, rather than a parallel event
-  // namespace.
-  auto epic_install_or_update = [this](const Request& req, Response& res, bool is_update) {
+  // namespace. Keyed by {source, ref} rather than a game id: the whole
+  // point is installing something Mira doesn't track yet.
+  auto library_install_or_update = [this](const Request& req, Response& res, bool is_update) {
     json body = json::parse(req.body, nullptr, false);
-    if (body.is_discarded() || !body.contains("game_id") || !body["game_id"].is_string()) {
-      return SendError(res, 400, "invalid_body", R"(expected {"game_id": "..."})");
+    if (body.is_discarded() || !body.contains("source") || !body["source"].is_string() ||
+        !body.contains("ref") || !body["ref"].is_string()) {
+      return SendError(res, 400, "invalid_body", R"(expected {"source": "epic"|"steam", "ref": "..."})");
     }
-    const std::string game_id = body["game_id"];
-    auto game = games_.Find(game_id);
-    if (!game) return SendError(res, 404, "game_not_found", "no such game");
-    if (game->source != "epic" || game->source_ref.empty()) {
-      return SendError(res, 400, "not_an_epic_game", "not an Epic-sourced game");
+    const std::string source = body["source"];
+    const std::string ref = body["ref"];
+
+    if (source == "steam") {
+      // Steam's own client owns downloading — same handoff posture as
+      // steam.launch_mode "steam" (see /launch above). Nothing to track
+      // here: the game shows up in POST /v1/steam/scan once Steam has
+      // actually put it on disk.
+      if (is_update) {
+        return SendError(res, 400, "unsupported", "Steam updates its own games; nothing for Mira to do");
+      }
+      Command command;
+      command.argv = {"steam", std::format("steam://install/{}", ref)};
+      if (auto spawned = runner::SpawnDetached(command); !spawned) {
+        return SendError(res, 500, spawned.error().code, spawned.error().message);
+      }
+      return SendJson(res, {{"status", "handed_off_to_steam"}, {"ref", ref}}, 202);
+    }
+
+    if (source != "epic") {
+      return SendError(res, 400, "unknown_source", std::format("no installable source named \"{}\"", source));
     }
 
     const epic::EpicAuthStatus auth = epic::Status(config_);
@@ -723,37 +765,29 @@ void Server::RegisterRoutes() {
       return SendError(res, 409, "not_authenticated", "run \"mira epic login\" first");
     }
 
-    const std::string app_name = game->source_ref;
-    [[maybe_unused]] auto _ = games_.Update(game_id, [](model::Game& g) {
-      g.status = model::GameStatus::SettingUp;
-      g.last_error.clear();
-    });
-    events_.Publish("epic.install.started", {{"id", game_id}, {"app_name", app_name}, {"update", is_update}});
-
-    std::thread([this, game_id, app_name, is_update] {
+    events_.Publish("library.install.started", {{"source", source}, {"ref", ref}, {"update", is_update}});
+    std::thread([this, source, ref, is_update] {
       epic::EpicInstaller installer(config_, games_, events_);
-      const Result<void> result = is_update ? installer.Update(app_name) : installer.Install(app_name);
+      const Result<void> result = is_update ? installer.Update(ref) : installer.Install(ref);
       if (!result) {
-        log::Error("epic {} failed ({}): {}", is_update ? "update" : "install", game_id, result.error().message);
-        [[maybe_unused]] auto _ = games_.Update(game_id, [&](model::Game& g) {
-          g.status = model::GameStatus::Broken;
-          g.last_error = result.error().message;
-        });
-        events_.Publish("epic.install.failed",
-                       {{"id", game_id}, {"update", is_update}, {"error", result.error().message}});
+        log::Error("epic {} failed ({}): {}", is_update ? "update" : "install", ref, result.error().message);
+        events_.Publish("library.install.failed",
+                       {{"source", source}, {"ref", ref}, {"update", is_update}, {"error", result.error().message}});
       } else {
-        log::Info("epic {} finished: {}", is_update ? "update" : "install", game_id);
+        log::Info("epic {} finished: {}", is_update ? "update" : "install", ref);
         SyncDesktopEntries(config_, games_);
-        events_.Publish("epic.install.finished", {{"id", game_id}, {"update", is_update}});
+        events_.Publish("library.install.finished", {{"source", source}, {"ref", ref}, {"update", is_update}});
       }
     }).detach();
 
-    SendJson(res, {{"status", is_update ? "updating" : "installing"}}, 202);
+    SendJson(res, {{"status", is_update ? "updating" : "installing"}, {"ref", ref}}, 202);
   };
-  http_->Post("/v1/epic/install",
-             [epic_install_or_update](const Request& req, Response& res) { epic_install_or_update(req, res, false); });
-  http_->Post("/v1/epic/update",
-             [epic_install_or_update](const Request& req, Response& res) { epic_install_or_update(req, res, true); });
+  http_->Post("/v1/library/install", [library_install_or_update](const Request& req, Response& res) {
+    library_install_or_update(req, res, false);
+  });
+  http_->Post("/v1/library/update", [library_install_or_update](const Request& req, Response& res) {
+    library_install_or_update(req, res, true);
+  });
 
   // --- desktop entries (importing someone else's, not writing ours) -----
 

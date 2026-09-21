@@ -1,5 +1,7 @@
 #include "epic/EpicImporter.h"
 
+#include <algorithm>
+
 #include <json.hpp>
 
 #include "core/Log.h"
@@ -9,6 +11,10 @@
 namespace mira::epic {
 namespace {
 using nlohmann::json;
+
+void AddTag(std::vector<std::string>& tags, const std::string& tag) {
+  if (std::ranges::find(tags, tag) == tags.end()) tags.push_back(tag);
+}
 
 struct InstalledTitle {
   std::string app_name;
@@ -27,26 +33,6 @@ std::vector<InstalledTitle> ParseInstalled(const json& parsed) {
     title.title = entry.value("title", std::string());
     title.install_path = entry.value("install_path", std::string());
     title.executable = entry.value("executable", std::string());
-    out.push_back(std::move(title));
-  }
-  return out;
-}
-
-struct CatalogTitle {
-  std::string app_name;
-  std::string title;
-};
-
-std::vector<CatalogTitle> ParseCatalog(const json& parsed) {
-  std::vector<CatalogTitle> out;
-  if (!parsed.is_array()) return out;
-  for (const auto& entry : parsed) {
-    CatalogTitle title;
-    title.app_name = entry.value("app_name", std::string());
-    if (title.app_name.empty()) continue;
-    // Legendary's `list --json` calls this field "app_title"; `list-installed`
-    // calls the same concept "title" -- accept either.
-    title.title = entry.value("app_title", entry.value("title", std::string()));
     out.push_back(std::move(title));
   }
   return out;
@@ -84,6 +70,7 @@ Result<EpicImportSummary> EpicImporter::Import() {
     game.last_error.clear();
     game.updated_at = model::NowSeconds();
     if (!existing) game.created_at = game.updated_at;
+    AddTag(game.tags, "epic");
 
     // Unlike Steam/Lutris, Legendary never creates a Wine prefix of its own
     // — an already-installed Epic title still needs Mira's own
@@ -120,40 +107,12 @@ Result<EpicImportSummary> EpicImporter::Import() {
     }
   }
 
-  if (!config_.GetBool("epic.import_uninstalled")) return summary;
-
-  const Result<json> catalog_json = RunLegendaryJson(config_, {"list"});
-  if (!catalog_json) {
-    log::Warn("epic catalog listing failed, only already-installed titles imported: {}",
-             catalog_json.error().message);
-    return summary;
-  }
-
-  for (const CatalogTitle& title : ParseCatalog(*catalog_json)) {
-    const std::string id = "epic-" + title.app_name;
-    if (games_.Find(id)) continue;  // already installed (handled above), or already a placeholder
-
-    model::Game game;
-    game.id = id;
-    game.source = "epic";
-    game.source_ref = title.app_name;
-    game.name = title.title.empty() ? title.app_name : title.title;
-    game.platform = model::Platform::Windows;
-    game.status = model::GameStatus::NeedsInstall;
-    game.last_error = "Not installed — run \"mira epic install " + id + "\".";
-    game.updated_at = model::NowSeconds();
-    game.created_at = game.updated_at;
-
-    auto result = games_.Upsert(game);
-    if (!result) {
-      log::Error("failed to save epic catalog entry {}: {}", id, result.error().message);
-      continue;
-    }
-    ++summary.added;
-    summary.added_games.push_back(game);
-    events_.Publish("game.added", model::ToJson(game));
-  }
-
+  // Titles the account owns but hasn't installed are deliberately NOT
+  // upserted here: an entitlement isn't a tracked game, and persisting all
+  // of them turned games.toml into 120 rows of placeholders carrying a
+  // meaningless data_dir/runner_ref/play_seconds each. They're served
+  // read-through from Legendary's own cache instead — see
+  // library::ListCatalog, GET /v1/library.
   return summary;
 }
 
