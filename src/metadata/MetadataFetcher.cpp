@@ -13,6 +13,7 @@
 #include "core/Command.h"
 #include "core/Log.h"
 #include "core/Strings.h"
+#include "epic/Legendary.h"
 #include "runner/Exec.h"
 
 namespace mira::metadata {
@@ -362,6 +363,62 @@ void FetchSteamOwned(const config::Config& config, const std::string& appid, con
   }
 }
 
+// Legendary's own catalog cache already has title metadata and store art
+// URLs for every title it knows about — populated by `legendary list`, read
+// here directly rather than hitting Epic's API again (Legendary already did
+// that work). Never fails: a cold/missing cache entry (a title added before
+// any `legendary list` refresh) falls back to SteamGridDB by name, same as
+// any other non-Steam game.
+void FetchEpicOwned(const config::Config& config, const std::string& app_name, const std::string& name,
+                    const std::string& game_id, json& info) {
+  std::ifstream in(epic::LegendaryMetadataFile(app_name));
+  const json parsed = in ? json::parse(in, nullptr, false) : json();
+
+  if (in && !parsed.is_discarded() && parsed.is_object()) {
+    const json meta = Value(parsed, "metadata", json::object());
+    info["epic"] = {
+        {"app_name", app_name},
+        {"description", Value(meta, "description", std::string())},
+        {"developer", Value(meta, "developer", std::string())},
+    };
+
+    // Epic's own image-type taxonomy: "DieselStoreFrontTall" is the
+    // vertical boxart-equivalent cover, "DieselStoreFrontWide" the wide
+    // banner-equivalent hero — same two slots Steam's own CDN fills in
+    // FetchSteamOwned above.
+    const json key_images = Value(meta, "keyImages", json::array());
+    auto find_image = [&](std::string_view type) -> std::string {
+      for (const auto& image : key_images) {
+        if (Value(image, "type", std::string()) == type) return Value(image, "url", std::string());
+      }
+      return {};
+    };
+
+    // Steam CDN candidates use id -1 above; a real SteamGridDB id is always
+    // positive, so any small negative id is safe as a fixed marker.
+    constexpr std::int64_t kEpicCandidateId = -2;
+    if (const std::string cover_url = find_image("DieselStoreFrontTall"); !cover_url.empty()) {
+      if (FetchArtworkInto(config, cover_url, game_id, "epic", "cover", info, kEpicCandidateId)) {
+        info["art_candidates"]["cover"] =
+            json::array({{{"id", kEpicCandidateId}, {"url", cover_url}, {"source", "epic"}}});
+      }
+    }
+    if (const std::string hero_url = find_image("DieselStoreFrontWide"); !hero_url.empty()) {
+      if (FetchArtworkInto(config, hero_url, game_id, "epic", "hero", info, kEpicCandidateId)) {
+        info["art_candidates"]["hero"] =
+            json::array({{{"id", kEpicCandidateId}, {"url", hero_url}, {"source", "epic"}}});
+      }
+    }
+  }
+
+  // Epic's own art above is already the default; SteamGridDB only adds
+  // alternates, same trailing call FetchSteamOwned makes. Never fails the
+  // fetch either way — Epic-owned art is there regardless of a key.
+  if (const std::string api_key = config.GetString("steamgriddb.api_key"); !api_key.empty()) {
+    FetchGriddbCandidates(config, api_key, name, game_id, info);
+  }
+}
+
 Result<void> FetchNonSteam(const config::Config& config, const std::string& name,
                            const std::string& game_id, json& info) {
   const std::string api_key = config.GetString("steamgriddb.api_key");
@@ -394,7 +451,14 @@ std::filesystem::path ArtworkDir(const config::Config& config, const std::string
 Result<void> Fetch(const config::Config& config, const model::Game& game) {
   json info = {{"fetched_at", model::NowSeconds()}};
 
-  if (game.runner_ref.starts_with("steam:")) {
+  // Checked before the steam: prefix below: an Epic game's runner_ref is
+  // "proton:..."/"wine:..." (it's launched through Mira's own Wine/Proton
+  // runners, not Legendary — see epic/Legendary.h), indistinguishable from
+  // a Lutris or scanned Windows game by runner_ref alone.
+  if (game.source == "epic") {
+    info["source"] = "epic";
+    FetchEpicOwned(config, game.source_ref, game.name, game.id, info);
+  } else if (game.runner_ref.starts_with("steam:")) {
     info["source"] = "steam";
     FetchSteamOwned(config, game.runner_ref.substr(std::string_view("steam:").size()), game.name, game.id, info);
   } else {

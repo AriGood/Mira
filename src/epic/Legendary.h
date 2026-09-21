@@ -31,6 +31,14 @@ struct LegendaryStatus {
 // requires the file to actually exist.
 std::filesystem::path ManagedLegendaryPath(const config::Config& config);
 
+// Legendary's own per-title metadata cache file (populated by `legendary
+// list`), read directly by metadata::FetchEpicOwned rather than shelling out
+// again — just reading another program's own cache, same posture as reading
+// Lutris's pga.db. $XDG_CONFIG_HOME/legendary (default ~/.config/legendary)
+// is Legendary's own config dir, independent of Mira's — not affected by
+// epic.legendary_bin, which only overrides where the binary lives.
+std::filesystem::path LegendaryMetadataFile(const std::string& app_name);
+
 // Detects legendary in this order: epic.legendary_bin override, Mira's own
 // managed download, then $PATH. Never itself requires legendary to already
 // work — safe to call before anything is set up, unlike everything below.

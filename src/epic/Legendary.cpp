@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdlib>
 #include <format>
 #include <ranges>
 #include <string>
@@ -33,6 +34,18 @@ std::string VersionOf(const std::string& path) {
 
 std::filesystem::path ManagedLegendaryPath(const config::Config& config) {
   return config.File().parent_path() / "tools" / "legendary";
+}
+
+std::filesystem::path LegendaryMetadataFile(const std::string& app_name) {
+  const char* xdg_config_home = std::getenv("XDG_CONFIG_HOME");
+  fs::path config_dir;
+  if (xdg_config_home && *xdg_config_home) {
+    config_dir = xdg_config_home;
+  } else {
+    const char* home = std::getenv("HOME");
+    config_dir = (home && *home ? fs::path(home) : fs::path()) / ".config";
+  }
+  return config_dir / "legendary" / "metadata" / (app_name + ".json");
 }
 
 LegendaryStatus DetectLegendary(const config::Config& config) {
