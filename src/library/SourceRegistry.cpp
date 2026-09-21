@@ -1,6 +1,7 @@
 #include "library/SourceRegistry.h"
 
 #include "epic/EpicSource.h"
+#include "gog/GogSource.h"
 #include "steam/SteamSource.h"
 
 namespace mira::library {
@@ -10,6 +11,7 @@ std::vector<std::unique_ptr<ILibrarySource>> BuildSources() {
   std::vector<std::unique_ptr<ILibrarySource>> sources;
   sources.push_back(std::make_unique<epic::EpicSource>());
   sources.push_back(std::make_unique<steam::SteamSource>());
+  sources.push_back(std::make_unique<gog::GogSource>());
   return sources;
 }
 

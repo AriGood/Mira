@@ -383,6 +383,36 @@ Schema::Schema() {
        "Path to the legendary binary. Empty tries Mira's own managed download "
        "(see \"mira epic setup\"), then $PATH."},
 
+      {"gog.enabled", Type::Bool, true, Tier::Basic,
+       "Use gogdl (Heroic's GOG downloader) to authenticate, import "
+       "already-installed GOG titles, and install/update new ones. The "
+       "installed game itself still runs through Mira's own Wine/Proton "
+       "runner (or natively, for the titles GOG ships a Linux build of), "
+       "never through gogdl or GOG Galaxy. See \"mira gog setup\" if gogdl "
+       "isn't already installed."},
+
+      {"gog.gogdl_bin", Type::String, "", Tier::Advanced,
+       "Path to the gogdl binary. Empty tries Mira's own managed download "
+       "(see \"mira gog setup\"), then $PATH."},
+
+      {"gog.install_root", Type::String, "~/Games/GOG", Tier::Advanced,
+       "Where GOG titles are installed to, one subdirectory per game id — "
+       "unlike Legendary/butler, gogdl doesn't choose or remember an "
+       "install location on its own, so Mira has to."},
+
+      {"itch.enabled", Type::Bool, true, Tier::Basic,
+       "Use butler (itch.io's own launcher-integration daemon) to "
+       "authenticate, import already-installed itch.io titles, and "
+       "install/update new ones. The installed game itself still runs "
+       "through Mira's own Wine/Proton runner (or natively, for the many "
+       "itch.io titles that ship a Linux build), never through butler or "
+       "the itch app. See \"mira itch setup\" if butler isn't already "
+       "installed."},
+
+      {"itch.butler_bin", Type::String, "", Tier::Advanced,
+       "Path to the butler binary. Empty tries Mira's own managed download "
+       "(see \"mira itch setup\"), then $PATH."},
+
       {"desktop_import.enabled", Type::Bool, true, Tier::Basic,
        "Let \"mira desktop-entries list\"/\"import\" and the matching REST "
        "endpoints read already-installed application-menu (.desktop) entries "
@@ -417,6 +447,22 @@ Schema::Schema() {
        std::string(runner_sources::kLegendaryAssetPattern), Tier::Expert,
        "Glob a release's assets are filtered to before offering one to download — "
        "Legendary ships one standalone Linux binary per release, not an archive."},
+
+      {"runner_sources.gog.repo", Type::String, std::string(runner_sources::kGogdlRepo),
+       Tier::Advanced, "GitHub \"owner/repo\" gogdl (the GOG downloader) is downloaded from."},
+
+      {"runner_sources.gog.asset_pattern", Type::String, std::string(runner_sources::kGogdlAssetPattern),
+       Tier::Expert,
+       "Glob a release's assets are filtered to before offering one to download — "
+       "gogdl ships one standalone Linux binary per release, not an archive."},
+
+      {"runner_sources.itch.repo", Type::String, std::string(runner_sources::kButlerRepo),
+       Tier::Advanced, "GitHub \"owner/repo\" butler (itch.io's launcher-integration daemon) is downloaded from."},
+
+      {"runner_sources.itch.asset_pattern", Type::String, std::string(runner_sources::kButlerAssetPattern),
+       Tier::Expert,
+       "Glob a release's assets are filtered to before offering one to download — "
+       "butler ships zipped, with shared libraries the binary needs alongside it."},
 
       {"metadata.enabled", Type::Bool, true, Tier::Basic,
        "Fetch cover art and store metadata (description, genre, ProtonDB compatibility "

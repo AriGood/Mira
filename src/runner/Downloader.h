@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -40,5 +41,19 @@ Result<std::vector<ReleaseAsset>> ListReleases(const config::Config& config, con
 // reason as ListReleases.
 Result<void> DownloadAndInstall(const config::Config& config, const std::string& kind,
                                 const ReleaseAsset& asset);
+
+// Downloads and installs a tool binary that isn't a runner build (gogdl,
+// butler, ...) into "<config dir>/tools/<tool_name>/<binary_name>",
+// returning that path. How `asset` unpacks depends on its own name: a
+// ".zip"/".tar.*" asset is extracted into that directory first and
+// `binary_name` is searched for inside it (some tools ship shared
+// libraries the binary needs to find alongside itself at runtime --
+// butler's 7z.so/libc7zip.so, for one -- so the archive's own internal
+// layout is never assumed, just searched); anything else is installed as
+// the bare file directly, renamed to `binary_name`. Verifies
+// asset.checksum_url first if the release has one, same as
+// DownloadAndInstall.
+Result<std::filesystem::path> InstallToolBinary(const config::Config& config, const std::string& tool_name,
+                                               const ReleaseAsset& asset, const std::string& binary_name);
 
 }  // namespace mira::runner
