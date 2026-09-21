@@ -422,6 +422,29 @@ void SettingsPanel::BuildRows() {
       nav_->RegisterRow(form, gamemode_status_, "gamemode feral daemon status");
       LoadGameModeStatus();
     }
+
+    if (category == "Desktop Entries") {
+      auto* sync_button = new QPushButton("Regenerate now", this);
+      sync_button->setToolTip(
+          "Rewrites Mira's own mira-<id>.desktop entries immediately, without waiting for the "
+          "next library change to pick up an edit made above.");
+      connect(sync_button, &QPushButton::clicked, this, [this, sync_button] {
+        sync_button->setEnabled(false);
+        mira_gui::MiradClient::SyncDesktopEntriesAsync(
+            this, [this, sync_button](mira_gui::DesktopEntrySyncResult result) {
+              sync_button->setEnabled(true);
+              if (!result.ok) {
+                mira_gui::notify::Failed(this, "Could not regenerate desktop entries.",
+                                        QString::fromStdString(result.error));
+                return;
+              }
+              mira_gui::notify::Toast(this, mira_gui::notify::Level::Success,
+                                     "Desktop entries regenerated.");
+            });
+      });
+      form->addRow(QString(), sync_button);
+      nav_->RegisterRow(form, sync_button, "desktop entries regenerate sync");
+    }
   }
 
   SetAdvancedVisible(show_advanced_->isChecked());

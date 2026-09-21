@@ -449,9 +449,9 @@ is visible rather than assumed.
 
 Nothing outstanding right now: winetricks (`WinetricksDialog`), runner
 delete/schema (`RunnerDialog`), the wider game detail page
-(`GameDetailPageDialog`), the per-game log viewer (`LogViewerDialog`) and a
-GameMode status indicator (Settings, Launching category) are all in. Flatpak
-(`POST /v1/flatpak/scan`) is deliberately left out — it is being replaced by
-AppImages backend-side, not wired up here. Manual single-game-add has no
-backend endpoint yet; the "Add Games" button's "Add game manually…" entry is
-a disabled placeholder until one exists.
+(`GameDetailPageDialog`), the per-game log viewer (`LogViewerDialog`), a
+GameMode status indicator (Settings, Launching category), manual single-game
+add (`AddManualGameDialog`), the desktop-entries import picker
+(`DesktopEntryImportDialog` — this is now how a Flatpak app gets added, since
+the Flatpak runner itself was removed backend-side) and the `delete_metadata`
+remove-game option are all in.

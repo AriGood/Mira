@@ -49,7 +49,7 @@ void Delete(QWidget* parent, const std::string& id, const QString& name,
     if (!choice.confirmed) return;
 
     MiradClient::DeleteGameAsync(
-        parent, id, choice.delete_files, choice.delete_prefix,
+        parent, id, choice.delete_files, choice.delete_prefix, choice.delete_metadata,
         [parent, name, on_deleted](DeleteResult result) {
           if (!result.ok) {
             notify::Failed(parent, QString("Could not remove \"%1\".").arg(name),

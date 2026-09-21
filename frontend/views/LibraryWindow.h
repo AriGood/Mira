@@ -119,6 +119,8 @@ private:
   void ScanLibrary();
   void ImportSteamLibrary();
   void ImportLutrisLibrary();
+  void ImportDesktopEntries();
+  void AddGameManually();
   void OpenClassicView();
   // `announce` is false for the bulk path, where one toast covers the batch
   // and per-game messages would be one notification per game.

@@ -52,16 +52,21 @@ GamesResult GetGamesSync(const std::string& status_filter, const std::string& ta
   return result;
 }
 
-DeleteResult DeleteGameSync(const std::string& id, bool delete_files, bool delete_prefix) {
-  // Both flags are opt-in server-side too (docs/api.md): the bare DELETE
-  // never touches disk, so an omitted param and "false" mean the same thing.
+DeleteResult DeleteGameSync(const std::string& id, bool delete_files, bool delete_prefix,
+                            bool delete_metadata) {
+  // Every flag is opt-in server-side too: the bare DELETE never touches
+  // disk, so an omitted param and "false" mean the same thing.
   std::string path = "/v1/games/" + id;
   std::string separator = "?";
   if (delete_files) {
     path += separator + "delete_files=true";
     separator = "&";
   }
-  if (delete_prefix) path += separator + "delete_prefix=true";
+  if (delete_prefix) {
+    path += separator + "delete_prefix=true";
+    separator = "&";
+  }
+  if (delete_metadata) path += separator + "delete_metadata=true";
 
   const transport::Reply reply = transport::Delete(path);
   return {reply.ok, reply.error};
@@ -654,6 +659,71 @@ RunnerSchemaResult GetRunnerSchemaSync(const std::string& kind) {
   return result;
 }
 
+GameDetailResult AddManualGameSync(const std::string& install_path, const std::string& exe_path,
+                                   const std::string& name, const std::string& platform,
+                                   bool is_installer) {
+  json body{{"install_path", install_path}, {"exe_path", exe_path}, {"is_installer", is_installer}};
+  if (!name.empty()) body["name"] = name;
+  if (!platform.empty()) body["platform"] = platform;
+
+  GameDetailResult result;
+  const transport::Reply reply = transport::PostJson("/v1/games/manual", body);
+  if (!reply.ok) {
+    result.error = reply.error;
+    return result;
+  }
+  if (!reply.body.is_object()) {
+    result.error = transport::UnexpectedResponse("POST /v1/games/manual");
+    return result;
+  }
+
+  result.ok = true;
+  result.game = mapping::ToGameDetail(reply.body);
+  return result;
+}
+
+DesktopEntryCandidatesResult GetDesktopEntryCandidatesSync() {
+  DesktopEntryCandidatesResult result;
+  const transport::Reply reply = transport::Get("/v1/desktop-entries/candidates");
+  if (!reply.ok) {
+    result.error = reply.error;
+    return result;
+  }
+  if (!reply.body.is_array()) {
+    result.error = transport::UnexpectedResponse("GET /v1/desktop-entries/candidates");
+    return result;
+  }
+
+  result.ok = true;
+  for (const json& entry : reply.body) {
+    DesktopEntryCandidate c;
+    c.id = entry.value("id", std::string());
+    c.name = entry.value("name", std::string());
+    c.icon = entry.value("icon", std::string());
+    result.candidates.push_back(std::move(c));
+  }
+  return result;
+}
+
+DesktopEntryImportResult ImportDesktopEntriesSync(const std::vector<std::string>& ids) {
+  DesktopEntryImportResult result;
+  const transport::Reply reply =
+      transport::PostJson("/v1/desktop-entries/import", json{{"ids", ids}});
+  if (!reply.ok) {
+    result.error = reply.error;
+    return result;
+  }
+  result.ok = true;
+  result.added = reply.body.value("added", 0);
+  result.updated = reply.body.value("updated", 0);
+  return result;
+}
+
+DesktopEntrySyncResult SyncDesktopEntriesSync() {
+  const transport::Reply reply = transport::Post("/v1/desktop-entries/sync");
+  return {reply.ok, reply.error};
+}
+
 }  // namespace
 
 std::string MiradClient::ResolveSocketPath() { return transport::SocketPath(); }
@@ -669,11 +739,11 @@ void MiradClient::ListGamesAsync(QObject* context, std::function<void(GamesResul
 }
 
 void MiradClient::DeleteGameAsync(QObject* context, const std::string& id, bool delete_files,
-                                  bool delete_prefix,
+                                  bool delete_prefix, bool delete_metadata,
                                   std::function<void(DeleteResult)> callback) {
   async::Run(
-      context, [id, delete_files, delete_prefix] {
-        return DeleteGameSync(id, delete_files, delete_prefix);
+      context, [id, delete_files, delete_prefix, delete_metadata] {
+        return DeleteGameSync(id, delete_files, delete_prefix, delete_metadata);
       },
       std::move(callback));
 }
@@ -840,6 +910,33 @@ void MiradClient::DeleteRunnerAsync(QObject* context, const std::string& kind,
 void MiradClient::GetRunnerSchemaAsync(QObject* context, const std::string& kind,
                                        std::function<void(RunnerSchemaResult)> callback) {
   async::Run(context, [kind] { return GetRunnerSchemaSync(kind); }, std::move(callback));
+}
+
+void MiradClient::AddManualGameAsync(QObject* context, const std::string& install_path,
+                                     const std::string& exe_path, const std::string& name,
+                                     const std::string& platform, bool is_installer,
+                                     std::function<void(GameDetailResult)> callback) {
+  async::Run(
+      context,
+      [install_path, exe_path, name, platform, is_installer] {
+        return AddManualGameSync(install_path, exe_path, name, platform, is_installer);
+      },
+      std::move(callback));
+}
+
+void MiradClient::GetDesktopEntryCandidatesAsync(
+    QObject* context, std::function<void(DesktopEntryCandidatesResult)> callback) {
+  async::Run(context, [] { return GetDesktopEntryCandidatesSync(); }, std::move(callback));
+}
+
+void MiradClient::ImportDesktopEntriesAsync(QObject* context, const std::vector<std::string>& ids,
+                                            std::function<void(DesktopEntryImportResult)> callback) {
+  async::Run(context, [ids] { return ImportDesktopEntriesSync(ids); }, std::move(callback));
+}
+
+void MiradClient::SyncDesktopEntriesAsync(QObject* context,
+                                          std::function<void(DesktopEntrySyncResult)> callback) {
+  async::Run(context, [] { return SyncDesktopEntriesSync(); }, std::move(callback));
 }
 
 bool MiradClient::ParseGameSummary(const std::string& data, GameSummary* out) {

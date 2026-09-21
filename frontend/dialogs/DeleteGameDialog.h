@@ -8,8 +8,9 @@ namespace mira_gui {
 
 struct DeleteChoice {
   bool confirmed = false;
-  bool delete_files = false;   // DELETE /v1/games/{id}?delete_files=true
-  bool delete_prefix = false;  // ...&delete_prefix=true
+  bool delete_files = false;     // DELETE /v1/games/{id}?delete_files=true
+  bool delete_prefix = false;    // ...&delete_prefix=true
+  bool delete_metadata = false;  // ...&delete_metadata=true
 };
 
 // The "remove game" confirmation, shared by both library views.

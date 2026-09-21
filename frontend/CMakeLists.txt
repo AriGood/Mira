@@ -91,10 +91,14 @@ qt_add_executable(mira-gui
   views/MainWindow.h
 
   # dialogs/
+  dialogs/AddManualGameDialog.cpp
+  dialogs/AddManualGameDialog.h
   dialogs/ArtworkPickerDialog.cpp
   dialogs/ArtworkPickerDialog.h
   dialogs/DeleteGameDialog.cpp
   dialogs/DeleteGameDialog.h
+  dialogs/DesktopEntryImportDialog.cpp
+  dialogs/DesktopEntryImportDialog.h
   dialogs/GameDetailDialog.cpp
   dialogs/GameDetailDialog.h
   dialogs/GameDetailPageDialog.cpp

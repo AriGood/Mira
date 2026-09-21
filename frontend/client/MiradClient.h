@@ -34,14 +34,19 @@ public:
                              const std::string& status_filter = std::string(),
                              const std::string& tag_filter = std::string());
 
-  // DELETE /v1/games/{id}[?delete_files=true][?delete_prefix=true]. With both
-  // flags false, this only forgets the game and never touches disk.
-  // `delete_files` removes its install_path, `delete_prefix` its data_dir;
-  // mirad refuses either if the path isn't really inside a configured
-  // library_roots/prefix_root (docs/api.md), so a 400 here is a guard
-  // tripping, not a missing permission.
+  // DELETE /v1/games/{id}[?delete_files=true][?delete_prefix=true][?delete_metadata=true].
+  // All opt-in; false/omitted never touches disk. delete_metadata alone has
+  // no library/prefix-root restriction — it's keyed by id under Mira's own state dir.
   static void DeleteGameAsync(QObject* context, const std::string& id, bool delete_files,
-                              bool delete_prefix, std::function<void(DeleteResult)> callback);
+                              bool delete_prefix, bool delete_metadata,
+                              std::function<void(DeleteResult)> callback);
+
+  // POST /v1/games/manual — adds a game record directly, for an installer or
+  // a folder outside every library root. Response mirrors GetGameAsync.
+  static void AddManualGameAsync(QObject* context, const std::string& install_path,
+                                 const std::string& exe_path, const std::string& name,
+                                 const std::string& platform, bool is_installer,
+                                 std::function<void(GameDetailResult)> callback);
 
   // POST /v1/games/{id}/launch. Returns once the process exists, not once
   // it exits — 409 if the game isn't `ready` (message explains why, e.g.
@@ -209,6 +214,22 @@ public:
   // in a game's runner_config. 404 for an unknown kind surfaces as !ok.
   static void GetRunnerSchemaAsync(QObject* context, const std::string& kind,
                                    std::function<void(RunnerSchemaResult)> callback);
+
+  // GET /v1/desktop-entries/candidates — already-installed .desktop entries
+  // (including Flatpak apps, via their X-Flatpak key) that could become
+  // games. An empty list when desktop_import.enabled is off, not an error.
+  static void GetDesktopEntryCandidatesAsync(
+      QObject* context, std::function<void(DesktopEntryCandidatesResult)> callback);
+
+  // POST /v1/desktop-entries/import. `ids` are candidate ids as returned by
+  // GetDesktopEntryCandidatesAsync.
+  static void ImportDesktopEntriesAsync(QObject* context, const std::vector<std::string>& ids,
+                                        std::function<void(DesktopEntryImportResult)> callback);
+
+  // POST /v1/desktop-entries/sync — regenerates Mira's own desktop entries
+  // immediately, for right after changing desktop_entries.* settings.
+  static void SyncDesktopEntriesAsync(QObject* context,
+                                      std::function<void(DesktopEntrySyncResult)> callback);
 
   // --- SSE payload parsing -------------------------------------------------
   //

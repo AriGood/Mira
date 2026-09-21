@@ -572,4 +572,33 @@ struct RunnerRemoveResult {
   std::string error;
 };
 
+// GET /v1/desktop-entries/candidates — an already-installed .desktop entry
+// (Flatpak or otherwise) that could become a game. `icon` is a theme icon
+// name/path, not image bytes.
+struct DesktopEntryCandidate {
+  std::string id;
+  std::string name;
+  std::string icon;
+};
+
+struct DesktopEntryCandidatesResult {
+  bool ok = false;
+  std::string error;
+  std::vector<DesktopEntryCandidate> candidates;
+};
+
+// POST /v1/desktop-entries/import.
+struct DesktopEntryImportResult {
+  bool ok = false;
+  std::string error;
+  int added = 0;
+  int updated = 0;
+};
+
+// POST /v1/desktop-entries/sync — regenerates Mira's own desktop entries.
+struct DesktopEntrySyncResult {
+  bool ok = false;
+  std::string error;
+};
+
 }  // namespace mira_gui

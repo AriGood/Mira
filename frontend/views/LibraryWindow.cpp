@@ -29,7 +29,9 @@
 #include <optional>
 
 #include "../client/MiradClient.h"
+#include "../dialogs/AddManualGameDialog.h"
 #include "../dialogs/ArtworkPickerDialog.h"
+#include "../dialogs/DesktopEntryImportDialog.h"
 #include "../dialogs/GameDetailDialog.h"
 #include "../dialogs/GameDetailPageDialog.h"
 #include "../dialogs/RunnerDialog.h"
@@ -662,6 +664,16 @@ void LibraryWindow::ImportLutrisLibrary() {
   });
 }
 
+void LibraryWindow::ImportDesktopEntries() {
+  mira_gui::DesktopEntryImportDialog dialog(this);
+  if (dialog.exec() == QDialog::Accepted) RefreshGames();
+}
+
+void LibraryWindow::AddGameManually() {
+  mira_gui::AddManualGameDialog dialog(this);
+  if (dialog.exec() == QDialog::Accepted) RefreshGames();
+}
+
 QWidget* LibraryWindow::BuildTopBar() {
   top_bar_ = new QWidget(this);
   top_bar_->setObjectName("top_bar");
@@ -725,12 +737,13 @@ QWidget* LibraryWindow::BuildTopBar() {
       ->setToolTip(
           "Read Lutris's own database and add its Wine games here. Nothing is moved or renamed, "
           "in either launcher's files — a game stays playable in Lutris too.");
+  add_games_menu
+      ->addAction("Import desktop entries…", this, &LibraryWindow::ImportDesktopEntries)
+      ->setToolTip(
+          "Pick from already-installed application-menu entries — including Flatpak apps, via "
+          "their own X-Flatpak key.");
   add_games_menu->addSeparator();
-  QAction* add_manually = add_games_menu->addAction("Add game manually… (coming soon)");
-  add_manually->setEnabled(false);
-  add_manually->setToolTip(
-      "Not built yet — mirad has no endpoint for adding a single game by hand. Use one of the "
-      "options above for now.");
+  add_games_menu->addAction("Add game manually…", this, &LibraryWindow::AddGameManually);
   add_games_->setMenu(add_games_menu);
   layout->addWidget(add_games_);
 

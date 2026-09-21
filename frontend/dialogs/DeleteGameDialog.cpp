@@ -63,6 +63,12 @@ DeleteChoice AskDeleteGame(QWidget* parent, const QString& name, const QString& 
       AddPathOption(layout, &dialog, "Also delete its Wine/Proton prefix", data_dir,
                     "This game has no prefix (native games don't need one).");
 
+  auto* metadata_check =
+      new QCheckBox("Also delete cached metadata && cover art", &dialog);
+  metadata_check->setToolTip(
+      "Otherwise this stays on disk forever, orphaned under an id nothing points at anymore.");
+  layout->addWidget(metadata_check);
+
   auto* warning = new QLabel(
       "⚠ Deleting files cannot be undone. mirad will refuse any path that isn't inside a "
       "configured library root or prefix root.",
@@ -84,12 +90,14 @@ DeleteChoice AskDeleteGame(QWidget* parent, const QString& name, const QString& 
   // The button text follows the checkboxes, so the last thing read before
   // clicking says whether this deletes data or only a library entry.
   auto sync_buttons = [&] {
-    const bool destructive = files_check->isChecked() || prefix_check->isChecked();
+    const bool destructive =
+        files_check->isChecked() || prefix_check->isChecked() || metadata_check->isChecked();
     warning->setVisible(destructive);
     remove_button->setText(destructive ? "Delete" : "Remove");
   };
   QObject::connect(files_check, &QCheckBox::toggled, &dialog, sync_buttons);
   QObject::connect(prefix_check, &QCheckBox::toggled, &dialog, sync_buttons);
+  QObject::connect(metadata_check, &QCheckBox::toggled, &dialog, sync_buttons);
   sync_buttons();
 
   DeleteChoice choice;
@@ -97,6 +105,7 @@ DeleteChoice AskDeleteGame(QWidget* parent, const QString& name, const QString& 
   choice.confirmed = true;
   choice.delete_files = files_check->isChecked();
   choice.delete_prefix = prefix_check->isChecked();
+  choice.delete_metadata = metadata_check->isChecked();
   return choice;
 }
 
