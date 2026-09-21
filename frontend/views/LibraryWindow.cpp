@@ -15,6 +15,7 @@
 #include <QMouseEvent>
 #include <QCloseEvent>
 #include <QComboBox>
+#include <QEventLoop>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSlider>
@@ -1232,6 +1233,30 @@ void LibraryWindow::ShowContextMenu(const QPoint& pos) {
   const bool native = current_game != nullptr && current_game->platform == "native";
   winetricks->setEnabled(!native);
   winetricks->setToolTip(native ? "Native game — no Wine/Proton prefix." : QString());
+  // Resolved (not on GameSummary), and the menu item's own label is the only
+  // place that state shows, so it's fetched synchronously here rather than
+  // asking first and acting second — a local socket round trip, once, before
+  // the menu is shown.
+  bool desktop_entry_enabled = true;
+  {
+    QEventLoop loop;
+    mira_gui::MiradClient::GetGameConfigAsync(
+        this, id, [&desktop_entry_enabled, &loop](mira_gui::GameConfigResult result) {
+          if (result.ok) {
+            for (const mira_gui::GameConfigEntry& entry : result.entries) {
+              if (entry.key == "desktop_entries.enabled") {
+                desktop_entry_enabled = entry.value_display == "true";
+                break;
+              }
+            }
+          }
+          loop.quit();
+        });
+    loop.exec();
+  }
+  QAction* desktop_entry =
+      menu.addAction(desktop_entry_enabled ? "Remove desktop entry" : "Add desktop entry");
+  desktop_entry->setToolTip("Whether this game has its own entry in the application menu.");
   menu.addSeparator();
   const bool hidden = current_game != nullptr && HasTag(*current_game, "hidden");
   QAction* toggle_hidden = menu.addAction(hidden ? "Unhide" : "Hide");
@@ -1261,6 +1286,8 @@ void LibraryWindow::ShowContextMenu(const QPoint& pos) {
     mira_gui::actions::ViewLog(this, id, name);
   } else if (chosen == winetricks) {
     mira_gui::actions::RunWinetricks(this, id, name);
+  } else if (chosen == desktop_entry) {
+    mira_gui::actions::ToggleDesktopEntry(this, id, desktop_entry_enabled);
   } else if (chosen == toggle_hidden) {
     ToggleHidden(id);
   } else if (chosen == remove) {

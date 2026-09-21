@@ -55,4 +55,9 @@ void ViewLog(QWidget* parent, const std::string& id, const QString& name);
 // prefix" asynchronously, so this catches it up front instead.
 void RunWinetricks(QWidget* parent, const std::string& id, const QString& name);
 
+// Flips this game's desktop_entries.enabled override to the opposite of
+// `currently_enabled` (the caller already resolved it to label the menu
+// item "Add"/"Remove", so this doesn't re-fetch).
+void ToggleDesktopEntry(QWidget* parent, const std::string& id, bool currently_enabled);
+
 }  // namespace mira_gui::actions

@@ -44,8 +44,9 @@ void Delete(QWidget* parent, const std::string& id, const QString& name,
     const QString install_path =
         detail.ok ? QString::fromStdString(detail.game.install_path) : QString();
     const QString data_dir = detail.ok ? QString::fromStdString(detail.game.data_dir) : QString();
+    const QString source = detail.ok ? QString::fromStdString(detail.game.source) : QString();
 
-    const DeleteChoice choice = AskDeleteGame(parent, name, install_path, data_dir);
+    const DeleteChoice choice = AskDeleteGame(parent, name, install_path, data_dir, source);
     if (!choice.confirmed) return;
 
     MiradClient::DeleteGameAsync(
@@ -111,6 +112,22 @@ void RunWinetricks(QWidget* parent, const std::string& id, const QString& name) 
     WinetricksDialog dialog(id, name, parent);
     dialog.exec();
   });
+}
+
+void ToggleDesktopEntry(QWidget* parent, const std::string& id, bool currently_enabled) {
+  const GameConfigEdit edit{"desktop_entries.enabled", "a boolean",
+                            currently_enabled ? "false" : "true", false};
+  MiradClient::PatchGameConfigAsync(
+      parent, id, {edit}, [parent, currently_enabled](PatchGameConfigResult result) {
+        if (!result.ok) {
+          notify::Failed(parent, "Could not update the desktop entry.",
+                         QString::fromStdString(result.error));
+          return;
+        }
+        notify::Toast(parent, notify::Level::Success,
+                      currently_enabled ? "Removed from the application menu."
+                                        : "Added to the application menu.");
+      });
 }
 
 }  // namespace mira_gui::actions

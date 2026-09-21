@@ -236,9 +236,10 @@ struct GameDetail {
   std::string name;
   std::string status;
   std::string platform;
-  // "scan", "steam", or "lutris" (docs/api.md) — which of the three owns
-  // this game's own fields on a rescan/re-import. GameEditForm uses it to
-  // warn when exe_path isn't actually what launches the game.
+  // "scan", "steam", "lutris", or "desktop-entry" — which source owns this
+  // game's own fields on a rescan/re-import. GameEditForm uses it to warn
+  // when exe_path isn't actually what launches the game; DeleteGameDialog
+  // uses "desktop-entry" to disable file/prefix deletion.
   std::string source;
   std::string install_path;
   std::string exe_path;
