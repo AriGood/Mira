@@ -10,6 +10,7 @@
 #include <json.hpp>
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cstdio>
 #include <format>
@@ -419,13 +420,48 @@ int CmdEpicStatus() {
 }
 
 int CmdEpicLogin() {
-  std::printf("Visit this URL, log in, and paste the code it shows:\n%s\n\ncode: ",
-             std::string(mira::epic::kLoginUrl).c_str());
-  std::string code;
-  std::getline(std::cin, code);
-  if (code.empty()) {
-    std::fprintf(stderr, "mira: no code entered\n");
+  {
+    auto client = Connect();
+    auto res = client.Get("/v1/epic/legendary/status");
+    if (!Ok(res)) {
+      PrintError(res);
+      return 1;
+    }
+    json legendary = json::parse(res->body);
+    if (!legendary.value("installed", false)) {
+      std::fprintf(stderr, "mira: legendary isn't installed — run \"mira epic setup\" first\n");
+      return 1;
+    }
+  }
+
+  std::printf(
+      "Visit this URL, log in, and paste back either the \"authorizationCode\" shown or the whole page:\n%s\n\n"
+      "code (or pasted JSON): ",
+      std::string(mira::epic::kLoginUrl).c_str());
+  std::string pasted;
+  std::getline(std::cin, pasted);
+  // Trim: a terminal paste routinely carries a trailing \r or spaces.
+  while (!pasted.empty() && std::isspace(static_cast<unsigned char>(pasted.back()))) pasted.pop_back();
+  size_t start = 0;
+  while (start < pasted.size() && std::isspace(static_cast<unsigned char>(pasted[start]))) ++start;
+  pasted.erase(0, start);
+  if (pasted.empty()) {
+    std::fprintf(stderr, "mira: nothing entered\n");
     return 2;
+  }
+
+  // Epic's own redirect page shows the whole exchange response as raw JSON
+  // ({"authorizationCode": "...", ...}), not just the one field legendary
+  // actually needs -- accepted as-is here rather than making the user hunt
+  // through it for the right key themselves.
+  std::string code = pasted;
+  if (pasted.front() == '{') {
+    json parsed = json::parse(pasted, nullptr, false);
+    if (parsed.is_discarded() || !parsed.contains("authorizationCode")) {
+      std::fprintf(stderr, "mira: that looked like JSON but had no \"authorizationCode\" field\n");
+      return 2;
+    }
+    code = parsed["authorizationCode"];
   }
 
   auto client = Connect();

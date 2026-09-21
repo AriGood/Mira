@@ -503,6 +503,12 @@ void Server::RegisterRoutes() {
     auto result =
         games_.Update(id, [&](model::Game& game) { ApplyOverridesPatch(game, patch); });
     if (!result) return SendError(res, 404, result.error().code, result.error().message);
+    // A per-game override can flip desktop_entries.enabled off for just this
+    // game — every other mutation path syncs already (PATCH /v1/config,
+    // PATCH /v1/games/{id}, DELETE /v1/games/{id}, ...); this one didn't,
+    // so a game's own .desktop entry never got removed until something else
+    // happened to trigger a sync.
+    SyncDesktopEntries(config_, games_);
     SendJson(res, model::ToJson(*result));
   });
 

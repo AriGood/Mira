@@ -92,6 +92,10 @@ Result<EpicImportSummary> EpicImporter::Import() {
     // provisioning attempt never actually finished: re-provisioning a
     // working game on every re-import would be wasteful and pointless.
     if (!existing || existing->runner_ref.empty() || existing->data_dir.empty()) {
+      // ProvisionGame creates the prefix AT data_dir, it doesn't invent a
+      // path -- the caller has to say where first (same convention
+      // AutoSetup.cpp uses for a fresh scan-detected Windows game).
+      game.data_dir = (config_.GetPath("prefix_root") / game.id).string();
       const model::Game provisioned = provisioner.ProvisionGame(game);
       game.runner_ref = provisioned.runner_ref;
       game.data_dir = provisioned.data_dir;
