@@ -423,9 +423,39 @@ void SettingsPanel::BuildRows() {
                         QString("%1 %2 %3").arg(QString::fromStdString(field.entry.key), category,
                                                  QString::fromStdString(field.entry.doc)));
     }
+
+    if (category == "Launching") {
+      gamemode_status_ = new QLabel("Checking…", this);
+      mira_gui::theme::SetStyleProperty(gamemode_status_, "role", "muted");
+      form->addRow("GameMode", gamemode_status_);
+      nav_->RegisterRow(form, gamemode_status_, "gamemode feral daemon status");
+      LoadGameModeStatus();
+    }
   }
 
   SetAdvancedVisible(show_advanced_->isChecked());
+}
+
+void SettingsPanel::LoadGameModeStatus() {
+  mira_gui::MiradClient::GetGameModeStatusAsync(this, [this](mira_gui::GameModeStatusResult result) {
+    if (gamemode_status_ == nullptr) return;
+    QString text;
+    bool error = false;
+    if (!result.ok) {
+      text = "Could not check (mirad unreachable).";
+      error = true;
+    } else if (!result.installed) {
+      text = "Not installed — gamemoded isn't on PATH.";
+      error = true;
+    } else if (!result.daemon_running) {
+      text = "Installed, but the daemon isn't running right now.";
+      error = true;
+    } else {
+      text = "Installed and running.";
+    }
+    gamemode_status_->setText(text);
+    mira_gui::theme::SetStyleProperty(gamemode_status_, "role", error ? "error" : "muted");
+  });
 }
 
 void SettingsPanel::PopulateRunnerCombos(const mira_gui::RunnersResult& result) {

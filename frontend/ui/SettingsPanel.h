@@ -14,6 +14,7 @@ class QComboBox;
 class QDoubleSpinBox;
 class QFormLayout;
 class QKeySequenceEdit;
+class QLabel;
 class QLineEdit;
 class QPushButton;
 class QSpinBox;
@@ -93,6 +94,7 @@ private:
   // theme::Notifier::Changed so it never goes stale.
   void RefreshShapeDefaults();
   void BuildRows();
+  void LoadGameModeStatus();
   void PopulateRunnerCombos(const mira_gui::RunnersResult& result);
   void SetAdvancedVisible(bool show);
   void ResetField(size_t index);
@@ -118,6 +120,9 @@ private:
   std::vector<ShortcutField> shortcuts_;
   std::vector<Field> fields_;
   QString pending_focus_key_;  // FocusKey called before the schema arrived
+  // Read-only "is Feral GameMode installed/running" indicator on the
+  // Launching category — not tied to any Field, since it isn't a config key.
+  QLabel* gamemode_status_ = nullptr;
 };
 
 }  // namespace mira_gui
