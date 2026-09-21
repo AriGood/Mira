@@ -80,7 +80,14 @@ protected:
   }
 
   void mouseMoveEvent(QMouseEvent* event) override {
-    if (tracking_drag_ && (event->buttons() & Qt::LeftButton)) {
+    // Belt and suspenders: if the button somehow isn't down anymore without
+    // this having seen a matching release (e.g. it was released while a
+    // dialog briefly had an implicit grab), don't let a stale tracking_drag_
+    // resume a drag from the old origin on the next plain hover-move.
+    if (tracking_drag_ && !(event->buttons() & Qt::LeftButton)) {
+      EndDrag();
+    }
+    if (tracking_drag_) {
       if (rubber_band_ == nullptr) {
         constexpr int kDragThreshold = 6;
         if ((event->pos() - drag_origin_).manhattanLength() < kDragThreshold) {
@@ -100,6 +107,11 @@ protected:
         rubber_band_ = new QRubberBand(QRubberBand::Rectangle, viewport());
         rubber_band_->setGeometry(QRect(drag_origin_, QSize()));
         rubber_band_->show();
+        // Guarantees the matching release reaches this widget even though
+        // the rubber band itself now sits on top of the viewport under the
+        // cursor -- without this, a release landing on that overlay could
+        // go missing, leaving tracking_drag_ stuck true.
+        grabMouse();
       }
       const QRect rect = QRect(drag_origin_, event->pos()).normalized();
       rubber_band_->setGeometry(rect);
@@ -113,17 +125,26 @@ protected:
   }
 
   void mouseReleaseEvent(QMouseEvent* event) override {
-    tracking_drag_ = false;
-    if (rubber_band_ != nullptr) {
-      rubber_band_->deleteLater();
-      rubber_band_ = nullptr;
-      base_selection_.clear();
-      return;  // the drag already applied the selection; not a click
-    }
+    const bool was_dragging = rubber_band_ != nullptr;
+    EndDrag();
+    if (was_dragging) return;  // the drag already applied the selection; not a click
     QListWidget::mouseReleaseEvent(event);
   }
 
 private:
+  void EndDrag() {
+    tracking_drag_ = false;
+    if (rubber_band_ == nullptr) return;
+    releaseMouse();
+    // Deleted immediately, not deleteLater(): a second drag can start
+    // before a deferred delete would have run, and a stale hidden rubber
+    // band still parented to the viewport at its old geometry is exactly
+    // the kind of leftover state that made this bug hard to pin down.
+    delete rubber_band_;
+    rubber_band_ = nullptr;
+    base_selection_.clear();
+  }
+
   QPoint drag_origin_;
   bool tracking_drag_ = false;
   QRubberBand* rubber_band_ = nullptr;
