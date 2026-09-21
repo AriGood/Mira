@@ -421,8 +421,9 @@ AppImage, pointed at directly with no prefix involved at all; imported as
 `platform: "native"`, `data_dir` empty. `skipped` counts Lutris rows this
 import can't use: anything not run through `wine` or `linux` (a
 `steam`-runner row is already covered by `POST /v1/steam/scan`, a
-`flatpak`-runner row by `POST /v1/flatpak/scan` reading installed apps
-directly), a wine-runner row whose YAML has no `prefix` recorded — Lutris
+`flatpak`-runner row's app already has its own real `.desktop` entry,
+covered by `## Desktop entries` below), a wine-runner row whose YAML has no
+`prefix` recorded — Lutris
 itself falls back to a filesystem heuristic in that case (walking up from
 the exe looking for something that looks like a prefix), which isn't
 something read from the yaml tree, so it's left alone rather than guessed
@@ -453,22 +454,6 @@ a game Lutris marks hidden stays out of the default `GET /v1/games` listing
 the same way a game Mira marked hidden by hand would. A Lutris install old
 enough to have no `categories`/`games_categories` tables degrades to "no
 categories" rather than failing the import.
-
----
-
-## Flatpak
-
-### `POST /v1/flatpak/scan` — implemented
-Lists installed Flatpak apps (`flatpak list --app`) and upserts them, same
-`{ "added": N, "updated": N }` shape as `POST /v1/steam/scan`. `runner_ref`
-is `flatpak:<app-id>`, resolved by the fifth `IRunner`, `FlatpakRunner` — the
-installed app *is* the build, there's no separate "which build" choice the
-way Proton/Wine have. `exe_path` is never required for a Flatpak game,
-unlike every other runner. `install_path` points at the app's own
-`~/.var/app/<app-id>` data directory — the closest real on-disk stand-in
-Flatpak has to an install folder, for `DELETE`'s containment check and
-`FindByInstallPath`'s idempotence on rescan. Requires `flatpak.enabled`
-(default on).
 
 ---
 

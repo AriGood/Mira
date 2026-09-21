@@ -211,10 +211,10 @@ Result<LutrisImportSummary> LutrisImporter::Import() {
   for (const LutrisRow& row : *rows) {
     // "wine" is a Windows game; "linux" is Lutris's own native-Linux runner
     // (a .sh script or an AppImage, pointed at directly, no prefix at all).
-    // Anything else is a different, unhandled case for now (a "steam" row
-    // is already covered by SteamScanner, a "flatpak" row by
-    // flatpak::FlatpakScanner reading installed apps directly) — note it,
-    // don't guess at it.
+    // Anything else is a different, unhandled case for now (a "steam" row is
+    // already covered by SteamScanner, a "flatpak" row's app already has its
+    // own real .desktop entry, covered by desktop::DesktopEntryScanner) —
+    // note it, don't guess at it.
     const bool is_native = row.runner == "linux";
     if (row.runner != "wine" && !is_native) {
       ++summary.skipped;
