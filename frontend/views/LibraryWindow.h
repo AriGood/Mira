@@ -90,6 +90,11 @@ private:
   // lets "Playing now"/"Never played" be filters at all.
   void ApplyFilter();
   bool MatchesFilter(const mira_gui::GameSummary& game) const;
+  // The part of MatchesFilter that doesn't depend on the search box — shared
+  // with UpdateFilterCounts, which needs every key's count, not just the
+  // active one's.
+  bool MatchesFilterKey(const mira_gui::GameSummary& game, const QString& key) const;
+  void UpdateFilterCounts();
   QString CurrentFilterKey() const;
   void UpsertGame(const mira_gui::GameSummary& game);
   void RemoveGame(const std::string& id);
@@ -155,7 +160,9 @@ private:
   QWidget* top_bar_ = nullptr;
   QToolButton* menu_button_ = nullptr;
   QLineEdit* search_ = nullptr;
-  QComboBox* filters_ = nullptr;
+  // One row per kFilters entry, each carrying its key in Qt::UserRole and a
+  // live count via a custom row widget (see UpdateFilterCounts).
+  QListWidget* filters_ = nullptr;
   LibraryGrid* grid_ = nullptr;
   QVBoxLayout* grid_layout_ = nullptr;
   mira_gui::GameTileDelegate* delegate_ = nullptr;

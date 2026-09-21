@@ -179,6 +179,23 @@ bool HasTag(const mira_gui::GameSummary& game, const std::string& tag) {
   return std::find(game.tags.begin(), game.tags.end(), tag) != game.tags.end();
 }
 
+// One filter row: a label and a right-aligned live count (see
+// LibraryWindow::UpdateFilterCounts, which finds the count label back by
+// its "count" object name). Transparent background so the list's own
+// selection highlight, not this widget, is what shows a row as active.
+QWidget* MakeFilterRow(const QString& label, QWidget* parent) {
+  auto* row = new QWidget(parent);
+  auto* layout = new QHBoxLayout(row);
+  layout->setContentsMargins(6, 2, 6, 2);
+  auto* text = new QLabel(label, row);
+  layout->addWidget(text, /*stretch=*/1);
+  auto* count = new QLabel(row);
+  count->setObjectName("count");
+  count->setProperty("role", "muted");
+  layout->addWidget(count);
+  return row;
+}
+
 constexpr int kResizeMargin = 5;
 
 Qt::Edges EdgesAt(const QSize& size, const QPoint& pos) {
@@ -437,7 +454,7 @@ void LibraryWindow::BuildShortcuts() {
   for (int row = 0; row < filters_->count() && row < 9; ++row) {
     auto* action = new QAction(this);
     action->setShortcut(QKeySequence(Qt::CTRL | static_cast<Qt::Key>(Qt::Key_1 + row)));
-    connect(action, &QAction::triggered, this, [this, row] { filters_->setCurrentIndex(row); });
+    connect(action, &QAction::triggered, this, [this, row] { filters_->setCurrentRow(row); });
     addAction(action);
   }
 
@@ -447,8 +464,8 @@ void LibraryWindow::BuildShortcuts() {
                [this] {
                  const int hidden_row = FilterRow("hidden");
                  if (hidden_row < 0) return;
-                 filters_->setCurrentIndex(CurrentFilterKey() == "hidden" ? FilterRow("all")
-                                                                          : hidden_row);
+                 filters_->setCurrentRow(CurrentFilterKey() == "hidden" ? FilterRow("all")
+                                                                        : hidden_row);
                });
 
   // No longer a Tools-menu entry (the sidebar's own Settings row opens it
@@ -520,9 +537,8 @@ void LibraryWindow::LoadPrefs() {
       if (index >= 0) sort_->setCurrentIndex(index);
     }
     if (prefs.library_filter) {
-      const QString wanted = QString::fromStdString(*prefs.library_filter);
-      const int index = filters_->findData(wanted);
-      if (index >= 0) filters_->setCurrentIndex(index);
+      const int row = FilterRow(QString::fromStdString(*prefs.library_filter));
+      if (row >= 0) filters_->setCurrentRow(row);
     }
     // Before the theme, so applying one does not repaint twice with the
     // theme's own shape first.
@@ -945,10 +961,44 @@ QWidget* LibraryWindow::BuildSidebar() {
 
   layout->addSpacing(10);
 
-  filters_ = new QComboBox(sidebar);
-  for (const FilterEntry& entry : kFilters) filters_->addItem(entry.label, QString(entry.key));
-  connect(filters_, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
-          [this] { ApplyFilter(); });
+  filters_ = new QListWidget(sidebar);
+  filters_->setObjectName("filter_list");
+  filters_->setFrameShape(QFrame::NoFrame);
+  filters_->setSelectionMode(QAbstractItemView::SingleSelection);
+  filters_->setFocusPolicy(Qt::NoFocus);
+  filters_->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+  for (const FilterEntry& entry : kFilters) {
+    auto* item = new QListWidgetItem(filters_);
+    item->setData(Qt::UserRole, QString(entry.key));
+    auto* row = MakeFilterRow(entry.label, filters_);
+    item->setSizeHint(row->sizeHint());
+    filters_->setItemWidget(item, row);
+  }
+  // setItemWidget replaces an item's own rendering entirely, so the QSS
+  // ::item:selected rule (and the palette's Highlight/HighlightedText roles
+  // it would normally use) never reaches these labels -- restyled by hand
+  // instead, on_accent when selected, otherwise back to the QSS default (an
+  // empty inline stylesheet), so it still reads correctly in a light theme.
+  auto restyle_filter_rows = [this] {
+    for (int row = 0; row < filters_->count(); ++row) {
+      QWidget* row_widget = filters_->itemWidget(filters_->item(row));
+      const bool current = row == filters_->currentRow();
+      const QString color = current ? QString("color: %1;").arg(mira_gui::theme::Current().on_accent.name())
+                                    : QString();
+      for (QLabel* label : row_widget->findChildren<QLabel*>()) label->setStyleSheet(color);
+    }
+  };
+  filters_->setCurrentRow(0);
+  restyle_filter_rows();
+  connect(filters_, &QListWidget::currentRowChanged, this, [this, restyle_filter_rows] {
+    restyle_filter_rows();
+    ApplyFilter();
+  });
+  // QListWidget's own sizeHint doesn't grow with its item count -- fit
+  // exactly the rows it has, once, rather than an arbitrary scrollable box.
+  int filters_height = 2 * filters_->frameWidth();
+  for (int row = 0; row < filters_->count(); ++row) filters_height += filters_->sizeHintForRow(row);
+  filters_->setFixedHeight(filters_height);
   layout->addWidget(filters_);
 
   auto* sort_row = new QHBoxLayout();
@@ -1211,13 +1261,13 @@ void LibraryWindow::RefreshGames() {
 }
 
 QString LibraryWindow::CurrentFilterKey() const {
-  const QVariant data = filters_->currentData();
-  return data.isValid() ? data.toString() : QString("all");
+  QListWidgetItem* item = filters_->currentItem();
+  return item != nullptr ? item->data(Qt::UserRole).toString() : QString("all");
 }
 
 int LibraryWindow::FilterRow(const QString& key) const {
   for (int row = 0; row < filters_->count(); ++row) {
-    if (filters_->itemData(row).toString() == key) return row;
+    if (filters_->item(row)->data(Qt::UserRole).toString() == key) return row;
   }
   return -1;
 }
@@ -1228,20 +1278,36 @@ bool LibraryWindow::MatchesFilter(const mira_gui::GameSummary& game) const {
       !QString::fromStdString(game.name).contains(search, Qt::CaseInsensitive)) {
     return false;
   }
+  return MatchesFilterKey(game, CurrentFilterKey());
+}
 
-  const QString filter = CurrentFilterKey();
-  if (filter == "hidden") return HasTag(game, "hidden");
+bool LibraryWindow::MatchesFilterKey(const mira_gui::GameSummary& game, const QString& key) const {
+  if (key == "hidden") return HasTag(game, "hidden");
   // Every other filter excludes a hidden game — "not displayed by default"
   // means not in "All games" either, not just off the initial screen.
   if (HasTag(game, "hidden")) return false;
-  if (filter == "all") return true;
-  if (filter == "running") return running_ids_.contains(game.id);
-  if (filter == "never") return !game.last_played_at.has_value();
-  return filter.toStdString() == game.status;
+  if (key == "all") return true;
+  if (key == "running") return running_ids_.contains(game.id);
+  if (key == "never") return !game.last_played_at.has_value();
+  return key.toStdString() == game.status;
+}
+
+void LibraryWindow::UpdateFilterCounts() {
+  for (int row = 0; row < filters_->count(); ++row) {
+    QListWidgetItem* item = filters_->item(row);
+    const QString key = item->data(Qt::UserRole).toString();
+    int count = 0;
+    for (const mira_gui::GameSummary& game : games_) {
+      if (MatchesFilterKey(game, key)) ++count;
+    }
+    auto* count_label = qobject_cast<QLabel*>(filters_->itemWidget(item)->findChild<QLabel*>("count"));
+    if (count_label != nullptr) count_label->setText(QString::number(count));
+  }
 }
 
 void LibraryWindow::ApplyFilter() {
   const std::string previously_selected = selected_id_;
+  UpdateFilterCounts();
 
   // Sorted here, not at fetch time, so a sort change costs a tile rebuild,
   // not a round trip.
@@ -1283,9 +1349,14 @@ void LibraryWindow::ApplyFilter() {
                                         : "No games match this filter.");
   }
 
-  footer_->setText(QString("%1 of %2 games · connected via %3")
+  // Two lines: count first (what you're looking at), connection status
+  // second (background fact, muted further by the dot standing in for a
+  // word). Only reached after a successful fetch, so the dot is always
+  // the "connected" color -- there's no "shown, but not connected" state.
+  footer_->setText(QString("%1 of %2 games shown<br><span style='color:%3'>●</span> Connected via %4")
                        .arg(shown)
                        .arg(games_.size())
+                       .arg(mira_gui::theme::Current().success.name())
                        .arg(QString::fromStdString(mira_gui::MiradClient::ResolveSocketPath())));
 }
 

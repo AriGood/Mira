@@ -89,6 +89,54 @@ QWidget#top_bar QToolButton#add_games {
   border: 1px solid @border;
 }
 
+/* --- Left sidebar ---------------------------------------------------------
+ * Library/Classic view/Settings are plain QPushButtons made to read as rows
+ * (see ui/GameTileDelegate.cpp's own status-dot styling for the same
+ * "flatten it, then restyle by objectName" approach elsewhere). */
+
+QWidget#left_sidebar {
+  background: @surface;
+  border-right: 1px solid @border;
+}
+
+QWidget#left_sidebar QPushButton {
+  background: transparent;
+  border: none;
+  border-radius: @radius_control;
+  padding: 7px 10px;
+  text-align: left;
+}
+
+QWidget#left_sidebar QPushButton:hover {
+  background: @surface_alt;
+}
+
+QWidget#left_sidebar QPushButton:pressed {
+  background: @border;
+}
+
+QWidget#left_sidebar QPushButton:checked {
+  background: @accent;
+  color: @on_accent;
+}
+
+/* setItemWidget rows (LibraryWindow.cpp's MakeFilterRow) draw their own
+ * selected-state text color by hand -- this only covers the row's
+ * background and shape. */
+QListWidget#filter_list {
+  background: transparent;
+  border: none;
+}
+
+QListWidget#filter_list::item {
+  padding: 0px;
+  border-radius: @radius_control;
+}
+
+QListWidget#filter_list::item:selected {
+  background: @accent;
+}
+
 /* --- Buttons ------------------------------------------------------------- */
 
 QPushButton {
