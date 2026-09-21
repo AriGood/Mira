@@ -88,6 +88,15 @@ src/
             library folders, installed apps, which Proton build/prefix an
             app uses), SteamScanner (detect -> upsert into GameStore, the
             Steam equivalent of library::Scanner).
+  epic/     Legendary (detects or fetches the `legendary` binary — a
+            native-Linux Epic Games Store CLI client — runs it, and reads
+            its own auth/metadata cache directly), EpicImporter (detect ->
+            upsert into GameStore, the Epic equivalent of
+            steam::SteamScanner), EpicInstaller (install/update via
+            `legendary install|update`, then re-imports). Never runs a
+            game through Legendary itself: an installed Epic title is
+            launched through Mira's own Wine/Proton runners, exactly like
+            any other Windows game.
   wrapper/  main.cpp for `mira-run` — the process mirad actually spawns
             for a direct launch; see "Built: launching a game" below.
   api/      EventBus (in-memory pub/sub) and Server (the REST routes) —
@@ -625,3 +634,10 @@ Recorded here so intent isn't lost between sessions:
   simply absent from the API response — never an error, never a blocker for
   everything else. Non-Steam games have no equivalent source and won't show
   achievement data.
+- **Epic Online Services / EasyAntiCheat provisioning.** Some Epic titles
+  need EOS and/or EAC runtime components installed into the Wine prefix to
+  run at all — Legendary can report which titles need this, but nothing
+  here acts on it yet. `legendary install` succeeds regardless; such a game
+  may still fail to launch or fail anti-cheat validation until a follow-up
+  designs EAC/EOS provisioning as an additional `Provision()`-time step,
+  gated by whatever flag Legendary's own catalog metadata reports for it.

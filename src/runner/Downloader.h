@@ -22,11 +22,13 @@ struct ReleaseAsset {
   std::string published_at;
 };
 
-// Lists releases of `kind` ("proton" or "wine") from its configured
-// GitHub source, newest first. Shells out to curl for the GitHub API
-// request rather than linking libcurl — consistent with how umu-run/wine
-// are already run as subprocesses, and this is occasional, human-triggered
-// traffic, not a hot path.
+// Lists releases of `kind` ("proton", "wine", or "legendary" — the last one
+// isn't a runner, but shares the same "GitHub repo + asset glob" source
+// shape; see src/epic/Legendary.h) from its configured GitHub source, newest
+// first. Shells out to curl for the GitHub API request rather than linking
+// libcurl — consistent with how umu-run/wine are already run as
+// subprocesses, and this is occasional, human-triggered traffic, not a hot
+// path.
 Result<std::vector<ReleaseAsset>> ListReleases(const config::Config& config, const std::string& kind);
 
 // Downloads `asset` (verifying its sha512sum first, if it has one) and

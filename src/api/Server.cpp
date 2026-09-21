@@ -20,8 +20,12 @@
 #include "core/Log.h"
 #include "core/Strings.h"
 #include "desktop/DesktopEntries.h"
+#include "library/Catalog.h"
 #include "library/Scanner.h"
 #include "desktop/DesktopEntryScanner.h"
+#include "epic/EpicImporter.h"
+#include "epic/EpicInstaller.h"
+#include "epic/Legendary.h"
 #include "lutris/LutrisImporter.h"
 #include "metadata/MetadataFetcher.h"
 #include "proc/Session.h"
@@ -500,6 +504,12 @@ void Server::RegisterRoutes() {
     auto result =
         games_.Update(id, [&](model::Game& game) { ApplyOverridesPatch(game, patch); });
     if (!result) return SendError(res, 404, result.error().code, result.error().message);
+    // A per-game override can flip desktop_entries.enabled off for just this
+    // game — every other mutation path syncs already (PATCH /v1/config,
+    // PATCH /v1/games/{id}, DELETE /v1/games/{id}, ...); this one didn't,
+    // so a game's own .desktop entry never got removed until something else
+    // happened to trigger a sync.
+    SyncDesktopEntries(config_, games_);
     SendJson(res, model::ToJson(*result));
   });
 
@@ -519,7 +529,15 @@ void Server::RegisterRoutes() {
     // own record points at, and only if that path is really inside a
     // configured root — never wherever install_path/data_dir happen to say,
     // in case a hand-edited games.toml points somewhere it shouldn't.
-    if (delete_files) {
+    if (delete_files && game->source == "epic" && !game->source_ref.empty()) {
+      // Legendary owns this install's manifest bookkeeping — uninstalling
+      // through it instead of a plain directory delete keeps that manifest
+      // in sync, so a later `legendary list-installed` doesn't still think
+      // this title is here (and broken).
+      if (auto uninstalled = epic::RunLegendary(config_, {"uninstall", game->source_ref, "-y"}); !uninstalled) {
+        return SendError(res, 400, uninstalled.error().code, uninstalled.error().message);
+      }
+    } else if (delete_files) {
       if (auto deleted = DeleteUnderRoot(game->install_path, config_.GetPathArray("library_roots")); !deleted) {
         return SendError(res, 400, deleted.error().code, deleted.error().message);
       }
@@ -590,6 +608,185 @@ void Server::RegisterRoutes() {
     SyncDesktopEntries(config_, games_);
     for (const model::Game& game : summary->added_games) metadata_fetches_.Enqueue(config_, events_, game);
     SendJson(res, {{"added", summary->added}, {"updated", summary->updated}, {"skipped", summary->skipped}});
+  });
+
+  // --- epic -------------------------------------------------------------
+  //
+  // Wraps Legendary, a native-Linux Epic Games Store CLI client, for
+  // everything protocol-shaped (auth, catalog, install/update). Mira never
+  // runs Legendary's own `legendary launch` — an installed Epic game is
+  // launched through Mira's own Wine/Proton runners like any other Windows
+  // game (see docs/architecture.md). Nothing here assumes legendary is
+  // already on the system — GET .../legendary/status is always safe to
+  // call first, and POST .../legendary/install is how Mira gets it there.
+
+  http_->Get("/v1/epic/legendary/status", [this](const Request&, Response& res) {
+    const epic::LegendaryStatus status = epic::DetectLegendary(config_);
+    SendJson(res, {{"installed", status.installed},
+                  {"source", status.source},
+                  {"path", status.path},
+                  {"version", status.version}});
+  });
+
+  // Downloads and installs Legendary's latest matching GitHub release —
+  // detached, same "don't block the request thread on a slow download"
+  // pattern as POST /v1/runners/download above; epic.legendary.install.*
+  // on the event stream is how a caller finds out it's done. Re-running
+  // this later re-fetches the latest release, which is also how staying
+  // up to date works — no separate update endpoint.
+  http_->Post("/v1/epic/legendary/install", [this](const Request&, Response& res) {
+    auto releases = runner::ListReleases(config_, "legendary");
+    if (!releases) return SendError(res, 502, releases.error().code, releases.error().message);
+    if (releases->empty()) return SendError(res, 404, "no_release_found", "no matching legendary release found");
+
+    const runner::ReleaseAsset asset = releases->front();  // newest first
+    events_.Publish("epic.legendary.install.started", {{"tag", asset.tag}});
+    std::thread([this, asset] {
+      if (auto installed = epic::InstallLegendaryBinary(config_, asset); !installed) {
+        log::Error("legendary install failed ({}): {}", asset.tag, installed.error().message);
+        events_.Publish("epic.legendary.install.failed", {{"tag", asset.tag}, {"error", installed.error().message}});
+      } else {
+        log::Info("installed legendary {}", asset.tag);
+        events_.Publish("epic.legendary.install.finished", {{"tag", asset.tag}});
+      }
+    }).detach();
+
+    SendJson(res, {{"status", "downloading"}, {"tag", asset.tag}}, 202);
+  });
+
+  // The one call to know the whole picture: is legendary installed, and are
+  // we authenticated. Never errors — both are just fields on the result.
+  http_->Get("/v1/epic/status", [this](const Request&, Response& res) {
+    const epic::EpicAuthStatus status = epic::Status(config_);
+    SendJson(res, {{"legendary", {{"installed", status.legendary.installed},
+                                  {"source", status.legendary.source},
+                                  {"path", status.legendary.path},
+                                  {"version", status.legendary.version}}},
+                  {"authenticated", status.authenticated},
+                  {"account", status.account}});
+  });
+
+  // The user pastes back the code shown at epic::kLoginUrl, visited in
+  // their own browser -- mirad itself never opens one (see Legendary.h).
+  http_->Post("/v1/epic/auth", [this](const Request& req, Response& res) {
+    json body = json::parse(req.body, nullptr, false);
+    if (body.is_discarded() || !body.contains("code") || !body["code"].is_string()) {
+      return SendError(res, 400, "invalid_body", R"(expected {"code": "..."})");
+    }
+    if (auto logged_in = epic::Login(config_, body["code"]); !logged_in) {
+      return SendError(res, 400, logged_in.error().code, logged_in.error().message);
+    }
+    const epic::EpicAuthStatus status = epic::Status(config_);
+    SendJson(res, {{"authenticated", status.authenticated}, {"account", status.account}});
+  });
+
+  http_->Post("/v1/epic/logout", [this](const Request&, Response& res) {
+    if (auto logged_out = epic::Logout(config_); !logged_out) {
+      return SendError(res, 400, logged_out.error().code, logged_out.error().message);
+    }
+    SendJson(res, {{"status", "logged_out"}});
+  });
+
+  // Imported games land in the same GameStore as everything else — no
+  // separate GET endpoint needed, they just show up in GET /v1/games.
+  http_->Post("/v1/epic/import", [this](const Request&, Response& res) {
+    epic::EpicImporter importer(config_, games_, events_);
+    auto summary = importer.Import();
+    if (!summary) return SendError(res, 404, summary.error().code, summary.error().message);
+    SyncDesktopEntries(config_, games_);
+    for (const model::Game& game : summary->added_games) metadata_fetches_.Enqueue(config_, events_, game);
+    SendJson(res, {{"added", summary->added}, {"updated", summary->updated}});
+  });
+
+  // --- library (what the account owns, across sources) ------------------
+  //
+  // Distinct from GET /v1/games, which is what Mira *tracks*. An
+  // entitlement isn't a tracked game (see library/Catalog.h): these are
+  // read through live from each source rather than persisted, and a title
+  // becomes a model::Game only once it's installed.
+
+  http_->Get("/v1/library", [this](const Request& req, Response& res) {
+    const std::string source = req.has_param("source") ? req.get_param_value("source") : "";
+    auto entries = library::ListCatalog(config_, games_, source);
+    if (!entries) return SendError(res, 400, entries.error().code, entries.error().message);
+    json out = json::array();
+    for (const library::CatalogEntry& entry : *entries) {
+      out.push_back({{"source", entry.source},
+                     {"ref", entry.ref},
+                     {"title", entry.title},
+                     {"installed", entry.installed},
+                     {"game_id", entry.game_id},
+                     {"play_seconds", entry.play_seconds}});
+    }
+    SendJson(res, std::move(out));
+  });
+
+  // Installs/updates run detached, same reasoning as POST
+  // /v1/runners/download above — a game download is easily minutes long.
+  // library.install.started/finished/failed on the event stream is how a
+  // caller finds out it's done; "update": true on the payload is the only
+  // difference between the two verbs, rather than a parallel event
+  // namespace. Keyed by {source, ref} rather than a game id: the whole
+  // point is installing something Mira doesn't track yet.
+  auto library_install_or_update = [this](const Request& req, Response& res, bool is_update) {
+    json body = json::parse(req.body, nullptr, false);
+    if (body.is_discarded() || !body.contains("source") || !body["source"].is_string() ||
+        !body.contains("ref") || !body["ref"].is_string()) {
+      return SendError(res, 400, "invalid_body", R"(expected {"source": "epic"|"steam", "ref": "..."})");
+    }
+    const std::string source = body["source"];
+    const std::string ref = body["ref"];
+
+    if (source == "steam") {
+      // Steam's own client owns downloading — same handoff posture as
+      // steam.launch_mode "steam" (see /launch above). Nothing to track
+      // here: the game shows up in POST /v1/steam/scan once Steam has
+      // actually put it on disk.
+      if (is_update) {
+        return SendError(res, 400, "unsupported", "Steam updates its own games; nothing for Mira to do");
+      }
+      Command command;
+      command.argv = {"steam", std::format("steam://install/{}", ref)};
+      if (auto spawned = runner::SpawnDetached(command); !spawned) {
+        return SendError(res, 500, spawned.error().code, spawned.error().message);
+      }
+      return SendJson(res, {{"status", "handed_off_to_steam"}, {"ref", ref}}, 202);
+    }
+
+    if (source != "epic") {
+      return SendError(res, 400, "unknown_source", std::format("no installable source named \"{}\"", source));
+    }
+
+    const epic::EpicAuthStatus auth = epic::Status(config_);
+    if (!auth.legendary.installed) {
+      return SendError(res, 409, "legendary_missing", "run \"mira epic setup\" first");
+    }
+    if (!auth.authenticated) {
+      return SendError(res, 409, "not_authenticated", "run \"mira epic login\" first");
+    }
+
+    events_.Publish("library.install.started", {{"source", source}, {"ref", ref}, {"update", is_update}});
+    std::thread([this, source, ref, is_update] {
+      epic::EpicInstaller installer(config_, games_, events_);
+      const Result<void> result = is_update ? installer.Update(ref) : installer.Install(ref);
+      if (!result) {
+        log::Error("epic {} failed ({}): {}", is_update ? "update" : "install", ref, result.error().message);
+        events_.Publish("library.install.failed",
+                       {{"source", source}, {"ref", ref}, {"update", is_update}, {"error", result.error().message}});
+      } else {
+        log::Info("epic {} finished: {}", is_update ? "update" : "install", ref);
+        SyncDesktopEntries(config_, games_);
+        events_.Publish("library.install.finished", {{"source", source}, {"ref", ref}, {"update", is_update}});
+      }
+    }).detach();
+
+    SendJson(res, {{"status", is_update ? "updating" : "installing"}, {"ref", ref}}, 202);
+  };
+  http_->Post("/v1/library/install", [library_install_or_update](const Request& req, Response& res) {
+    library_install_or_update(req, res, false);
+  });
+  http_->Post("/v1/library/update", [library_install_or_update](const Request& req, Response& res) {
+    library_install_or_update(req, res, true);
   });
 
   // --- desktop entries (importing someone else's, not writing ours) -----

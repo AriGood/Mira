@@ -81,6 +81,7 @@ json ToJson(const Game& game) {
       {"args", game.args},
       {"working_dir", game.working_dir},
       {"runner_ref", game.runner_ref},
+      {"source_ref", game.source_ref},
       {"data_dir", game.data_dir},
       {"runner_config", game.runner_config},
       {"overrides", game.overrides},
@@ -130,6 +131,7 @@ Game GameFromJson(const json& document) {
   game.args = document.value("args", std::string());
   game.working_dir = document.value("working_dir", std::string());
   game.runner_ref = document.value("runner_ref", std::string());
+  game.source_ref = document.value("source_ref", std::string());
   game.data_dir = document.value("data_dir", std::string());
   if (document.contains("runner_config") && document["runner_config"].is_object()) {
     game.runner_config = document["runner_config"];

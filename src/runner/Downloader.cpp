@@ -28,6 +28,14 @@ Result<Source> SourceFor(const config::Config& config, const std::string& kind) 
     return Source{.repo = config.GetString("runner_sources.wine_ge.repo"),
                  .asset_pattern = config.GetString("runner_sources.wine_ge.asset_pattern")};
   }
+  // Not a runner kind — Legendary is the Epic Games Store CLI client
+  // (see src/epic/Legendary.h) — but it shares the same "list a GitHub
+  // repo's releases, filter assets by glob" shape, so it reuses ListReleases
+  // rather than duplicating the GitHub API call.
+  if (kind == "legendary") {
+    return Source{.repo = config.GetString("runner_sources.legendary.repo"),
+                 .asset_pattern = config.GetString("runner_sources.legendary.asset_pattern")};
+  }
   return Err("unknown_runner_kind", std::format("no downloadable source for kind \"{}\"", kind));
 }
 

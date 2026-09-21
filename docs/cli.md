@@ -121,6 +121,51 @@ as ordinary games (`GET /v1/games`, `mira list`, `mira show` all work on
 one with no special-casing). Prints `added: N  updated: N`. Idempotent:
 rerunning it never duplicates an already-detected app.
 
+## `mira library [source]`
+`GET /v1/library` — what the account *owns* on each storefront, as opposed
+to what Mira tracks (`mira list`). Entitlements aren't stored in
+`games.toml`; they're read through live from each source. One line per
+title, marked `[installed]` when Mira already tracks it:
+```
+epic     e8bbb84be35640cda646233152ff3428  [installed]  Brotato
+epic     d26da9e047e4440a80781f13a8b7c062               Botanicula
+```
+`mira library epic` / `mira library steam` narrows it to one source. A
+source that isn't set up contributes nothing rather than erroring, so an
+empty listing means "nothing owned, or nothing configured" — `mira epic
+status` tells the two apart. Steam needs `steam.web_api_key` +
+`steam.steamid64` to report anything here at all, since Steam's on-disk
+files only describe games that are already installed.
+
+## `mira library install <source> <ref>` / `mira library update <source> <ref>`
+`POST /v1/library/install` — installs a title the account owns but Mira
+doesn't track yet. `<ref>` is the id `mira library` prints (Legendary's
+app_name, Steam's appid). Returns immediately; the download runs detached,
+so watch `mira watch` for `library.install.finished`. For Epic this drives
+`legendary install` and then imports and provisions the result; for Steam
+it hands off to the Steam client (`steam://install/<appid>`) and the game
+appears on the next `mira steam scan`. `update` is Epic-only — Steam
+updates its own games.
+
+## `mira epic setup|status|login|logout|import`
+Epic Games Store support, via [Legendary](https://github.com/derrod/legendary).
+- `setup` — downloads Legendary's latest release binary into
+  `~/.config/mira/tools/legendary`. Re-run it to update. Needed once before
+  anything else here works.
+- `status` — whether Legendary is installed (and from where) and whether
+  it's authenticated, in one call. Safe before setup.
+- `login` — prints Epic's login URL, then reads back either the
+  `authorizationCode` or the whole JSON blob that page shows and pastes it
+  through to `legendary auth`. The interactive part lives here rather than
+  in `mirad`, which is headless and has no browser.
+- `logout` — `legendary auth --delete`.
+- `import` — adds already-installed Epic titles as ordinary games, tagged
+  `epic`. Prints `added: N  updated: N`. Titles that aren't installed stay
+  out of `games.toml` — see `mira library`.
+
+Installing is deliberately not an `epic` subcommand: it's source-generic,
+so it lives under `mira library install epic <app_name>`.
+
 ## `mira metadata <id> [--refresh]`
 `GET /v1/games/{id}/metadata` — prints the cached cover-art/store-info JSON
 (description, genres, release date, developers/publishers, price, Steam

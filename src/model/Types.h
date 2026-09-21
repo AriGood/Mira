@@ -63,6 +63,11 @@ struct Game {
   // "kind:name", e.g. "proton:GE-Proton11-7"; empty until resolved.
   std::string runner_ref;
 
+  // Opaque, owned by whatever `source` is — e.g. Legendary's app_name for
+  // an "epic" game. Distinct from runner_config, which is owned by the
+  // runner instead. Empty for sources that don't need one.
+  std::string source_ref;
+
   // The game's private directory. A Wine/Proton prefix today, but core does
   // not know that: what lives inside belongs to the runner.
   std::string data_dir;
