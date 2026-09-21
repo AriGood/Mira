@@ -144,6 +144,7 @@ private:
   QToolButton* settings_button_ = nullptr;
   QWidget* settings_actions_widget_ = nullptr;
   QPushButton* settings_back_button_ = nullptr;
+  QPushButton* settings_reset_button_ = nullptr;
   QPushButton* settings_save_button_ = nullptr;
   QToolButton* minimize_button_ = nullptr;
   QToolButton* maximize_button_ = nullptr;

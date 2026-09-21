@@ -8,13 +8,13 @@
 #include "../client/Types.h"
 
 class QCheckBox;
-class QFormLayout;
 class QLabel;
 class QLineEdit;
 class QPushButton;
-class QTabWidget;
 
 namespace mira_gui {
+
+class SettingsNavWidget;
 
 // The "just for this game" half of GameDetailDialog: every overridable
 // setting, resolved through default -> settings.toml -> this game, editable
@@ -58,20 +58,16 @@ private:
     QLabel* layer_label = nullptr;
     QPushButton* reset_button = nullptr;
     QWidget* row_widget = nullptr;
-    QFormLayout* owner_form = nullptr;  // which category tab's form this row lives in
   };
 
   void BuildRows(const ConfigSchemaResult& schema);
-  // Adds a tab (scroll-wrapped) and returns its form layout, ready for rows —
-  // same shape as every overridable key gets on the main Settings screen.
-  QFormLayout* AddCategoryTab(const QString& title);
   void ApplyValues(const GameConfigResult& config);
   void Reload();
   void ResetField(size_t index);
   std::string CurrentText(const Field& field) const;
 
   std::string game_id_;
-  QTabWidget* tabs_ = nullptr;
+  SettingsNavWidget* nav_ = nullptr;
   std::vector<Field> fields_;
 };
 

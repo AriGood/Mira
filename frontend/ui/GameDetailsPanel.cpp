@@ -2,26 +2,21 @@
 
 #include <QFormLayout>
 #include <QLabel>
-#include <QPainter>
-#include <QPainterPath>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QSizePolicy>
 #include <QStackedWidget>
 #include <QVBoxLayout>
 
 #include "../client/MiradClient.h"
 #include "AboutPanel.h"
 #include "ArtworkStore.h"
-#include "CoverArt.h"
 #include "GamePresentation.h"
+#include "HeroArtWidget.h"
 #include "Theme.h"
-
-#include <algorithm>
 
 namespace mira_gui {
 namespace {
-
-constexpr QSize kCoverSize(140, 210);
 
 std::string Join(const std::vector<std::string>& values) {
   std::string joined;
@@ -32,10 +27,27 @@ std::string Join(const std::vector<std::string>& values) {
   return joined;
 }
 
+// QPushButton's own default horizontal size policy is Fixed — one of these,
+// with wording like "Refresh cover art & metadata", dictates a floor on the
+// sidebar's minimum width the same way an unwrappable label does (see
+// ValueLabel), and dragging the splitter narrower than that floor just left
+// its own text spilling past the panel instead of shrinking. Ignored fixes
+// it the same way: still full width when there's room, no longer a floor
+// when there isn't.
+QPushButton* ActionButton(const QString& text, QWidget* parent) {
+  auto* button = new QPushButton(text, parent);
+  button->setSizePolicy(QSizePolicy::Ignored, button->sizePolicy().verticalPolicy());
+  return button;
+}
+
 QLabel* ValueLabel(QWidget* parent) {
   auto* label = new QLabel(parent);
   label->setTextInteractionFlags(Qt::TextSelectableByMouse);
   label->setWordWrap(true);
+  // Ignored, not Preferred: word wrap can't break an unbroken string (a
+  // path, "proton:GE-Proton11-7"), so its minimumSizeHint was the sidebar's
+  // own floor, wider than the splitter was ever dragged to.
+  label->setSizePolicy(QSizePolicy::Ignored, label->sizePolicy().verticalPolicy());
   return label;
 }
 
@@ -55,16 +67,8 @@ GameDetailsPanel::GameDetailsPanel(QWidget* parent) : QWidget(parent) {
   layout->setContentsMargins(12, 12, 12, 12);
   layout->setSpacing(10);
 
-  // The wide hero art when mirad has it (Steam games do), the portrait cover
-  // otherwise — never both, which reads as two pictures of the same game.
-  banner_ = new QLabel(panel);
-  banner_->setAlignment(Qt::AlignCenter);
-  banner_->setVisible(false);
-  layout->addWidget(banner_);
-
-  cover_ = new QLabel(panel);
-  cover_->setAlignment(Qt::AlignCenter);
-  layout->addWidget(cover_);
+  hero_art_ = new HeroArtWidget(panel);
+  layout->addWidget(hero_art_);
 
   name_ = new QLabel(panel);
   name_->setWordWrap(true);
@@ -74,7 +78,7 @@ GameDetailsPanel::GameDetailsPanel(QWidget* parent) : QWidget(parent) {
   status_ = new QLabel(panel);
   layout->addWidget(status_);
 
-  play_ = new QPushButton("Play", panel);
+  play_ = ActionButton("Play", panel);
   play_->setMinimumHeight(34);
   connect(play_, &QPushButton::clicked, this, [this] {
     if (game_id_.empty()) return;
@@ -87,7 +91,7 @@ GameDetailsPanel::GameDetailsPanel(QWidget* parent) : QWidget(parent) {
   });
   layout->addWidget(play_);
 
-  auto* edit = new QPushButton("Details && settings…", panel);
+  auto* edit = ActionButton("Details && settings…", panel);
   connect(edit, &QPushButton::clicked, this, [this] {
     if (!game_id_.empty()) emit EditRequested(QString::fromStdString(game_id_));
   });
@@ -95,7 +99,7 @@ GameDetailsPanel::GameDetailsPanel(QWidget* parent) : QWidget(parent) {
 
   // Also on the tile's right-click menu, but a right-click menu is not
   // where anyone looks for "this game has the wrong picture".
-  auto* refresh_metadata = new QPushButton("Refresh cover art && metadata", panel);
+  auto* refresh_metadata = ActionButton("Refresh cover art && metadata", panel);
   refresh_metadata->setToolTip(
       "Re-fetch this game's cover and store info. Worth doing after setting a SteamGridDB key, "
       "which is what a non-Steam game needs before it can have artwork at all.");
@@ -104,7 +108,7 @@ GameDetailsPanel::GameDetailsPanel(QWidget* parent) : QWidget(parent) {
   });
   layout->addWidget(refresh_metadata);
 
-  auto* choose_artwork = new QPushButton("Choose cover art…", panel);
+  auto* choose_artwork = ActionButton("Choose cover art…", panel);
   choose_artwork->setToolTip(
       "Browse SteamGridDB's other results for this game's cover, if it has any cached.");
   connect(choose_artwork, &QPushButton::clicked, this, [this] {
@@ -112,7 +116,7 @@ GameDetailsPanel::GameDetailsPanel(QWidget* parent) : QWidget(parent) {
   });
   layout->addWidget(choose_artwork);
 
-  auto* choose_hero = new QPushButton("Choose hero art…", panel);
+  auto* choose_hero = ActionButton("Choose hero art…", panel);
   choose_hero->setToolTip(
       "Browse SteamGridDB's other results for this game's wide banner art, if it has any cached.");
   connect(choose_hero, &QPushButton::clicked, this, [this] {
@@ -164,24 +168,17 @@ GameDetailsPanel::GameDetailsPanel(QWidget* parent) : QWidget(parent) {
   scroll->setFrameShape(QFrame::NoFrame);
   stack_->addWidget(scroll);
 
-  // The banner is a painted pixmap, so the stylesheet cannot re-round it
-  // when the corner radius changes.
-  connect(theme::Notifier::Instance(), &theme::Notifier::Changed, this,
-          [this] { RenderBanner(); });
-
   Clear();
 }
 
 void GameDetailsPanel::Clear() {
   game_id_.clear();
+  hero_art_->Clear();
   stack_->setCurrentIndex(0);
 }
 
 void GameDetailsPanel::ClearMetadata() {
   description_->setVisible(false);
-  banner_->setVisible(false);
-  banner_source_ = QPixmap();
-  cover_->setVisible(true);
   for (QLabel* label : {released_, developer_, genres_, reviews_, protondb_}) {
     form_->setRowVisible(label, false);
   }
@@ -220,84 +217,22 @@ void GameDetailsPanel::ShowMetadata(const GameMetadata& metadata) {
 void GameDetailsPanel::LoadMetadata(const std::string& id) {
   MiradClient::GetMetadataAsync(this, id, [this, id](GameMetadataResult result) {
     if (game_id_ != id) return;  // the selection moved on while this was in flight
-    if (!result.ok) return;      // missing is the ordinary case, and says nothing to show
-    ShowMetadata(result.metadata);
-    // Not named `slots`: Qt's moc keywords define that as a macro.
-    const std::vector<std::string>& art = result.metadata.art_slots;
-    if (std::find(art.begin(), art.end(), "hero") != art.end()) LoadBanner(id);
+    if (result.ok) ShowMetadata(result.metadata);
   });
 }
 
-void GameDetailsPanel::LoadBanner(const std::string& id) {
-  const QString key = QString::fromStdString(id);
-  if (banners_.contains(key)) {
-    banner_source_ = banners_.value(key);
-    RenderBanner();
-    return;
-  }
-  MiradClient::GetArtworkSlotAsync(this, id, "hero", [this, id, key](ArtworkResult result) {
-    if (!result.ok) return;
-    QPixmap pixmap;
-    if (!pixmap.loadFromData(reinterpret_cast<const uchar*>(result.bytes.data()),
-                             static_cast<uint>(result.bytes.size()))) {
-      return;
-    }
-    banners_.insert(key, pixmap);
-    if (game_id_ != id) return;
-    banner_source_ = pixmap;
-    RenderBanner();
-  });
-}
+void GameDetailsPanel::SetArtworkStore(ArtworkStore* store) { hero_art_->SetArtworkStore(store); }
 
-void GameDetailsPanel::RenderBanner() {
-  if (banner_source_.isNull()) return;
+void GameDetailsPanel::RefreshBanner(const std::string& id) { hero_art_->RefreshBanner(id); }
 
-  const int width = qMax(120, banner_->width());
-  const QPixmap scaled = banner_source_.scaledToWidth(width, Qt::SmoothTransformation);
-
-  // Rounded to the panel radius the theme asks for, which means painting it:
-  // a stylesheet cannot clip a pixmap inside a QLabel.
-  const int radius = theme::Current().radius_panel;
-  QPixmap rounded(scaled.size());
-  rounded.fill(Qt::transparent);
-  QPainter painter(&rounded);
-  painter.setRenderHint(QPainter::Antialiasing);
-  QPainterPath clip;
-  clip.addRoundedRect(QRectF(QPointF(0, 0), scaled.size()), radius, radius);
-  painter.setClipPath(clip);
-  painter.drawPixmap(0, 0, scaled);
-  painter.end();
-
-  banner_->setPixmap(rounded);
-  banner_->setVisible(true);
-  cover_->setVisible(false);
-}
-
-void GameDetailsPanel::resizeEvent(QResizeEvent* event) {
-  QWidget::resizeEvent(event);
-  RenderBanner();
-}
-
-void GameDetailsPanel::SetArtworkStore(ArtworkStore* store) { artwork_ = store; }
-
-void GameDetailsPanel::RefreshBanner(const std::string& id) {
-  banners_.remove(QString::fromStdString(id));
-  if (game_id_ == id) LoadBanner(id);
-}
-
-void GameDetailsPanel::RefreshCover(const GameSummary& game) {
-  cover_->setPixmap(artwork_ != nullptr
-                        ? artwork_->Cover(game, kCoverSize, devicePixelRatioF())
-                        : PlaceholderCover(QString::fromStdString(game.name),
-                                           QString::fromStdString(game.id), kCoverSize,
-                                           devicePixelRatioF()));
-}
+void GameDetailsPanel::RefreshCover(const GameSummary&) { hero_art_->RefreshCover(); }
 
 void GameDetailsPanel::ShowGame(const GameSummary& game, bool running) {
   const bool same_game = game_id_ == game.id;
   game_id_ = game.id;
   running_ = running;
   stack_->setCurrentIndex(1);
+  hero_art_->ShowGame(game);
 
   // Only on a real change of selection: ShowGame also runs for a state event
   // on the game already shown, and clearing there would flicker.
@@ -306,7 +241,6 @@ void GameDetailsPanel::ShowGame(const GameSummary& game, bool running) {
     LoadMetadata(game.id);
   }
 
-  RefreshCover(game);
   name_->setText(QString::fromStdString(game.name));
 
   // "Ready" is the common case and says nothing worth a line of its own —

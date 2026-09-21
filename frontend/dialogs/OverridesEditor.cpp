@@ -7,11 +7,10 @@
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QSizePolicy>
-#include <QTabWidget>
 
 #include "../ui/Notify.h"
+#include "../ui/SettingsNav.h"
 #include <QPushButton>
-#include <QScrollArea>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -28,22 +27,8 @@ OverridesEditor::OverridesEditor(std::string game_id, QWidget* parent)
   auto* outer = new QVBoxLayout(this);
   outer->setContentsMargins(0, 0, 0, 0);
 
-  tabs_ = new QTabWidget(this);
-  outer->addWidget(tabs_);
-}
-
-QFormLayout* OverridesEditor::AddCategoryTab(const QString& title) {
-  auto* page = new QWidget(tabs_);
-  auto* form = new QFormLayout(page);
-  form->setVerticalSpacing(8);
-  form->setHorizontalSpacing(14);
-
-  auto* scroll = new QScrollArea(tabs_);
-  scroll->setWidget(page);
-  scroll->setWidgetResizable(true);
-  scroll->setFrameShape(QFrame::NoFrame);
-  tabs_->addTab(scroll, title);
-  return form;
+  nav_ = new SettingsNavWidget(this);
+  outer->addWidget(nav_);
 }
 
 void OverridesEditor::Load() {
@@ -76,13 +61,12 @@ void OverridesEditor::BuildRows(const ConfigSchemaResult& schema) {
   }
 
   for (const QString& category : ordered_categories) {
-    QFormLayout* form = AddCategoryTab(category.isEmpty() ? "General" : category);
+    QFormLayout* form = nav_->AddCategory(category.isEmpty() ? "General" : category);
 
     for (const size_t i : buckets[category]) {
       const ConfigSchemaEntry& entry = entries[i];
       Field field;
       field.entry = entry;
-      field.owner_form = form;
 
       auto* row_widget = new QWidget(this);
       auto* row_layout = new QHBoxLayout(row_widget);
@@ -122,6 +106,9 @@ void OverridesEditor::BuildRows(const ConfigSchemaResult& schema) {
       const size_t index = fields_.size() - 1;
       connect(field.reset_button, &QPushButton::clicked, this, [this, index] { ResetField(index); });
       form->addRow(label, row_widget);
+      nav_->RegisterRow(form, row_widget,
+                        QString("%1 %2 %3").arg(QString::fromStdString(entry.key), category,
+                                                 QString::fromStdString(entry.doc)));
     }
   }
 }
@@ -136,7 +123,7 @@ void OverridesEditor::ApplyValues(const GameConfigResult& config) {
     if (it == fields_.end()) continue;
     Field& field = *it;
 
-    field.owner_form->setRowVisible(field.row_widget, entry.overridable);
+    nav_->SetRowGateVisible(field.row_widget, entry.overridable);
     if (!entry.overridable) continue;
 
     field.layer = entry.layer;

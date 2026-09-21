@@ -3,9 +3,6 @@
 #include <QString>
 #include <QWidget>
 
-#include <QHash>
-#include <QPixmap>
-
 #include <string>
 
 #include "../client/Types.h"
@@ -13,12 +10,12 @@
 class QFormLayout;
 class QLabel;
 class QPushButton;
-class QResizeEvent;
 class QStackedWidget;
 
 namespace mira_gui {
 
 class ArtworkStore;
+class HeroArtWidget;
 
 // The side panel a selected game fills in: cover, name, status, the
 // play/stop button, and its metadata.
@@ -49,9 +46,6 @@ public:
   // currently shown. For game.artwork_selected on the hero slot.
   void RefreshBanner(const std::string& id);
 
-protected:
-  void resizeEvent(QResizeEvent* event) override;
-
 signals:
   void PlayRequested(const QString& id);
   void StopRequested(const QString& id);
@@ -67,19 +61,16 @@ private:
   void LoadMetadata(const std::string& id);
   void ShowMetadata(const GameMetadata& metadata);
   void ClearMetadata();
-  void LoadBanner(const std::string& id);
-  void RenderBanner();
 
   QStackedWidget* stack_ = nullptr;
   QFormLayout* form_ = nullptr;
-  QLabel* banner_ = nullptr;
+  HeroArtWidget* hero_art_ = nullptr;
   QLabel* description_ = nullptr;
   QLabel* released_ = nullptr;
   QLabel* developer_ = nullptr;
   QLabel* genres_ = nullptr;
   QLabel* reviews_ = nullptr;
   QLabel* protondb_ = nullptr;
-  QLabel* cover_ = nullptr;
   QLabel* name_ = nullptr;
   QLabel* status_ = nullptr;
   QLabel* platform_ = nullptr;
@@ -90,11 +81,8 @@ private:
   QLabel* error_ = nullptr;
   QPushButton* play_ = nullptr;
 
-  ArtworkStore* artwork_ = nullptr;
   std::string game_id_;
   bool running_ = false;
-  QHash<QString, QPixmap> banners_;  // hero art by id, at the size mirad sent
-  QPixmap banner_source_;            // the one on screen, before scaling
 };
 
 }  // namespace mira_gui

@@ -77,6 +77,15 @@ bool ArtworkStore::HasArtwork(const std::string& id) const {
   return original_.contains(QString::fromStdString(id));
 }
 
+QPixmap ArtworkStore::RawArtwork(const std::string& id) const {
+  return original_.value(QString::fromStdString(id));
+}
+
+void ArtworkStore::EnsureRequested(const std::string& id) {
+  const QString key = QString::fromStdString(id);
+  if (!answered_.contains(key)) Request(key);
+}
+
 void ArtworkStore::Invalidate(const std::string& id) {
   const QString key = QString::fromStdString(id);
   original_.remove(key);

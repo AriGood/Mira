@@ -8,18 +8,19 @@
 #include <QFormLayout>
 #include <QGridLayout>
 #include <QHBoxLayout>
+#include <QKeySequenceEdit>
 #include <QLabel>
 #include <QLineEdit>
 #include <QSpinBox>
 
+#include "KeyBindings.h"
 #include "Notify.h"
+#include "SettingsNav.h"
 #include "Theme.h"
 #include "SystemNotifier.h"
 #include <QPushButton>
-#include <QScrollArea>
 #include <QSizePolicy>
 #include <QStringList>
-#include <QTabWidget>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -33,37 +34,24 @@ namespace mira_gui {
 SettingsPanel::SettingsPanel(QWidget* parent) : QWidget(parent) {
   auto* layout = new QVBoxLayout(this);
   layout->setContentsMargins(0, 0, 0, 0);
-  layout->setSpacing(10);
+  layout->setSpacing(0);
+
+  nav_ = new SettingsNavWidget(this);
+  layout->addWidget(nav_, /*stretch=*/1);
 
   show_advanced_ = new QCheckBox("Show advanced && expert settings", this);
   connect(show_advanced_, &QCheckBox::toggled, this, &SettingsPanel::SetAdvancedVisible);
-  layout->addWidget(show_advanced_);
+  nav_->SetHeaderWidget(show_advanced_);
 
-  tabs_ = new QTabWidget(this);
-  layout->addWidget(tabs_, /*stretch=*/1);
   BuildInterfaceGroup();
+  BuildShortcutsGroup();
 
   setEnabled(false);
   Load();
 }
 
-QFormLayout* SettingsPanel::AddCategoryTab(const QString& title) {
-  auto* page = new QWidget(this);
-  auto* form = new QFormLayout(page);
-  form->setVerticalSpacing(10);
-  form->setHorizontalSpacing(14);
-  form->setRowWrapPolicy(QFormLayout::WrapLongRows);
-
-  auto* scroll = new QScrollArea(this);
-  scroll->setWidget(page);
-  scroll->setWidgetResizable(true);
-  scroll->setFrameShape(QFrame::NoFrame);
-  tabs_->addTab(scroll, title);
-  return form;
-}
-
 void SettingsPanel::BuildInterfaceGroup() {
-  auto* form = AddCategoryTab("Interface");
+  auto* form = nav_->AddCategory("Interface");
   QWidget* box = form->parentWidget();
 
   scan_on_startup_ = new QCheckBox(box);
@@ -72,6 +60,7 @@ void SettingsPanel::BuildInterfaceGroup() {
       "Run a library scan when the frontend opens. mirad's own watcher keeps the library current "
       "while it runs, so this only matters for changes made while it was stopped.");
   form->addRow("Scan the library on startup", scan_on_startup_);
+  nav_->RegisterRow(form, scan_on_startup_, "scan the library on startup");
 
   theme_ = new QComboBox(box);
   theme_->addItem("Follow the desktop", "auto");
@@ -80,6 +69,7 @@ void SettingsPanel::BuildInterfaceGroup() {
       "Drop a .toml of your own into ~/.config/mira/themes to add to this list — see any "
       "bundled theme for the keys it can set.");
   form->addRow("Theme", theme_);
+  nav_->RegisterRow(form, theme_, "theme appearance dark light");
 
   notification_timeout_ = new QSpinBox(box);
   notification_timeout_->setRange(0, mira_gui::notify::kMaxTimeoutSeconds);
@@ -95,6 +85,7 @@ void SettingsPanel::BuildInterfaceGroup() {
           : "No desktop notification service is running, so this falls back to a card inside "
             "the window. How long it stays up. \"Until dismissed\" is the default.");
   form->addRow("Keep notifications for", notification_timeout_);
+  nav_->RegisterRow(form, notification_timeout_, "keep notifications for desktop notification timeout");
 
   game_settings_in_sidebar_ = new QCheckBox(box);
   game_settings_in_sidebar_->setChecked(true);
@@ -102,6 +93,7 @@ void SettingsPanel::BuildInterfaceGroup() {
       "\"Details & settings\" edits a game inline in the right panel instead of opening a "
       "separate window.");
   form->addRow("Edit a game in the sidebar", game_settings_in_sidebar_);
+  nav_->RegisterRow(form, game_settings_in_sidebar_, "edit a game in the sidebar");
 
   auto* shapes = new QLabel("Layout", box);
   shapes->setProperty("role", "section");
@@ -135,7 +127,17 @@ void SettingsPanel::BuildInterfaceGroup() {
       MakeShapeControl(control_radius_, "Control rounding", 20,
                        "Corner radius of buttons, inputs and dropdowns."),
       2, 0);
+  shape_grid->addWidget(
+      MakeShapeControl(hero_height_, "Hero height", 400,
+                       "Height of the details panel's image area — hero banner, or the cover for "
+                       "a game with none. Fixed rather than following each image's own aspect "
+                       "ratio, so it doesn't change size from game to game and the Play button "
+                       "underneath always lands in the same place."),
+      2, 1);
   form->addRow(shape_grid_widget);
+  nav_->RegisterRow(form, shape_grid_widget,
+                    "tile gap grid padding cover rounding panel rounding control rounding "
+                    "hero height banner corner radius spacing layout");
   RefreshShapeDefaults();
   connect(mira_gui::theme::Notifier::Instance(), &mira_gui::theme::Notifier::Changed, this,
           &SettingsPanel::RefreshShapeDefaults);
@@ -185,6 +187,55 @@ void SettingsPanel::RefreshShapeDefaults() {
   set(tile_radius_, defaults.radius_tile);
   set(panel_radius_, defaults.radius_panel);
   set(control_radius_, defaults.radius_control);
+  set(hero_height_, defaults.hero_height);
+}
+
+void SettingsPanel::BuildShortcutsGroup() {
+  // Synchronous, unlike every other pref below: the owning window already
+  // ran BuildShortcuts() and loaded overrides before this screen could open,
+  // so ui/KeyBindings' registry already holds current state.
+  auto* form = nav_->AddCategory("Shortcuts");
+  for (const mira_gui::keybindings::Binding& binding : mira_gui::keybindings::All()) {
+    const QKeySequence current =
+        mira_gui::keybindings::Override(binding.id).value_or(binding.default_keys);
+
+    auto* row_widget = new QWidget(this);
+    auto* row_layout = new QHBoxLayout(row_widget);
+    row_layout->setContentsMargins(0, 0, 0, 0);
+    row_layout->setSpacing(8);
+
+    auto* edit = new QKeySequenceEdit(current, row_widget);
+    edit->setMaximumSequenceLength(1);
+    row_layout->addWidget(edit, /*stretch=*/1);
+
+    auto* reset_button = new QPushButton("Reset", row_widget);
+    reset_button->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+    QString tooltip =
+        QString("Reset to default: %1")
+            .arg(binding.default_keys.isEmpty()
+                     ? QString("no shortcut")
+                     : binding.default_keys.toString(QKeySequence::NativeText));
+    if (!binding.extra_aliases.isEmpty()) {
+      QStringList alias_text;
+      for (const QKeySequence& alias : binding.extra_aliases) {
+        alias_text << alias.toString(QKeySequence::NativeText);
+      }
+      tooltip += QString(" — %1 always works too, fixed").arg(alias_text.join(", "));
+    }
+    reset_button->setToolTip(tooltip);
+    row_widget->setToolTip(tooltip);
+    row_layout->addWidget(reset_button);
+
+    shortcuts_.push_back(ShortcutField{binding.id, edit, current, reset_button});
+    const size_t index = shortcuts_.size() - 1;
+    connect(reset_button, &QPushButton::clicked, this,
+            [this, index, default_keys = binding.default_keys] {
+              shortcuts_[index].edit->setKeySequence(default_keys);
+            });
+
+    form->addRow(binding.label, row_widget);
+    nav_->RegisterRow(form, row_widget, QString("%1 shortcut keyboard").arg(binding.label));
+  }
 }
 
 void SettingsPanel::LoadFrontendPrefs() {
@@ -223,6 +274,7 @@ void SettingsPanel::LoadFrontendPrefs() {
     shape(tile_radius_, result.prefs.tile_radius);
     shape(panel_radius_, result.prefs.panel_radius);
     shape(control_radius_, result.prefs.control_radius);
+    shape(hero_height_, result.prefs.hero_height);
   });
 }
 
@@ -268,12 +320,7 @@ void SettingsPanel::FocusKey(const QString& key) {
   }
 
   if (it->entry.tier != "basic") show_advanced_->setChecked(true);
-  for (const CategoryGroup& group : groups_) {
-    if (group.form == it->owner_form) {
-      tabs_->setCurrentIndex(group.tab_index);
-      break;
-    }
-  }
+  nav_->RevealRow(it->row_widget);
 
   QWidget* field_widget = it->check   ? static_cast<QWidget*>(it->check)
                           : it->combo ? static_cast<QWidget*>(it->combo)
@@ -299,14 +346,11 @@ void SettingsPanel::BuildRows() {
   }
 
   for (const QString& category : ordered_categories) {
-    CategoryGroup group;
-    group.form = AddCategoryTab(category);
-    group.tab_index = tabs_->count() - 1;
+    QFormLayout* form = nav_->AddCategory(category);
 
     for (const size_t i : buckets[category]) {
       Field& field = fields_[i];
-      field.owner_form = group.form;
-      if (field.entry.tier == "basic") group.has_basic = true;
+      field.owner_form = form;
 
       auto* row_widget = new QWidget(this);
       auto* row_layout = new QHBoxLayout(row_widget);
@@ -374,10 +418,11 @@ void SettingsPanel::BuildRows() {
       row_widget->setToolTip(QString::fromStdString(field.entry.doc));
 
       field.row_widget = row_widget;
-      group.form->addRow(label, row_widget);
+      form->addRow(label, row_widget);
+      nav_->RegisterRow(form, row_widget,
+                        QString("%1 %2 %3").arg(QString::fromStdString(field.entry.key), category,
+                                                 QString::fromStdString(field.entry.doc)));
     }
-
-    groups_.push_back(group);
   }
 
   SetAdvancedVisible(show_advanced_->isChecked());
@@ -405,9 +450,8 @@ void SettingsPanel::PopulateRunnerCombos(const mira_gui::RunnersResult& result) 
 
 void SettingsPanel::SetAdvancedVisible(bool show) {
   for (const Field& field : fields_) {
-    if (field.entry.tier != "basic") field.owner_form->setRowVisible(field.row_widget, show);
+    if (field.entry.tier != "basic") nav_->SetRowGateVisible(field.row_widget, show);
   }
-  for (const CategoryGroup& group : groups_) tabs_->setTabVisible(group.tab_index, group.has_basic || show);
 }
 
 std::string SettingsPanel::CurrentText(const Field& field) const {
@@ -460,13 +504,30 @@ bool SettingsPanel::IsDirty() const {
   if (theme_->currentData().toString() != theme_original_) return true;
   if (game_settings_in_sidebar_->isChecked() != game_settings_in_sidebar_original_) return true;
   for (const ShapeField* field :
-       {&tile_spacing_, &grid_margin_, &tile_radius_, &panel_radius_, &control_radius_}) {
+       {&tile_spacing_, &grid_margin_, &tile_radius_, &panel_radius_, &control_radius_, &hero_height_}) {
     if (field->spin->value() != field->original) return true;
+  }
+  for (const ShortcutField& field : shortcuts_) {
+    if (field.edit->keySequence() != field.original) return true;
   }
   for (const Field& field : fields_) {
     if (CurrentText(field) != field.original) return true;
   }
   return false;
+}
+
+void SettingsPanel::DiscardChanges() {
+  scan_on_startup_->setChecked(scan_on_startup_original_);
+  notification_timeout_->setValue(notification_timeout_original_);
+  const int theme_index = theme_->findData(theme_original_);
+  if (theme_index >= 0) theme_->setCurrentIndex(theme_index);
+  game_settings_in_sidebar_->setChecked(game_settings_in_sidebar_original_);
+  for (ShapeField* field :
+       {&tile_spacing_, &grid_margin_, &tile_radius_, &panel_radius_, &control_radius_, &hero_height_}) {
+    field->spin->setValue(field->original);
+  }
+  for (ShortcutField& field : shortcuts_) field.edit->setKeySequence(field.original);
+  for (Field& field : fields_) SetFieldText(field, field.original);
 }
 
 void SettingsPanel::Save() {
@@ -475,12 +536,16 @@ void SettingsPanel::Save() {
   const bool game_settings_in_sidebar = game_settings_in_sidebar_->isChecked();
   bool shapes_changed = false;
   for (const ShapeField* field :
-       {&tile_spacing_, &grid_margin_, &tile_radius_, &panel_radius_, &control_radius_}) {
+       {&tile_spacing_, &grid_margin_, &tile_radius_, &panel_radius_, &control_radius_, &hero_height_}) {
     if (field->spin->value() != field->original) shapes_changed = true;
+  }
+  bool shortcuts_changed = false;
+  for (const ShortcutField& field : shortcuts_) {
+    if (field.edit->keySequence() != field.original) shortcuts_changed = true;
   }
   if (scan_on_startup_->isChecked() != scan_on_startup_original_ ||
       timeout != notification_timeout_original_ ||
-      theme_name != theme_original_ || shapes_changed ||
+      theme_name != theme_original_ || shapes_changed || shortcuts_changed ||
       game_settings_in_sidebar != game_settings_in_sidebar_original_) {
     mira_gui::FrontendPrefs prefs;
     prefs.scan_on_startup = scan_on_startup_->isChecked();
@@ -494,8 +559,9 @@ void SettingsPanel::Save() {
     prefs.tile_radius = tile_radius_.spin->value();
     prefs.panel_radius = panel_radius_.spin->value();
     prefs.control_radius = control_radius_.spin->value();
+    prefs.hero_height = hero_height_.spin->value();
     for (ShapeField* field :
-         {&tile_spacing_, &grid_margin_, &tile_radius_, &panel_radius_, &control_radius_}) {
+         {&tile_spacing_, &grid_margin_, &tile_radius_, &panel_radius_, &control_radius_, &hero_height_}) {
       field->original = field->spin->value();
     }
     if (shapes_changed) {
@@ -509,7 +575,23 @@ void SettingsPanel::Save() {
       overrides.radius_tile = shape(tile_radius_);
       overrides.radius_panel = shape(panel_radius_);
       overrides.radius_control = shape(control_radius_);
+      overrides.hero_height = shape(hero_height_);
       mira_gui::theme::SetOverrides(overrides);
+    }
+    if (shortcuts_changed) {
+      const QList<mira_gui::keybindings::Binding> bindings = mira_gui::keybindings::All();
+      for (ShortcutField& field : shortcuts_) {
+        const QKeySequence current = field.edit->keySequence();
+        if (current == field.original) continue;
+        const auto binding = std::ranges::find(bindings, field.id, &mira_gui::keybindings::Binding::id);
+        if (binding != bindings.end() && current == binding->default_keys) {
+          mira_gui::keybindings::ResetOverride(field.id);
+        } else {
+          mira_gui::keybindings::SetOverride(field.id, current);
+        }
+        field.original = current;
+      }
+      prefs.shortcut_overrides = mira_gui::keybindings::Current();
     }
     scan_on_startup_original_ = *prefs.scan_on_startup;
     notification_timeout_original_ = timeout;

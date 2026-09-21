@@ -8,15 +8,24 @@
 #include <QScrollArea>
 #include <QVBoxLayout>
 
-GameDetailDialog::GameDetailDialog(std::string id, QWidget* parent) : QDialog(parent) {
+GameDetailDialog::GameDetailDialog(std::string id, QWidget* parent, mira_gui::ArtworkStore* artwork)
+    : QDialog(parent) {
   setWindowTitle("Loading…");
-  resize(560, 460);
+  // 780x640, not the old 560x480: wide enough for the form's fields next to
+  // their labels, tall enough that the QScrollArea below rarely has to
+  // scroll.
+  resize(780, 640);
 
   auto* layout = new QVBoxLayout(this);
   layout->setContentsMargins(16, 16, 16, 16);
   layout->setSpacing(12);
 
-  form_ = new mira_gui::GameEditForm(std::move(id), this);
+  auto* scroll = new QScrollArea(this);
+  scroll->setWidgetResizable(true);
+  scroll->setFrameShape(QFrame::NoFrame);
+  form_ = new mira_gui::GameEditForm(std::move(id), scroll);
+  form_->SetArtworkStore(artwork);
+  scroll->setWidget(form_);
   connect(form_, &mira_gui::GameEditForm::Loaded, this,
           [this](QString name) { setWindowTitle(name); });
   connect(form_, &mira_gui::GameEditForm::LoadFailed, this, [this](QString error) {
@@ -30,7 +39,7 @@ GameDetailDialog::GameDetailDialog(std::string id, QWidget* parent) : QDialog(pa
     }
     accept();
   });
-  layout->addWidget(form_, /*stretch=*/1);
+  layout->addWidget(scroll, /*stretch=*/1);
 
   auto* buttons = new QDialogButtonBox(this);
   save_button_ = buttons->addButton("Save", QDialogButtonBox::AcceptRole);

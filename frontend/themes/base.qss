@@ -296,6 +296,29 @@ QListWidget#library_grid {
   border: none;
 }
 
+/* The settings nav is a rail inside a two-pane layout (ui/SettingsNav), not
+ * a standalone panel, so it skips the generic bordered/rounded look below. */
+QListWidget#settings_nav {
+  background: @surface;
+  border: none;
+  border-right: 1px solid @border;
+  border-radius: 0;
+}
+
+QListWidget#settings_nav::item {
+  padding: 7px 12px;
+  border-radius: @radius_control;
+}
+
+QListWidget#settings_nav::item:selected {
+  background: @accent;
+  color: @on_accent;
+}
+
+QLineEdit#settings_search {
+  margin-bottom: 6px;
+}
+
 QListWidget, QTreeWidget, QTableWidget {
   background: @surface;
   border: 1px solid @border;

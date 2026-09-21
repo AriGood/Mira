@@ -123,6 +123,7 @@ Tokens ParseTokens(const std::string& text) {
   number("placeholder_value", tokens.placeholder_value);
   number("tile_spacing", tokens.tile_spacing);
   number("grid_margin", tokens.grid_margin);
+  number("hero_height", tokens.hero_height);
 
   return tokens;
 }
@@ -268,6 +269,7 @@ void ApplyResolved(const QString& resolved) {
   if (g_overrides.radius_tile) g_tokens.radius_tile = *g_overrides.radius_tile;
   if (g_overrides.radius_panel) g_tokens.radius_panel = *g_overrides.radius_panel;
   if (g_overrides.radius_control) g_tokens.radius_control = *g_overrides.radius_control;
+  if (g_overrides.hero_height) g_tokens.hero_height = *g_overrides.hero_height;
 
   // Fusion rather than the desktop's own style: ours is the only palette and
   // stylesheet in play, and Breeze/Adwaita would otherwise keep drawing the

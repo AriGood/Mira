@@ -24,6 +24,7 @@ Result<SteamScanSummary> SteamScanner::Scan() {
     // fields Steam itself owns get overwritten.
     model::Game game = existing.value_or(model::Game{});
     game.id = id;
+    game.source = "steam";
     game.name = app.name;
     game.install_path = app.install_dir.string();
     game.platform = app.is_native ? model::Platform::Native : model::Platform::Windows;

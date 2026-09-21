@@ -226,6 +226,10 @@ struct GameDetail {
   std::string name;
   std::string status;
   std::string platform;
+  // "scan", "steam", or "lutris" (docs/api.md) — which of the three owns
+  // this game's own fields on a rescan/re-import. GameEditForm uses it to
+  // warn when exe_path isn't actually what launches the game.
+  std::string source;
   std::string install_path;
   std::string exe_path;
   std::string args;
@@ -494,6 +498,11 @@ struct FrontendPrefs {
   std::optional<int> tile_radius;
   std::optional<int> panel_radius;
   std::optional<int> control_radius;
+  std::optional<int> hero_height;
+  // Overridden keyboard shortcuts, id (ui/KeyBindings.h) -> a
+  // QKeySequence::toString(PortableText) string. An id absent here just
+  // means "whatever that action's own default is" -- see keybindings::All().
+  std::optional<std::map<std::string, std::string>> shortcut_overrides;
 };
 
 struct FrontendPrefsResult {

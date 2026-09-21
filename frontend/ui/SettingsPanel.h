@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QKeySequence>
 #include <QWidget>
 #include <QString>
 
@@ -12,12 +13,14 @@ class QCheckBox;
 class QComboBox;
 class QDoubleSpinBox;
 class QFormLayout;
+class QKeySequenceEdit;
 class QLineEdit;
 class QPushButton;
 class QSpinBox;
-class QTabWidget;
 
 namespace mira_gui {
+
+class SettingsNavWidget;
 
 // The settings screen's content, with no QDialog machinery — embeddable in
 // a dialog shell (dialogs/SettingsDialog) or directly in a window (the
@@ -43,6 +46,12 @@ public:
   // confirmed — the signal a caller uses to warn before discarding.
   bool IsDirty() const;
 
+  // Reverts every field to what Load() last fetched or Save() last
+  // confirmed, without touching the daemon or re-fetching anything —
+  // nothing here applies live before Save() runs, so there is no already-
+  // applied state to undo, just widgets to set back.
+  void DiscardChanges();
+
 signals:
   void LoadFailed(QString error);
   void SaveFinished(bool ok, QString error);
@@ -66,15 +75,17 @@ private:
     int original = -1;
   };
 
-  struct CategoryGroup {
-    int tab_index = -1;
-    QFormLayout* form = nullptr;
-    bool has_basic = false;
+  struct ShortcutField {
+    QString id;
+    QKeySequenceEdit* edit = nullptr;
+    QKeySequence original;  // last value loaded (the override, or the default if none)
+    QPushButton* reset_button = nullptr;
   };
 
   void Load();
   void LoadFrontendPrefs();
   void BuildInterfaceGroup();
+  void BuildShortcutsGroup();
   QWidget* MakeShapeControl(ShapeField& field, const QString& label, int maximum,
                             const QString& tip);
   // Shows each shape spinbox's special "unset" value as the actual number
@@ -82,15 +93,13 @@ private:
   // theme::Notifier::Changed so it never goes stale.
   void RefreshShapeDefaults();
   void BuildRows();
-  // Adds a tab (scroll-wrapped) and returns its form layout, ready for rows.
-  QFormLayout* AddCategoryTab(const QString& title);
   void PopulateRunnerCombos(const mira_gui::RunnersResult& result);
   void SetAdvancedVisible(bool show);
   void ResetField(size_t index);
   std::string CurrentText(const Field& field) const;
   void SetFieldText(Field& field, const std::string& text);
 
-  QTabWidget* tabs_ = nullptr;
+  SettingsNavWidget* nav_ = nullptr;
   QCheckBox* show_advanced_ = nullptr;
   QCheckBox* scan_on_startup_ = nullptr;
   bool scan_on_startup_original_ = true;
@@ -105,8 +114,9 @@ private:
   ShapeField tile_radius_;
   ShapeField panel_radius_;
   ShapeField control_radius_;
+  ShapeField hero_height_;
+  std::vector<ShortcutField> shortcuts_;
   std::vector<Field> fields_;
-  std::vector<CategoryGroup> groups_;
   QString pending_focus_key_;  // FocusKey called before the schema arrived
 };
 

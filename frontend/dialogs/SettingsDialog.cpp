@@ -9,7 +9,9 @@
 
 SettingsDialog::SettingsDialog(QWidget* parent) : QDialog(parent) {
   setWindowTitle("Settings");
-  resize(640, 620);
+  // Wide enough for the nav column (SettingsNavWidget) plus a usable form
+  // column next to it — the old size predates that layout.
+  resize(880, 620);
 
   auto* layout = new QVBoxLayout(this);
   layout->setContentsMargins(16, 16, 16, 16);
@@ -30,6 +32,9 @@ SettingsDialog::SettingsDialog(QWidget* parent) : QDialog(parent) {
   layout->addWidget(panel_, /*stretch=*/1);
 
   auto* buttons = new QDialogButtonBox(this);
+  QPushButton* reset_button = buttons->addButton("Reset", QDialogButtonBox::ResetRole);
+  reset_button->setToolTip("Discard unsaved changes on this screen — back to what was last saved.");
+  connect(reset_button, &QPushButton::clicked, panel_, &mira_gui::SettingsPanel::DiscardChanges);
   QPushButton* save_button = buttons->addButton("Save", QDialogButtonBox::AcceptRole);
   buttons->addButton(QDialogButtonBox::Close);
   connect(save_button, &QPushButton::clicked, panel_, &mira_gui::SettingsPanel::Save);

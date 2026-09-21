@@ -9,6 +9,8 @@
 #include "../client/MiradClient.h"
 
 namespace mira_gui {
+class ArtworkStore;
+class HeroArtWidget;
 class OverridesEditor;
 }
 
@@ -32,6 +34,10 @@ public:
   explicit GameEditForm(std::string id, QWidget* parent = nullptr);
 
   const std::string& id() const { return id_; }
+
+  // Same store the sidebar's own hero/cover box uses. Without one this
+  // form's own copy still works and shows placeholders.
+  void SetArtworkStore(ArtworkStore* store);
 
   void Save();
 
@@ -61,8 +67,10 @@ private:
   mira_gui::GamePatch original_patch_;
 
   QFormLayout* form_ = nullptr;
+  HeroArtWidget* hero_art_ = nullptr;
   QLabel* status_label_;
   QLabel* install_path_label_;
+  QLabel* source_note_label_;
   QLabel* last_error_label_;
   QLineEdit* name_edit_;
   QComboBox* exe_combo_;

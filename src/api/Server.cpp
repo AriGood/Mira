@@ -625,9 +625,6 @@ void Server::RegisterRoutes() {
         const bool track = resolver.GetBool("steam.track_process");
         events_.Publish("game.launched",
                         {{"id", game->id}, {"via", "steam"}, {"tracked", track}});
-        events_.PublishNotification(model::NotifyLevel::Info,
-                                    "Handed to Steam. Mira does not track Steam-launched sessions — "
-                                    "Steam keeps its own playtime.");
         if (track) {
           if (auto started = supervisor_.TrackSteamLaunch(*game, appid, post_script); !started) {
             log::Warn("couldn't start tracking {}: {}", game->id, started.error().message);

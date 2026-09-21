@@ -47,6 +47,7 @@ GameDetail ToGameDetail(const json& entry) {
   game.name = entry.value("name", std::string());
   game.status = entry.value("status", std::string());
   game.platform = entry.value("platform", std::string());
+  game.source = entry.value("source", std::string("scan"));
   game.install_path = entry.value("install_path", std::string());
   game.exe_path = entry.value("exe_path", std::string());
   game.args = entry.value("args", std::string());
