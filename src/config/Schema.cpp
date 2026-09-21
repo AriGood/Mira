@@ -413,6 +413,20 @@ Schema::Schema() {
        "Path to the butler binary. Empty tries Mira's own managed download "
        "(see \"mira itch setup\"), then $PATH."},
 
+      {"humble.enabled", Type::Bool, true, Tier::Basic,
+       "Use humble-cli (an unofficial Humble Bundle CLI) to list purchased "
+       "bundles and download items from them. Humble Bundle has no "
+       "\"installed game\" concept of its own — a downloaded item is a "
+       "plain file (installer, archive, or DRM-free build), added as a "
+       "game manually afterward like any other manually-acquired title."},
+
+      {"humble.humble_cli_bin", Type::String, "", Tier::Advanced,
+       "Path to the humble-cli binary. Empty tries Mira's own managed "
+       "download (see \"mira humble setup\"), then $PATH."},
+
+      {"humble.download_root", Type::String, "~/Downloads/HumbleBundle", Tier::Advanced,
+       "Where downloaded bundle items land, one subdirectory per bundle key."},
+
       {"desktop_import.enabled", Type::Bool, true, Tier::Basic,
        "Let \"mira desktop-entries list\"/\"import\" and the matching REST "
        "endpoints read already-installed application-menu (.desktop) entries "
@@ -463,6 +477,12 @@ Schema::Schema() {
        Tier::Expert,
        "Glob a release's assets are filtered to before offering one to download — "
        "butler ships zipped, with shared libraries the binary needs alongside it."},
+
+      {"runner_sources.humble.repo", Type::String, std::string(runner_sources::kHumbleCliRepo),
+       Tier::Advanced, "GitHub \"owner/repo\" humble-cli (an unofficial Humble Bundle CLI) is downloaded from."},
+
+      {"runner_sources.humble.asset_pattern", Type::String, std::string(runner_sources::kHumbleCliAssetPattern),
+       Tier::Expert, "Glob a release's assets are filtered to before offering one to download."},
 
       {"metadata.enabled", Type::Bool, true, Tier::Basic,
        "Fetch cover art and store metadata (description, genre, ProtonDB compatibility "

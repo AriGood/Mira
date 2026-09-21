@@ -40,4 +40,11 @@ inline constexpr std::string_view kGogdlAssetPattern = "gogdl_linux_x86_64";
 inline constexpr std::string_view kButlerRepo = "itchio/butler";
 inline constexpr std::string_view kButlerAssetPattern = "butler-linux-amd64.zip";
 
+// humble-cli (unofficial Humble Bundle CLI) ships tarred, with the binary
+// itself named for its own platform ("humble-cli-linux-amd64", not just
+// "humble-cli") — confirmed against a real release (v0.23.2).
+inline constexpr std::string_view kHumbleCliRepo = "smbl64/humble-cli";
+inline constexpr std::string_view kHumbleCliAssetPattern = "humble-cli-linux-amd64.tar.gz";
+inline constexpr std::string_view kHumbleCliBinaryName = "humble-cli-linux-amd64";
+
 }  // namespace mira::config::runner_sources

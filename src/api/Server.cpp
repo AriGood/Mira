@@ -30,6 +30,7 @@
 #include "gog/Gog.h"
 #include "gog/GogImporter.h"
 #include "gog/GogInstaller.h"
+#include "humble/Humble.h"
 #include "itch/Itch.h"
 #include "itch/ItchImporter.h"
 #include "itch/ItchInstaller.h"
@@ -845,6 +846,96 @@ void Server::RegisterRoutes() {
     SyncDesktopEntries(config_, games_);
     for (const model::Game& game : summary->added_games) metadata_fetches_.Enqueue(config_, events_, game);
     SendJson(res, {{"added", summary->added}, {"updated", summary->updated}});
+  });
+
+  // --- humble -------------------------------------------------------------
+  //
+  // Wraps humble-cli (unofficial). Deliberately outside the
+  // library::ILibrarySource registry — Humble Bundle has no
+  // install/update/uninstall state of its own to report on, just
+  // purchased bundles of downloadable files (see src/humble/Humble.h's
+  // class comment). A downloaded item is never auto-imported as a
+  // model::Game.
+
+  http_->Get("/v1/humble/status", [this](const Request&, Response& res) {
+    const humble::HumbleAuthStatus status = humble::Status(config_);
+    SendJson(res, {{"humble_cli", {{"installed", status.humble_cli.installed},
+                                   {"source", status.humble_cli.source},
+                                   {"path", status.humble_cli.path},
+                                   {"version", status.humble_cli.version}}},
+                  {"authenticated", status.authenticated}});
+  });
+
+  http_->Post("/v1/humble/setup", [this](const Request&, Response& res) {
+    auto releases = runner::ListReleases(config_, "humble");
+    if (!releases) return SendError(res, 502, releases.error().code, releases.error().message);
+    if (releases->empty()) return SendError(res, 404, "no_release_found", "no matching humble-cli release found");
+
+    const runner::ReleaseAsset asset = releases->front();
+    events_.Publish("humble.setup.started", {{"tag", asset.tag}});
+    std::thread([this, asset] {
+      if (auto installed = humble::InstallHumbleCliBinary(config_, asset); !installed) {
+        log::Error("humble-cli install failed ({}): {}", asset.tag, installed.error().message);
+        events_.Publish("humble.setup.failed", {{"tag", asset.tag}, {"error", installed.error().message}});
+      } else {
+        log::Info("installed humble-cli {}", asset.tag);
+        events_.Publish("humble.setup.finished", {{"tag", asset.tag}});
+      }
+    }).detach();
+
+    SendJson(res, {{"status", "downloading"}, {"tag", asset.tag}}, 202);
+  });
+
+  // The _simpleauth_sess cookie value from a logged-in browser session —
+  // no login URL/code flow exists for Humble Bundle the way Epic/GOG have.
+  http_->Post("/v1/humble/auth", [this](const Request& req, Response& res) {
+    json body = json::parse(req.body, nullptr, false);
+    if (body.is_discarded() || !body.contains("session_key") || !body["session_key"].is_string()) {
+      return SendError(res, 400, "invalid_body", R"(expected {"session_key": "..."})");
+    }
+    if (auto logged_in = humble::Login(config_, body["session_key"]); !logged_in) {
+      return SendError(res, 400, logged_in.error().code, logged_in.error().message);
+    }
+    SendJson(res, {{"authenticated", true}});
+  });
+
+  http_->Get("/v1/humble/library", [this](const Request&, Response& res) {
+    auto bundles = humble::ListBundles(config_);
+    if (!bundles) return SendError(res, 400, bundles.error().code, bundles.error().message);
+    json out = json::array();
+    for (const humble::BundleSummary& bundle : *bundles) {
+      out.push_back({{"key", bundle.key}, {"name", bundle.name}, {"claimed", bundle.claimed}});
+    }
+    SendJson(res, std::move(out));
+  });
+
+  // Detached, same "don't block the request thread on a slow download"
+  // pattern as everything else here — humble.download.started/finished/
+  // failed on the event stream is how a caller finds out it's done.
+  http_->Post("/v1/humble/download", [this](const Request& req, Response& res) {
+    json body = json::parse(req.body, nullptr, false);
+    if (body.is_discarded() || !body.contains("bundle_key") || !body["bundle_key"].is_string()) {
+      return SendError(res, 400, "invalid_body", R"(expected {"bundle_key": "...", "item_numbers": "..."})");
+    }
+    const std::string bundle_key = body["bundle_key"];
+    const std::string item_numbers = body.value("item_numbers", std::string());
+
+    events_.Publish("humble.download.started", {{"bundle_key", bundle_key}});
+    std::thread([this, bundle_key, item_numbers] {
+      const Result<void> result = humble::Download(config_, bundle_key, item_numbers);
+      if (!result) {
+        log::Error("humble download failed ({}): {}", bundle_key, result.error().message);
+        events_.Publish("humble.download.failed", {{"bundle_key", bundle_key}, {"error", result.error().message}});
+      } else {
+        log::Info("humble download finished: {}", bundle_key);
+        events_.Publish("humble.download.finished",
+                       {{"bundle_key", bundle_key}, {"path", humble::DownloadDir(config_, bundle_key).string()}});
+      }
+    }).detach();
+
+    SendJson(res, {{"status", "downloading"}, {"bundle_key", bundle_key},
+                  {"path", humble::DownloadDir(config_, bundle_key).string()}},
+            202);
   });
 
   // --- library (what the account owns, across sources) ------------------

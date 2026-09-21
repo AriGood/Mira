@@ -774,6 +774,105 @@ int CmdItch(int argc, char** argv) {
   return 2;
 }
 
+int CmdHumbleSetup() {
+  auto client = Connect();
+  auto res = client.Post("/v1/humble/setup");
+  if (!Ok(res)) {
+    PrintError(res);
+    return 1;
+  }
+  json body = json::parse(res->body);
+  std::printf("downloading humble-cli %s — watch `mira watch` for humble.setup.finished\n",
+             body.value("tag", std::string()).c_str());
+  return 0;
+}
+
+int CmdHumbleStatus() {
+  auto client = Connect();
+  auto res = client.Get("/v1/humble/status");
+  if (!Ok(res)) {
+    PrintError(res);
+    return 1;
+  }
+  json status = json::parse(res->body);
+  const json& cli = status["humble_cli"];
+  if (!cli.value("installed", false)) {
+    std::puts("humble-cli: not installed — run \"mira humble setup\"");
+    return 0;
+  }
+  std::printf("humble-cli: installed (%s, %s) at %s\n", cli.value("source", "").c_str(),
+             cli.value("version", "").c_str(), cli.value("path", "").c_str());
+  std::puts(status.value("authenticated", false) ? "authenticated"
+                                                 : "not authenticated — run \"mira humble login\"");
+  return 0;
+}
+
+int CmdHumbleLogin(int argc, char** argv) {
+  if (argc < 1) {
+    std::fprintf(stderr,
+                "usage: mira humble login <session-key>\n"
+                "       (the _simpleauth_sess cookie value from a logged-in humblebundle.com session)\n");
+    return 2;
+  }
+  auto client = Connect();
+  json body = {{"session_key", argv[0]}};
+  auto res = client.Post("/v1/humble/auth", body.dump(), "application/json");
+  if (!Ok(res)) {
+    PrintError(res);
+    return 1;
+  }
+  std::puts("authenticated");
+  return 0;
+}
+
+int CmdHumbleLibrary() {
+  auto client = Connect();
+  auto res = client.Get("/v1/humble/library");
+  if (!Ok(res)) {
+    PrintError(res);
+    return 1;
+  }
+  json bundles = json::parse(res->body);
+  if (bundles.empty()) {
+    std::puts("(nothing — is humble-cli set up and logged in? try `mira humble status`)");
+    return 0;
+  }
+  for (const json& bundle : bundles) {
+    std::printf("%-24s %-8s %s\n", bundle.value("key", "").c_str(),
+               bundle.value("claimed", false) ? "claimed" : "", bundle.value("name", "").c_str());
+  }
+  return 0;
+}
+
+int CmdHumbleDownload(int argc, char** argv) {
+  if (argc < 1) {
+    std::fprintf(stderr, "usage: mira humble download <bundle-key> [item-numbers]\n");
+    return 2;
+  }
+  auto client = Connect();
+  json body = {{"bundle_key", argv[0]}};
+  if (argc > 1) body["item_numbers"] = argv[1];
+  auto res = client.Post("/v1/humble/download", body.dump(), "application/json");
+  if (!Ok(res)) {
+    PrintError(res);
+    return 1;
+  }
+  json status = json::parse(res->body);
+  std::printf("downloading into %s — watch `mira watch` for humble.download.finished\n",
+             status.value("path", std::string()).c_str());
+  return 0;
+}
+
+int CmdHumble(int argc, char** argv) {
+  if (argc > 0 && std::string_view(argv[0]) == "setup") return CmdHumbleSetup();
+  if (argc > 0 && std::string_view(argv[0]) == "status") return CmdHumbleStatus();
+  if (argc > 0 && std::string_view(argv[0]) == "login") return CmdHumbleLogin(argc - 1, argv + 1);
+  if (argc > 0 && std::string_view(argv[0]) == "library") return CmdHumbleLibrary();
+  if (argc > 0 && std::string_view(argv[0]) == "download") return CmdHumbleDownload(argc - 1, argv + 1);
+  std::fprintf(stderr, "usage: mira humble setup|status|login|library|download\n");
+  return 2;
+}
+
 int CmdDesktopEntriesList() {
   auto client = Connect();
   auto res = client.Get("/v1/desktop-entries/candidates");
@@ -1240,6 +1339,7 @@ int main(int argc, char** argv) {
   if (command == "epic") return CmdEpic(rest_argc, rest);
   if (command == "gog") return CmdGog(rest_argc, rest);
   if (command == "itch") return CmdItch(rest_argc, rest);
+  if (command == "humble") return CmdHumble(rest_argc, rest);
   if (command == "library") return CmdLibrary(rest_argc, rest);
   if (command == "desktop-entries") return CmdDesktopEntries(rest_argc, rest);
   if (command == "gamemode") return CmdGameMode(rest_argc, rest);
