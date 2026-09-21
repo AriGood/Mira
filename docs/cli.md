@@ -130,22 +130,25 @@ title, marked `[installed]` when Mira already tracks it:
 epic     e8bbb84be35640cda646233152ff3428  [installed]  Brotato
 epic     d26da9e047e4440a80781f13a8b7c062               Botanicula
 ```
-`mira library epic` / `mira library steam` narrows it to one source. A
-source that isn't set up contributes nothing rather than erroring, so an
-empty listing means "nothing owned, or nothing configured" — `mira epic
+`mira library epic` / `mira library steam` / `mira library gog` / `mira
+library itch` narrows it to one source. A source that isn't set up
+contributes nothing rather than erroring, so an empty listing means
+"nothing owned, or nothing configured" — each source's own `mira <source>
 status` tells the two apart. Steam needs `steam.web_api_key` +
 `steam.steamid64` to report anything here at all, since Steam's on-disk
-files only describe games that are already installed.
+files only describe games that are already installed. Humble Bundle isn't
+part of this listing at all — see `mira humble library`.
 
 ## `mira library install <source> <ref>` / `mira library update <source> <ref>`
 `POST /v1/library/install` — installs a title the account owns but Mira
 doesn't track yet. `<ref>` is the id `mira library` prints (Legendary's
-app_name, Steam's appid). Returns immediately; the download runs detached,
-so watch `mira watch` for `library.install.finished`. For Epic this drives
-`legendary install` and then imports and provisions the result; for Steam
-it hands off to the Steam client (`steam://install/<appid>`) and the game
-appears on the next `mira steam scan`. `update` is Epic-only — Steam
-updates its own games.
+app_name, Steam's appid, GOG's/itch's numeric game id). Returns
+immediately; the download runs detached, so watch `mira watch` for
+`library.install.finished`. For Epic/GOG/itch this drives the source's own
+install tool and then imports and provisions the result; for Steam it
+hands off to the Steam client (`steam://install/<appid>`) and the game
+appears on the next `mira steam scan`. `update` works for
+Epic/GOG/itch — Steam updates its own games.
 
 ## `mira epic setup|status|login|logout|import`
 Epic Games Store support, via [Legendary](https://github.com/derrod/legendary).
@@ -165,6 +168,66 @@ Epic Games Store support, via [Legendary](https://github.com/derrod/legendary).
 
 Installing is deliberately not an `epic` subcommand: it's source-generic,
 so it lives under `mira library install epic <app_name>`.
+
+## `mira gog setup|status|login|logout|import`
+GOG support, via [gogdl](https://github.com/Heroic-Games-Launcher/heroic-gogdl)
+(Heroic's own downloader — needs a system `python3`, unlike Legendary's
+self-contained binary). Same verb shape as `mira epic`, with one real
+difference: gogdl has no "list installed" command of its own, so `import`
+doesn't scan the whole system — it re-identifies whatever's already under
+`gog.install_root` (default `~/Games/GOG`), which is what `mira library
+install gog <id>` itself installs into. A GOG install living somewhere else
+isn't picked up.
+- `setup` — downloads gogdl's latest release into
+  `~/.config/mira/tools/gog/gogdl`.
+- `status` — whether gogdl is installed and whether Mira has a stored,
+  unexpired token (refreshed transparently if not).
+- `login` — prints GOG's login URL, reads back the `code` query param from
+  the redirect it shows.
+- `logout` — removes Mira's own stored token.
+- `import` — see above.
+
+Installing is source-generic: `mira library install gog <id>`.
+
+## `mira itch setup|status|login|logout|import`
+itch.io support, via [butlerd](https://itch.io/docs/butler/launcher-integration.html)
+— itch's own launcher-integration daemon, the one source here with a tool
+built specifically for third-party launchers. `mirad` keeps one `butler
+daemon` connection open for its whole run rather than spawning a fresh one
+per call; a change to `itch.butler_bin` only takes effect on `mirad`'s next
+restart.
+- `setup` — downloads butler's latest release into
+  `~/.config/mira/tools/itch/` (a zip — butler ships with shared libraries
+  that have to stay alongside the binary, not a bare file).
+- `status` — whether butler is installed and whether an API key is stored.
+- `login` — prompts for an API key from
+  [itch.io/user/settings/api-keys](https://itch.io/user/settings/api-keys)
+  (no login URL/code flow — itch keys don't expire).
+- `logout` — removes Mira's own stored key.
+- `import` — adds already-installed itch titles (butlerd's own `Fetch.
+  Caves`) as ordinary games, tagged `itch`.
+
+Installing is source-generic: `mira library install itch <id>`.
+
+## `mira humble setup|status|login|library|download`
+Humble Bundle support, via [humble-cli](https://github.com/smbl64/humble-cli)
+(unofficial). Deliberately its own command family, not folded into `mira
+library` — Humble Bundle has no "installed" concept at all, just purchased
+bundles of downloadable files, so there's no install/update lifecycle to
+plug in there.
+- `setup` — downloads humble-cli's latest release.
+- `status` — whether humble-cli is installed and authenticated.
+- `login <session-key>` — the `_simpleauth_sess` cookie value from a
+  logged-in humblebundle.com browser session (documented in humble-cli's
+  own README) — no login URL to visit.
+- `library` — lists purchased bundles: key, claimed status, name.
+- `download <bundle-key> [item-numbers]` — downloads items from one bundle
+  (optionally narrowed, humble-cli's own "1,3,5-7" syntax) into
+  `<humble.download_root>/<bundle_key>/`. Returns immediately; watch `mira
+  watch` for `humble.download.finished`. Not auto-added as a game — a
+  downloaded item is an arbitrary archive/installer, not a provisioned
+  prefix; add it manually once it's landed (`mira add`, same as any other
+  manually-acquired game).
 
 ## `mira metadata <id> [--refresh]`
 `GET /v1/games/{id}/metadata` — prints the cached cover-art/store-info JSON

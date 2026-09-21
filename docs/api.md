@@ -505,7 +505,7 @@ entitlements meant 120 rows in a file the README promises stays
 hand-editable, each carrying a meaningless `data_dir`/`runner_ref`/
 `play_seconds`.
 
-### `GET /v1/library[?source=epic|steam]` — implemented
+### `GET /v1/library[?source=epic|steam|gog|itch]` — implemented
 Every entitlement the configured sources can report, or one source's with
 `?source=`:
 ```json
@@ -514,44 +514,57 @@ Every entitlement the configured sources can report, or one source's with
     "game_id": "epic-e8bbb84be35640cda646233152ff3428", "play_seconds": 0 } ]
 ```
 `ref` is the source's own stable id (Legendary's `app_name`, Steam's
-appid) — the handle `POST /v1/library/install` takes. `installed` and
-`game_id` say whether Mira already tracks it, resolved by looking up
-`"<source>-<ref>"` in the game store. `play_seconds` is what the source
-itself reports (Steam does; Legendary doesn't, so it's 0 there).
+appid, GOG's/itch's numeric game id) — the handle `POST /v1/library/install`
+takes. `installed` and `game_id` say whether Mira already tracks it,
+resolved by looking up `"<source>-<ref>"` in the game store. `play_seconds`
+is what the source itself reports (Steam does; the others don't, so it's 0).
 
 A source that isn't configured or authenticated contributes nothing rather
 than failing the whole listing — one broken storefront shouldn't hide the
 others — so an empty array means "nothing owned, or nothing set up", and
-`mira epic status` is what distinguishes the two. Epic entries come from
-Legendary's own cache (`legendary list`), Steam's from
-`IPlayerService/GetOwnedGames`, which needs `steam.web_api_key` +
-`steam.steamid64`; without them Steam contributes nothing, since Steam's
-on-disk files only ever describe games that are actually *installed*.
+each source's own `GET /v1/<source>/status` is what distinguishes the two.
+Every source implements `library::ILibrarySource` (`src/library/
+ILibrarySource.h`) and is looked up through a small registry
+(`library::AllSources()`) rather than a hand-written per-source branch —
+Epic/Steam entries come from Legendary's cache / `IPlayerService/
+GetOwnedGames`, same as before; GOG's come from GOG's own `embed.gog.com`
+API directly (gogdl has no catalog subcommand of its own — see `GET
+/v1/gog/status`); itch's come from butlerd's `Fetch.ProfileOwnedKeys`.
+Steam additionally needs `steam.web_api_key` + `steam.steamid64`, without
+which it contributes nothing (its on-disk files only ever describe
+*installed* games). Humble Bundle is **not** part of this registry at all
+— see `## Humble Bundle` below for why.
 
 ### `POST /v1/library/install` — implemented
-Body `{"source": "epic"|"steam", "ref": "..."}`. Keyed by `{source, ref}`
-rather than a game id precisely because the whole point is installing
-something Mira doesn't track yet.
+Body `{"source": "epic"|"steam"|"gog"|"itch", "ref": "..."}`. Keyed by
+`{source, ref}` rather than a game id precisely because the whole point is
+installing something Mira doesn't track yet. Dispatches to the matching
+`ILibrarySource::Install`, runs it detached, and returns `202 {"status":
+"installing", "ref": ...}` immediately — a game download is easily minutes
+long and there's no job queue yet (see `docs/architecture.md`), so
+`library.install.started`/`.finished`/`.failed` on the event stream is how
+a caller finds out it's done.
 
-For `epic`: runs `legendary install` detached and returns `202
-{"status": "installing", "ref": ...}` immediately — a game download is
-easily minutes long and there's no job queue yet (see
-`docs/architecture.md`), so `library.install.started`/`.finished`/`.failed`
-on the event stream is how a caller finds out it's done. On success the
-title is re-imported, which is what actually creates the tracked game and
-provisions its Wine/Proton prefix. 409s with `legendary_missing` or
-`not_authenticated` before starting anything.
+- `epic`: `legendary install`. 409s with `legendary_missing` or
+  `not_authenticated` before starting anything.
+- `gog`: `gogdl download <id> --path <gog.install_root>/<id> --platform
+  windows`, then re-identifies the result via `gogdl import`. 409s the same
+  way if gogdl isn't set up/authenticated.
+- `itch`: butlerd's `Install.Queue` → `Install.Perform` sequence, then
+  re-runs the itch importer. 409s if butler isn't set up/authenticated.
+- `steam`: fires `steam://install/<appid>` and hands off to the Steam
+  client — the same handoff posture as `steam.launch_mode: "steam"`.
+  Nothing is tracked from here; the game shows up via `POST
+  /v1/steam/scan` once Steam has actually put it on disk.
 
-For `steam`: fires `steam://install/<appid>` and hands off to the Steam
-client, returning `202 {"status": "handed_off_to_steam"}` — the same
-handoff posture as `steam.launch_mode: "steam"`. Nothing is tracked from
-here; the game shows up via `POST /v1/steam/scan` once Steam has actually
-put it on disk.
+On success the title is re-imported for epic/gog/itch, which is what
+actually creates the tracked game and provisions its Wine/Proton prefix
+(or leaves it native, for a title that shipped a Linux build).
 
 ### `POST /v1/library/update` — implemented
-Same body and the same detached/event shape, running `legendary update`.
-Epic only: a `steam` source 400s with `unsupported`, since Steam updates
-its own games and there's nothing for Mira to do.
+Same body and the same detached/event shape. `epic`/`gog`/`itch` all
+support it; `steam` 400s with `unsupported`, since Steam updates its own
+games and there's nothing for Mira to do.
 
 ---
 
@@ -633,6 +646,145 @@ handles a freshly scanned Windows game.
 `legendary uninstall` instead of deleting the directory directly, so
 Legendary's own manifest stays in sync rather than being left believing the
 title is still installed.
+
+---
+
+## GOG
+
+GOG support wraps [gogdl](https://github.com/Heroic-Games-Launcher/heroic-gogdl),
+the downloader Heroic itself uses. It's a Python zipapp (needs a system
+`python3` to run, confirmed live — not a self-contained binary the way
+Legendary is), and unlike Legendary it has **no catalog or "what's
+installed" subcommand of its own** — only `auth`, `download`/`repair`/
+`update`, `import` (identifies an already-unpacked install at a given
+local path), `info`, and `launch` (never used here). Two real consequences:
+
+- Catalog listing (`GET /v1/library?source=gog`) talks to GOG's own
+  `embed.gog.com`/`api.gog.com` API directly with the access token gogdl's
+  own `auth` step obtained, rather than through gogdl.
+- `POST /v1/gog/import` doesn't scan the whole system the way `POST
+  /v1/epic/import` does — it re-identifies whatever's already under
+  `gog.install_root` (default `~/Games/GOG`, one subdirectory per game id),
+  which is what `POST /v1/library/install` itself installs into. A GOG
+  install living somewhere else isn't picked up automatically.
+
+### `GET /v1/gog/status` — implemented
+```json
+{ "gogdl": { "installed": true, "source": "managed", "path": "...", "version": "..." },
+  "authenticated": true }
+```
+No account name — gogdl exposes no cheap "who am I" call the way Legendary
+does; `authenticated` just reflects whether a stored token is present and
+unexpired (refreshed once, transparently, via a bare `gogdl auth` call, if
+it looks expired).
+
+### `POST /v1/gog/setup` — implemented
+Downloads gogdl's latest GitHub release binary into
+`~/.config/mira/tools/gog/gogdl`, detached, with `gog.setup.started`/
+`.finished`/`.failed` on the event stream. Re-running it re-fetches the
+latest release.
+
+### `POST /v1/gog/auth` — implemented
+Body `{"code": "..."}` — the `code` query param from GOG's own login-page
+redirect (`mira gog login` prints the URL). Verified by re-checking status
+afterward, not the exit code — gogdl's `auth` handler prints `{"error":
+true}` on a rejected code but still exits 0 (confirmed live, the same
+lie Legendary's own `auth --code` tells).
+
+### `POST /v1/gog/logout` — implemented
+Removes Mira's own stored token file — gogdl has no `auth --delete`.
+
+### `POST /v1/gog/import` — implemented
+See the class-comment note above: re-identifies everything already under
+`gog.install_root`, not a system-wide scan.
+
+---
+
+## itch.io
+
+itch.io support wraps [butlerd](https://itch.io/docs/butler/launcher-integration.html),
+itch's own launcher-integration daemon — the one source here with a tool
+*built specifically* for third-party launchers to use, confirmed against
+itch's own docs and a real `butler daemon --json` run. Unlike every other
+source, this is a **long-lived daemon connection**, not a one-shot
+subprocess per call: `mirad` starts `butler daemon` once, lazily, on the
+first itch call any code makes, and keeps that JSON-RPC-over-TCP
+connection for the rest of its run rather than paying butlerd's startup
+cost (a real subprocess spawn plus a database open) every time. A
+consequence worth knowing: changing `itch.butler_bin` takes effect only on
+`mirad`'s next restart, not immediately.
+
+### `GET /v1/itch/status` — implemented
+```json
+{ "butler": { "installed": true, "source": "managed", "path": "...", "version": "..." },
+  "authenticated": true }
+```
+`authenticated` reflects whether an itch.io API key is stored — never
+connects to butlerd just to check this.
+
+### `POST /v1/itch/setup` — implemented
+Downloads butler's latest GitHub release into
+`~/.config/mira/tools/itch/` (a zip, not a bare binary — butler ships with
+shared libraries, `7z.so`/`libc7zip.so`, that have to stay alongside it),
+detached, `itch.setup.started`/`.finished`/`.failed` on the event stream.
+
+### `POST /v1/itch/auth` — implemented
+Body `{"api_key": "..."}` — from
+[itch.io/user/settings/api-keys](https://itch.io/user/settings/api-keys),
+not a pasted redirect code the way Epic/GOG use (itch keys don't expire).
+Verified immediately via butlerd's own `Profile.LoginWithAPIKey`.
+
+### `POST /v1/itch/logout` — implemented
+Removes Mira's own stored key.
+
+### `POST /v1/itch/import` — implemented
+Upserts butlerd's own installed-games state (`Fetch.Caves` — a "cave" is
+butler's word for one installed copy) as tracked games, tagged `itch`.
+**Not fully confirmed against a real logged-in account** — the exact
+`Cave` JSON shape is per itch's own documentation, parsed defensively
+(a missing/renamed field just leaves that piece blank rather than failing
+the import).
+
+---
+
+## Humble Bundle
+
+Humble Bundle support wraps [humble-cli](https://github.com/smbl64/humble-cli)
+(unofficial). Deliberately **not** part of the `library::ILibrarySource`
+registry the other four sources share — Humble Bundle has no "installed"
+concept of its own at all, just purchased bundles of downloadable files (a
+mix of installers, archives, and DRM-free builds), so there's no catalog/
+install/update *lifecycle* to wrap, only "list what's purchased" and
+"download some files from one bundle." A downloaded item is never
+auto-imported as a `model::Game` — it's an arbitrary archive/installer, not
+a provisioned prefix; the existing manual-add flow (`POST /v1/games`, or
+`AutoSetup` detecting the extracted folder) takes it from there.
+
+humble-cli itself has no `--json` output (confirmed live, v0.23.2) — only
+a human-readable table — so `GET /v1/humble/library` parses that table
+defensively (columns split on runs of 2+ spaces, a Go `text/tabwriter`
+convention) rather than a stable machine format.
+
+### `GET /v1/humble/status` — implemented
+### `POST /v1/humble/setup` — implemented
+Same shape as gog/itch's equivalents.
+
+### `POST /v1/humble/auth` — implemented
+Body `{"session_key": "..."}` — the `_simpleauth_sess` cookie value,
+copied from a logged-in browser session (documented in humble-cli's own
+README). There's no login URL/code flow the way Epic/GOG have.
+
+### `GET /v1/humble/library` — implemented
+```json
+[ { "key": "abc123def456", "name": "Indie Bundle 42", "claimed": true } ]
+```
+
+### `POST /v1/humble/download` — implemented
+Body `{"bundle_key": "...", "item_numbers": "1,3,5-7"}` (`item_numbers`
+optional, humble-cli's own range syntax). Detached, into
+`<humble.download_root>/<bundle_key>/`, with `humble.download.started`/
+`.finished`/`.failed` on the event stream — `.finished`'s payload includes
+`path`.
 
 ---
 
