@@ -50,7 +50,12 @@ json ParseJsonTail(const std::string& text) {
     if (line_start == 0) break;
     line_end = line_start - 1;
   }
-  return json();
+  // Not json() -- that's a valid null value, is_discarded() false, so a
+  // caller checking only is_discarded() (every caller here) would read "no
+  // JSON line found anywhere" as a successful null result instead of the
+  // parse failure it actually is. Parsing an empty string reliably comes
+  // back discarded.
+  return json::parse("", nullptr, false);
 }
 
 std::string VersionOf(const std::string& path) {
