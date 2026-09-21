@@ -491,6 +491,151 @@ categories" rather than failing the import.
 
 ---
 
+## Library
+
+What the account *owns* on a storefront, as opposed to what Mira tracks.
+These are deliberately two different things: a tracked game (`GET
+/v1/games`, a row in `games.toml`) is something Mira manages — installed,
+provisioned, launchable, with session history — while a catalog entry is an
+entitlement, and most entitlements aren't on disk at all. Entitlements are
+**not persisted**: they're read through live from whatever each source
+already caches, and a title becomes a `model::Game` only once it's
+installed. Persisting them instead was tried and reverted — 120 Epic
+entitlements meant 120 rows in a file the README promises stays
+hand-editable, each carrying a meaningless `data_dir`/`runner_ref`/
+`play_seconds`.
+
+### `GET /v1/library[?source=epic|steam]` — implemented
+Every entitlement the configured sources can report, or one source's with
+`?source=`:
+```json
+[ { "source": "epic", "ref": "e8bbb84be35640cda646233152ff3428",
+    "title": "Brotato", "installed": true,
+    "game_id": "epic-e8bbb84be35640cda646233152ff3428", "play_seconds": 0 } ]
+```
+`ref` is the source's own stable id (Legendary's `app_name`, Steam's
+appid) — the handle `POST /v1/library/install` takes. `installed` and
+`game_id` say whether Mira already tracks it, resolved by looking up
+`"<source>-<ref>"` in the game store. `play_seconds` is what the source
+itself reports (Steam does; Legendary doesn't, so it's 0 there).
+
+A source that isn't configured or authenticated contributes nothing rather
+than failing the whole listing — one broken storefront shouldn't hide the
+others — so an empty array means "nothing owned, or nothing set up", and
+`mira epic status` is what distinguishes the two. Epic entries come from
+Legendary's own cache (`legendary list`), Steam's from
+`IPlayerService/GetOwnedGames`, which needs `steam.web_api_key` +
+`steam.steamid64`; without them Steam contributes nothing, since Steam's
+on-disk files only ever describe games that are actually *installed*.
+
+### `POST /v1/library/install` — implemented
+Body `{"source": "epic"|"steam", "ref": "..."}`. Keyed by `{source, ref}`
+rather than a game id precisely because the whole point is installing
+something Mira doesn't track yet.
+
+For `epic`: runs `legendary install` detached and returns `202
+{"status": "installing", "ref": ...}` immediately — a game download is
+easily minutes long and there's no job queue yet (see
+`docs/architecture.md`), so `library.install.started`/`.finished`/`.failed`
+on the event stream is how a caller finds out it's done. On success the
+title is re-imported, which is what actually creates the tracked game and
+provisions its Wine/Proton prefix. 409s with `legendary_missing` or
+`not_authenticated` before starting anything.
+
+For `steam`: fires `steam://install/<appid>` and hands off to the Steam
+client, returning `202 {"status": "handed_off_to_steam"}` — the same
+handoff posture as `steam.launch_mode: "steam"`. Nothing is tracked from
+here; the game shows up via `POST /v1/steam/scan` once Steam has actually
+put it on disk.
+
+### `POST /v1/library/update` — implemented
+Same body and the same detached/event shape, running `legendary update`.
+Epic only: a `steam` source 400s with `unsupported`, since Steam updates
+its own games and there's nothing for Mira to do.
+
+---
+
+## Epic
+
+Epic support wraps [Legendary](https://github.com/derrod/legendary), a
+native-Linux Epic Games Store client, for everything protocol-shaped —
+auth, catalog, install/update/uninstall. Mira never runs Legendary's own
+`legendary launch`: an installed Epic game is launched through Mira's own
+Wine/Proton runners like any other Windows game, which is what keeps
+crash/playtime tracking, GameMode and log capture working on it (see
+`docs/architecture.md`). Browsing or buying from the Epic *store* isn't
+possible here and isn't planned — Legendary operates on entitlements the
+account already has; new purchases happen in a browser.
+
+### `GET /v1/epic/legendary/status` — implemented
+```json
+{ "installed": true, "source": "managed",
+  "path": "~/.config/mira/tools/legendary", "version": "legendary version \"0.20.34\"..." }
+```
+`source` is `"override"` (`epic.legendary_bin`), `"managed"` (Mira's own
+download), `"path"` ($PATH) or `"none"` — the resolution order. Never
+requires Legendary to already exist, so it's always safe to call first.
+
+### `POST /v1/epic/legendary/install` — implemented
+Downloads Legendary's latest GitHub release binary into
+`~/.config/mira/tools/legendary` and marks it executable, detached, with
+`epic.legendary.install.started`/`.finished`/`.failed` on the event stream.
+Legendary ships one standalone Linux binary per release rather than an
+archive, so this doesn't reuse `runner::DownloadAndInstall` (which extracts
+a tarball into a runner search path); it does reuse the same
+`runner_sources.*` GitHub-release machinery. Re-running it re-fetches the
+latest release, which is also how staying up to date works — there's no
+separate update endpoint.
+
+### `GET /v1/epic/status` — implemented
+The layered "don't assume setup" call — checks Legendary is installed
+first, and only then asks it about auth:
+```json
+{ "legendary": { "installed": true, "source": "managed", "path": "...", "version": "..." },
+  "authenticated": true, "account": "Exo03" }
+```
+Never errors: "not installed" and "not authenticated" are both just fields.
+
+### `POST /v1/epic/auth` — implemented
+Body `{"code": "..."}`. Mira stores no Epic credentials of its own —
+Legendary owns its session (`~/.config/legendary/user.json`) and this only
+shuttles the code to it. The user visits Epic's login page in their own
+browser and pastes back the `authorizationCode` it shows; `mira epic login`
+accepts the whole JSON blob from that page and pulls the field out.
+
+Verified by re-checking status afterward rather than by the subprocess's
+exit code, because `legendary auth --code` **exits 0 even when the code is
+rejected**, reporting the failure only as a log line. A rejected code 400s
+with `login_failed`.
+
+### `POST /v1/epic/logout` — implemented
+`legendary auth --delete`.
+
+### `POST /v1/epic/import` — implemented
+Upserts already-installed Epic titles (`legendary list-installed`) as
+tracked games:
+```json
+{ "added": 1, "updated": 0 }
+```
+Entitlements that aren't installed are deliberately not touched here — see
+`GET /v1/library`. Idempotent, and preserves anything the user configured
+(`exe_path`, `args`, `env`, overrides, `reviewed`), same contract as the
+Steam/Lutris importers. Every imported game is tagged `epic`.
+
+`runner_ref` is left empty for `RunnerRegistry` to resolve via
+`default_runner.windows`, exactly like a Lutris wine row. Unlike Steam and
+Lutris, though, Legendary creates **no Wine prefix of its own**, so this
+import is also what provisions one: `data_dir` is set to
+`<prefix_root>/<id>` and `ProvisionGame` runs, the same way `AutoSetup`
+handles a freshly scanned Windows game.
+
+`DELETE /v1/games/{id}?delete_files=true` on an Epic-sourced game runs
+`legendary uninstall` instead of deleting the directory directly, so
+Legendary's own manifest stays in sync rather than being left believing the
+title is still installed.
+
+---
+
 ## Desktop entries
 
 Two directions, both covered here: reading someone else's already-installed
@@ -708,6 +853,13 @@ Published today:
   counterpart to `game.state` for that same case.
 - `runners.download.started` / `.finished` / `.failed` — see
   `POST /v1/runners/download` above.
+- `library.install.started` / `.finished` / `.failed` —
+  `{"source": ..., "ref": ..., "update": false}`, see
+  `POST /v1/library/install` above. `update: true` is the only thing
+  distinguishing an update from an install, rather than a parallel event
+  namespace.
+- `epic.legendary.install.started` / `.finished` / `.failed` — fetching
+  the Legendary binary itself, see `POST /v1/epic/legendary/install`.
 
 Planned as the rest of the backend lands: `scan.started`, `scan.finished`,
 `setup.progress`, `setup.finished`, `setup.failed`, `config.changed`.
