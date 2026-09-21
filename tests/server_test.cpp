@@ -60,6 +60,7 @@ public:
 
   store::GameStore& games() { return games_; }
   const config::Config& config() const { return config_; }
+  config::Config& MutableConfig() { return config_; }
 
 private:
   config::Config config_;
@@ -468,6 +469,71 @@ TEST_CASE("GET /v1/runners lists native:native") {
   REQUIRE(listed != nullptr);
   CHECK(listed->status == 200);
   CHECK(listed->body.find("\"native:native\"") != std::string::npos);
+}
+
+TEST_CASE("DELETE /v1/games/{id}?delete_metadata=true removes cached metadata/artwork, "
+          "and only those paths") {
+  LiveServer server(TempDir("server-delete-metadata"));
+
+  model::Game game;
+  game.id = "celeste";
+  game.name = "Celeste";
+  REQUIRE(server.games().Upsert(game).has_value());
+
+  const fs::path metadata_file = metadata::MetadataFile(server.config(), "celeste");
+  const fs::path artwork_dir = metadata::ArtworkDir(server.config(), "celeste");
+  fs::create_directories(metadata_file.parent_path());
+  std::ofstream(metadata_file) << R"({"artwork": {"file": "cover.png"}})";
+  fs::create_directories(artwork_dir);
+  std::ofstream(artwork_dir / "cover.png") << "not really a png";
+
+  // A sibling game's own metadata must survive untouched.
+  const fs::path sibling_metadata = metadata::MetadataFile(server.config(), "peak");
+  std::ofstream(sibling_metadata) << R"({})";
+
+  httplib::Client client = server.Client();
+  auto res = client.Delete("/v1/games/celeste?delete_metadata=true");
+  REQUIRE(res != nullptr);
+  CHECK(res->status == 200);
+
+  CHECK_FALSE(fs::exists(metadata_file));
+  CHECK_FALSE(fs::exists(artwork_dir));
+  CHECK(fs::exists(sibling_metadata));
+}
+
+TEST_CASE("DELETE /v1/games/{id}?purge=true removes files, prefix, and metadata together") {
+  LiveServer server(TempDir("server-delete-purge-state"));
+  const fs::path library_root = TempDir("server-delete-purge-library");
+  const fs::path prefix_root = TempDir("server-delete-purge-prefix");
+  REQUIRE(server.MutableConfig().Set("library_roots", nlohmann::json::array({library_root.string()})).has_value());
+  REQUIRE(server.MutableConfig().Set("prefix_root", prefix_root.string()).has_value());
+
+  const fs::path install_path = library_root / "Celeste";
+  const fs::path data_dir = prefix_root / "celeste";
+  fs::create_directories(install_path);
+  std::ofstream(install_path / "Celeste.exe") << "fake exe";
+  fs::create_directories(data_dir);
+
+  model::Game game;
+  game.id = "celeste";
+  game.name = "Celeste";
+  game.install_path = install_path.string();
+  game.data_dir = data_dir.string();
+  REQUIRE(server.games().Upsert(game).has_value());
+
+  const fs::path metadata_file = metadata::MetadataFile(server.config(), "celeste");
+  fs::create_directories(metadata_file.parent_path());
+  std::ofstream(metadata_file) << "{}";
+
+  httplib::Client client = server.Client();
+  auto res = client.Delete("/v1/games/celeste?purge=true");
+  REQUIRE(res != nullptr);
+  CHECK(res->status == 200);
+
+  CHECK_FALSE(fs::exists(install_path));
+  CHECK_FALSE(fs::exists(data_dir));
+  CHECK_FALSE(fs::exists(metadata_file));
+  CHECK_FALSE(server.games().Find("celeste").has_value());
 }
 
 TEST_CASE("DELETE /v1/runners/{reference} refuses a path outside every configured search root") {

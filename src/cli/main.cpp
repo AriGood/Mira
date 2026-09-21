@@ -270,24 +270,33 @@ int CmdFinishInstall(int argc, char** argv) {
 int CmdRemove(int argc, char** argv) {
   if (argc < 1) {
     std::fprintf(stderr,
-                 "usage: mira remove <id> [--delete-files] [--delete-prefix]\n"
-                 "  forgets the game; its files are only deleted if you ask for that\n"
-                 "  explicitly, and only if they're really inside a configured root.\n");
+                 "usage: mira remove <id> [--delete-files] [--delete-prefix] [--delete-metadata] [--purge]\n"
+                 "  forgets the game; nothing on disk is touched unless you ask for it\n"
+                 "  explicitly, and only paths that are really inside a configured root.\n"
+                 "  --delete-files     removes the game's own install folder\n"
+                 "  --delete-prefix    removes its Wine/Proton prefix — use --delete-files\n"
+                 "                     alone to remove the game but leave the prefix in place\n"
+                 "  --delete-metadata  removes cached cover art / store info\n"
+                 "  --purge            shorthand for all three of the above\n");
     return 2;
   }
   const std::string id = argv[0];
-  bool delete_files = false, delete_prefix = false;
+  bool delete_files = false, delete_prefix = false, delete_metadata = false, purge = false;
   for (int i = 1; i < argc; ++i) {
     const std::string_view arg = argv[i];
     if (arg == "--delete-files") delete_files = true;
     else if (arg == "--delete-prefix") delete_prefix = true;
+    else if (arg == "--delete-metadata") delete_metadata = true;
+    else if (arg == "--purge") purge = true;
   }
   auto client = Connect();
   std::string path = std::format("/v1/games/{}", id);
-  if (delete_files || delete_prefix) {
+  if (delete_files || delete_prefix || delete_metadata || purge) {
     path += "?";
     if (delete_files) path += "delete_files=true&";
     if (delete_prefix) path += "delete_prefix=true&";
+    if (delete_metadata) path += "delete_metadata=true&";
+    if (purge) path += "purge=true&";
     path.pop_back();  // trailing '&' or '?'
   }
   auto res = client.Delete(path);

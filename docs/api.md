@@ -135,13 +135,24 @@ below — a game's own fields and its overrides of unrelated global settings
 are different concerns and don't share a request body). Publishes
 `game.updated`. 404 if the id is unknown.
 
-### `DELETE /v1/games/{id}[?delete_files=true][?delete_prefix=true]` — implemented
-Forgets the game. By default never touches disk. `delete_files=true` also
-removes `install_path` (the game's own folder); `delete_prefix=true` also
-removes `data_dir` (its Wine/Proton prefix, if any). Both are restricted to
-paths that actually resolve inside a configured `library_roots`/
-`prefix_root` — never wherever a hand-edited `games.toml` happens to say.
-Publishes `game.removed`.
+### `DELETE /v1/games/{id}[?delete_files=true][?delete_prefix=true][?delete_metadata=true][?purge=true]` — implemented
+Forgets the game. By default never touches disk — every one of the four
+flags below is independent and opt-in.
+
+- `delete_files=true` — removes `install_path` (the game's own folder).
+  This alone is how to remove the game but leave its prefix in place — it
+  never touches `data_dir` unless `delete_prefix` is also given.
+- `delete_prefix=true` — removes `data_dir` (its Wine/Proton prefix, if any).
+- `delete_metadata=true` — removes cached metadata/cover art
+  (`metadata::MetadataFile`/`ArtworkDir`), which otherwise stay orphaned on
+  disk forever, keyed by an id nothing points at anymore.
+- `purge=true` — shorthand for all three of the above together.
+
+`delete_files`/`delete_prefix` are restricted to paths that actually resolve
+inside a configured `library_roots`/`prefix_root` — never wherever a
+hand-edited `games.toml` happens to say. `delete_metadata` has no such check:
+metadata/artwork live under Mira's own state directory, keyed by game id, not
+a user-configured root. Publishes `game.removed`.
 
 ### `GET /v1/games/{id}/config` — implemented
 Every schema key resolved through `default -> settings.toml -> this game's

@@ -507,19 +507,38 @@ void Server::RegisterRoutes() {
     auto game = games_.Find(req.matches[1]);
     if (!game) return SendError(res, 404, "game_not_found", "no such game");
 
+    const bool purge = req.has_param("purge") && req.get_param_value("purge") == "true";
+    const bool delete_files =
+        purge || (req.has_param("delete_files") && req.get_param_value("delete_files") == "true");
+    const bool delete_prefix =
+        purge || (req.has_param("delete_prefix") && req.get_param_value("delete_prefix") == "true");
+    const bool delete_metadata =
+        purge || (req.has_param("delete_metadata") && req.get_param_value("delete_metadata") == "true");
+
     // Opt-in, and deliberately narrow: only ever deletes a path this game's
     // own record points at, and only if that path is really inside a
     // configured root — never wherever install_path/data_dir happen to say,
     // in case a hand-edited games.toml points somewhere it shouldn't.
-    if (req.has_param("delete_files") && req.get_param_value("delete_files") == "true") {
+    if (delete_files) {
       if (auto deleted = DeleteUnderRoot(game->install_path, config_.GetPathArray("library_roots")); !deleted) {
         return SendError(res, 400, deleted.error().code, deleted.error().message);
       }
     }
-    if (req.has_param("delete_prefix") && req.get_param_value("delete_prefix") == "true") {
+    if (delete_prefix) {
       if (auto deleted = DeleteUnderRoot(game->data_dir, {config_.GetPath("prefix_root")}); !deleted) {
         return SendError(res, 400, deleted.error().code, deleted.error().message);
       }
+    }
+    if (delete_metadata) {
+      // Metadata/artwork live under Mira's own ~/.config/mira tree, keyed
+      // by game id — not a user-configured root, so no containment check
+      // is needed the way library_roots/prefix_root's is. Best effort: a
+      // cache file that was never written or already gone isn't an error.
+      std::error_code ec;
+      std::filesystem::remove(metadata::MetadataFile(config_, game->id), ec);
+      if (ec) log::Warn("could not remove metadata for {}: {}", game->id, ec.message());
+      std::filesystem::remove_all(metadata::ArtworkDir(config_, game->id), ec);
+      if (ec) log::Warn("could not remove artwork for {}: {}", game->id, ec.message());
     }
 
     auto result = games_.Remove(req.matches[1]);
