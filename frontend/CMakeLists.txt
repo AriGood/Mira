@@ -97,6 +97,10 @@ qt_add_executable(mira-gui
   dialogs/DeleteGameDialog.h
   dialogs/GameDetailDialog.cpp
   dialogs/GameDetailDialog.h
+  dialogs/GameDetailPageDialog.cpp
+  dialogs/GameDetailPageDialog.h
+  dialogs/LogViewerDialog.cpp
+  dialogs/LogViewerDialog.h
   dialogs/RunInPrefixDialog.cpp
   dialogs/RunInPrefixDialog.h
   dialogs/RunnerDialog.cpp
@@ -107,6 +111,8 @@ qt_add_executable(mira-gui
   dialogs/SettingsCategories.cpp
   dialogs/SettingsCategories.h
   dialogs/SettingsDialog.h
+  dialogs/WinetricksDialog.cpp
+  dialogs/WinetricksDialog.h
 )
 
 # The placeholder app icon, embedded so mira-gui has a window/taskbar icon

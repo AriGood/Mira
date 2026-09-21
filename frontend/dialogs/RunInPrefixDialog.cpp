@@ -18,8 +18,9 @@
 
 namespace mira_gui {
 
-RunInPrefixDialog::RunInPrefixDialog(std::string game_id, const GameDetail& game, QWidget* parent)
-    : QDialog(parent), game_id_(std::move(game_id)), install_path_(game.install_path) {
+RunInPrefixDialog::RunInPrefixDialog(std::string game_id, const std::string& install_path,
+                                     const QString& name, QWidget* parent)
+    : QDialog(parent), game_id_(std::move(game_id)), install_path_(install_path) {
   setWindowTitle("Run in prefix");
   // 680, not the old 520, for a real install path next to the Browse
   // button. setMinimumWidth, not resize(680, 0): resize() marks the widget
@@ -34,7 +35,7 @@ RunInPrefixDialog::RunInPrefixDialog(std::string game_id, const GameDetail& game
       QString("Runs an executable inside \"%1\"'s own Wine/Proton prefix. If the game has no "
               "prefix yet, one is created first — which is how an installer gets run for a game "
               "that needs installing.")
-          .arg(QString::fromStdString(game.name)),
+          .arg(name),
       this);
   explanation->setWordWrap(true);
   layout->addWidget(explanation);

@@ -115,6 +115,8 @@ private:
   // Gear <-> Back/Save, and greys out the library controls either way.
   void SetSettingsChromeVisible(bool settings_open);
   void OpenRunners();
+  void OpenGameDetailPage(const std::string& id);
+  void ScanLibrary();
   void ImportSteamLibrary();
   void ImportLutrisLibrary();
   void OpenClassicView();
@@ -139,6 +141,7 @@ private:
   QSlider* zoom_ = nullptr;
   QComboBox* sort_ = nullptr;
   QToolButton* sort_direction_ = nullptr;
+  QToolButton* add_games_ = nullptr;
   // The gear and the Back/Save pair are siblings, one shown at a time — see
   // SetSettingsChromeVisible.
   QToolButton* settings_button_ = nullptr;
