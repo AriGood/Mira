@@ -407,36 +407,43 @@ only covers what's actually Lutris-specific.
 
 ### `POST /v1/lutris/import` — implemented
 Reads Lutris's own game database (`pga.db`, sqlite, via the `sqlite3` CLI —
-not a bundled sqlite library) and each `runner: wine` game's per-game YAML
-config (`~/.local/share/lutris/games/<configpath>.yml`, or
+not a bundled sqlite library) and, for each `runner: wine` or `runner:
+linux` game, its per-game YAML config
+(`~/.local/share/lutris/games/<configpath>.yml`, or
 `~/.config/lutris/games/` if that's where Lutris's `CONFIG_DIR` actually
 resolves to — see `lutris.data_dir` for an explicit override) and upserts
 them:
 ```json
 { "added": 3, "updated": 1, "skipped": 2 }
 ```
-`skipped` counts Lutris rows this import can't use: anything not run
-through `runner: wine` (a `steam`-runner row is already covered by
-`POST /v1/steam/scan`), and any wine-runner row whose YAML has no `prefix`
-recorded — Lutris itself falls back to a filesystem heuristic in that case
-(walking up from the exe looking for something that looks like a prefix),
-which isn't something read from the yaml tree, so it's left alone rather
-than guessed at.
+`runner: linux` is Lutris's own native-Linux runner — a `.sh` script or an
+AppImage, pointed at directly with no prefix involved at all; imported as
+`platform: "native"`, `data_dir` empty. `skipped` counts Lutris rows this
+import can't use: anything not run through `wine` or `linux` (a
+`steam`-runner row is already covered by `POST /v1/steam/scan`, a
+`flatpak`-runner row by `POST /v1/flatpak/scan` reading installed apps
+directly), a wine-runner row whose YAML has no `prefix` recorded — Lutris
+itself falls back to a filesystem heuristic in that case (walking up from
+the exe looking for something that looks like a prefix), which isn't
+something read from the yaml tree, so it's left alone rather than guessed
+at — and a linux-runner row whose `exe` isn't given as an absolute path,
+since there's no prefix to resolve a relative one against.
 
 Nothing here moves or renames anything on disk, in Lutris's data or Mira's
 library roots — this only reads Lutris's config and writes Mira's own
 `games.toml`. `install_path` is always the exe's own directory and
 `data_dir` is always exactly the yaml's `prefix`, verbatim, wherever it
 actually is (they don't have to be related at all — Lutris allows a prefix
-that lives nowhere near the game's files). Idempotent — rescanning updates
-Lutris-owned fields (`name`, `install_path`, `exe_path`, `data_dir`, `env`)
-without touching anything the user configured (`args` is Lutris-owned too,
-since it's Lutris's own launch argument, but `overrides`/`reviewed` are left
-alone), matched by `install_path` rather than an id Lutris and Mira could
-agree on. `runner_ref` is never set by this import: Lutris's own
-`wine.version` is often a generic alias ("ge-proton"), not an exact
-installed build name Mira can resolve, so `default_runner.windows` picks
-one instead.
+that lives nowhere near the game's files), or empty for a native-Linux row.
+Idempotent — rescanning updates Lutris-owned fields (`name`, `install_path`,
+`exe_path`, `data_dir`, `env`) without touching anything the user configured
+(`args` is Lutris-owned too, since it's Lutris's own launch argument, but
+`overrides`/`reviewed` are left alone), matched by `install_path` rather
+than an id Lutris and Mira could agree on. `runner_ref` is never set by
+this import: Lutris's own `wine.version` is often a generic alias
+("ge-proton"), not an exact installed build name Mira can resolve, so
+`default_runner.windows` picks one instead (a native row needs no
+`runner_ref` resolution at all).
 
 Lutris's own categories are mapped onto `tags` (Lutris's `.hidden` becomes
 Mira's `hidden`, `favorites` becomes `favorite`, everything else carries

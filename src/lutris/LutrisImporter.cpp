@@ -141,12 +141,16 @@ std::string NodeToString(const fkyaml::node& node) {
 
 struct LutrisGameConfig {
   std::string exe;
-  std::string prefix;
+  std::string prefix;  // empty for a native-Linux ("linux" runner) row -- no prefix concept at all
   std::string args;
   std::map<std::string, std::string> env;
 };
 
-std::optional<LutrisGameConfig> ReadGameConfig(const fs::path& yaml_path) {
+// `requires_prefix` distinguishes the two runner kinds this importer
+// handles: a "wine" row needs both exe and prefix (see the no-prefix skip
+// note below); a "linux" row (a native .sh/AppImage game) has no prefix
+// concept whatsoever, so only exe is required.
+std::optional<LutrisGameConfig> ReadGameConfig(const fs::path& yaml_path, bool requires_prefix) {
   std::ifstream in(yaml_path);
   if (!in) return std::nullopt;
   std::stringstream buffer;
@@ -172,11 +176,11 @@ std::optional<LutrisGameConfig> ReadGameConfig(const fs::path& yaml_path) {
     return std::nullopt;
   }
 
-  // No inference beyond what the yaml itself declares: a game with no
+  // No inference beyond what the yaml itself declares: a wine row with no
   // prefix recorded is skipped rather than guessed at (Lutris's own
-  // fallback for this case is a filesystem walk-up heuristic, not
-  // something read from the yaml tree).
-  if (cfg.exe.empty() || cfg.prefix.empty()) return std::nullopt;
+  // fallback for this case is a filesystem walk-up heuristic, not something
+  // read from the yaml tree).
+  if (cfg.exe.empty() || (requires_prefix && cfg.prefix.empty())) return std::nullopt;
   return cfg;
 }
 
@@ -205,17 +209,20 @@ Result<LutrisImportSummary> LutrisImporter::Import() {
   const std::map<int, std::vector<std::string>> categories = ReadCategories(*sqlite3, pga_db);
 
   for (const LutrisRow& row : *rows) {
-    // A Lutris row run through anything other than wine is a different,
-    // unhandled case for now (a "steam" row is already covered by
-    // SteamScanner; a native-Linux row would need no runner_ref resolution
-    // at all) — note it, don't guess at it.
-    if (row.runner != "wine") {
+    // "wine" is a Windows game; "linux" is Lutris's own native-Linux runner
+    // (a .sh script or an AppImage, pointed at directly, no prefix at all).
+    // Anything else is a different, unhandled case for now (a "steam" row
+    // is already covered by SteamScanner, a "flatpak" row by
+    // flatpak::FlatpakScanner reading installed apps directly) — note it,
+    // don't guess at it.
+    const bool is_native = row.runner == "linux";
+    if (row.runner != "wine" && !is_native) {
       ++summary.skipped;
       continue;
     }
 
     const fs::path yaml_path = *data_dir / "games" / (row.configpath + ".yml");
-    const auto cfg = ReadGameConfig(yaml_path);
+    const auto cfg = ReadGameConfig(yaml_path, /*requires_prefix=*/!is_native);
     if (!cfg) {
       ++summary.skipped;
       continue;
@@ -224,28 +231,35 @@ Result<LutrisImportSummary> LutrisImporter::Import() {
     // Nothing here is inferred from how exe and prefix relate to each other
     // on disk — an exe given relative is relative to prefix because that's
     // what Lutris's own config format declares (see Epic's real config:
-    // exe under drive_c, prefix $GAMEDIR), not because Mira went looking.
-    // install_path is always the exe's own directory; data_dir is always
-    // exactly what the yaml's prefix says, verbatim, wherever that is.
+    // exe under drive_c, prefix $GAMEDIR), not because Mira went looking. A
+    // "linux" row has no prefix at all, so its exe is always given as an
+    // absolute path (Lutris's own linux.py: a plain file picker, nothing to
+    // resolve relative to) — a relative one here has nothing to resolve
+    // against and is skipped rather than guessed at.
     const fs::path prefix = fs::path(cfg->prefix);
     const fs::path exe_raw = fs::path(cfg->exe);
+    if (is_native && !exe_raw.is_absolute()) {
+      ++summary.skipped;
+      continue;
+    }
     const fs::path exe_abs = exe_raw.is_absolute() ? exe_raw : prefix / exe_raw;
 
     const std::string install_path = exe_abs.parent_path().string();
     const std::string exe_path = exe_abs.filename().string();
-    const std::string data_dir_path = prefix.string();
+    const std::string data_dir_path = is_native ? std::string() : prefix.string();
 
-    // Not a layout guess — a safety floor for one specific real shape: an
-    // exe referenced with no subdirectory at all under drive_c (a launcher
-    // script dropped straight at the C: drive root, e.g. a second game
-    // riding along in another game's prefix). That makes install_path the
-    // whole C: drive, shared by every other game in that prefix — Mira's
-    // DELETE /v1/games removes install_path's contents, so handing out a
-    // scope that broad would let deleting this game take the others with
-    // it. A combined install+prefix layout (install_path == prefix itself,
-    // e.g. Batman) is fine and left alone: that prefix belongs to this game
-    // alone.
-    if (install_path == (prefix / "drive_c").string()) {
+    // Not a layout guess — a safety floor for one specific real shape,
+    // wine-only (a native row has no prefix to share in the first place):
+    // an exe referenced with no subdirectory at all under drive_c (a
+    // launcher script dropped straight at the C: drive root, e.g. a second
+    // game riding along in another game's prefix). That makes install_path
+    // the whole C: drive, shared by every other game in that prefix —
+    // Mira's DELETE /v1/games removes install_path's contents, so handing
+    // out a scope that broad would let deleting this game take the others
+    // with it. A combined install+prefix layout (install_path == prefix
+    // itself, e.g. Batman) is fine and left alone: that prefix belongs to
+    // this game alone.
+    if (!is_native && install_path == (prefix / "drive_c").string()) {
       log::Warn("skipping lutris game {}: install path {} is drive_c's own root, not something game-specific",
                row.name, install_path);
       ++summary.skipped;
@@ -265,7 +279,7 @@ Result<LutrisImportSummary> LutrisImporter::Import() {
     game.exe_path = exe_path;
     game.args = cfg->args;
     game.data_dir = data_dir_path;
-    game.platform = model::Platform::Windows;
+    game.platform = is_native ? model::Platform::Native : model::Platform::Windows;
     game.env = cfg->env;
     if (const auto it = categories.find(row.id); it != categories.end()) {
       game.tags = MergeTags(game.tags, it->second);
@@ -273,6 +287,7 @@ Result<LutrisImportSummary> LutrisImporter::Import() {
     // Lutris's own wine.version is often a generic alias ("ge-proton"), not
     // an exact installed build name Mira can resolve — leave runner_ref
     // alone (empty for a new game) and let default_runner.windows pick one.
+    // A native row needs no runner_ref at all (NativeRunner has no builds).
     game.status = model::GameStatus::Ready;  // Lutris already installed and configured it
     game.last_error.clear();
     game.updated_at = model::NowSeconds();
