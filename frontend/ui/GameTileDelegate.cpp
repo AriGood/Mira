@@ -28,23 +28,51 @@ QSize GameTileDelegate::sizeHint(const QStyleOptionViewItem&, const QModelIndex&
 void GameTileDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option,
                              const QModelIndex& index) const {
   const theme::Tokens& tokens = theme::Current();
+  const bool selected = option.state & QStyle::State_Selected;
+  const bool hovered = option.state & QStyle::State_MouseOver;
+
   // The gap between tiles is this inset, not QListView::spacing: the grid
-  // cell stays the size the zoom slider asked for either way.
+  // cell stays the size the zoom slider asked for either way. On hover, the
+  // tile grows into part of that gap -- never past it, so it can't touch a
+  // neighbor -- and what's left of the gap becomes room for a soft shadow
+  // (below), grown outward from the un-hovered inset so neither ever
+  // crosses into the next cell.
   const int inset = tokens.tile_spacing;
-  const QRect rect = option.rect.adjusted(inset, inset, -inset, -inset);
+  const int grow = hovered ? qMin(inset, 2) : 0;
+  const QRect rect = option.rect.adjusted(inset - grow, inset - grow, -(inset - grow), -(inset - grow));
   if (rect.isEmpty()) return;
 
   const QString name = index.data(NameRole).toString();
   const std::string status = index.data(StatusRole).toString().toStdString();
   const bool running = index.data(RunningRole).toBool();
-  const bool selected = option.state & QStyle::State_Selected;
-  const bool hovered = option.state & QStyle::State_MouseOver;
 
   QPainterPath path;
   if (tokens.radius_tile > 0) {
     path.addRoundedRect(rect, tokens.radius_tile, tokens.radius_tile);
   } else {
     path.addRect(rect);
+  }
+
+  if (hovered) {
+    painter->save();
+    painter->setRenderHint(QPainter::Antialiasing);
+    painter->setPen(Qt::NoPen);
+    // Concentric, decreasingly transparent fills: each smaller one paints
+    // over the middle of the last, leaving only its own outer ring visible
+    // -- the usual cheap stand-in for a real blur. Capped to what's left of
+    // the gap after grow above claimed its share, so it can't reach the
+    // neighbor either.
+    const int shadow_budget = qMax(1, inset - grow);
+    for (int i = shadow_budget; i >= 1; --i) {
+      painter->setBrush(QColor(0, 0, 0, 8 + (shadow_budget - i) * 6));
+      const QRect ring = rect.adjusted(-i, -i, i, i);
+      if (tokens.radius_tile > 0) {
+        painter->drawRoundedRect(ring, tokens.radius_tile + i, tokens.radius_tile + i);
+      } else {
+        painter->drawRect(ring);
+      }
+    }
+    painter->restore();
   }
 
   painter->save();

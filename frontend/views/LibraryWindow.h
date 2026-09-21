@@ -37,20 +37,24 @@ class LibraryGrid;
 namespace mira_gui {
 class GameEditForm;
 class GameTileDelegate;
+class HoverCard;
 class SettingsPanel;
 }
 
-// Primary library view: cover-art grid, details panel, custom top bar in
-// place of a native titlebar. Frameless, so it owns its own
+// Primary library view: cover-art grid, a left sidebar (filters, sort,
+// search, Library/Classic-view nav, Settings), custom top bar in place of a
+// native titlebar. Frameless, so it owns its own
 // move/resize/minimize/maximize/close.
 //
 // Peer of MainWindow, not a replacement — MainWindow (table view) stays
-// reachable from the View menu and `mira-gui --classic` for auditing a
-// freshly scanned library. Both are thin clients over the same MiradClient
-// calls.
+// reachable from the sidebar's Classic table view row and `mira-gui
+// --classic` for auditing a freshly scanned library. Both are thin clients
+// over the same MiradClient calls.
 //
-// Selection model: one click selects a tile and fills the details panel, a
-// second (double) click launches, right-click opens the per-game menu.
+// Selection model: one click selects a tile, a second (double) click
+// launches, right-click opens the per-game menu. Hovering a tile shows a
+// HoverCard after a short dwell — the tile itself plus the right-click menu
+// and the per-game edit page cover everything the old right sidebar used to.
 class LibraryWindow : public QMainWindow {
   Q_OBJECT
 
@@ -105,6 +109,9 @@ private:
   QSize TileSize() const;
 
   void SelectionChanged();
+  // nullptr hides it; otherwise positions and fills a persistent HoverCard
+  // for that tile. Called by LibraryGrid::on_hover_item after its dwell.
+  void ShowHoverCard(QListWidgetItem* item);
   void ShowContextMenu(const QPoint& pos);
   // More than one tile selected — a reduced set of actions applied to all
   // of them at once, chosen at the pos the right-click landed on.
@@ -203,6 +210,7 @@ private:
   bool game_settings_in_sidebar_ = true;
   QLabel* footer_ = nullptr;
   QLabel* empty_hint_ = nullptr;
+  mira_gui::HoverCard* hover_card_ = nullptr;
 
   std::vector<mira_gui::GameSummary> games_;
   std::set<std::string> running_ids_;

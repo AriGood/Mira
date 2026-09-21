@@ -18,18 +18,22 @@
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QEventLoop>
+#include <QGuiApplication>
 #include <QPushButton>
 #include <QRubberBand>
+#include <QScreen>
 #include <QScrollArea>
 #include <QSet>
 #include <QSlider>
 #include <QSplitter>
 #include <QStackedWidget>
 #include <QStyle>
+#include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
 #include <QWindow>
 
+#include <functional>
 #include <iterator>
 #include <optional>
 
@@ -46,6 +50,7 @@
 #include "../ui/GameActions.h"
 #include "../ui/GameEditForm.h"
 #include "../ui/GameTileDelegate.h"
+#include "../ui/HoverCard.h"
 #include "../ui/Icons.h"
 #include "../ui/KeyBindings.h"
 #include "../ui/LibrarySort.h"
@@ -70,6 +75,18 @@ class LibraryGrid : public QListWidget {
 public:
   using QListWidget::QListWidget;
   using QListWidget::setViewportMargins;
+
+  // Set once by LibraryWindow after construction. Called with nullptr on
+  // leaving a tile (hide immediately) or the viewport entirely, and with an
+  // item after it's stayed hovered past the dwell below.
+  std::function<void(QListWidgetItem*)> on_hover_item;
+
+  // Before clear() deletes every item -- otherwise a pending dwell timer, or
+  // the next hover-changed check, could still be holding one of them.
+  void ResetHover() {
+    if (hover_timer_ != nullptr) hover_timer_->stop();
+    last_hover_item_ = nullptr;
+  }
 
 protected:
   void mousePressEvent(QMouseEvent* event) override {
@@ -122,7 +139,13 @@ protected:
       }
       return;
     }
+    TrackHover(itemAt(event->pos()));
     QListWidget::mouseMoveEvent(event);
+  }
+
+  void leaveEvent(QEvent* event) override {
+    TrackHover(nullptr);
+    QListWidget::leaveEvent(event);
   }
 
   void mouseReleaseEvent(QMouseEvent* event) override {
@@ -133,6 +156,25 @@ protected:
   }
 
 private:
+  // Debounced: a card popping up on every tile the cursor merely crosses
+  // while scanning the grid would be worse than not having one.
+  static constexpr int kHoverDwellMs = 280;
+
+  void TrackHover(QListWidgetItem* hovered) {
+    if (hovered == last_hover_item_) return;
+    last_hover_item_ = hovered;
+    if (hover_timer_ == nullptr) {
+      hover_timer_ = new QTimer(this);
+      hover_timer_->setSingleShot(true);
+      connect(hover_timer_, &QTimer::timeout, this, [this] {
+        if (on_hover_item) on_hover_item(last_hover_item_);
+      });
+    }
+    hover_timer_->stop();
+    if (on_hover_item) on_hover_item(nullptr);  // hide immediately on change or leave
+    if (hovered != nullptr) hover_timer_->start(kHoverDwellMs);
+  }
+
   void EndDrag() {
     tracking_drag_ = false;
     if (rubber_band_ == nullptr) return;
@@ -150,6 +192,8 @@ private:
   bool tracking_drag_ = false;
   QRubberBand* rubber_band_ = nullptr;
   QSet<QListWidgetItem*> base_selection_;
+  QListWidgetItem* last_hover_item_ = nullptr;
+  QTimer* hover_timer_ = nullptr;
 };
 
 namespace {
@@ -1085,6 +1129,7 @@ QWidget* LibraryWindow::BuildGrid() {
     if (!running_ids_.contains(id) && status != "ready") return;
     ToggleRunning(id);
   });
+  grid_->on_hover_item = [this](QListWidgetItem* item) { ShowHoverCard(item); };
   layout->addWidget(grid_, /*stretch=*/1);
   ApplyLayoutTokens();  // needs grid_ to already exist
 
@@ -1313,6 +1358,12 @@ void LibraryWindow::ApplyFilter() {
   // not a round trip.
   mira_gui::SortGames(games_, sort_key_, sort_descending_);
 
+  // grid_->clear() deletes every item; a stale last_hover_item_/pending
+  // dwell timer pointing at one of them would be a use-after-free the next
+  // time it fires.
+  grid_->ResetHover();
+  ShowHoverCard(nullptr);
+
   grid_->blockSignals(true);
   grid_->clear();
 
@@ -1405,6 +1456,38 @@ void LibraryWindow::SelectionChanged() {
   selected_id_ = selected.size() == 1
                      ? selected.first()->data(mira_gui::GameTileDelegate::IdRole).toString().toStdString()
                      : std::string();
+}
+
+void LibraryWindow::ShowHoverCard(QListWidgetItem* item) {
+  if (item == nullptr) {
+    if (hover_card_ != nullptr) hover_card_->hide();
+    return;
+  }
+  // Nothing to preview once the grid isn't on screen, and a preview for one
+  // game reads as wrong noise over an active multi-selection.
+  if (content_stack_->currentWidget() != splitter_ || grid_->selectedItems().size() > 1) return;
+
+  const std::string id = item->data(mira_gui::GameTileDelegate::IdRole).toString().toStdString();
+  const mira_gui::GameSummary* game = FindGame(id);
+  if (game == nullptr) return;
+
+  if (hover_card_ == nullptr) hover_card_ = new mira_gui::HoverCard(this);
+  hover_card_->ShowGame(*game, running_ids_.contains(id));
+  hover_card_->adjustSize();
+
+  const QRect tile_rect = grid_->visualItemRect(item);
+  const QPoint top_right = grid_->viewport()->mapToGlobal(tile_rect.topRight());
+  QPoint pos(top_right.x() + 8, top_right.y());
+  // To the right of the tile by default; the left side instead if that
+  // would run off the screen (a tile in the grid's rightmost column).
+  if (QScreen* screen = QGuiApplication::screenAt(top_right)) {
+    if (pos.x() + hover_card_->width() > screen->availableGeometry().right()) {
+      const QPoint top_left = grid_->viewport()->mapToGlobal(tile_rect.topLeft());
+      pos.setX(top_left.x() - hover_card_->width() - 8);
+    }
+  }
+  hover_card_->move(pos);
+  hover_card_->show();
 }
 
 void LibraryWindow::ShowContextMenu(const QPoint& pos) {
@@ -1735,6 +1818,9 @@ void LibraryWindow::SetSettingsChromeVisible(bool settings_open) {
 }
 
 void LibraryWindow::SetGridControlsEnabled(bool enabled) {
+  // The grid itself is what's leaving the screen either way -- nothing left
+  // to preview.
+  if (!enabled) ShowHoverCard(nullptr);
   // These act on a grid that isn't on screen while settings or a game's edit
   // page covers it. library_nav_ is deliberately not here — it's the way
   // back out of either, so it has to stay clickable while they're up.

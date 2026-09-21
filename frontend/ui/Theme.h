@@ -44,7 +44,7 @@ struct Tokens {
 
   int radius_panel = 8;
   int radius_control = 6;
-  int radius_tile = 0;
+  int radius_tile = 6;
   int radius_toast = 8;
 
   int tile_spacing = 5;  // gap between two tiles in the grid
