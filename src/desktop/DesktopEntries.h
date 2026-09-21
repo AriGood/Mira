@@ -33,6 +33,7 @@ public:
 private:
   std::filesystem::path EntryPath(const std::string& game_id) const;
   std::string Render(const model::Game& game) const;
+  bool IsWanted(const model::Game& game) const;
 
   config::Config& config_;
 };

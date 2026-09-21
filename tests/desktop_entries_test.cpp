@@ -1,9 +1,13 @@
 #include <doctest.h>
 
 #include <filesystem>
+#include <format>
+#include <fstream>
+#include <iterator>
 
 #include "config/Config.h"
 #include "desktop/DesktopEntries.h"
+#include "metadata/MetadataFetcher.h"
 
 using namespace mira;
 namespace fs = std::filesystem;
@@ -47,4 +51,74 @@ TEST_CASE("DesktopEntries never writes an entry for a Steam-sourced game -- Stea
 
   CHECK_FALSE(fs::exists(applications / "mira-some-steam-game.desktop"));
   CHECK(fs::exists(applications / "mira-native-game.desktop"));
+}
+
+TEST_CASE("DesktopEntries: a per-game desktop_entries.enabled=false override excludes just that game") {
+  const fs::path state = TempDir("desktop-entries-override-state");
+  const fs::path applications = TempDir("desktop-entries-override-apps");
+
+  config::Config config(state / "settings.toml");
+  config.Load();
+  REQUIRE(config.Set("desktop_entries.enabled", true).has_value());
+  REQUIRE(config.Set("desktop_entries.directory", applications.string()).has_value());
+
+  model::Game excluded;
+  excluded.id = "excluded-game";
+  excluded.name = "Excluded Game";
+  excluded.status = model::GameStatus::Ready;
+  excluded.exe_path = "game";
+  excluded.overrides = {{"desktop_entries.enabled", false}};
+
+  model::Game included;
+  included.id = "included-game";
+  included.name = "Included Game";
+  included.status = model::GameStatus::Ready;
+  included.exe_path = "game";
+
+  desktop::DesktopEntries entries(config);
+  REQUIRE(entries.Sync({excluded, included}).has_value());
+
+  CHECK_FALSE(fs::exists(applications / "mira-excluded-game.desktop"));
+  CHECK(fs::exists(applications / "mira-included-game.desktop"));
+}
+
+TEST_CASE("DesktopEntries: uses cached artwork as Icon= when present, falls back otherwise") {
+  const fs::path state = TempDir("desktop-entries-icon-state");
+  const fs::path applications = TempDir("desktop-entries-icon-apps");
+
+  config::Config config(state / "settings.toml");
+  config.Load();
+  REQUIRE(config.Set("desktop_entries.enabled", true).has_value());
+  REQUIRE(config.Set("desktop_entries.directory", applications.string()).has_value());
+
+  const fs::path metadata_file = metadata::MetadataFile(config, "with-art");
+  const fs::path artwork_dir = metadata::ArtworkDir(config, "with-art");
+  fs::create_directories(metadata_file.parent_path());
+  std::ofstream(metadata_file) << R"({"artwork": {"file": "cover.png"}})";
+  fs::create_directories(artwork_dir);
+  std::ofstream(artwork_dir / "cover.png") << "not really a png";
+
+  model::Game with_art;
+  with_art.id = "with-art";
+  with_art.name = "With Art";
+  with_art.status = model::GameStatus::Ready;
+  with_art.exe_path = "game";
+
+  model::Game without_art;
+  without_art.id = "without-art";
+  without_art.name = "Without Art";
+  without_art.status = model::GameStatus::Ready;
+  without_art.exe_path = "game";
+
+  desktop::DesktopEntries entries(config);
+  REQUIRE(entries.Sync({with_art, without_art}).has_value());
+
+  std::ifstream with_art_in(applications / "mira-with-art.desktop");
+  std::string with_art_contents((std::istreambuf_iterator<char>(with_art_in)), std::istreambuf_iterator<char>());
+  CHECK(with_art_contents.find(std::format("Icon={}", (artwork_dir / "cover.png").string())) != std::string::npos);
+
+  std::ifstream without_art_in(applications / "mira-without-art.desktop");
+  std::string without_art_contents((std::istreambuf_iterator<char>(without_art_in)),
+                                   std::istreambuf_iterator<char>());
+  CHECK(without_art_contents.find("Icon=applications-games") != std::string::npos);
 }

@@ -1,11 +1,16 @@
 #include "desktop/DesktopEntries.h"
 
 #include <format>
-#include <set>
 #include <fstream>
+#include <optional>
+#include <set>
 
+#include <json.hpp>
+
+#include "config/Resolver.h"
 #include "core/Log.h"
 #include "core/Paths.h"
+#include "metadata/MetadataFetcher.h"
 
 namespace mira::desktop {
 namespace {
@@ -25,16 +30,17 @@ std::string Sanitize(std::string_view value) {
   return out;
 }
 
-bool IsLaunchable(const model::Game& game) {
-  if (game.status != model::GameStatus::Ready) return false;
-  // Steam already puts every game in your Steam library into the desktop
-  // menu itself (via its own Linux integration) — a second, Mira-owned
-  // entry for the same game is redundant clutter, not a missing feature,
-  // regardless of steam.launch_mode. Sync() below removes any mira-<id>
-  // entry that stops being "wanted", so this also cleans up an entry a
-  // Steam game already had from before this exclusion existed.
-  if (game.runner_ref.starts_with("steam:")) return false;
-  return !game.exe_path.empty();
+// Absolute path to a game's cached cover art, if any is actually on disk --
+// a .desktop file's Icon= accepts an absolute path just as well as a themed
+// icon name, per spec, so a game with real artwork doesn't have to settle
+// for the generic fallback.
+std::optional<fs::path> CachedArtwork(const config::Config& config, const std::string& game_id) {
+  std::ifstream meta_in(metadata::MetadataFile(config, game_id));
+  if (!meta_in) return std::nullopt;
+  const nlohmann::json info = nlohmann::json::parse(meta_in, nullptr, false);
+  if (info.is_discarded() || !info.contains("artwork")) return std::nullopt;
+  const fs::path file = metadata::ArtworkDir(config, game_id) / info["artwork"].value("file", std::string());
+  return std::ifstream(file, std::ios::binary).good() ? std::make_optional(file) : std::nullopt;
 }
 
 }  // namespace
@@ -46,10 +52,28 @@ fs::path DesktopEntries::EntryPath(const std::string& game_id) const {
          std::format("{}{}{}", kPrefix, game_id, kSuffix);
 }
 
+bool DesktopEntries::IsWanted(const model::Game& game) const {
+  if (game.status != model::GameStatus::Ready) return false;
+  // Steam already puts every game in your Steam library into the desktop
+  // menu itself (via its own Linux integration) — a second, Mira-owned
+  // entry for the same game is redundant clutter, not a missing feature,
+  // regardless of steam.launch_mode. Sync() below removes any mira-<id>
+  // entry that stops being "wanted", so this also cleans up an entry a
+  // Steam game already had from before this exclusion existed.
+  if (game.runner_ref.starts_with("steam:")) return false;
+  if (game.exe_path.empty()) return false;
+
+  const config::Resolver resolver(config_, game.overrides);
+  return resolver.GetBool("desktop_entries.enabled");
+}
+
 std::string DesktopEntries::Render(const model::Game& game) const {
-  const std::string exec = config_.GetString("desktop_entries.exec_mode") == "frontend"
+  const config::Resolver resolver(config_, game.overrides);
+  const std::string exec = resolver.GetString("desktop_entries.exec_mode") == "frontend"
                                ? std::format("mira-gui --launch {}", game.id)
                                : std::format("mira launch {}", game.id);
+  const std::optional<fs::path> artwork = CachedArtwork(config_, game.id);
+  const std::string icon = artwork ? artwork->string() : "applications-games";
 
   return std::format(
       "[Desktop Entry]\n"
@@ -57,15 +81,18 @@ std::string DesktopEntries::Render(const model::Game& game) const {
       "Name={}\n"
       "Comment=Launch {} with Mira\n"
       "Exec={}\n"
-      "Icon=applications-games\n"
+      "Icon={}\n"
       "Categories={}\n"
       "Terminal=false\n"
       "X-Mira-Game-Id={}\n",
-      Sanitize(game.name), Sanitize(game.name), exec,
-      Sanitize(config_.GetString("desktop_entries.categories")), game.id);
+      Sanitize(game.name), Sanitize(game.name), exec, icon,
+      Sanitize(resolver.GetString("desktop_entries.categories")), game.id);
 }
 
 Result<void> DesktopEntries::Sync(const std::vector<model::Game>& games) {
+  // The global switch still gates everything -- a per-game override can
+  // exclude one game while the rest of the menu stays on, but it can't turn
+  // entries back on when they're off globally.
   const bool enabled = config_.GetBool("desktop_entries.enabled");
   const fs::path dir = config_.GetPath("desktop_entries.directory");
 
@@ -82,7 +109,7 @@ Result<void> DesktopEntries::Sync(const std::vector<model::Game>& games) {
   std::set<std::string> wanted;
   if (enabled) {
     for (const model::Game& game : games) {
-      if (IsLaunchable(game)) wanted.insert(game.id);
+      if (IsWanted(game)) wanted.insert(game.id);
     }
   }
 

@@ -252,13 +252,18 @@ needs to also start the daemon. There is no separate desktop entry for
 Separately, `desktop::DesktopEntries` (`src/desktop/DesktopEntries.cpp`)
 gives *each ready game* its own menu entry (`mira-<id>.desktop`), synced
 after every scan and every change to a game or to `desktop_entries.*`
-settings. Its `Exec=` line is always `mira launch <id>` (or the frontend,
+settings. `desktop_entries.enabled`/`.categories`/`.exec_mode` are resolved
+per game through `config::Resolver`, not read straight off the global
+config, so a game's own override (`PATCH .../config`) actually takes effect
+— excluding just that one game from the menu, or filing it under different
+categories. Its `Exec=` line is always `mira launch <id>` (or the frontend,
 if `desktop_entries.exec_mode` is `"frontend"`) — never the game's own
 executable directly, no matter how tempting that shortcut looks, because
 that's exactly what would make a menu launch invisible to
-`proc::ProcessSupervisor`'s playtime/crash tracking. Only ever creates or
-removes files it created itself (`mira-<id>.desktop`) in the configured
-directory.
+`proc::ProcessSupervisor`'s playtime/crash tracking. `Icon=` uses the
+game's cached cover art when one is on disk, falling back to a generic icon
+otherwise. Only ever creates or removes files it created itself
+(`mira-<id>.desktop`) in the configured directory.
 
 ## Idle cost
 
