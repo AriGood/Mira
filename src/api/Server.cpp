@@ -938,14 +938,24 @@ void Server::RegisterRoutes() {
 
     events_.Publish("humble.download.started", {{"bundle_key", bundle_key}});
     std::thread([this, bundle_key, item_numbers] {
-      const Result<void> result = humble::Download(config_, bundle_key, item_numbers);
+      const Result<bool> result = humble::Download(config_, bundle_key, item_numbers);
       if (!result) {
         log::Error("humble download failed ({}): {}", bundle_key, result.error().message);
         events_.Publish("humble.download.failed", {{"bundle_key", bundle_key}, {"error", result.error().message}});
+      } else if (!*result) {
+        log::Warn("humble download for {} had nothing to download (a redeemed key with no Humble-hosted "
+                 "files, most likely)",
+                 bundle_key);
+        events_.Publish("humble.download.finished",
+                       {{"bundle_key", bundle_key},
+                        {"path", humble::DownloadDir(config_, bundle_key).string()},
+                        {"downloaded", false}});
       } else {
         log::Info("humble download finished: {}", bundle_key);
         events_.Publish("humble.download.finished",
-                       {{"bundle_key", bundle_key}, {"path", humble::DownloadDir(config_, bundle_key).string()}});
+                       {{"bundle_key", bundle_key},
+                        {"path", humble::DownloadDir(config_, bundle_key).string()},
+                        {"downloaded", true}});
       }
     }).detach();
 

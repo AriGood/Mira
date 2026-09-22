@@ -784,7 +784,12 @@ Body `{"bundle_key": "...", "item_numbers": "1,3,5-7"}` (`item_numbers`
 optional, humble-cli's own range syntax). Detached, into
 `<humble.download_root>/<bundle_key>/`, with `humble.download.started`/
 `.finished`/`.failed` on the event stream — `.finished`'s payload includes
-`path`.
+`path` and `downloaded` (bool). `downloaded: false` on an otherwise
+successful run means the key had nothing Humble-hosted to fetch —
+confirmed live against an already-redeemed Steam-key purchase
+(`humble-cli details` showed "No items to show", "Total size: 0 B");
+humble-cli itself exits 0 and prints "Nothing to download" for these,
+which isn't a failure, but isn't a real download either.
 
 ---
 

@@ -75,6 +75,12 @@ std::filesystem::path DownloadDir(const config::Config& config, const std::strin
 // optionally narrowed by `item_numbers` (humble-cli's own "1,3,5-7" range
 // syntax, passed through as-is). Blocking, same convention as every other
 // install-shaped call here -- the caller runs it on a detached thread.
-Result<void> Download(const config::Config& config, const std::string& bundle_key, const std::string& item_numbers);
+// Returns whether anything actually landed on disk: some owned "bundle"
+// entries are a redeemed Steam key with no Humble-hosted files at all
+// (confirmed live: `humble-cli details` reporting "No items to show",
+// "Total size: 0 B") -- humble-cli itself exits 0 and prints "Nothing to
+// download" for these, which isn't a failure, but isn't the same as a
+// real download landing either.
+Result<bool> Download(const config::Config& config, const std::string& bundle_key, const std::string& item_numbers);
 
 }  // namespace mira::humble

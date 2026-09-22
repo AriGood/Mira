@@ -27,26 +27,39 @@ std::string VersionOf(const std::string& path) {
   return Trim(result->output);
 }
 
-// Splits one table line on runs of 2+ spaces -- Go's text/tabwriter (what
-// a Cobra CLI's own table output is virtually always built with) pads
-// columns with spaces, not tabs, in a rendered terminal-width table.
-// Not confirmed against real purchase data (no account available), so
-// this is a best-effort convention match, not a verified contract —
-// callers treat a row that doesn't split into the expected number of
-// fields as unparseable and skip it rather than guessing.
-std::vector<std::string> SplitColumns(const std::string& line) {
-  std::vector<std::string> columns;
-  size_t i = 0;
-  while (i < line.size()) {
-    while (i < line.size() && line[i] == ' ') ++i;
-    const size_t start = i;
-    while (i < line.size()) {
-      if (line[i] == ' ' && i + 1 < line.size() && line[i + 1] == ' ') break;
-      ++i;
+// Confirmed live: humble-cli's --field output is plain CSV, not a padded
+// table (no header row either) -- "pS5kGAW5APbRTHH7,Surviving Mars -
+// Deluxe Edition,Yes". Handles a quoted field (a title containing a
+// comma) the standard way, matching Go's encoding/csv default dialect,
+// which this is almost certainly built with.
+std::vector<std::string> ParseCsvLine(const std::string& line) {
+  std::vector<std::string> fields;
+  std::string field;
+  bool in_quotes = false;
+  for (size_t i = 0; i < line.size(); ++i) {
+    const char c = line[i];
+    if (in_quotes) {
+      if (c == '"') {
+        if (i + 1 < line.size() && line[i + 1] == '"') {
+          field += '"';
+          ++i;
+        } else {
+          in_quotes = false;
+        }
+      } else {
+        field += c;
+      }
+    } else if (c == '"') {
+      in_quotes = true;
+    } else if (c == ',') {
+      fields.push_back(std::move(field));
+      field.clear();
+    } else {
+      field += c;
     }
-    if (i > start) columns.push_back(Trim(line.substr(start, i - start)));
   }
-  return columns;
+  fields.push_back(std::move(field));
+  return fields;
 }
 
 }  // namespace
@@ -133,12 +146,12 @@ Result<std::vector<BundleSummary>> ListBundles(const config::Config& config) {
 
     const std::string trimmed = Trim(line);
     if (trimmed.empty()) continue;
-    const std::vector<std::string> columns = SplitColumns(trimmed);
+    const std::vector<std::string> columns = ParseCsvLine(trimmed);
     if (columns.size() < 2) continue;
 
-    // A table's own header row ("KEY  NAME  CLAIMED") isn't a bundle --
-    // skip the first row whose first column case-insensitively reads
-    // "key", rather than assuming a fixed number of header lines.
+    // No header row in real output, but skip one defensively if a future
+    // humble-cli version adds one -- same "first column reads exactly
+    // 'key'" check either way.
     if (!skipped_header) {
       std::string lowered = columns[0];
       std::ranges::transform(lowered, lowered.begin(), [](unsigned char c) { return std::tolower(c); });
@@ -151,7 +164,9 @@ Result<std::vector<BundleSummary>> ListBundles(const config::Config& config) {
     BundleSummary bundle;
     bundle.key = columns[0];
     bundle.name = columns[1];
-    bundle.claimed = columns.size() > 2 && (columns[2] == "yes" || columns[2] == "true");
+    std::string claimed = columns.size() > 2 ? columns[2] : std::string();
+    std::ranges::transform(claimed, claimed.begin(), [](unsigned char c) { return std::tolower(c); });
+    bundle.claimed = claimed == "yes" || claimed == "true";
     bundles.push_back(std::move(bundle));
   }
   return bundles;
@@ -161,7 +176,7 @@ std::filesystem::path DownloadDir(const config::Config& config, const std::strin
   return config.GetPath("humble.download_root") / bundle_key;
 }
 
-Result<void> Download(const config::Config& config, const std::string& bundle_key, const std::string& item_numbers) {
+Result<bool> Download(const config::Config& config, const std::string& bundle_key, const std::string& item_numbers) {
   const fs::path dir = DownloadDir(config, bundle_key);
   std::error_code ec;
   fs::create_directories(dir, ec);
@@ -182,7 +197,12 @@ Result<void> Download(const config::Config& config, const std::string& bundle_ke
   if (result->exit_code != 0) {
     return Err("download_failed", std::format("humble-cli exited {}: {}", result->exit_code, result->output));
   }
-  return {};
+  // Confirmed live: a purchase that's a redeemed Steam key with no
+  // Humble-hosted files (`humble-cli details` shows "No items to show",
+  // "Total size: 0 B") still exits 0 here, printing this exact line
+  // instead of downloading anything.
+  if (result->output.find("Nothing to download") != std::string::npos) return false;
+  return true;
 }
 
 }  // namespace mira::humble
