@@ -85,8 +85,114 @@ QWidget#top_bar QToolButton#close_button:hover {
   background: @error;
 }
 
-QWidget#top_bar QToolButton#add_games {
+/* --- Filter/sort pill, its popover, and the sidebar's icon-button tools -- */
+
+QWidget#filter_sort_button {
+  background: @surface_alt;
   border: 1px solid @border;
+  border-radius: @radius_control;
+}
+
+QWidget#filter_sort_button:hover {
+  border-color: @accent;
+}
+
+QWidget#filter_sort_popover {
+  background: @surface;
+  border: 1px solid @border;
+  border-radius: @radius_panel;
+}
+
+QWidget#filter_sort_popover QToolButton {
+  background: transparent;
+  border: none;
+  border-radius: @radius_control;
+  padding: 5px 4px;
+}
+
+QWidget#filter_sort_popover QToolButton:hover {
+  background: @surface_alt;
+}
+
+/* The sort rows -- same flat, full-width, icon-optional treatment as the
+ * left sidebar's own nav rows (QWidget#left_sidebar QPushButton), just
+ * scoped to the popover instead since these live outside the sidebar. */
+QWidget#filter_sort_popover QPushButton {
+  background: transparent;
+  border: none;
+  border-radius: @radius_control;
+  padding: 7px 10px;
+  text-align: left;
+}
+
+QWidget#filter_sort_popover QPushButton:hover {
+  background: @surface_alt;
+}
+
+QWidget#filter_sort_popover QToolButton:checked,
+QWidget#filter_sort_popover QPushButton:checked {
+  background: @accent;
+  color: @on_accent;
+}
+
+QWidget#left_sidebar QToolButton#add_games {
+  background: transparent;
+  border: 1px solid @border;
+  border-radius: @radius_control;
+  padding: 7px 10px;
+}
+
+QWidget#left_sidebar QToolButton#add_games:hover {
+  border-color: @accent;
+  background: @surface_alt;
+}
+
+/* --- Left sidebar ---------------------------------------------------------
+ * Library/Classic view/Settings are plain QPushButtons made to read as rows
+ * (see ui/GameTileDelegate.cpp's own status-dot styling for the same
+ * "flatten it, then restyle by objectName" approach elsewhere). */
+
+QWidget#left_sidebar {
+  background: @surface;
+  border-right: 1px solid @border;
+}
+
+QWidget#left_sidebar QPushButton {
+  background: transparent;
+  border: none;
+  border-radius: @radius_control;
+  padding: 7px 10px;
+  text-align: left;
+}
+
+QWidget#left_sidebar QPushButton:hover {
+  background: @surface_alt;
+}
+
+QWidget#left_sidebar QPushButton:pressed {
+  background: @border;
+}
+
+QWidget#left_sidebar QPushButton:checked {
+  background: @accent;
+  color: @on_accent;
+}
+
+/* setItemWidget rows (LibraryWindow.cpp's MakeFilterRow) draw their own
+ * selected-state text color by hand -- this only covers the row's
+ * background and shape. */
+QListWidget#filter_list {
+  background: transparent;
+  border: none;
+}
+
+QListWidget#filter_list::item {
+  padding: 0px;
+  border-radius: @radius_control;
+}
+
+QListWidget#filter_list::item:selected {
+  background: @accent;
 }
 
 /* --- Buttons ------------------------------------------------------------- */
@@ -407,4 +513,14 @@ QGroupBox::title {
 
 QScrollArea {
   border: none;
+}
+
+/* --- Game-edit overlay ---------------------------------------------------
+ * The scrim itself is painted inline (its alpha isn't a plain theme color),
+ * this just covers the centered card sitting on top of it. */
+
+QWidget#game_edit_card {
+  background: @surface;
+  border: 1px solid @border;
+  border-radius: @radius_panel;
 }

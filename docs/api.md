@@ -747,6 +747,14 @@ Steam-owned (`runner_ref` starting `"steam:"`):
   `game.metadata_failed` — the signal for "set a key", not "no art exists".
   Every slot's full candidate list is cached too (`art_candidates` below),
   so a different one can be picked via `POST /v1/games/{id}/artwork?type=`.
+  If `metadata.protondb_for_non_steam` is on (default off), a Steam AppID is
+  also best-matched by name (Steam's own public store search — no key
+  needed) and, if found, ProtonDB is queried the same as the Steam-owned
+  path. Best-effort and independent of `steamgriddb.api_key`: with no key
+  set, this alone is enough for the fetch to succeed instead of failing with
+  `no_steamgriddb_key`, just with no cover art. Matching by name can pick
+  the wrong game (a generic title has no other signal to disambiguate with)
+  and never touches `runner_ref` or how the game actually launches.
 
 Fetched automatically the moment a game is first detected (`POST
 /v1/library/scan`, the inotify watcher, and `POST /v1/steam/scan` all

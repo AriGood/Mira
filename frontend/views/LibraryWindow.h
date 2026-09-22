@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QHash>
+#include <QList>
 #include <QMainWindow>
 #include <QPixmap>
 #include <QSize>
@@ -17,15 +18,18 @@
 
 class QLabel;
 class QLineEdit;
-class QComboBox;
+class QGridLayout;
 class QListWidget;
 class QPushButton;
 class QSlider;
 class QSplitter;
+class QStackedLayout;
 class QStackedWidget;
 class QVBoxLayout;
 class QAction;
 class QToolButton;
+class QListWidgetItem;
+class QTableWidget;
 
 // QListWidget with setViewportMargins made public — Qt keeps it protected on
 // QAbstractScrollArea. Defined in LibraryWindow.cpp; this file only ever
@@ -33,23 +37,25 @@ class QToolButton;
 class LibraryGrid;
 
 namespace mira_gui {
-class GameDetailsPanel;
 class GameEditForm;
 class GameTileDelegate;
+class HoverCard;
 class SettingsPanel;
 }
 
-// Primary library view: cover-art grid, details panel, custom top bar in
-// place of a native titlebar. Frameless, so it owns its own
+// Primary library view: cover-art grid, a left sidebar (filters, sort,
+// search, Library/Classic-view nav, Settings), custom top bar in place of a
+// native titlebar. Frameless, so it owns its own
 // move/resize/minimize/maximize/close.
 //
-// Peer of MainWindow, not a replacement — MainWindow (table view) stays
-// reachable from the View menu and `mira-gui --classic` for auditing a
-// freshly scanned library. Both are thin clients over the same MiradClient
-// calls.
+// `mira-gui --classic` still opens MainWindow standalone; the sidebar's
+// Classic table view row instead shows the same table as a content_stack_
+// page, reading this window's own games_/running_ids_.
 //
-// Selection model: one click selects a tile and fills the details panel, a
-// second (double) click launches, right-click opens the per-game menu.
+// Selection model: one click selects a tile, a second (double) click
+// launches, right-click opens the per-game menu. Hovering a tile shows a
+// HoverCard after a short dwell — the tile itself plus the right-click menu
+// and the per-game edit page cover everything the old right sidebar used to.
 class LibraryWindow : public QMainWindow {
   Q_OBJECT
 
@@ -58,9 +64,20 @@ public:
 
 private:
   QWidget* BuildTopBar();
+  QWidget* BuildSidebar();
   QWidget* BuildGrid();
   QWidget* BuildSettingsPage();
-  void BuildMenus();
+  // The sidebar's single filter+sort control, a Qt::Popup so it dismisses
+  // itself on an outside click or Escape — no manual close-on-click-away
+  // wiring needed. Built once; filters_ and the sort buttons live inside it.
+  QWidget* BuildFilterSortPopover();
+  // Refreshes the pill's own summary text/icons after a filter, sort, or
+  // theme change — the popover's own rows restyle themselves separately.
+  void UpdateFilterSortSummary();
+  // Library-only actions as vertical icon+label rows. Refresh/Shortcuts/
+  // About moved to the top bar; Close window/Quit dropped (the frameless ×
+  // and the tray icon already cover them).
+  void PopulateLibraryActions();
   void BuildShortcuts();
 
   // Frontend's own state (size, tile size, which filter) round-trips through
@@ -88,6 +105,11 @@ private:
   // lets "Playing now"/"Never played" be filters at all.
   void ApplyFilter();
   bool MatchesFilter(const mira_gui::GameSummary& game) const;
+  // The part of MatchesFilter that doesn't depend on the search box — shared
+  // with UpdateFilterCounts, which needs every key's count, not just the
+  // active one's.
+  bool MatchesFilterKey(const mira_gui::GameSummary& game, const QString& key) const;
+  void UpdateFilterCounts();
   QString CurrentFilterKey() const;
   void UpsertGame(const mira_gui::GameSummary& game);
   void RemoveGame(const std::string& id);
@@ -98,14 +120,33 @@ private:
   QSize TileSize() const;
 
   void SelectionChanged();
-  void SelectGridItem(const std::string& id);
+  // nullptr hides it; otherwise positions and fills a persistent HoverCard
+  // for that tile. Called by LibraryGrid::on_hover_item after its dwell.
+  void ShowHoverCard(QListWidgetItem* item);
   void ShowContextMenu(const QPoint& pos);
+  // More than one tile selected — a reduced set of actions applied to all
+  // of them at once, chosen at the pos the right-click landed on.
+  void ShowBatchContextMenu(const QList<QListWidgetItem*>& items, const QPoint& pos);
   void ToggleRunning(const std::string& id);
   void ToggleHidden(const std::string& id);
+  // Adds the hidden tag to each id that doesn't already have it — batch
+  // "Hide" only ever hides, unlike the single-game toggle.
+  void BatchHide(const std::vector<std::string>& ids);
   void LaunchGame(const std::string& id);
   void OpenGameDialog(const std::string& id);
-  QWidget* BuildGameEditPage(const std::string& id);
+  // Scrim + centered card slot, built once. Shown/hidden per open rather
+  // than swapped into content_stack_, so the grid and sidebar stay live
+  // underneath it.
+  QWidget* BuildGameEditOverlay();
+  // The card's own content, rebuilt fresh on every open — same reasoning as
+  // settings_page_: starts synced to what's actually saved, not stale edits
+  // from a discarded previous open.
+  QWidget* BuildGameEditCard(const std::string& id);
   void CloseGameEdit();
+  // Confirms first if game_edit_form_ is dirty — the card's own Back
+  // button, the sidebar's Library nav row, and a click on the scrim.
+  void RequestCloseGameEdit();
+  bool GameEditOpen() const;
   // `focus_key` jumps straight to that schema field once loaded.
   void OpenSettings(const QString& focus_key = QString());
   void CloseSettings();
@@ -114,19 +155,33 @@ private:
   bool SettingsOpen() const;
   // Gear <-> Back/Save, and greys out the library controls either way.
   void SetSettingsChromeVisible(bool settings_open);
+  // Shared by SetSettingsChromeVisible and the per-game edit page: neither
+  // filtering nor sorting means anything while the grid isn't on screen.
+  void SetGridControlsEnabled(bool enabled);
+  // Highlights the sidebar's "Library" row exactly when the grid is the
+  // visible content (not Settings, not a game's edit page).
+  void UpdateLibraryNavActive();
   void OpenRunners();
+  void OpenAbout();
   void OpenGameDetailPage(const std::string& id);
   void ScanLibrary();
   void ImportSteamLibrary();
   void ImportLutrisLibrary();
   void ImportDesktopEntries();
   void AddGameManually();
+  QWidget* BuildClassicPage();
+  // Repopulates classic_table_ from the same filtered games_ the grid just
+  // rebuilt — called at the end of ApplyFilter so the two views never drift.
+  void RefreshClassicTable();
   void OpenClassicView();
+  void CloseClassicView();
   // `announce` is false for the bulk path, where one toast covers the batch
   // and per-game messages would be one notification per game.
   void RefreshMetadata(const std::string& id, bool announce = true);
   void OpenArtworkPicker(const std::string& id, const std::string& slot);
   void FetchMissingArtwork();
+  void SyncDesktopEntries();
+  void RemoveAllDesktopEntries();
   void ShowSteamGridDbNotice(bool asked_for);
   void UpdateTileCover(const QString& id);
 
@@ -134,45 +189,83 @@ private:
   int FilterRow(const QString& key) const;
 
   QWidget* top_bar_ = nullptr;
-  QToolButton* menu_button_ = nullptr;
   QLineEdit* search_ = nullptr;
-  QComboBox* filters_ = nullptr;
+  // One row per kFilters entry, each carrying its key in Qt::UserRole and a
+  // live count via a custom row widget (see UpdateFilterCounts) — lives
+  // inside filter_sort_popover_, not directly in the sidebar layout.
+  QListWidget* filters_ = nullptr;
+  // The sidebar's always-visible filter+sort pill; concrete type (a small
+  // QWidget subclass with a plain on_clicked callback, matching LibraryGrid's
+  // own pattern) is local to LibraryWindow.cpp.
+  QWidget* filter_sort_button_ = nullptr;
+  QLabel* filter_icon_ = nullptr;
+  QLabel* filter_summary_label_ = nullptr;
+  QLabel* sort_icon_ = nullptr;
+  QLabel* sort_summary_label_ = nullptr;
+  QLabel* filter_sort_chevron_ = nullptr;
+  QWidget* filter_sort_popover_ = nullptr;
+  // One button per mira_gui::SortOptions() entry, exclusive selection —
+  // replaces the old QComboBox with a vertical list of full-width rows.
+  QList<QPushButton*> sort_buttons_;
   LibraryGrid* grid_ = nullptr;
   QVBoxLayout* grid_layout_ = nullptr;
   mira_gui::GameTileDelegate* delegate_ = nullptr;
   QSlider* zoom_ = nullptr;
-  QComboBox* sort_ = nullptr;
   QToolButton* sort_direction_ = nullptr;
   QToolButton* add_games_ = nullptr;
-  // The gear and the Back/Save pair are siblings, one shown at a time — see
-  // SetSettingsChromeVisible.
-  QToolButton* settings_button_ = nullptr;
+  // Sidebar row now, styled like library_nav_/classic_view_nav_ — see
+  // SetSettingsChromeVisible for how it and the top bar's Back/Save pair
+  // (still shown/hidden together) coordinate.
+  QPushButton* settings_button_ = nullptr;
   QWidget* settings_actions_widget_ = nullptr;
   QPushButton* settings_back_button_ = nullptr;
   QPushButton* settings_reset_button_ = nullptr;
   QPushButton* settings_save_button_ = nullptr;
+  // Moved here from the sidebar's old hamburger menu — see BuildTopBar.
+  QToolButton* refresh_button_ = nullptr;
+  QToolButton* shortcuts_button_ = nullptr;
+  QToolButton* about_button_ = nullptr;
+  QWidget* top_bar_divider_ = nullptr;
   QToolButton* minimize_button_ = nullptr;
   QToolButton* maximize_button_ = nullptr;
   QToolButton* close_button_ = nullptr;
 
+  // The left sidebar's two nav rows — Library is checked/highlighted
+  // whenever content_stack_ shows splitter_ (see UpdateLibraryNavActive).
+  QPushButton* library_nav_ = nullptr;
+  QPushButton* classic_view_nav_ = nullptr;
+  // Where PopulateLibraryActions() adds its icon+label rows.
+  QVBoxLayout* library_actions_layout_ = nullptr;
+
   QSplitter* splitter_ = nullptr;
-  // Swaps the whole splitter (grid + sidebar) out for settings, full-screen
-  // — there's no left sidebar left to keep visible next to it.
+  // Swaps the splitter out for Settings/classic table, full-screen. A
+  // game's edit card is a separate overlay (game_edit_overlay_) that stays
+  // over the grid instead.
   QStackedWidget* content_stack_ = nullptr;
   // Rebuilt on every OpenSettings() so it starts synced to what's actually
   // saved, not stale edits left over from a discarded previous open.
   QWidget* settings_page_ = nullptr;
   mira_gui::SettingsPanel* settings_panel_ = nullptr;
-  // The splitter's right slot: page 0 is details_, page 1 is a game's
-  // editable form taking over that space (game_settings_in_sidebar pref).
-  QStackedWidget* sidebar_stack_ = nullptr;
-  QWidget* game_edit_page_ = nullptr;
+  // A game's editable form, in a centered overlay card (game_settings_in_sidebar_)
+  // or a modal dialog — see OpenGameDialog. The overlay is a chrome sibling,
+  // not a content_stack_ page, so the grid stays visible (dimmed) underneath.
+  QWidget* game_edit_overlay_ = nullptr;
+  QGridLayout* game_edit_overlay_layout_ = nullptr;
+  QWidget* game_edit_card_ = nullptr;
+  // Owns chrome (top_bar_ + content_stack_) at index 0 and game_edit_overlay_
+  // at index 1 -- StackAll shows both always; this just decides which one is
+  // raised on top, toggled in OpenGameDialog/CloseGameEdit.
+  QStackedLayout* root_stack_ = nullptr;
   mira_gui::GameEditForm* game_edit_form_ = nullptr;
   bool game_settings_in_sidebar_ = true;
-  bool restoring_selection_ = false;  // re-entrancy guard for SelectGridItem's own selection change
+  // Built once at startup, not per-open like settings_page_/game_edit_card_
+  // — it has no per-session state to go stale, so it just stays synced via
+  // RefreshClassicTable().
+  QWidget* classic_page_ = nullptr;
+  QTableWidget* classic_table_ = nullptr;
   QLabel* footer_ = nullptr;
   QLabel* empty_hint_ = nullptr;
-  mira_gui::GameDetailsPanel* details_ = nullptr;
+  mira_gui::HoverCard* hover_card_ = nullptr;
 
   std::vector<mira_gui::GameSummary> games_;
   std::set<std::string> running_ids_;

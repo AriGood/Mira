@@ -236,9 +236,10 @@ struct GameDetail {
   std::string name;
   std::string status;
   std::string platform;
-  // "scan", "steam", or "lutris" (docs/api.md) — which of the three owns
-  // this game's own fields on a rescan/re-import. GameEditForm uses it to
-  // warn when exe_path isn't actually what launches the game.
+  // "scan", "steam", "lutris", or "desktop-entry" — which source owns this
+  // game's own fields on a rescan/re-import. GameEditForm uses it to warn
+  // when exe_path isn't actually what launches the game; DeleteGameDialog
+  // uses "desktop-entry" to disable file/prefix deletion.
   std::string source;
   std::string install_path;
   std::string exe_path;
@@ -482,7 +483,7 @@ struct FrontendPrefs {
   std::optional<int> window_height;
   std::optional<int> tile_width;
   std::optional<std::string> library_filter;  // a filter key
-  std::optional<int> details_width;
+  std::optional<int> sidebar_width;
   std::optional<std::string> sort_by;  // "name" | "last_played" | "playtime" | "status"
   std::optional<bool> sort_descending;
   // Whether opening the frontend also kicks off POST /v1/library/scan.

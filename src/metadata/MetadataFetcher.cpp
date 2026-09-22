@@ -215,6 +215,40 @@ void FetchGriddbCandidates(const config::Config& config, const std::string& api_
   FetchGriddbSlot(config, auth_header, griddb_id, game_id, "icons", "icon", info);
 }
 
+// GET protondb's own reports summary for a Steam AppID. Best-effort and
+// silent about it -- see FetchGriddbCandidates's own comment for why "no
+// data for this id" isn't treated as an error here either.
+void FetchProtonDb(const std::string& appid, json& info) {
+  const json proton =
+      CurlJson({"curl", "-sSL", std::format("https://www.protondb.com/api/v1/reports/summaries/{}.json", appid)});
+  if (!proton.is_discarded() && proton.contains("tier")) {
+    info["protondb"] = {{"tier", Value(proton, "tier", std::string())},
+                        {"confidence", Value(proton, "confidence", std::string())},
+                        {"total_reports", Value(proton, "total", 0)}};
+  }
+}
+
+// Best-effort Steam AppID lookup by name, so a non-Steam game (Lutris,
+// scanned, manually added) can still get a ProtonDB tier -- ProtonDB is
+// keyed by AppID and this is the only source of one Mira has for a game
+// that isn't runner_ref="steam:<appid>" already. Never touches runner_ref
+// or how the game actually launches; it only feeds FetchProtonDb below.
+// Steam's own search ranks relevance server-side, same trust level this
+// file already gives SteamGridDB's own top autocomplete result
+// (FetchGriddbCandidates) -- a generic title can still match the wrong
+// game, which is the accepted tradeoff of matching by name at all.
+std::string FindSteamAppId(const std::string& name) {
+  const json search = CurlJson(
+      {"curl", "-sSL", std::format("https://store.steampowered.com/api/storesearch/?term={}&l=english&cc=us",
+                                   UrlEncode(name))});
+  if (search.is_discarded()) return {};
+  for (const auto& item : Value(search, "items", json::array())) {
+    if (Value(item, "type", std::string()) != "game") continue;
+    if (const std::int64_t id = Value(item, "id", std::int64_t{0}); id != 0) return std::to_string(id);
+  }
+  return {};
+}
+
 void FetchSteamOwned(const config::Config& config, const std::string& appid, const std::string& name,
                      const std::string& game_id, json& info) {
   const json store = CurlJson(
@@ -311,13 +345,7 @@ void FetchSteamOwned(const config::Config& config, const std::string& appid, con
     };
   }
 
-  const json proton =
-      CurlJson({"curl", "-sSL", std::format("https://www.protondb.com/api/v1/reports/summaries/{}.json", appid)});
-  if (!proton.is_discarded() && proton.contains("tier")) {
-    info["protondb"] = {{"tier", Value(proton, "tier", std::string())},
-                        {"confidence", Value(proton, "confidence", std::string())},
-                        {"total_reports", Value(proton, "total", 0)}};
-  }
+  FetchProtonDb(appid, info);
 
   // Steam's own cover/hero go into art_candidates too, as the first entry --
   // otherwise there was no way back to it once you picked a SteamGridDB
@@ -421,14 +449,27 @@ void FetchEpicOwned(const config::Config& config, const std::string& app_name, c
 
 Result<void> FetchNonSteam(const config::Config& config, const std::string& name,
                            const std::string& game_id, json& info) {
+  // Independent of the SteamGridDB key below -- ProtonDB's own by-AppID
+  // lookup needs no key, only a best-matched AppID, so this runs first and
+  // can still leave something cached even when there's no key for cover art.
+  bool found_protondb = false;
+  if (config.GetBool("metadata.protondb_for_non_steam")) {
+    if (const std::string appid = FindSteamAppId(name); !appid.empty()) {
+      FetchProtonDb(appid, info);
+      found_protondb = true;
+    }
+  }
+
   const std::string api_key = config.GetString("steamgriddb.api_key");
   // An error rather than a silent skip. There is no other free cover-art
   // source for a non-Steam game, so with no key there is nothing this
   // function can ever do — and reporting success left the caller with a
   // cache entry, a game.metadata_ready event and no picture, which reads as
   // "Mira looked and there was nothing" rather than "Mira was never given
-  // the one thing it needed".
+  // the one thing it needed". A found ProtonDB tier is still something,
+  // though, so that alone is not treated the same as finding nothing at all.
   if (api_key.empty()) {
+    if (found_protondb) return {};
     return Err("no_steamgriddb_key",
                "non-Steam games need a SteamGridDB API key for cover art — set "
                "steamgriddb.api_key (it is free, from steamgriddb.com)");

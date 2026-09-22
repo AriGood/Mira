@@ -3,6 +3,7 @@
 
 #include <QAbstractItemView>
 #include <QAction>
+#include <QButtonGroup>
 #include <QKeySequence>
 #include <QHBoxLayout>
 #include <QIcon>
@@ -13,18 +14,32 @@
 #include <QListWidgetItem>
 #include <QMenu>
 #include <QMouseEvent>
+#include <QWheelEvent>
 #include <QCloseEvent>
-#include <QComboBox>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QEventLoop>
+#include <QGridLayout>
+#include <QGuiApplication>
 #include <QPushButton>
+#include <QRubberBand>
+#include <QScreen>
 #include <QScrollArea>
+#include <QSet>
 #include <QSlider>
 #include <QSplitter>
+#include <QStackedLayout>
 #include <QStackedWidget>
+#include <QHeaderView>
 #include <QStyle>
+#include <QTableWidget>
+#include <QTableWidgetItem>
+#include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
 #include <QWindow>
 
+#include <functional>
 #include <iterator>
 #include <optional>
 
@@ -36,11 +51,13 @@
 #include "../dialogs/GameDetailPageDialog.h"
 #include "../dialogs/RunnerDialog.h"
 
+#include "../ui/AboutPanel.h"
 #include "../ui/CoverArt.h"
 #include "../ui/GameActions.h"
-#include "../ui/GameDetailsPanel.h"
 #include "../ui/GameEditForm.h"
+#include "../ui/GamePresentation.h"
 #include "../ui/GameTileDelegate.h"
+#include "../ui/HoverCard.h"
 #include "../ui/Icons.h"
 #include "../ui/KeyBindings.h"
 #include "../ui/LibrarySort.h"
@@ -49,42 +66,200 @@
 #include "../ui/Shortcuts.h"
 #include "../ui/Theme.h"
 #include "../ui/Tray.h"
-#include "MainWindow.h"
 
 // setViewportMargins is protected on QAbstractScrollArea; this just republishes
 // it so ApplyLayoutTokens() can pad the tiles without also inseting the
 // scrollbar (a container's own contents margins would do both).
+//
+// Also implements its own drag-to-select rather than relying on
+// QAbstractItemView's built-in rubber band: that only starts when the press
+// lands on genuinely empty viewport space, but every tile here fills its
+// whole grid cell (setSpacing(0), the visual gap between tiles is the
+// delegate's own padding within each cell, not real space between cells) —
+// so there is no pixel left to start Qt's own rubber band from.
 class LibraryGrid : public QListWidget {
 public:
   using QListWidget::QListWidget;
   using QListWidget::setViewportMargins;
+
+  // Set once by LibraryWindow after construction. Called with nullptr on
+  // leaving a tile (hide immediately) or the viewport entirely, and with an
+  // item after it's stayed hovered past the dwell below.
+  std::function<void(QListWidgetItem*)> on_hover_item;
+
+  // Ctrl+wheel resizes tiles instead of scrolling -- one call per notch,
+  // positive to grow. Set once by LibraryWindow after construction.
+  std::function<void(int steps)> on_ctrl_wheel;
+
+  // Before clear() deletes every item -- otherwise a pending dwell timer, or
+  // the next hover-changed check, could still be holding one of them.
+  void ResetHover() {
+    if (hover_timer_ != nullptr) hover_timer_->stop();
+    last_hover_item_ = nullptr;
+  }
+
+protected:
+  void mousePressEvent(QMouseEvent* event) override {
+    if (event->button() == Qt::LeftButton) {
+      drag_origin_ = event->pos();
+      tracking_drag_ = true;
+    }
+    QListWidget::mousePressEvent(event);
+  }
+
+  void mouseMoveEvent(QMouseEvent* event) override {
+    // Belt and suspenders: if the button somehow isn't down anymore without
+    // this having seen a matching release (e.g. it was released while a
+    // dialog briefly had an implicit grab), don't let a stale tracking_drag_
+    // resume a drag from the old origin on the next plain hover-move.
+    if (tracking_drag_ && !(event->buttons() & Qt::LeftButton)) {
+      EndDrag();
+    }
+    if (tracking_drag_) {
+      if (rubber_band_ == nullptr) {
+        constexpr int kDragThreshold = 6;
+        if ((event->pos() - drag_origin_).manhattanLength() < kDragThreshold) {
+          QListWidget::mouseMoveEvent(event);
+          return;
+        }
+        // A fresh drag replaces the selection unless it started with a
+        // modifier held, matching plain-click behavior; either way, what's
+        // selected right now (including whatever the initiating press
+        // already selected) is the additive floor a shrinking rect won't
+        // clear again below.
+        if (!(event->modifiers() & (Qt::ControlModifier | Qt::ShiftModifier))) {
+          clearSelection();
+        }
+        base_selection_.clear();
+        for (QListWidgetItem* selected : selectedItems()) base_selection_.insert(selected);
+        rubber_band_ = new QRubberBand(QRubberBand::Rectangle, viewport());
+        rubber_band_->setGeometry(QRect(drag_origin_, QSize()));
+        rubber_band_->show();
+      }
+      const QRect rect = QRect(drag_origin_, event->pos()).normalized();
+      rubber_band_->setGeometry(rect);
+      for (int row = 0; row < count(); ++row) {
+        QListWidgetItem* it = item(row);
+        it->setSelected(base_selection_.contains(it) || rect.intersects(visualItemRect(it)));
+      }
+      return;
+    }
+    TrackHover(itemAt(event->pos()));
+    QListWidget::mouseMoveEvent(event);
+  }
+
+  void leaveEvent(QEvent* event) override {
+    TrackHover(nullptr);
+    QListWidget::leaveEvent(event);
+  }
+
+  void wheelEvent(QWheelEvent* event) override {
+    if (event->modifiers() & Qt::ControlModifier) {
+      // angleDelta() is in eighths of a degree; a "notch" on a real wheel is
+      // 15 degrees (120), a step per notch is the usual feel for this.
+      const int steps = event->angleDelta().y() / 120;
+      if (steps != 0 && on_ctrl_wheel) on_ctrl_wheel(steps);
+      event->accept();
+      return;
+    }
+    QListWidget::wheelEvent(event);
+  }
+
+  void mouseReleaseEvent(QMouseEvent* event) override {
+    const bool was_dragging = rubber_band_ != nullptr;
+    EndDrag();
+    if (was_dragging) return;  // the drag already applied the selection; not a click
+    QListWidget::mouseReleaseEvent(event);
+  }
+
+private:
+  // Debounced: a card popping up on every tile the cursor merely crosses
+  // while scanning the grid would be worse than not having one.
+  static constexpr int kHoverDwellMs = 280;
+
+  void TrackHover(QListWidgetItem* hovered) {
+    if (hovered == last_hover_item_) return;
+    last_hover_item_ = hovered;
+    if (hover_timer_ == nullptr) {
+      hover_timer_ = new QTimer(this);
+      hover_timer_->setSingleShot(true);
+      connect(hover_timer_, &QTimer::timeout, this, [this] {
+        if (on_hover_item) on_hover_item(last_hover_item_);
+      });
+    }
+    hover_timer_->stop();
+    if (on_hover_item) on_hover_item(nullptr);  // hide immediately on change or leave
+    if (hovered != nullptr) hover_timer_->start(kHoverDwellMs);
+  }
+
+  void EndDrag() {
+    tracking_drag_ = false;
+    if (rubber_band_ == nullptr) return;
+    // Deleted immediately, not deleteLater(): a second drag can start
+    // before a deferred delete would have run, and a stale hidden rubber
+    // band still parented to the viewport at its old geometry is exactly
+    // the kind of leftover state that made this bug hard to pin down.
+    delete rubber_band_;
+    rubber_band_ = nullptr;
+    base_selection_.clear();
+  }
+
+  QPoint drag_origin_;
+  bool tracking_drag_ = false;
+  QRubberBand* rubber_band_ = nullptr;
+  QSet<QListWidgetItem*> base_selection_;
+  QListWidgetItem* last_hover_item_ = nullptr;
+  QTimer* hover_timer_ = nullptr;
 };
 
 namespace {
 
-// The top bar's filter picker. Status keys match mirad's `status` values;
-// "all", "running" and "never" are frontend-only groupings.
+// The sidebar's filter picker, inside the filter+sort popover. Status keys
+// match mirad's `status` values; "all", "running" and "never" are
+// frontend-only groupings.
 struct FilterEntry {
   const char* label;
   const char* key;
+  mira_gui::icons::Glyph icon;
 };
 
 const FilterEntry kFilters[] = {
-    {"All games", "all"},
-    {"Playing now", "running"},
-    {"Ready", "ready"},
-    {"Needs install", "needs_install"},
-    {"Setting up", "setting_up"},
-    {"Broken", "broken"},
-    {"Missing", "missing"},
-    {"Never played", "never"},
+    {"All games", "all", mira_gui::icons::Glyph::Filter},
+    {"Playing now", "running", mira_gui::icons::Glyph::Play},
+    {"Ready", "ready", mira_gui::icons::Glyph::CheckCircle},
+    {"Needs install", "needs_install", mira_gui::icons::Glyph::Download},
+    {"Setting up", "setting_up", mira_gui::icons::Glyph::Clock},
+    {"Broken", "broken", mira_gui::icons::Glyph::Warning},
+    {"Missing", "missing", mira_gui::icons::Glyph::CircleX},
+    {"Never played", "never", mira_gui::icons::Glyph::Moon},
     // Every entry above excludes a hidden-tagged game; this is the only one
     // that shows them, and only them.
-    {"Hidden", "hidden"},
+    {"Hidden", "hidden", mira_gui::icons::Glyph::EyeSlash},
 };
 
 bool HasTag(const mira_gui::GameSummary& game, const std::string& tag) {
   return std::find(game.tags.begin(), game.tags.end(), tag) != game.tags.end();
+}
+
+// Icon + label (label also stashed in Qt::UserRole + 1, for the pill) + a
+// live count (see UpdateFilterCounts). Transparent background: the list's
+// own selection highlight marks the active row.
+QWidget* MakeFilterRow(mira_gui::icons::Glyph glyph, const QString& label, QWidget* parent) {
+  auto* row = new QWidget(parent);
+  auto* layout = new QHBoxLayout(row);
+  layout->setContentsMargins(6, 3, 6, 3);
+  layout->setSpacing(8);
+  auto* icon = new QLabel(row);
+  icon->setObjectName("icon");
+  icon->setPixmap(mira_gui::icons::For(glyph, mira_gui::theme::Current().text_muted).pixmap(14, 14));
+  layout->addWidget(icon);
+  auto* text = new QLabel(label, row);
+  layout->addWidget(text, /*stretch=*/1);
+  auto* count = new QLabel(row);
+  count->setObjectName("count");
+  count->setProperty("role", "muted");
+  layout->addWidget(count);
+  return row;
 }
 
 constexpr int kResizeMargin = 5;
@@ -145,6 +320,39 @@ private:
   QMainWindow* window_;
 };
 
+// Sidebar's filter+sort pill. Plain QWidget, not QPushButton: needs two
+// icon+label pairs and a chevron, not one icon+text. Plain callback (like
+// LibraryGrid), not a signal — too small to need one.
+class FilterSortButton : public QWidget {
+public:
+  explicit FilterSortButton(QWidget* parent) : QWidget(parent) {
+    setCursor(Qt::PointingHandCursor);
+    setAttribute(Qt::WA_Hover, true);
+  }
+  std::function<void()> on_clicked;
+
+protected:
+  void mousePressEvent(QMouseEvent* event) override {
+    if (event->button() == Qt::LeftButton && on_clicked) on_clicked();
+  }
+};
+
+// The game-edit card's dimmed backdrop. A click that lands here (never on
+// the card itself, which is a child widget and consumes its own clicks
+// first) closes the card, same as clicking outside any other modal.
+class ModalOverlay : public QWidget {
+public:
+  explicit ModalOverlay(QWidget* parent) : QWidget(parent) {
+    setAttribute(Qt::WA_StyledBackground, true);
+  }
+  std::function<void()> on_backdrop_clicked;
+
+protected:
+  void mousePressEvent(QMouseEvent* event) override {
+    if (event->button() == Qt::LeftButton && on_backdrop_clicked) on_backdrop_clicked();
+  }
+};
+
 }  // namespace
 
 LibraryWindow::LibraryWindow(QWidget* parent) : QMainWindow(parent) {
@@ -168,42 +376,32 @@ LibraryWindow::LibraryWindow(QWidget* parent) : QMainWindow(parent) {
     ApplyTopBarIcons();
   });
 
-  details_ = new mira_gui::GameDetailsPanel(this);
-  details_->SetArtworkStore(artwork_);
-  connect(details_, &mira_gui::GameDetailsPanel::PlayRequested, this,
-          [this](const QString& id) { LaunchGame(id.toStdString()); });
-  connect(details_, &mira_gui::GameDetailsPanel::StopRequested, this,
-          [this](const QString& id) { mira_gui::actions::Stop(this, id.toStdString()); });
-  connect(details_, &mira_gui::GameDetailsPanel::EditRequested, this,
-          [this](const QString& id) { OpenGameDialog(id.toStdString()); });
-  connect(details_, &mira_gui::GameDetailsPanel::MetadataRefreshRequested, this,
-          [this](const QString& id) { RefreshMetadata(id.toStdString()); });
-  connect(details_, &mira_gui::GameDetailsPanel::ArtworkPickRequested, this,
-          [this](const QString& id, const QString& slot) {
-            OpenArtworkPicker(id.toStdString(), slot.toStdString());
-          });
-  connect(details_, &mira_gui::GameDetailsPanel::MoreDetailsRequested, this,
-          [this](const QString& id) { OpenGameDetailPage(id.toStdString()); });
-
-  // page 1 (game_edit_page_) is built lazily by OpenGameDialog.
-  sidebar_stack_ = new QStackedWidget(this);
-  sidebar_stack_->addWidget(details_);
-
   splitter_ = new QSplitter(Qt::Horizontal, this);
+  splitter_->addWidget(BuildSidebar());
   splitter_->addWidget(BuildGrid());
-  splitter_->addWidget(sidebar_stack_);
-  splitter_->setStretchFactor(0, 1);
-  splitter_->setStretchFactor(1, 0);
-  splitter_->setSizes({850, 330});
+  splitter_->setStretchFactor(0, 0);
+  splitter_->setStretchFactor(1, 1);
+  splitter_->setSizes({232, 850});
   splitter_->setChildrenCollapsible(false);
 
-  // page 1 (settings) is built lazily by OpenSettings and covers this
-  // entire slot, sidebar included.
+  // Settings is built lazily by OpenSettings() and covers this slot; the
+  // classic table is built once here since it has no per-open state to go
+  // stale. A game's edit card is a separate overlay, not a page here.
   content_stack_ = new QStackedWidget(this);
   content_stack_->addWidget(splitter_);
+  classic_page_ = BuildClassicPage();
+  content_stack_->addWidget(classic_page_);
 
   auto* central = new RootWidget(this);
-  auto* layout = new QVBoxLayout(central);
+  // StackAll: the game-edit overlay is a chrome sibling, not a
+  // content_stack_ page, so the grid/sidebar stay visible (dimmed)
+  // underneath. current_widget only picks which one is raised.
+  root_stack_ = new QStackedLayout(central);
+  root_stack_->setStackingMode(QStackedLayout::StackAll);
+  root_stack_->setContentsMargins(0, 0, 0, 0);
+
+  auto* chrome = new QWidget(central);
+  auto* layout = new QVBoxLayout(chrome);
   layout->setContentsMargins(kResizeMargin, kResizeMargin, kResizeMargin, kResizeMargin);
   layout->setSpacing(0);
   QWidget* top_bar = BuildTopBar();
@@ -213,19 +411,19 @@ LibraryWindow::LibraryWindow(QWidget* parent) : QMainWindow(parent) {
   layout->addWidget(top_bar);
   content_stack_->setCursor(Qt::ArrowCursor);
   layout->addWidget(content_stack_, /*stretch=*/1);
+  root_stack_->addWidget(chrome);
 
-  footer_ = new QLabel(central);
-  footer_->setProperty("role", "muted");
-  footer_->setContentsMargins(10, 4, 10, 4);
-  footer_->setCursor(Qt::ArrowCursor);
-  layout->addWidget(footer_);
+  game_edit_overlay_ = BuildGameEditOverlay();
+  root_stack_->addWidget(game_edit_overlay_);
+  root_stack_->setCurrentWidget(chrome);
 
   setCentralWidget(central);
 
-  // After BuildShortcuts, not before: BuildMenus reads common_'s actions,
-  // which BuildShortcuts is what populates.
+  // After BuildShortcuts, not before: PopulateLibraryActions reads common_'s
+  // actions, which BuildShortcuts is what populates.
   BuildShortcuts();
-  BuildMenus();
+  PopulateLibraryActions();
+  UpdateLibraryNavActive();
 
   LoadPrefs();
   RefreshHealth(/*force_scan=*/false);
@@ -234,54 +432,34 @@ LibraryWindow::LibraryWindow(QWidget* parent) : QMainWindow(parent) {
                       [this](std::string type, std::string data) { HandleGameEvent(type, data); });
 }
 
-void LibraryWindow::BuildMenus() {
-  auto* menu = new QMenu(menu_button_);
-  menu_button_->setMenu(menu);
+void LibraryWindow::PopulateLibraryActions() {
+  using mira_gui::icons::Glyph;
+  QVBoxLayout* actions = library_actions_layout_;
 
-  // Actions come from BuildShortcuts, already added to the window. Listing
-  // one in a menu makes its key discoverable — Qt draws the sequence next
-  // to the label.
-  auto* file_menu = menu->addMenu("&File");
-  file_menu->addAction(common_.close_window);
-  file_menu->addAction(common_.quit);
+  // Same flat row style as library_nav_ above (QSS already covers it by
+  // parentage). Refresh/Shortcuts/About moved to the top bar; Close
+  // window/Quit dropped (the × and tray icon already cover them).
+  auto row = [this, actions](Glyph glyph, const QString& text, auto slot) {
+    auto* button = new QPushButton(text, actions->parentWidget());
+    button->setFlat(true);
+    button->setIcon(mira_gui::icons::For(glyph));
+    connect(button, &QPushButton::clicked, this, slot);
+    actions->addWidget(button);
+    return button;
+  };
 
-  auto* view_menu = menu->addMenu("&View");
-  // Always scans, whatever scan_on_startup says: the preference is about
-  // opening the window, not about this command.
-  QAction* refresh = view_menu->addAction("&Refresh library", this,
-                                          [this] { RefreshHealth(/*force_scan=*/true); });
-  // F5 is the platform's own Refresh; Ctrl+R is the one every browser
-  // taught, and a second binding costs nothing. Shared id with MainWindow's
-  // own refresh action -- editing either in Settings updates both.
-  refresh->setShortcuts({mira_gui::keybindings::Register(refresh, "refresh", "Refresh the library",
-                                                          QKeySequence(QKeySequence::Refresh),
-                                                          {QKeySequence(Qt::CTRL | Qt::Key_R)}),
-                        QKeySequence(Qt::CTRL | Qt::Key_R)});
-  view_menu->addAction("Open &classic table view", this, &LibraryWindow::OpenClassicView);
-
-  auto* library_menu = menu->addMenu("&Library");
-  library_menu->addAction("Import &Steam library", this, &LibraryWindow::ImportSteamLibrary);
-  library_menu->addAction("Import &Lutris games", this, &LibraryWindow::ImportLutrisLibrary)
-      ->setToolTip(
-          "Read Lutris's own database and add its Wine games here. Nothing is moved or renamed, "
-          "in either launcher's files — a game stays playable in Lutris too.");
-  library_menu->addAction("Fetch missing &cover art", this, &LibraryWindow::FetchMissingArtwork)
+  row(Glyph::Wrench, "Runners…", &LibraryWindow::OpenRunners);
+  row(Glyph::Image, "Fetch missing cover art", &LibraryWindow::FetchMissingArtwork)
       ->setToolTip(
           "Re-fetch metadata for every game with no cover. mirad only fetches automatically for a "
           "newly detected game, so a game that failed once — or a non-Steam game from before a "
           "SteamGridDB key was set — stays without one until asked again.");
-
-  auto* tools_menu = menu->addMenu("&Tools");
-  tools_menu->addAction("&Runners…", this, &LibraryWindow::OpenRunners);
-  QAction* settings = tools_menu->addAction("&Settings…", this, [this] { OpenSettings(); });
-  // Spelled out rather than QKeySequence::Preferences, which Qt binds on
-  // macOS only — this row showed no shortcut at all on Linux. Shared id with
-  // MainWindow's own settings action.
-  settings->setShortcut(mira_gui::keybindings::Register(settings, "settings", "Settings",
-                                                         QKeySequence(Qt::CTRL | Qt::Key_Comma)));
-
-  auto* help_menu = menu->addMenu("&Help");
-  help_menu->addAction(common_.reference);
+  row(Glyph::Grid, "Regenerate desktop entries", &LibraryWindow::SyncDesktopEntries)
+      ->setToolTip(
+          "Rewrites Mira's own mira-<id>.desktop entries immediately, without waiting for the "
+          "next library change to pick up a desktop_entries.* setting edit.");
+  row(Glyph::Trash, "Remove all desktop entries…", &LibraryWindow::RemoveAllDesktopEntries)
+      ->setToolTip("Turns off desktop entries and deletes every one Mira generated.");
 }
 
 void LibraryWindow::BuildShortcuts() {
@@ -293,7 +471,7 @@ void LibraryWindow::BuildShortcuts() {
                 {"Ctrl+H", "Toggle the Hidden filter"},
                 {"F5, Ctrl+R", "Refresh the library"},
                 {"Enter", "Play the selected game — Stop while it runs"},
-                {"Alt+Enter", "Details && settings"},
+                {"Alt+Enter", "Game settings"},
                 {"Delete", "Remove the selected game"},
                 {"Ctrl++, Ctrl+-", "Tile size"},
                 {"Ctrl+0", "Reset tile size"},
@@ -344,6 +522,10 @@ void LibraryWindow::BuildShortcuts() {
       RequestCloseSettings();
       return;
     }
+    if (GameEditOpen()) {
+      RequestCloseGameEdit();
+      return;
+    }
     if (!search_->text().isEmpty()) {
       search_->clear();
       return;
@@ -368,7 +550,7 @@ void LibraryWindow::BuildShortcuts() {
   for (int row = 0; row < filters_->count() && row < 9; ++row) {
     auto* action = new QAction(this);
     action->setShortcut(QKeySequence(Qt::CTRL | static_cast<Qt::Key>(Qt::Key_1 + row)));
-    connect(action, &QAction::triggered, this, [this, row] { filters_->setCurrentIndex(row); });
+    connect(action, &QAction::triggered, this, [this, row] { filters_->setCurrentRow(row); });
     addAction(action);
   }
 
@@ -378,9 +560,21 @@ void LibraryWindow::BuildShortcuts() {
                [this] {
                  const int hidden_row = FilterRow("hidden");
                  if (hidden_row < 0) return;
-                 filters_->setCurrentIndex(CurrentFilterKey() == "hidden" ? FilterRow("all")
-                                                                          : hidden_row);
+                 filters_->setCurrentRow(CurrentFilterKey() == "hidden" ? FilterRow("all")
+                                                                        : hidden_row);
                });
+
+  // Neither is a menu entry anymore (both are sidebar rows now) — kept here
+  // so their shortcuts and Settings-screen Shortcuts-category listing
+  // survive the menu trim.
+  window_action("settings", "Settings", QKeySequence(Qt::CTRL | Qt::Key_Comma), {},
+               [this] { OpenSettings(); });
+  // F5 is the platform's own Refresh; Ctrl+R is the one every browser
+  // taught, and a second binding costs nothing. Shared id with MainWindow's
+  // own refresh action -- editing either in Settings updates both.
+  window_action("refresh", "Refresh the library", QKeySequence(QKeySequence::Refresh),
+               {QKeySequence(Qt::CTRL | Qt::Key_R)},
+               [this] { RefreshHealth(/*force_scan=*/true); });
 
   // Qt::Key_Enter is the keypad one — a separate key from Qt::Key_Return,
   // and binding only Return would leave it dead.
@@ -394,7 +588,7 @@ void LibraryWindow::BuildShortcuts() {
                ToggleRunning(std::string(game->id));
              });
 
-  grid_action("details_settings", "Details && settings", QKeySequence(Qt::ALT | Qt::Key_Return),
+  grid_action("details_settings", "Game settings", QKeySequence(Qt::ALT | Qt::Key_Return),
              {QKeySequence(Qt::ALT | Qt::Key_Enter)}, [this] {
                if (selected_id_.empty()) return;
                OpenGameDialog(std::string(selected_id_));
@@ -425,9 +619,9 @@ void LibraryWindow::LoadPrefs() {
       // invalidation both apply.
       zoom_->setValue(*prefs.tile_width);
     }
-    if (prefs.details_width) {
-      const int details = *prefs.details_width;
-      splitter_->setSizes({qMax(200, width() - details), details});
+    if (prefs.sidebar_width) {
+      const int sidebar = *prefs.sidebar_width;
+      splitter_->setSizes({sidebar, qMax(400, width() - sidebar)});
     }
     if (prefs.scan_on_startup) scan_on_startup_ = *prefs.scan_on_startup;
     if (prefs.notification_timeout_s) {
@@ -439,15 +633,19 @@ void LibraryWindow::LoadPrefs() {
       sort_direction_->setArrowType(sort_descending_ ? Qt::DownArrow : Qt::UpArrow);
     }
     if (prefs.sort_by) {
-      const int index = sort_->findData(QString::fromStdString(*prefs.sort_by));
-      // An unknown key (hand-edited, or from a newer build) leaves the
-      // picker where it is rather than selecting nothing.
-      if (index >= 0) sort_->setCurrentIndex(index);
+      // Unlike the old combo box, no signal does this for us -- set the key
+      // and the matching button's checked state by hand, in the same order
+      // both were built in (BuildFilterSortPopover), then refresh the pill.
+      sort_key_ = *prefs.sort_by;
+      const std::vector<mira_gui::SortOption>& options = mira_gui::SortOptions();
+      for (int i = 0; i < sort_buttons_.size() && i < static_cast<int>(options.size()); ++i) {
+        sort_buttons_[i]->setChecked(options[i].key == sort_key_);
+      }
+      UpdateFilterSortSummary();
     }
     if (prefs.library_filter) {
-      const QString wanted = QString::fromStdString(*prefs.library_filter);
-      const int index = filters_->findData(wanted);
-      if (index >= 0) filters_->setCurrentIndex(index);
+      const int row = FilterRow(QString::fromStdString(*prefs.library_filter));
+      if (row >= 0) filters_->setCurrentRow(row);
     }
     // Before the theme, so applying one does not repaint twice with the
     // theme's own shape first.
@@ -482,7 +680,7 @@ void LibraryWindow::SavePrefs() {
   // the settings dialog survives closing the window that did not make it.
   prefs.notification_timeout_s = mira_gui::notify::CurrentTimeoutSeconds();
   const QList<int> sizes = splitter_->sizes();
-  if (sizes.size() == 2) prefs.details_width = sizes[1];
+  if (sizes.size() == 2) prefs.sidebar_width = sizes[0];
   // Blocking, not fire-and-forget: the async form's detached thread might
   // not reach the socket before the process exits on the last window's
   // close. Failure isn't reported — the cost is a remembered layout, not data.
@@ -501,12 +699,27 @@ void LibraryWindow::ApplyLayoutTokens() {
 
 void LibraryWindow::ApplyTopBarIcons() {
   using mira_gui::icons::Glyph;
-  menu_button_->setIcon(mira_gui::icons::For(Glyph::Menu));
   settings_button_->setIcon(mira_gui::icons::For(Glyph::Settings));
+  refresh_button_->setIcon(mira_gui::icons::For(Glyph::Refresh));
+  shortcuts_button_->setIcon(mira_gui::icons::For(Glyph::Keyboard));
+  about_button_->setIcon(mira_gui::icons::For(Glyph::Info));
+  top_bar_divider_->setStyleSheet(
+      QString("background: %1;").arg(mira_gui::theme::Current().border.name()));
   minimize_button_->setIcon(mira_gui::icons::For(Glyph::Minimize));
   maximize_button_->setIcon(
       mira_gui::icons::For(isMaximized() ? Glyph::Restore : Glyph::Maximize));
   close_button_->setIcon(mira_gui::icons::For(Glyph::Close));
+  add_games_->setIcon(mira_gui::icons::For(Glyph::Plus));
+
+  // The filter+sort pill's own static icons -- its text and the popover's
+  // rows restyle separately (UpdateFilterSortSummary, restyle_filter_rows).
+  if (filter_icon_ != nullptr) {
+    const QColor muted = mira_gui::theme::Current().text_muted;
+    filter_icon_->setPixmap(mira_gui::icons::For(Glyph::Filter, muted).pixmap(14, 14));
+    sort_icon_->setPixmap(mira_gui::icons::For(Glyph::SortArrows, muted).pixmap(13, 13));
+    filter_sort_chevron_->setPixmap(mira_gui::icons::For(Glyph::ChevronDown, muted).pixmap(12, 12));
+  }
+  UpdateFilterSortSummary();
 }
 
 void LibraryWindow::ToggleMaximize() {
@@ -555,9 +768,8 @@ void LibraryWindow::closeEvent(QCloseEvent* event) {
   }
 
   const bool settings_dirty = settings_panel_ != nullptr && settings_panel_->IsDirty();
-  const bool game_dirty = game_edit_form_ != nullptr &&
-                          sidebar_stack_->currentWidget() == game_edit_page_ &&
-                          game_edit_form_->IsDirty();
+  const bool game_dirty =
+      game_edit_form_ != nullptr && GameEditOpen() && game_edit_form_->IsDirty();
   if (settings_dirty || game_dirty) {
     switch (mira_gui::notify::ConfirmUnsaved(
         this, settings_dirty ? "Settings changed but not saved."
@@ -596,6 +808,17 @@ void LibraryWindow::closeEvent(QCloseEvent* event) {
 
 void LibraryWindow::OpenRunners() {
   RunnerDialog dialog(this);
+  dialog.exec();
+}
+
+void LibraryWindow::OpenAbout() {
+  QDialog dialog(this);
+  dialog.setWindowTitle("About Mira");
+  auto* layout = new QVBoxLayout(&dialog);
+  layout->addWidget(new mira_gui::AboutPanel(&dialog));
+  auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close, &dialog);
+  connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+  layout->addWidget(buttons);
   dialog.exec();
 }
 
@@ -674,6 +897,50 @@ void LibraryWindow::AddGameManually() {
   if (dialog.exec() == QDialog::Accepted) RefreshGames();
 }
 
+void LibraryWindow::SyncDesktopEntries() {
+  mira_gui::MiradClient::SyncDesktopEntriesAsync(this, [this](mira_gui::DesktopEntrySyncResult result) {
+    if (!result.ok) {
+      mira_gui::notify::Failed(this, "Could not regenerate desktop entries.",
+                               QString::fromStdString(result.error));
+      return;
+    }
+    mira_gui::notify::Toast(this, mira_gui::notify::Level::Success, "Desktop entries regenerated.");
+  });
+}
+
+void LibraryWindow::RemoveAllDesktopEntries() {
+  // desktop_entries.enabled is the only lever that actually makes Sync()
+  // remove every mira-<id>.desktop entry rather than immediately rewriting
+  // them (see desktop::DesktopEntries::Sync) — there's no "wipe once, stay
+  // enabled" concept, so this is honest about turning the setting off too.
+  if (!mira_gui::notify::Confirm(
+          this, "Remove all desktop entries",
+          "This turns off desktop entries and deletes every one Mira generated. "
+          "Re-enable them any time in Settings → Desktop Entries.",
+          "Remove all", /*destructive=*/true)) {
+    return;
+  }
+  const mira_gui::ConfigEdit edit{"desktop_entries.enabled", "a boolean", "false"};
+  mira_gui::MiradClient::PatchConfigAsync(
+      this, {edit}, [this](mira_gui::PatchConfigResult patch_result) {
+        if (!patch_result.ok) {
+          mira_gui::notify::Failed(this, "Could not turn off desktop entries.",
+                                   QString::fromStdString(patch_result.error));
+          return;
+        }
+        mira_gui::MiradClient::SyncDesktopEntriesAsync(
+            this, [this](mira_gui::DesktopEntrySyncResult sync_result) {
+              if (!sync_result.ok) {
+                mira_gui::notify::Failed(this, "Could not remove the desktop entries.",
+                                         QString::fromStdString(sync_result.error));
+                return;
+              }
+              mira_gui::notify::Toast(this, mira_gui::notify::Level::Success,
+                                     "Desktop entries removed.");
+            });
+      });
+}
+
 QWidget* LibraryWindow::BuildTopBar() {
   top_bar_ = new QWidget(this);
   top_bar_->setObjectName("top_bar");
@@ -685,76 +952,6 @@ QWidget* LibraryWindow::BuildTopBar() {
   layout->setContentsMargins(8, 4, 6, 4);
   layout->setSpacing(8);
 
-  menu_button_ = new QToolButton(top_bar_);
-  menu_button_->setPopupMode(QToolButton::InstantPopup);
-  menu_button_->setAutoRaise(true);
-  // Its menu is filled in later, by BuildMenus() — deferred until
-  // BuildShortcuts() has populated common_, which BuildMenus() reads.
-  layout->addWidget(menu_button_);
-
-  filters_ = new QComboBox(top_bar_);
-  for (const FilterEntry& entry : kFilters) filters_->addItem(entry.label, QString(entry.key));
-  connect(filters_, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
-          [this] { ApplyFilter(); });
-  layout->addWidget(filters_);
-
-  sort_ = new QComboBox(top_bar_);
-  for (const mira_gui::SortOption& option : mira_gui::SortOptions()) {
-    sort_->addItem(option.label, QString(option.key));
-  }
-  connect(sort_, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this] {
-    sort_key_ = sort_->currentData().toString().toStdString();
-    ApplyFilter();
-  });
-  layout->addWidget(sort_);
-
-  sort_direction_ = new QToolButton(top_bar_);
-  sort_direction_->setArrowType(Qt::UpArrow);
-  sort_direction_->setAutoRaise(true);
-  sort_direction_->setToolTip("Ascending — click for descending");
-  connect(sort_direction_, &QToolButton::clicked, this, [this] {
-    sort_descending_ = !sort_descending_;
-    sort_direction_->setArrowType(sort_descending_ ? Qt::DownArrow : Qt::UpArrow);
-    sort_direction_->setToolTip(sort_descending_ ? "Descending — click for ascending"
-                                                 : "Ascending — click for descending");
-    ApplyFilter();
-  });
-  layout->addWidget(sort_direction_);
-
-  layout->addStretch(1);
-
-  add_games_ = new QToolButton(top_bar_);
-  add_games_->setObjectName("add_games");
-  add_games_->setText("Add Games");
-  add_games_->setToolButtonStyle(Qt::ToolButtonTextOnly);
-  add_games_->setPopupMode(QToolButton::InstantPopup);
-  add_games_->setAutoRaise(true);
-  auto* add_games_menu = new QMenu(add_games_);
-  add_games_menu->addAction("Scan library folders", this, &LibraryWindow::ScanLibrary);
-  add_games_menu->addAction("Import Steam library", this, &LibraryWindow::ImportSteamLibrary);
-  add_games_menu
-      ->addAction("Import Lutris games", this, &LibraryWindow::ImportLutrisLibrary)
-      ->setToolTip(
-          "Read Lutris's own database and add its Wine games here. Nothing is moved or renamed, "
-          "in either launcher's files — a game stays playable in Lutris too.");
-  add_games_menu
-      ->addAction("Import desktop entries…", this, &LibraryWindow::ImportDesktopEntries)
-      ->setToolTip(
-          "Pick from already-installed application-menu entries — including Flatpak apps, via "
-          "their own X-Flatpak key.");
-  add_games_menu->addSeparator();
-  add_games_menu->addAction("Add game manually…", this, &LibraryWindow::AddGameManually);
-  add_games_->setMenu(add_games_menu);
-  layout->addWidget(add_games_);
-
-  search_ = new QLineEdit(top_bar_);
-  search_->setObjectName("library_search");
-  search_->setPlaceholderText("Search…");
-  search_->setClearButtonEnabled(true);
-  search_->setMaximumWidth(420);
-  connect(search_, &QLineEdit::textChanged, this, [this] { ApplyFilter(); });
-  layout->addWidget(search_, /*stretch=*/1);
-
   layout->addStretch(1);
 
   zoom_ = new QSlider(Qt::Horizontal, top_bar_);
@@ -765,14 +962,9 @@ QWidget* LibraryWindow::BuildTopBar() {
   connect(zoom_, &QSlider::valueChanged, this, &LibraryWindow::SetTileWidth);
   layout->addWidget(zoom_);
 
-  // Gear <-> Back/Save, swapped by OpenSettings/CloseSettings. Two sibling
-  // widgets, not a QStackedWidget — a stack is as wide as its widest page.
-  settings_button_ = new QToolButton(top_bar_);
-  settings_button_->setAutoRaise(true);
-  settings_button_->setToolTip("Settings");
-  connect(settings_button_, &QToolButton::clicked, this, [this] { OpenSettings(); });
-  layout->addWidget(settings_button_);
-
+  // The gear itself now lives in the sidebar (BuildSidebar) — this is just
+  // the Back/Reset/Save trio that replaces the top bar's usual right side
+  // while Settings is open (see SetSettingsChromeVisible).
   settings_actions_widget_ = new QWidget(top_bar_);
   auto* settings_actions_layout = new QHBoxLayout(settings_actions_widget_);
   settings_actions_layout->setContentsMargins(0, 0, 0, 0);
@@ -793,6 +985,30 @@ QWidget* LibraryWindow::BuildTopBar() {
   settings_actions_layout->addWidget(settings_save_button_);
   settings_actions_widget_->hide();
   layout->addWidget(settings_actions_widget_);
+
+  // Moved from the sidebar's old hamburger menu -- generic actions that fit
+  // the top bar (window chrome) better than a library-focused sidebar.
+  refresh_button_ = new QToolButton(top_bar_);
+  refresh_button_->setAutoRaise(true);
+  refresh_button_->setToolTip("Refresh library");
+  connect(refresh_button_, &QToolButton::clicked, this, [this] { RefreshHealth(/*force_scan=*/true); });
+  layout->addWidget(refresh_button_);
+
+  shortcuts_button_ = new QToolButton(top_bar_);
+  shortcuts_button_->setAutoRaise(true);
+  shortcuts_button_->setToolTip("Keyboard shortcuts");
+  connect(shortcuts_button_, &QToolButton::clicked, this, [this] { common_.reference->trigger(); });
+  layout->addWidget(shortcuts_button_);
+
+  about_button_ = new QToolButton(top_bar_);
+  about_button_->setAutoRaise(true);
+  about_button_->setToolTip("About Mira");
+  connect(about_button_, &QToolButton::clicked, this, &LibraryWindow::OpenAbout);
+  layout->addWidget(about_button_);
+
+  top_bar_divider_ = new QWidget(top_bar_);
+  top_bar_divider_->setFixedSize(1, 20);
+  layout->addWidget(top_bar_divider_);
 
   minimize_button_ = new QToolButton(top_bar_);
   minimize_button_->setAutoRaise(true);
@@ -817,6 +1033,279 @@ QWidget* LibraryWindow::BuildTopBar() {
   return top_bar_;
 }
 
+QWidget* LibraryWindow::BuildFilterSortPopover() {
+  using mira_gui::icons::Glyph;
+
+  // Qt::Popup: grabs the mouse and closes itself on an outside click or
+  // Escape, so the pill's on_clicked only ever needs to open it.
+  auto* popover = new QWidget(this, Qt::Popup);
+  popover->setObjectName("filter_sort_popover");
+  auto* layout = new QVBoxLayout(popover);
+  layout->setContentsMargins(8, 8, 8, 8);
+  layout->setSpacing(2);
+
+  auto* filter_heading = new QLabel("FILTER", popover);
+  filter_heading->setProperty("role", "muted");
+  filter_heading->setStyleSheet("font-weight: 600; letter-spacing: 0.04em;");
+  layout->addWidget(filter_heading);
+
+  filters_ = new QListWidget(popover);
+  filters_->setObjectName("filter_list");
+  filters_->setFrameShape(QFrame::NoFrame);
+  filters_->setSelectionMode(QAbstractItemView::SingleSelection);
+  filters_->setFocusPolicy(Qt::NoFocus);
+  filters_->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+  for (const FilterEntry& entry : kFilters) {
+    auto* item = new QListWidgetItem(filters_);
+    item->setData(Qt::UserRole, QString(entry.key));
+    // Stashed alongside the key so the pill can show it without digging
+    // back into the row widget's own child labels.
+    item->setData(Qt::UserRole + 1, QString(entry.label));
+    auto* row = MakeFilterRow(entry.icon, entry.label, filters_);
+    item->setSizeHint(row->sizeHint());
+    filters_->setItemWidget(item, row);
+  }
+  // setItemWidget bypasses QSS's ::item:selected -- restyled by hand
+  // instead (icon included), on_accent when active, else muted.
+  auto restyle_filter_rows = [this] {
+    for (int row = 0; row < filters_->count(); ++row) {
+      QWidget* row_widget = filters_->itemWidget(filters_->item(row));
+      const bool current = row == filters_->currentRow();
+      const QColor color = current ? mira_gui::theme::Current().on_accent
+                                   : mira_gui::theme::Current().text_muted;
+      for (QLabel* label : row_widget->findChildren<QLabel*>()) {
+        if (label->objectName() == "icon") {
+          label->setPixmap(mira_gui::icons::For(kFilters[row].icon, color).pixmap(14, 14));
+        } else {
+          // Count included: on_accent for contrast against the accent
+          // background, not left at its ordinary muted gray.
+          label->setStyleSheet(current ? QString("color: %1;").arg(color.name()) : QString());
+        }
+      }
+    }
+  };
+  filters_->setCurrentRow(0);
+  restyle_filter_rows();
+  connect(filters_, &QListWidget::currentRowChanged, this, [this, restyle_filter_rows] {
+    restyle_filter_rows();
+    UpdateFilterSortSummary();
+    ApplyFilter();
+  });
+  // QListWidget's own sizeHint doesn't grow with its item count -- fit
+  // exactly the rows it has, once, rather than an arbitrary scrollable box.
+  int filters_height = 2 * filters_->frameWidth();
+  for (int row = 0; row < filters_->count(); ++row) filters_height += filters_->sizeHintForRow(row);
+  filters_->setFixedHeight(filters_height);
+  layout->addWidget(filters_);
+
+  auto* divider = new QWidget(popover);
+  divider->setFixedHeight(1);
+  divider->setStyleSheet(QString("background: %1;").arg(mira_gui::theme::Current().border.name()));
+  layout->addWidget(divider);
+
+  auto* sort_heading_row = new QHBoxLayout();
+  auto* sort_heading = new QLabel("SORT", popover);
+  sort_heading->setProperty("role", "muted");
+  sort_heading->setStyleSheet("font-weight: 600; letter-spacing: 0.04em;");
+  sort_heading_row->addWidget(sort_heading, /*stretch=*/1);
+
+  sort_direction_ = new QToolButton(popover);
+  sort_direction_->setAutoRaise(true);
+  sort_direction_->setIcon(mira_gui::icons::For(mira_gui::icons::Glyph::SortArrows));
+  sort_direction_->setToolTip(sort_descending_ ? "Descending — click for ascending"
+                                               : "Ascending — click for descending");
+  connect(sort_direction_, &QToolButton::clicked, this, [this] {
+    sort_descending_ = !sort_descending_;
+    sort_direction_->setToolTip(sort_descending_ ? "Descending — click for ascending"
+                                                 : "Ascending — click for descending");
+    UpdateFilterSortSummary();
+    ApplyFilter();
+  });
+  sort_heading_row->addWidget(sort_direction_);
+  layout->addLayout(sort_heading_row);
+
+  // Full-width rows, same shape as the filter list above (and the sidebar's
+  // own nav rows) -- a segmented row cramped "Last played"/"Playtime" down
+  // to unreadable widths at the sidebar's ~230px.
+  auto* sort_group = new QButtonGroup(popover);
+  sort_buttons_.clear();
+  for (const mira_gui::SortOption& option : mira_gui::SortOptions()) {
+    auto* button = new QPushButton(option.label, popover);
+    button->setFlat(true);
+    button->setCheckable(true);
+    button->setChecked(option.key == sort_key_);
+    const QString key = QString(option.key);
+    connect(button, &QPushButton::clicked, this, [this, key] {
+      sort_key_ = key.toStdString();
+      UpdateFilterSortSummary();
+      ApplyFilter();
+    });
+    sort_group->addButton(button);
+    sort_buttons_.append(button);
+    layout->addWidget(button);
+  }
+
+  return popover;
+}
+
+void LibraryWindow::UpdateFilterSortSummary() {
+  if (filter_summary_label_ == nullptr) return;  // popover not built yet
+
+  const QListWidgetItem* current = filters_->currentItem();
+  filter_summary_label_->setText(current != nullptr ? current->data(Qt::UserRole + 1).toString()
+                                                     : QString("All games"));
+
+  QString sort_label = "Name";
+  for (const mira_gui::SortOption& option : mira_gui::SortOptions()) {
+    if (option.key == sort_key_) {
+      sort_label = option.label;
+      break;
+    }
+  }
+  sort_summary_label_->setText(
+      QString("%1 %2").arg(sort_label, sort_descending_ ? QString::fromUtf8("\xe2\x86\x93")
+                                                        : QString::fromUtf8("\xe2\x86\x91")));
+}
+
+QWidget* LibraryWindow::BuildSidebar() {
+  auto* sidebar = new QWidget(this);
+  sidebar->setObjectName("left_sidebar");
+  auto* layout = new QVBoxLayout(sidebar);
+  layout->setContentsMargins(10, 14, 10, 10);
+  layout->setSpacing(2);
+
+  // Always visible (not just a "back" affordance): checked/highlighted
+  // exactly when the grid is the current content — see UpdateLibraryNavActive.
+  library_nav_ = new QPushButton("Library", sidebar);
+  library_nav_->setObjectName("library_nav");
+  library_nav_->setFlat(true);
+  library_nav_->setCheckable(true);
+  library_nav_->setChecked(true);
+  connect(library_nav_, &QPushButton::clicked, this, [this] {
+    if (SettingsOpen()) {
+      RequestCloseSettings();
+    } else if (GameEditOpen()) {
+      RequestCloseGameEdit();
+    }
+  });
+  layout->addWidget(library_nav_);
+
+  classic_view_nav_ = new QPushButton("Classic table view", sidebar);
+  classic_view_nav_->setObjectName("classic_view_nav");
+  classic_view_nav_->setFlat(true);
+  classic_view_nav_->setCheckable(true);
+  connect(classic_view_nav_, &QPushButton::clicked, this, &LibraryWindow::OpenClassicView);
+  layout->addWidget(classic_view_nav_);
+
+  layout->addSpacing(10);
+
+  add_games_ = new QToolButton(sidebar);
+  add_games_->setObjectName("add_games");
+  add_games_->setText("Add Games");
+  add_games_->setToolButtonStyle(Qt::ToolButtonTextOnly);
+  add_games_->setPopupMode(QToolButton::InstantPopup);
+  // QToolButton's own sizeHint is Preferred but stays content-sized in
+  // practice next to a QPushButton row with the same nominal policy —
+  // Expanding makes it actually stretch to the sidebar's full width.
+  add_games_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+  auto* add_games_menu = new QMenu(add_games_);
+  add_games_menu->addAction("Scan library folders", this, &LibraryWindow::ScanLibrary);
+  add_games_menu->addAction("Import Steam library", this, &LibraryWindow::ImportSteamLibrary);
+  add_games_menu
+      ->addAction("Import Lutris games", this, &LibraryWindow::ImportLutrisLibrary)
+      ->setToolTip(
+          "Read Lutris's own database and add its Wine games here. Nothing is moved or renamed, "
+          "in either launcher's files — a game stays playable in Lutris too.");
+  add_games_menu
+      ->addAction("Import desktop entries…", this, &LibraryWindow::ImportDesktopEntries)
+      ->setToolTip(
+          "Pick from already-installed application-menu entries — including Flatpak apps, via "
+          "their own X-Flatpak key.");
+  add_games_menu->addSeparator();
+  add_games_menu->addAction("Add game manually…", this, &LibraryWindow::AddGameManually);
+  add_games_->setMenu(add_games_menu);
+  layout->addWidget(add_games_);
+
+  layout->addSpacing(10);
+
+  search_ = new QLineEdit(sidebar);
+  search_->setObjectName("library_search");
+  search_->setPlaceholderText("Search…");
+  search_->setClearButtonEnabled(true);
+  connect(search_, &QLineEdit::textChanged, this, [this] { ApplyFilter(); });
+  layout->addWidget(search_);
+
+  layout->addSpacing(10);
+
+  // Pill summarizing filter+sort, opening a self-dismissing Qt::Popup with
+  // the actual rows/buttons.
+  filter_sort_popover_ = BuildFilterSortPopover();
+
+  auto* pill = new FilterSortButton(sidebar);
+  pill->setObjectName("filter_sort_button");
+  filter_sort_button_ = pill;
+  auto* pill_layout = new QHBoxLayout(pill);
+  pill_layout->setContentsMargins(8, 6, 8, 6);
+  pill_layout->setSpacing(6);
+
+  filter_icon_ = new QLabel(pill);
+  pill_layout->addWidget(filter_icon_);
+  filter_summary_label_ = new QLabel(pill);
+  pill_layout->addWidget(filter_summary_label_, /*stretch=*/1);
+
+  auto* pill_divider = new QWidget(pill);
+  pill_divider->setFixedSize(1, 14);
+  pill_divider->setStyleSheet(QString("background: %1;").arg(mira_gui::theme::Current().border.name()));
+  pill_layout->addWidget(pill_divider);
+
+  sort_icon_ = new QLabel(pill);
+  pill_layout->addWidget(sort_icon_);
+  sort_summary_label_ = new QLabel(pill);
+  sort_summary_label_->setProperty("role", "muted");
+  pill_layout->addWidget(sort_summary_label_);
+
+  filter_sort_chevron_ = new QLabel(pill);
+  pill_layout->addWidget(filter_sort_chevron_);
+
+  pill->on_clicked = [this] {
+    filter_sort_popover_->setFixedWidth(filter_sort_button_->width());
+    const QPoint below_left =
+        filter_sort_button_->mapToGlobal(QPoint(0, filter_sort_button_->height() + 4));
+    filter_sort_popover_->move(below_left);
+    filter_sort_popover_->show();
+  };
+  layout->addWidget(pill);
+
+  layout->addSpacing(14);
+  auto* library_heading = new QLabel("LIBRARY", sidebar);
+  library_heading->setProperty("role", "muted");
+  library_heading->setStyleSheet("font-weight: 600; letter-spacing: 0.04em;");
+  layout->addWidget(library_heading);
+
+  // Filled in by PopulateLibraryActions(), after BuildShortcuts() populates
+  // common_.
+  library_actions_layout_ = new QVBoxLayout();
+  library_actions_layout_->setSpacing(2);
+  layout->addLayout(library_actions_layout_);
+
+  layout->addStretch(1);
+
+  settings_button_ = new QPushButton("Settings", sidebar);
+  settings_button_->setObjectName("sidebar_settings");
+  settings_button_->setFlat(true);
+  connect(settings_button_, &QPushButton::clicked, this, [this] { OpenSettings(); });
+  layout->addWidget(settings_button_);
+
+  // Replaces the old bottom bar entirely.
+  footer_ = new QLabel(sidebar);
+  footer_->setProperty("role", "muted");
+  footer_->setContentsMargins(6, 8, 6, 2);
+  footer_->setWordWrap(true);
+  layout->addWidget(footer_);
+
+  return sidebar;
+}
+
 QWidget* LibraryWindow::BuildGrid() {
   auto* container = new QWidget(this);
   grid_layout_ = new QVBoxLayout(container);
@@ -833,7 +1322,10 @@ QWidget* LibraryWindow::BuildGrid() {
   grid_->setUniformItemSizes(true);
   grid_->setSpacing(0);
   grid_->setGridSize(TileSize());
-  grid_->setSelectionMode(QAbstractItemView::SingleSelection);
+  // Extended, not Single: ctrl/shift-click and a drag over empty space
+  // (rubber-band, built into QAbstractItemView for this mode) both select
+  // more than one tile, for the batch actions in ShowContextMenu.
+  grid_->setSelectionMode(QAbstractItemView::ExtendedSelection);
   grid_->setEditTriggers(QAbstractItemView::NoEditTriggers);
   grid_->setMouseTracking(true);
   grid_->setFrameShape(QFrame::NoFrame);
@@ -855,6 +1347,10 @@ QWidget* LibraryWindow::BuildGrid() {
     if (!running_ids_.contains(id) && status != "ready") return;
     ToggleRunning(id);
   });
+  grid_->on_hover_item = [this](QListWidgetItem* item) { ShowHoverCard(item); };
+  grid_->on_ctrl_wheel = [this](int steps) {
+    zoom_->setValue(zoom_->value() + steps * zoom_->pageStep());
+  };
   layout->addWidget(grid_, /*stretch=*/1);
   ApplyLayoutTokens();  // needs grid_ to already exist
 
@@ -884,15 +1380,6 @@ QPixmap LibraryWindow::CoverFor(const mira_gui::GameSummary& game) {
   return artwork_->Cover(game, TileSize(), devicePixelRatioF());
 }
 
-void LibraryWindow::SelectGridItem(const std::string& id) {
-  for (int row = 0; row < grid_->count(); ++row) {
-    QListWidgetItem* item = grid_->item(row);
-    if (item->data(mira_gui::GameTileDelegate::IdRole).toString().toStdString() != id) continue;
-    grid_->setCurrentItem(item);
-    return;
-  }
-}
-
 void LibraryWindow::UpdateTileCover(const QString& id) {
   // One item, not a rebuild: artwork arrives one game at a time, and
   // ApplyFilter would drop the selection and scroll position on each.
@@ -902,9 +1389,10 @@ void LibraryWindow::UpdateTileCover(const QString& id) {
     const mira_gui::GameSummary* game = FindGame(id.toStdString());
     if (game == nullptr) return;
     item->setData(Qt::DecorationRole, CoverFor(*game));
-    // The panel draws the same game at a different size, so it needs the
-    // same nudge — it has no way to notice the store changed under it.
-    if (selected_id_ == game->id) details_->RefreshCover(*game);
+    // The edit page draws the same game at a different size, so it needs the
+    // same nudge — it has no way to notice the store changed under it. A
+    // no-op if it isn't currently showing this game (or isn't open at all).
+    if (game_edit_form_ != nullptr) game_edit_form_->RefreshCover();
     return;
   }
 }
@@ -1039,13 +1527,13 @@ void LibraryWindow::RefreshGames() {
 }
 
 QString LibraryWindow::CurrentFilterKey() const {
-  const QVariant data = filters_->currentData();
-  return data.isValid() ? data.toString() : QString("all");
+  QListWidgetItem* item = filters_->currentItem();
+  return item != nullptr ? item->data(Qt::UserRole).toString() : QString("all");
 }
 
 int LibraryWindow::FilterRow(const QString& key) const {
   for (int row = 0; row < filters_->count(); ++row) {
-    if (filters_->itemData(row).toString() == key) return row;
+    if (filters_->item(row)->data(Qt::UserRole).toString() == key) return row;
   }
   return -1;
 }
@@ -1056,24 +1544,46 @@ bool LibraryWindow::MatchesFilter(const mira_gui::GameSummary& game) const {
       !QString::fromStdString(game.name).contains(search, Qt::CaseInsensitive)) {
     return false;
   }
+  return MatchesFilterKey(game, CurrentFilterKey());
+}
 
-  const QString filter = CurrentFilterKey();
-  if (filter == "hidden") return HasTag(game, "hidden");
+bool LibraryWindow::MatchesFilterKey(const mira_gui::GameSummary& game, const QString& key) const {
+  if (key == "hidden") return HasTag(game, "hidden");
   // Every other filter excludes a hidden game — "not displayed by default"
   // means not in "All games" either, not just off the initial screen.
   if (HasTag(game, "hidden")) return false;
-  if (filter == "all") return true;
-  if (filter == "running") return running_ids_.contains(game.id);
-  if (filter == "never") return !game.last_played_at.has_value();
-  return filter.toStdString() == game.status;
+  if (key == "all") return true;
+  if (key == "running") return running_ids_.contains(game.id);
+  if (key == "never") return !game.last_played_at.has_value();
+  return key.toStdString() == game.status;
+}
+
+void LibraryWindow::UpdateFilterCounts() {
+  for (int row = 0; row < filters_->count(); ++row) {
+    QListWidgetItem* item = filters_->item(row);
+    const QString key = item->data(Qt::UserRole).toString();
+    int count = 0;
+    for (const mira_gui::GameSummary& game : games_) {
+      if (MatchesFilterKey(game, key)) ++count;
+    }
+    auto* count_label = qobject_cast<QLabel*>(filters_->itemWidget(item)->findChild<QLabel*>("count"));
+    if (count_label != nullptr) count_label->setText(QString::number(count));
+  }
 }
 
 void LibraryWindow::ApplyFilter() {
   const std::string previously_selected = selected_id_;
+  UpdateFilterCounts();
 
   // Sorted here, not at fetch time, so a sort change costs a tile rebuild,
   // not a round trip.
   mira_gui::SortGames(games_, sort_key_, sort_descending_);
+
+  // grid_->clear() deletes every item; a stale last_hover_item_/pending
+  // dwell timer pointing at one of them would be a use-after-free the next
+  // time it fires.
+  grid_->ResetHover();
+  ShowHoverCard(nullptr);
 
   grid_->blockSignals(true);
   grid_->clear();
@@ -1103,7 +1613,6 @@ void LibraryWindow::ApplyFilter() {
   } else if (!previously_selected.empty()) {
     // Selected game was filtered away or removed — don't keep showing it.
     selected_id_.clear();
-    details_->Clear();
   }
 
   empty_hint_->setVisible(shown == 0);
@@ -1112,10 +1621,17 @@ void LibraryWindow::ApplyFilter() {
                                         : "No games match this filter.");
   }
 
-  footer_->setText(QString("%1 of %2 games · connected via %3")
+  // Two lines: count first (what you're looking at), connection status
+  // second (background fact, muted further by the dot standing in for a
+  // word). Only reached after a successful fetch, so the dot is always
+  // the "connected" color -- there's no "shown, but not connected" state.
+  footer_->setText(QString("%1 of %2 games shown<br><span style='color:%3'>●</span> Connected via %4")
                        .arg(shown)
                        .arg(games_.size())
+                       .arg(mira_gui::theme::Current().success.name())
                        .arg(QString::fromStdString(mira_gui::MiradClient::ResolveSocketPath())));
+
+  RefreshClassicTable();
 }
 
 const mira_gui::GameSummary* LibraryWindow::FindGame(const std::string& id) const {
@@ -1153,55 +1669,64 @@ void LibraryWindow::RemoveGame(const std::string& id) {
 }
 
 void LibraryWindow::SelectionChanged() {
-  if (content_stack_->currentWidget() == settings_page_) return;  // grid isn't on screen
-  if (restoring_selection_) return;  // re-entrant call from the revert below
+  // Not the grid on screen (Settings or classic table instead) — a stray
+  // signal (e.g. ApplyFilter rebuilding the grid) should stay a no-op.
+  if (content_stack_->currentWidget() != splitter_) return;
 
-  if (sidebar_stack_->currentWidget() == game_edit_page_ &&
-      !(game_edit_form_ != nullptr && game_edit_form_->IsDirty())) {
-    sidebar_stack_->setCurrentWidget(details_);
-  } else if (sidebar_stack_->currentWidget() == game_edit_page_) {
-    QListWidgetItem* clicked = grid_->currentItem();
-    const std::string clicked_id =
-        clicked != nullptr ? clicked->data(mira_gui::GameTileDelegate::IdRole).toString().toStdString()
-                           : std::string();
+  const QList<QListWidgetItem*> selected = grid_->selectedItems();
+  selected_id_ = selected.size() == 1
+                     ? selected.first()->data(mira_gui::GameTileDelegate::IdRole).toString().toStdString()
+                     : std::string();
+}
 
-    switch (mira_gui::notify::ConfirmUnsaved(this, "This game's edits aren't saved.")) {
-      case mira_gui::notify::UnsavedAction::Cancel:
-        restoring_selection_ = true;
-        SelectGridItem(game_edit_form_->id());
-        restoring_selection_ = false;
-        return;
-      case mira_gui::notify::UnsavedAction::SaveAndExit:
-        // So the reselect RefreshGames does after CloseGameEdit() (via the
-        // SaveFinished connection in BuildGameEditPage) lands on the tile
-        // just clicked, not the one being edited.
-        selected_id_ = clicked_id;
-        game_edit_form_->Save();
-        return;
-      case mira_gui::notify::UnsavedAction::DiscardAndExit:
-        sidebar_stack_->setCurrentWidget(details_);
-        break;
-    }
-  }
-
-  auto* item = grid_->currentItem();
-  const mira_gui::GameSummary* game =
-      item != nullptr && item->isSelected()
-          ? FindGame(item->data(mira_gui::GameTileDelegate::IdRole).toString().toStdString())
-          : nullptr;
-  if (game == nullptr) {
-    selected_id_.clear();
-    details_->Clear();
+void LibraryWindow::ShowHoverCard(QListWidgetItem* item) {
+  if (item == nullptr) {
+    if (hover_card_ != nullptr) hover_card_->hide();
     return;
   }
-  selected_id_ = game->id;
-  details_->ShowGame(*game, running_ids_.contains(game->id));
+  // Nothing to preview once the grid isn't on screen, and a preview for one
+  // game reads as wrong noise over an active multi-selection.
+  if (content_stack_->currentWidget() != splitter_ || grid_->selectedItems().size() > 1) return;
+
+  const std::string id = item->data(mira_gui::GameTileDelegate::IdRole).toString().toStdString();
+  const mira_gui::GameSummary* game = FindGame(id);
+  if (game == nullptr) return;
+
+  if (hover_card_ == nullptr) hover_card_ = new mira_gui::HoverCard(this);
+  hover_card_->ShowGame(*game, running_ids_.contains(id));
+  hover_card_->adjustSize();
+
+  const QRect tile_rect = grid_->visualItemRect(item);
+  const QPoint top_right = grid_->viewport()->mapToGlobal(tile_rect.topRight());
+  QPoint pos(top_right.x() + 8, top_right.y());
+  // To the right of the tile by default; the left side instead if that
+  // would run off the screen (a tile in the grid's rightmost column).
+  if (QScreen* screen = QGuiApplication::screenAt(top_right)) {
+    if (pos.x() + hover_card_->width() > screen->availableGeometry().right()) {
+      const QPoint top_left = grid_->viewport()->mapToGlobal(tile_rect.topLeft());
+      pos.setX(top_left.x() - hover_card_->width() - 8);
+    }
+  }
+  hover_card_->move(pos);
+  hover_card_->show();
 }
 
 void LibraryWindow::ShowContextMenu(const QPoint& pos) {
   QListWidgetItem* item = grid_->itemAt(pos);
   if (item == nullptr) return;
+  // Right-clicking outside the current selection replaces it, same as most
+  // file managers; right-clicking inside a multi-selection keeps it so the
+  // batch menu below applies to everything that was selected.
+  if (!item->isSelected()) {
+    grid_->clearSelection();
+    item->setSelected(true);
+  }
   grid_->setCurrentItem(item);
+
+  if (grid_->selectedItems().size() > 1) {
+    ShowBatchContextMenu(grid_->selectedItems(), pos);
+    return;
+  }
 
   const std::string id = item->data(mira_gui::GameTileDelegate::IdRole).toString().toStdString();
   const QString name = item->data(mira_gui::GameTileDelegate::NameRole).toString();
@@ -1213,8 +1738,9 @@ void LibraryWindow::ShowContextMenu(const QPoint& pos) {
   QMenu menu(this);
   QAction* play = menu.addAction(running ? "Stop" : "Play");
   play->setEnabled(running || status == "ready");
-  QAction* details = menu.addAction("Details && settings…");
+  QAction* details = menu.addAction("Game settings…");
   QAction* folder = menu.addAction("Open install folder");
+  QAction* more_details = menu.addAction("More details…");
   menu.addSeparator();
   // Both halves of the needs_install escape hatch: run the installer inside
   // this game's prefix, then say it worked. "Run in prefix" is offered for
@@ -1232,6 +1758,30 @@ void LibraryWindow::ShowContextMenu(const QPoint& pos) {
   const bool native = current_game != nullptr && current_game->platform == "native";
   winetricks->setEnabled(!native);
   winetricks->setToolTip(native ? "Native game — no Wine/Proton prefix." : QString());
+  // Resolved (not on GameSummary), and the menu item's own label is the only
+  // place that state shows, so it's fetched synchronously here rather than
+  // asking first and acting second — a local socket round trip, once, before
+  // the menu is shown.
+  bool desktop_entry_enabled = true;
+  {
+    QEventLoop loop;
+    mira_gui::MiradClient::GetGameConfigAsync(
+        this, id, [&desktop_entry_enabled, &loop](mira_gui::GameConfigResult result) {
+          if (result.ok) {
+            for (const mira_gui::GameConfigEntry& entry : result.entries) {
+              if (entry.key == "desktop_entries.enabled") {
+                desktop_entry_enabled = entry.value_display == "true";
+                break;
+              }
+            }
+          }
+          loop.quit();
+        });
+    loop.exec();
+  }
+  QAction* desktop_entry =
+      menu.addAction(desktop_entry_enabled ? "Remove desktop entry" : "Add desktop entry");
+  desktop_entry->setToolTip("Whether this game has its own entry in the application menu.");
   menu.addSeparator();
   const bool hidden = current_game != nullptr && HasTag(*current_game, "hidden");
   QAction* toggle_hidden = menu.addAction(hidden ? "Unhide" : "Hide");
@@ -1250,6 +1800,8 @@ void LibraryWindow::ShowContextMenu(const QPoint& pos) {
   } else if (chosen == folder) {
     mira_gui::actions::OpenInstallFolder(
         this, current_game != nullptr ? current_game->install_path : std::string());
+  } else if (chosen == more_details) {
+    OpenGameDetailPage(id);
   } else if (chosen == run_in_prefix) {
     mira_gui::actions::RunInPrefix(
         this, id, current_game != nullptr ? current_game->install_path : std::string(), name);
@@ -1261,10 +1813,79 @@ void LibraryWindow::ShowContextMenu(const QPoint& pos) {
     mira_gui::actions::ViewLog(this, id, name);
   } else if (chosen == winetricks) {
     mira_gui::actions::RunWinetricks(this, id, name);
+  } else if (chosen == desktop_entry) {
+    mira_gui::actions::ToggleDesktopEntry(this, id, desktop_entry_enabled);
   } else if (chosen == toggle_hidden) {
     ToggleHidden(id);
   } else if (chosen == remove) {
     mira_gui::actions::Delete(this, id, name, [this] { RefreshGames(); });
+  }
+}
+
+void LibraryWindow::ShowBatchContextMenu(const QList<QListWidgetItem*>& items, const QPoint& pos) {
+  const int count = items.size();
+
+  QMenu menu(this);
+  QAction* refresh_metadata = menu.addAction(QString("Refresh metadata && cover art (%1)").arg(count));
+  QAction* hide = menu.addAction(QString("Hide (%1)").arg(count));
+  hide->setToolTip(
+      "Keep these games out of the library until asked for (Ctrl+H, or the Hidden filter)");
+  auto* desktop_menu = menu.addMenu("Desktop entry");
+  QAction* add_desktop_entry = desktop_menu->addAction("Add to application menu");
+  QAction* remove_desktop_entry = desktop_menu->addAction("Remove from application menu");
+  menu.addSeparator();
+  QAction* remove = menu.addAction(QString("Remove from library… (%1)").arg(count));
+
+  QAction* chosen = menu.exec(grid_->viewport()->mapToGlobal(pos));
+
+  std::vector<std::string> ids;
+  std::vector<std::pair<std::string, QString>> named;
+  ids.reserve(count);
+  named.reserve(count);
+  for (QListWidgetItem* item : items) {
+    ids.push_back(item->data(mira_gui::GameTileDelegate::IdRole).toString().toStdString());
+    named.emplace_back(ids.back(), item->data(mira_gui::GameTileDelegate::NameRole).toString());
+  }
+
+  if (chosen == refresh_metadata) {
+    for (const std::string& game_id : ids) RefreshMetadata(game_id, /*announce=*/false);
+    mira_gui::notify::Toast(this, mira_gui::notify::Level::Info,
+                            QString("Refreshing metadata for %1 game(s)…").arg(count));
+  } else if (chosen == hide) {
+    BatchHide(ids);
+  } else if (chosen == add_desktop_entry) {
+    mira_gui::actions::BatchSetDesktopEntry(this, ids, /*enabled=*/true);
+  } else if (chosen == remove_desktop_entry) {
+    mira_gui::actions::BatchSetDesktopEntry(this, ids, /*enabled=*/false);
+  } else if (chosen == remove) {
+    mira_gui::actions::BatchDelete(this, named, [this] { RefreshGames(); });
+  }
+}
+
+void LibraryWindow::BatchHide(const std::vector<std::string>& ids) {
+  for (const std::string& id : ids) {
+    const mira_gui::GameSummary* game = FindGame(id);
+    if (game == nullptr || HasTag(*game, "hidden")) continue;
+
+    std::vector<std::string> tags = game->tags;
+    tags.push_back("hidden");
+    mira_gui::GamePatch patch;
+    patch.tags = tags;
+    mira_gui::MiradClient::PatchGameAsync(
+        this, id, patch, [this, id, tags](mira_gui::PatchGameResult result) {
+          if (!result.ok) {
+            mira_gui::notify::Failed(this, "Could not hide a game.",
+                                     QString::fromStdString(result.error));
+            return;
+          }
+          for (mira_gui::GameSummary& stored : games_) {
+            if (stored.id == id) {
+              stored.tags = tags;
+              break;
+            }
+          }
+          ApplyFilter();
+        });
   }
 }
 
@@ -1329,27 +1950,57 @@ void LibraryWindow::OpenGameDialog(const std::string& id) {
   }
 
   // Fresh instance each time: GameEditForm loads its id at construction.
-  if (game_edit_page_ != nullptr) {
-    sidebar_stack_->removeWidget(game_edit_page_);
-    game_edit_page_->deleteLater();
+  if (game_edit_card_ != nullptr) {
+    game_edit_overlay_layout_->removeWidget(game_edit_card_);
+    game_edit_card_->deleteLater();
   }
-  game_edit_page_ = BuildGameEditPage(id);
-  sidebar_stack_->addWidget(game_edit_page_);
-  sidebar_stack_->setCurrentWidget(game_edit_page_);
+  SetGridControlsEnabled(false);
+  game_edit_card_ = BuildGameEditCard(id);
+  game_edit_overlay_layout_->addWidget(game_edit_card_, 0, 0, Qt::AlignCenter);
+  root_stack_->setCurrentWidget(game_edit_overlay_);
+  game_edit_overlay_->show();
+  UpdateLibraryNavActive();
 }
 
 void LibraryWindow::CloseGameEdit() {
-  sidebar_stack_->setCurrentWidget(details_);
+  game_edit_overlay_->hide();
+  // Index 0 is chrome (root_stack_ only ever holds these two) -- raising it
+  // back on top is cosmetic once the overlay is hidden, but keeps z-order
+  // consistent for the next OpenGameDialog.
+  root_stack_->setCurrentIndex(0);
+  SetGridControlsEnabled(true);
+  UpdateLibraryNavActive();
   // Torn down rather than left alive off-screen: IsDirty() on a discarded
   // form would otherwise still read dirty, and wrongly prompt again on the
   // next Ctrl+Q from the grid.
-  if (game_edit_page_ != nullptr) {
-    sidebar_stack_->removeWidget(game_edit_page_);
-    game_edit_page_->deleteLater();
-    game_edit_page_ = nullptr;
+  if (game_edit_card_ != nullptr) {
+    game_edit_overlay_layout_->removeWidget(game_edit_card_);
+    game_edit_card_->deleteLater();
+    game_edit_card_ = nullptr;
     game_edit_form_ = nullptr;
   }
   RefreshGames();
+}
+
+void LibraryWindow::RequestCloseGameEdit() {
+  if (game_edit_form_ == nullptr || !game_edit_form_->IsDirty()) {
+    CloseGameEdit();
+    return;
+  }
+  switch (mira_gui::notify::ConfirmUnsaved(this, "This game's edits aren't saved.")) {
+    case mira_gui::notify::UnsavedAction::Cancel:
+      return;
+    case mira_gui::notify::UnsavedAction::SaveAndExit:
+      game_edit_form_->Save();  // SaveFinished, connected in BuildGameEditCard, closes on success
+      return;
+    case mira_gui::notify::UnsavedAction::DiscardAndExit:
+      CloseGameEdit();
+      return;
+  }
+}
+
+bool LibraryWindow::GameEditOpen() const {
+  return game_edit_overlay_ != nullptr && game_edit_overlay_->isVisible();
 }
 
 void LibraryWindow::OpenSettings(const QString& focus_key) {
@@ -1391,13 +2042,40 @@ bool LibraryWindow::SettingsOpen() const {
 }
 
 void LibraryWindow::SetSettingsChromeVisible(bool settings_open) {
-  settings_button_->setVisible(!settings_open);
   settings_actions_widget_->setVisible(settings_open);
-  // These act on a grid that isn't on screen while settings covers it.
-  for (QWidget* control : {static_cast<QWidget*>(filters_), static_cast<QWidget*>(sort_),
-                           static_cast<QWidget*>(sort_direction_), static_cast<QWidget*>(add_games_),
-                           static_cast<QWidget*>(search_), static_cast<QWidget*>(zoom_)}) {
-    control->setEnabled(!settings_open);
+  SetGridControlsEnabled(!settings_open);
+  UpdateLibraryNavActive();
+}
+
+void LibraryWindow::SetGridControlsEnabled(bool enabled) {
+  // The grid itself is what's leaving the screen either way -- nothing left
+  // to preview.
+  if (!enabled) ShowHoverCard(nullptr);
+  // These act on a hidden grid. library_nav_ stays clickable — it's the way
+  // back out. Disabling filter_sort_button_ alone blocks its popover too.
+  for (QWidget* control :
+       {filter_sort_button_, static_cast<QWidget*>(add_games_), static_cast<QWidget*>(search_),
+        static_cast<QWidget*>(zoom_), static_cast<QWidget*>(settings_button_),
+        static_cast<QWidget*>(classic_view_nav_)}) {
+    control->setEnabled(enabled);
+  }
+}
+
+void LibraryWindow::UpdateLibraryNavActive() {
+  using mira_gui::icons::Glyph;
+  const mira_gui::theme::Tokens& tokens = mira_gui::theme::Current();
+
+  const bool library_active = content_stack_->currentWidget() == splitter_ && !GameEditOpen();
+  if (library_nav_ != nullptr) {
+    library_nav_->setChecked(library_active);
+    library_nav_->setIcon(
+        mira_gui::icons::For(Glyph::Home, library_active ? tokens.on_accent : tokens.text));
+  }
+  const bool classic_active = content_stack_->currentWidget() == classic_page_;
+  if (classic_view_nav_ != nullptr) {
+    classic_view_nav_->setChecked(classic_active);
+    classic_view_nav_->setIcon(
+        mira_gui::icons::For(Glyph::Table, classic_active ? tokens.on_accent : tokens.text));
   }
 }
 
@@ -1451,20 +2129,70 @@ QWidget* LibraryWindow::BuildSettingsPage() {
   return page;
 }
 
-QWidget* LibraryWindow::BuildGameEditPage(const std::string& id) {
-  auto* page = new QWidget(this);
-  auto* layout = new QVBoxLayout(page);
-  layout->setContentsMargins(12, 12, 12, 12);
-  layout->setSpacing(10);
+QWidget* LibraryWindow::BuildGameEditOverlay() {
+  // Parented to nullptr here -- root_stack_->addWidget(overlay) reparents it
+  // to central, same as any other widget added to a layout.
+  auto* overlay = new ModalOverlay(nullptr);
+  overlay->setObjectName("game_edit_overlay");
+  // Plain black, not theme::window -- the theme's dark surfaces already
+  // sit close to black, so tinting toward window barely dims anything.
+  QColor scrim(0, 0, 0, 150);
+  overlay->setStyleSheet(
+      QString("QWidget#game_edit_overlay { background: rgba(%1, %2, %3, %4); }")
+          .arg(scrim.red())
+          .arg(scrim.green())
+          .arg(scrim.blue())
+          .arg(scrim.alpha()));
+  overlay->hide();
+  overlay->on_backdrop_clicked = [this] { RequestCloseGameEdit(); };
 
-  auto* save = new QPushButton("Save", page);
+  game_edit_overlay_layout_ = new QGridLayout(overlay);
+  game_edit_overlay_layout_->setContentsMargins(24, 24, 24, 24);
+  return overlay;
+}
 
-  auto* scroll = new QScrollArea(page);
+QWidget* LibraryWindow::BuildGameEditCard(const std::string& id) {
+  auto* card = new QWidget();
+  card->setObjectName("game_edit_card");
+  // ~70% of the window, not a hardcoded constant -- recomputed per open
+  // since the window can resize between edits.
+  card->setFixedSize(qRound(width() * 0.7), qRound(height() * 0.7));
+
+  auto* layout = new QVBoxLayout(card);
+  layout->setContentsMargins(0, 0, 0, 0);
+  layout->setSpacing(0);
+
+  // Header: name + status, static (the scrollable form below has its own
+  // editable Name field) -- just enough identity to confirm which game this
+  // is, plus the close affordance an overlay needs beyond the scrim click.
+  auto* header = new QWidget(card);
+  auto* header_layout = new QHBoxLayout(header);
+  header_layout->setContentsMargins(18, 14, 10, 14);
+  const mira_gui::GameSummary* game = FindGame(id);
+  auto* title = new QLabel(game != nullptr ? QString::fromStdString(game->name) : "Game settings",
+                           header);
+  title->setProperty("role", "heading");
+  header_layout->addWidget(title, /*stretch=*/1);
+  auto* close = new QToolButton(header);
+  close->setAutoRaise(true);
+  close->setIcon(mira_gui::icons::For(mira_gui::icons::Glyph::Close));
+  close->setToolTip("Close");
+  connect(close, &QToolButton::clicked, this, &LibraryWindow::RequestCloseGameEdit);
+  header_layout->addWidget(close);
+  layout->addWidget(header);
+
+  auto* divider = new QWidget(card);
+  divider->setFixedHeight(1);
+  divider->setStyleSheet(QString("background: %1;").arg(mira_gui::theme::Current().border.name()));
+  layout->addWidget(divider);
+
+  auto* scroll = new QScrollArea(card);
   scroll->setWidgetResizable(true);
   scroll->setFrameShape(QFrame::NoFrame);
   game_edit_form_ = new mira_gui::GameEditForm(id, scroll);
   game_edit_form_->SetArtworkStore(artwork_);
-  connect(save, &QPushButton::clicked, game_edit_form_, &mira_gui::GameEditForm::Save);
+  connect(game_edit_form_, &mira_gui::GameEditForm::ArtworkPickRequested, this,
+          [this, id](const QString& slot) { OpenArtworkPicker(id, slot.toStdString()); });
   connect(game_edit_form_, &mira_gui::GameEditForm::LoadFailed, this, [this](QString error) {
     mira_gui::notify::Failed(this, "Could not load this game.", error);
     CloseGameEdit();
@@ -1475,7 +2203,7 @@ QWidget* LibraryWindow::BuildGameEditPage(const std::string& id) {
               mira_gui::notify::Failed(this, "Could not save this game.", error);
               return;
             }
-            // The screen closing back to the grid is already the feedback —
+            // The overlay closing back to the grid is already the feedback —
             // a save the user just triggered isn't the background-result
             // case a toast is for.
             CloseGameEdit();
@@ -1483,39 +2211,137 @@ QWidget* LibraryWindow::BuildGameEditPage(const std::string& id) {
   scroll->setWidget(game_edit_form_);
   layout->addWidget(scroll, /*stretch=*/1);
 
-  auto* footer = new QHBoxLayout();
+  auto* footer = new QWidget(card);
+  auto* footer_layout = new QHBoxLayout(footer);
+  footer_layout->setContentsMargins(14, 12, 14, 14);
+  auto* back = new QPushButton("← Back", footer);
+  connect(back, &QPushButton::clicked, this, &LibraryWindow::RequestCloseGameEdit);
+  auto* save = new QPushButton("Save", footer);
+  connect(save, &QPushButton::clicked, game_edit_form_, &mira_gui::GameEditForm::Save);
+  footer_layout->addWidget(back);
+  footer_layout->addStretch(1);
+  footer_layout->addWidget(save);
+  layout->addWidget(footer);
+
+  return card;
+}
+
+void LibraryWindow::OpenClassicView() {
+  content_stack_->setCurrentWidget(classic_page_);
+  SetGridControlsEnabled(false);
+  UpdateLibraryNavActive();
+}
+
+void LibraryWindow::CloseClassicView() {
+  content_stack_->setCurrentWidget(splitter_);
+  SetGridControlsEnabled(true);
+  UpdateLibraryNavActive();
+}
+
+QWidget* LibraryWindow::BuildClassicPage() {
+  auto* page = new QWidget(this);
+  auto* layout = new QVBoxLayout(page);
+  layout->setContentsMargins(16, 12, 16, 16);
+  layout->setSpacing(10);
+
+  auto* header = new QHBoxLayout();
   auto* back = new QPushButton("← Back", page);
-  connect(back, &QPushButton::clicked, this, [this] {
-    if (game_edit_form_ == nullptr || !game_edit_form_->IsDirty()) {
-      CloseGameEdit();
-      return;
-    }
-    switch (mira_gui::notify::ConfirmUnsaved(this, "This game's edits aren't saved.")) {
-      case mira_gui::notify::UnsavedAction::Cancel:
-        return;
-      case mira_gui::notify::UnsavedAction::SaveAndExit:
-        game_edit_form_->Save();  // SaveFinished, connected above, closes on success
-        return;
-      case mira_gui::notify::UnsavedAction::DiscardAndExit:
-        CloseGameEdit();
-        return;
-    }
+  connect(back, &QPushButton::clicked, this, &LibraryWindow::CloseClassicView);
+  auto* title = new QLabel("Classic table view", page);
+  title->setProperty("role", "heading");
+  header->addWidget(back);
+  header->addWidget(title);
+  header->addStretch(1);
+  layout->addLayout(header);
+
+  classic_table_ = new QTableWidget(0, 7, page);
+  classic_table_->setHorizontalHeaderLabels(
+      {"Name", "Status", "Platform", "Runner", "Last Played", "Playtime", ""});
+  classic_table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+  classic_table_->setSelectionBehavior(QAbstractItemView::SelectRows);
+  classic_table_->setSelectionMode(QAbstractItemView::SingleSelection);
+  classic_table_->setAlternatingRowColors(true);
+  classic_table_->verticalHeader()->setVisible(false);
+  classic_table_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
+  for (int column = 1; column <= 6; ++column) {
+    classic_table_->horizontalHeader()->setSectionResizeMode(column, QHeaderView::ResizeToContents);
+  }
+  classic_table_->setShowGrid(false);
+  connect(classic_table_, &QTableWidget::cellDoubleClicked, this, [this](int row, int) {
+    QTableWidgetItem* item = classic_table_->item(row, 0);
+    if (item != nullptr) OpenGameDialog(item->data(Qt::UserRole).toString().toStdString());
   });
-  footer->addWidget(back);
-  footer->addWidget(save);
-  footer->addStretch(1);
-  layout->addLayout(footer);
+  layout->addWidget(classic_table_, /*stretch=*/1);
 
   return page;
 }
 
-void LibraryWindow::OpenClassicView() {
-  // A second top-level window, not a swap: the two views are useful side
-  // by side, and both stay live since each holds its own EventStream.
-  auto* classic = new MainWindow();
-  classic->setAttribute(Qt::WA_DeleteOnClose);
-  classic->setWindowTitle("Mira — classic view");
-  classic->show();
+void LibraryWindow::RefreshClassicTable() {
+  if (classic_table_ == nullptr) return;
+
+  // Same source and same filter as the grid — one games_ list, two
+  // presentations, always in sync since both are rebuilt from ApplyFilter.
+  std::vector<const mira_gui::GameSummary*> shown;
+  for (const mira_gui::GameSummary& game : games_) {
+    if (MatchesFilter(game)) shown.push_back(&game);
+  }
+
+  // Sorting stays off for the whole repopulate: Qt re-sorts on every setItem
+  // to the sort column, which would move a row out from under the loop
+  // that's still filling its other columns.
+  classic_table_->setSortingEnabled(false);
+  classic_table_->setRowCount(static_cast<int>(shown.size()));
+  for (int row = 0; row < static_cast<int>(shown.size()); ++row) {
+    const mira_gui::GameSummary& game = *shown[row];
+
+    auto* name_item = new QTableWidgetItem(QString::fromStdString(game.name));
+    name_item->setData(Qt::UserRole, QString::fromStdString(game.id));
+
+    auto* status_item = new QTableWidgetItem(QString::fromStdString(game.status));
+    status_item->setForeground(mira_gui::StatusColor(game.status));
+    if (!game.last_error.empty()) status_item->setToolTip(QString::fromStdString(game.last_error));
+
+    auto* platform_item = new QTableWidgetItem(QString::fromStdString(game.platform));
+    auto* runner_item = new QTableWidgetItem(
+        game.runner_ref.empty() ? "Auto" : QString::fromStdString(game.runner_ref));
+    auto* last_played_item = new QTableWidgetItem(mira_gui::FormatLastPlayed(game.last_played_at));
+    auto* playtime_item = new QTableWidgetItem(mira_gui::FormatPlaytime(game.play_seconds));
+
+    classic_table_->setItem(row, 0, name_item);
+    classic_table_->setItem(row, 1, status_item);
+    classic_table_->setItem(row, 2, platform_item);
+    classic_table_->setItem(row, 3, runner_item);
+    classic_table_->setItem(row, 4, last_played_item);
+    classic_table_->setItem(row, 5, playtime_item);
+
+    auto* actions_widget = new QWidget(classic_table_);
+    auto* actions_layout = new QHBoxLayout(actions_widget);
+    actions_layout->setContentsMargins(0, 0, 0, 0);
+    actions_layout->setSpacing(4);
+
+    const std::string id = game.id;
+    const QString name = QString::fromStdString(game.name);
+    const bool running = running_ids_.contains(id);
+
+    auto* launch_button = new QPushButton(running ? "Stop" : "Launch", classic_table_);
+    const bool can_launch = game.status == "ready";
+    launch_button->setEnabled(running || can_launch);
+    if (!running && !can_launch) {
+      launch_button->setToolTip(
+          QString("Not launchable while %1").arg(QString::fromStdString(game.status)));
+    }
+    connect(launch_button, &QPushButton::clicked, this, [this, id] { ToggleRunning(id); });
+    actions_layout->addWidget(launch_button);
+
+    auto* delete_button = new QPushButton("Delete", classic_table_);
+    connect(delete_button, &QPushButton::clicked, this, [this, id, name] {
+      mira_gui::actions::Delete(this, id, name, [this] { RefreshGames(); });
+    });
+    actions_layout->addWidget(delete_button);
+
+    classic_table_->setCellWidget(row, 6, actions_widget);
+  }
+  classic_table_->setSortingEnabled(true);
 }
 
 void LibraryWindow::HandleGameEvent(const std::string& type, const std::string& data) {
@@ -1581,7 +2407,7 @@ void LibraryWindow::HandleGameEvent(const std::string& type, const std::string& 
     if (event.slot == "cover") {
       artwork_->Invalidate(event.id);
     } else if (event.slot == "hero") {
-      details_->RefreshBanner(event.id);
+      if (game_edit_form_ != nullptr) game_edit_form_->RefreshBanner(event.id);
     }
     return;
   }

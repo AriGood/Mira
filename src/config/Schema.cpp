@@ -433,6 +433,14 @@ Schema::Schema() {
        "fetching metadata for a non-Steam game fails with no_steamgriddb_key rather than "
        "appearing to succeed."},
 
+      {"metadata.protondb_for_non_steam", Type::Bool, false, Tier::Basic,
+       "For a non-Steam game (Lutris, scanned, or manually added), look up a matching Steam "
+       "AppID by name and fetch its ProtonDB compatibility tier — best-effort, and never "
+       "changes how the game actually launches (that stays whatever runner_ref says). Off by "
+       "default: matching by name can pick the wrong game, and this sends the game's name to "
+       "Steam's public search API on every fetch. On has no effect on cover art, which is "
+       "steamgriddb.api_key's own concern either way."},
+
       {"events.sse_keepalive_s", Type::Int, 0, Tier::Expert,
        "Seconds between keepalive comments on the event stream. 0 disables them; a Unix "
        "socket does not need them and a timer would cost idle wakeups.",

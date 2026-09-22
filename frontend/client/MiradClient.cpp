@@ -295,7 +295,7 @@ FrontendPrefsResult GetFrontendPrefsSync() {
   read_int("window_width", result.prefs.window_width);
   read_int("window_height", result.prefs.window_height);
   read_int("tile_width", result.prefs.tile_width);
-  read_int("details_width", result.prefs.details_width);
+  read_int("sidebar_width", result.prefs.sidebar_width);
   const auto read_string = [&table](const char* key, std::optional<std::string>& out) {
     if (table.contains(key) && table[key].is_string()) out = table[key].get<std::string>();
   };
@@ -329,7 +329,7 @@ PatchConfigResult SaveFrontendPrefsSync(const FrontendPrefs& prefs) {
   if (prefs.window_width) table["window_width"] = *prefs.window_width;
   if (prefs.window_height) table["window_height"] = *prefs.window_height;
   if (prefs.tile_width) table["tile_width"] = *prefs.tile_width;
-  if (prefs.details_width) table["details_width"] = *prefs.details_width;
+  if (prefs.sidebar_width) table["sidebar_width"] = *prefs.sidebar_width;
   if (prefs.library_filter) table["library_filter"] = *prefs.library_filter;
   if (prefs.sort_by) table["sort_by"] = *prefs.sort_by;
   if (prefs.sort_descending) table["sort_descending"] = *prefs.sort_descending;

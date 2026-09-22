@@ -8,11 +8,12 @@ that decision is load-bearing and is not restated here.
 ## Two views, both kept
 
 `mira-gui` opens on **the grid** (`views/LibraryWindow`): cover tiles and a
-details panel, with a custom top bar in place of a native titlebar — filter
-and sort controls, search, tile size, and window controls (minimize/
-maximize/close), inspired by Lutris. It is modelled on Playnite's shelf for
-the tile browsing itself, which is the interaction most people arriving at a
-Linux game launcher already know.
+left sidebar (filters, sort, search, Library/Classic-view navigation,
+Settings, and a status line), with a custom top bar in place of a native
+titlebar — Add Games, tile size, and window controls (minimize/maximize/
+close), inspired by Lutris. It is modelled on Playnite's shelf for the tile
+browsing itself, which is the interaction most people arriving at a Linux
+game launcher already know.
 
 The window is frameless (`Qt::FramelessWindowHint`): the top bar owns
 move (`QWindow::startSystemMove`, dragging its own empty background) and
@@ -22,8 +23,8 @@ compositor rather than repositioning the window by hand, which is what makes
 them work under Wayland as well as X11.
 
 **The table** (`views/MainWindow`) shows every field of every game at once.
-It is reachable as `mira-gui --classic`, or from the grid's *View → Open
-classic table view*, which opens it as a second top-level window rather than
+It is reachable as `mira-gui --classic`, or from the grid sidebar's *Classic
+table view* row, which opens it as a second top-level window rather than
 swapping the grid out.
 
 Neither is a fallback for the other. The grid is the better browser; the
@@ -35,15 +36,20 @@ said.
 
 ### Selection model
 
-With nothing selected the details panel shows `ui/AboutPanel` — logo,
-version, authors, repository and license — rather than an empty rectangle.
-That is the whole of Mira's About: a frameless window has no Help menu to
-hang a dialog off, and the panel is otherwise idle.
+One click selects a tile (or, with Ctrl/Shift or a drag, several — the
+context menu then offers a reduced batch version of its usual actions). A
+second (double) click launches. Right-click opens the per-game menu.
+Launching on the first click would turn a misclick into a started game, so a
+single click never launches anything.
 
-One click selects a tile and fills the details panel. A second (double)
-click launches. Right-click opens the per-game menu. Launching on the first
-click would turn a misclick into a started game, so a single click never
-launches anything.
+Hovering a tile for ~280ms shows `ui/HoverCard`, a floating, non-modal
+preview built from the `GameSummary` already in memory (name, status,
+platform/runner) plus one `GET /v1/games/{id}/metadata` call for the
+ProtonDB tier and developer/genres — the old right sidebar's job, without a
+permanent panel taking up space. It never shows over a multi-selection.
+`ui/AboutPanel` (logo, version, authors, repository, license) moved to
+*Help → About Mira* — a frameless window has no native Help menu to hang a
+dialog off, so it's a plain `QDialog` built in `LibraryWindow::OpenAbout`.
 
 ### Keyboard
 
@@ -102,9 +108,9 @@ have to stay writable to be cleared again, and a merge patch cannot drop one.
 
 Four things the stylesheet cannot reach read the tokens directly instead:
 `ui/GameTileDelegate` and `ui/CoverArt`, which paint with `QPainter`,
-`ui/Notify`'s toasts, and `ui/GameDetailsPanel`'s hero banner, which is
-clipped to `radius_panel` by hand because a stylesheet cannot round a pixmap
-inside a `QLabel`. They repaint on `theme::Notifier::Changed`.
+`ui/Notify`'s toasts, and `ui/HeroArtWidget`'s banner, which is clipped to
+`radius_panel` by hand because a stylesheet cannot round a pixmap inside a
+`QLabel`. They repaint on `theme::Notifier::Changed`.
 
 Two conventions keep colors out of the widgets themselves:
 
@@ -175,7 +181,7 @@ This matters more than it looks:
   frontend. Adding a backend setting requires no frontend change.
 - **`frontend.toml`** holds the frontend's own state and preferences:
   window size, tile size, which filter and sort were selected,
-  the details panel's splitter width, and whether to scan the library on
+  the left sidebar's splitter width, and whether to scan the library on
   startup. The backend stores it verbatim and never validates it, reachable
   as the opaque `frontend` key of `GET`/`PATCH /v1/config` (see
   `FrontendPrefs`).
@@ -183,7 +189,7 @@ This matters more than it looks:
   | key | what it does |
   |---|---|
   | `window_width`, `window_height` | remembered window size |
-  | `details_width` | remembered splitter width for the details panel |
+  | `sidebar_width` | remembered splitter width for the left sidebar |
   | `tile_width` | cover tile size (clamped to the zoom slider's range) |
   | `library_filter` | which filter was selected |
   | `sort_by`, `sort_descending` | grid order — see `ui/LibrarySort` |
@@ -226,14 +232,14 @@ Everything `api.md` marks implemented has a path through the UI:
 |---|---|
 | `GET /v1/health` | the Online/Offline badge |
 | `GET /v1/games[?status=]` | both library views |
-| `GET`/`PATCH /v1/games/{id}` | `GameDetailDialog` |
+| `GET`/`PATCH /v1/games/{id}` | `GameDetailDialog`, `ui/GameEditForm` |
 | `DELETE /v1/games/{id}` | `DeleteGameDialog`, including `delete_files`/`delete_prefix` |
 | `GET`/`PATCH /v1/games/{id}/config` | `OverridesEditor` |
 | `POST /v1/games/{id}/launch`, `/stop` | Play/Stop, tile double-click, context menu |
-| `GET /v1/games/{id}/artwork` | `ui/ArtworkStore` — grid tiles and the details panel |
-| `GET /v1/games/{id}/artwork?type=hero` | the details panel's banner, in place of the cover when a game has one |
-| `GET /v1/games/{id}/metadata` | the details panel — release date, developer, genres, review summary, ProtonDB tier; also `art_candidates.cover`/`.hero` for `ArtworkPickerDialog` |
-| `POST /v1/games/{id}/metadata/refresh` | the details panel's button, the tile context menu, and *Library → Fetch missing cover art* |
+| `GET /v1/games/{id}/artwork` | `ui/ArtworkStore` — grid tiles and `ui/GameEditForm`'s hero/cover box |
+| `GET /v1/games/{id}/artwork?type=hero` | `ui/GameEditForm`'s banner, in place of the cover when a game has one |
+| `GET /v1/games/{id}/metadata` | `ui/HoverCard` (ProtonDB tier, developer, genres) on hover; `GameDetailPageDialog` (context menu → *More details…*) for screenshots, trailers, requirements, DLC, content descriptors, achievements; also `art_candidates.cover`/`.hero` for `ArtworkPickerDialog` |
+| `POST /v1/games/{id}/metadata/refresh` | the tile context menu's *Refresh metadata && cover art*, and *Library → Fetch missing cover art* |
 | `POST /v1/games/{id}/artwork?type=` | *Choose cover art…* / *Choose hero art…* (`ArtworkPickerDialog`) |
 | `POST /v1/games/{id}/run` | *Run in prefix…* (`RunInPrefixDialog`) |
 | `POST /v1/games/{id}/finish-install` | *Mark as installed* |
@@ -374,8 +380,8 @@ story and hands out a pixmap that is never empty:
   re-fetching it absurd. A rename drops the rendered copies (the
   placeholder's initials changed) but not the fetched image.
 
-The grid and the details panel share one store, so a cover is fetched,
-decoded and cached once for both.
+The grid and `ui/GameEditForm`'s hero/cover box share one store, so a cover
+is fetched, decoded and cached once for both.
 
 **No key, no art, and now it says so.** A non-Steam game has no free cover
 source other than SteamGridDB, so with `steamgriddb.api_key` unset mirad
@@ -389,11 +395,10 @@ for a game the user asked about.
 **Re-fetching.** mirad fetches metadata only when a game is *first*
 detected, so a game whose fetch failed — or any non-Steam game from before
 `steamgriddb.api_key` was set — keeps its placeholder until something asks
-again. Three ways to ask: the details panel's *Refresh cover art &
-metadata* button, the same entry on a tile's right-click menu, and
-*Library → Fetch missing cover art*, which does it for every game the store
-has no image for. The bulk path raises one toast for the batch rather than
-one per game.
+again. Two ways to ask: a tile's right-click *Refresh metadata && cover
+art*, and *Library → Fetch missing cover art*, which does it for every game
+the store has no image for. The bulk path raises one toast for the batch
+rather than one per game.
 
 There is no `has_artwork` on a game summary, so "does this game have
 artwork" can only be answered by asking for it. That is the reason for the
@@ -411,8 +416,8 @@ and pre-selected on open. Picking a row applies it immediately (`POST
 `game.artwork_selected`, redraws the preview from the real image mirad just
 fetched and cached — that redraw *is* the preview. The same event also
 reaches `LibraryWindow::HandleGameEvent`, which invalidates the game's
-`ArtworkStore` entry (cover) or the details panel's banner cache (hero) so
-the grid tile/sidebar follow without waiting for the picker to close. A game
+`ArtworkStore` entry (cover) or `GameEditForm`'s own banner cache (hero) so
+the grid tile/edit page follow without waiting for the picker to close. A game
 with no candidates cached (no `steamgriddb.api_key` set, or SteamGridDB has
 no match for the name) says so instead of showing an empty list — this now
 includes Steam-owned games too, which get SteamGridDB candidates as

@@ -52,10 +52,10 @@ qt_add_executable(mira-gui
   ui/DaemonSupervisor.h
   ui/GameActions.cpp
   ui/GameActions.h
-  ui/GameDetailsPanel.cpp
-  ui/GameDetailsPanel.h
   ui/HeroArtWidget.cpp
   ui/HeroArtWidget.h
+  ui/HoverCard.cpp
+  ui/HoverCard.h
   ui/GamePresentation.h
   ui/LibrarySort.cpp
   ui/LibrarySort.h
