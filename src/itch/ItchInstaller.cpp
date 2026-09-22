@@ -27,26 +27,26 @@ ItchInstaller::ItchInstaller(config::Config& config, store::GameStore& games, ap
 Result<void> ItchInstaller::Run(const std::string& game_id) {
   if (auto ready = CheckReady(config_); !ready) return ready;
 
-  // Two-call sequence: Install.Queue (asks butlerd to pick an upload for
-  // this game and stage it) then Install.Perform (actually fetches it
-  // into stagingFolder). This is a simplification of the three-call
-  // Queue/PlanUpload/Perform sequence itch's own docs describe -- the
-  // exact parameters PlanUpload needs weren't confirmed against a real
-  // account (see Butlerd.h's class comment), so it's left out rather than
-  // called with guessed arguments; if it turns out to be required for a
-  // given title, Perform below fails with a clear butlerd_error instead
-  // of silently doing the wrong thing.
-  const Result<json> queued = Call(config_, "Install.Queue", {{"game", {{"id", std::stoll(game_id)}}}});
+  const Result<std::int64_t> profile_id = CurrentProfileId(config_);
+  if (!profile_id) return std::unexpected(profile_id.error());
+  if (auto location = EnsureInstallLocation(config_); !location) return std::unexpected(location.error());
+
+  // Two-call sequence confirmed against butlerd's own spec: Install.Queue
+  // picks an upload and returns {id, stagingFolder}; Install.Perform
+  // fetches it using exactly those two values back.
+  const Result<json> queued = Call(config_, "Install.Queue",
+                                  {{"game", {{"id", std::stoll(game_id)}}},
+                                   {"profileId", *profile_id},
+                                   {"installLocationId", "mira"}});
   if (!queued) return std::unexpected(queued.error());
 
   const std::string install_id = queued->value("id", std::string());
-  if (install_id.empty()) return Err("itch_queue_failed", "Install.Queue didn't return an install id");
+  const std::string staging_folder = queued->value("stagingFolder", std::string());
+  if (install_id.empty() || staging_folder.empty()) {
+    return Err("itch_queue_failed", "Install.Queue didn't return an id/stagingFolder");
+  }
 
-  const std::filesystem::path staging = config_.File().parent_path() / "tools" / "itch" / "staging" / install_id;
-  std::error_code ec;
-  std::filesystem::create_directories(staging, ec);
-
-  if (auto performed = Call(config_, "Install.Perform", {{"id", install_id}, {"stagingFolder", staging.string()}});
+  if (auto performed = Call(config_, "Install.Perform", {{"id", install_id}, {"stagingFolder", staging_folder}});
       !performed) {
     return std::unexpected(performed.error());
   }

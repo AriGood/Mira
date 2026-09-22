@@ -395,10 +395,13 @@ Schema::Schema() {
        "Path to the gogdl binary. Empty tries Mira's own managed download "
        "(see \"mira gog setup\"), then $PATH."},
 
-      {"gog.install_root", Type::String, "~/Games/GOG", Tier::Advanced,
+      {"gog.install_root", Type::String, "~/.local/share/mira/gog", Tier::Advanced,
        "Where GOG titles are installed to, one subdirectory per game id — "
        "unlike Legendary/butler, gogdl doesn't choose or remember an "
-       "install location on its own, so Mira has to."},
+       "install location on its own, so Mira has to. Deliberately outside "
+       "library_roots' usual defaults (e.g. ~/Games) — a real game install "
+       "here would otherwise also get auto-detected as a second, bogus "
+       "scan-sourced game."},
 
       {"itch.enabled", Type::Bool, true, Tier::Basic,
        "Use butler (itch.io's own launcher-integration daemon) to "
@@ -412,6 +415,11 @@ Schema::Schema() {
       {"itch.butler_bin", Type::String, "", Tier::Advanced,
        "Path to the butler binary. Empty tries Mira's own managed download "
        "(see \"mira itch setup\"), then $PATH."},
+
+      {"itch.install_root", Type::String, "~/.local/share/mira/itch", Tier::Advanced,
+       "Where itch.io titles are installed to — registered with butlerd as "
+       "an install location on first use. Deliberately outside "
+       "library_roots' usual defaults, same reasoning as gog.install_root."},
 
       {"humble.enabled", Type::Bool, true, Tier::Basic,
        "Use humble-cli (an unofficial Humble Bundle CLI) to list purchased "

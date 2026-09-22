@@ -6,6 +6,8 @@
 
 #include "core/Log.h"
 #include "itch/Butlerd.h"
+#include "itch/Itch.h"
+#include "library/Detector.h"
 #include "runner/RunnerRegistry.h"
 
 namespace mira::itch {
@@ -24,13 +26,8 @@ struct Cave {
   bool is_linux_native = false;
 };
 
-// butlerd's documented Cave shape (itch.io/docs/butler/launcher-
-// integration.html) nests the owning game under "game" and the on-disk
-// location under "installInfo" -- not yet confirmed against a real
-// logged-in account, so every field here is read defensively
-// (json::value with a fallback) rather than assumed present; a field
-// that's actually named differently just leaves that one piece blank
-// instead of failing the whole import.
+// Field names confirmed against butlerd's own spec (butlerd/generous/
+// spec/butlerd.json in itchio/butler).
 std::vector<Cave> ParseCaves(const json& items) {
   std::vector<Cave> out;
   if (!items.is_array()) return out;
@@ -46,8 +43,12 @@ std::vector<Cave> ParseCaves(const json& items) {
     const json& install_info = item.value("installInfo", json::object());
     cave.install_folder = install_info.value("installFolder", std::string());
 
+    // Upload.platforms.linux is an enum string ("all"/"386"/"amd64") when
+    // present, absent otherwise -- not a bool, confirmed against
+    // butlerd's own spec (a naive .value<bool>() here throws on a real
+    // linux upload).
     const json& upload = item.value("upload", json::object());
-    cave.is_linux_native = upload.value("platforms", json::object()).value("linux", false);
+    cave.is_linux_native = upload.value("platforms", json::object()).contains("linux");
 
     out.push_back(std::move(cave));
   }
@@ -63,7 +64,10 @@ Result<ItchImportSummary> ItchImporter::Import() {
   ItchImportSummary summary;
   if (!config_.GetBool("itch.enabled")) return summary;
 
-  const Result<json> caves_json = Call(config_, "Fetch.Caves", {{"fresh", true}});
+  const Result<std::int64_t> profile_id = CurrentProfileId(config_);
+  if (!profile_id) return std::unexpected(profile_id.error());
+
+  const Result<json> caves_json = Call(config_, "Fetch.Caves", {{"profileId", *profile_id}});
   if (!caves_json) return std::unexpected(caves_json.error());
 
   const json items = caves_json->value("items", json::array());
@@ -85,6 +89,19 @@ Result<ItchImportSummary> ItchImporter::Import() {
     game.updated_at = model::NowSeconds();
     if (!existing) game.created_at = game.updated_at;
     AddTag(game.tags, "itch");
+
+    // butlerd's Cave doesn't say which file to run -- reuse Mira's own
+    // executable detector against the real install folder, same as a
+    // manually-scanned game. Only when exe_path isn't already set, so a
+    // user's own correction survives a re-import.
+    if (game.exe_path.empty() && !cave.install_folder.empty()) {
+      const library::Detector::Result detected = library::Detector({}).Detect(cave.install_folder);
+      if (!detected.candidates.empty()) {
+        game.exe_path = detected.candidates.front().rel_path;
+        game.candidates = detected.candidates;
+        game.confidence = detected.confidence;
+      }
+    }
 
     if (game.platform == model::Platform::Windows &&
         (!existing || existing->runner_ref.empty() || existing->data_dir.empty())) {

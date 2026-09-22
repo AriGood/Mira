@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <filesystem>
 #include <string>
 
@@ -46,5 +47,16 @@ ItchAuthStatus Status(const config::Config& config);
 Result<void> Login(const config::Config& config, const std::string& api_key);
 
 Result<void> Logout(const config::Config& config);
+
+// Every Fetch.ProfileOwnedKeys/Install.Queue call needs a numeric
+// profileId (confirmed against butlerd's own spec) -- there's no
+// separate persisted profile id, so this re-runs Profile.LoginWithAPIKey
+// with the stored key each time and reads .profile.id back.
+Result<std::int64_t> CurrentProfileId(const config::Config& config);
+
+// Install.Queue needs a registered "install location" id when installing
+// a title for the first time (confirmed live: "installLocationId must be
+// set"). Idempotent -- safe to call before every install.
+Result<void> EnsureInstallLocation(const config::Config& config);
 
 }  // namespace mira::itch
