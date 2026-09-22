@@ -163,11 +163,12 @@ QSize HeroArtWidget::ImageBoxSize() const {
 
 void HeroArtWidget::RenderBanner() {
   if (banner_source_.isNull()) return;
+  const QSize box = ImageBoxSize();
   // Contain-fit, not cover: SteamGridDB's own hero shape is 1920x620, but a
   // mismatched alternate should show whole and undistorted, not have its
   // edges cut off — same treatment RefreshCover gives a game with no hero.
-  banner_->setPixmap(FitLetterboxed(banner_source_, ImageBoxSize(), theme::Current().radius_panel,
-                                    theme::Current().surface_alt));
+  banner_->setPixmap(
+      FitLetterboxed(banner_source_, box, theme::Current().radius_panel, theme::Current().surface_alt));
   UpdateImageVisibility();
 }
 

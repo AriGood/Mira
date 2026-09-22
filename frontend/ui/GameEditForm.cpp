@@ -26,14 +26,22 @@
 namespace mira_gui {
 
 GameEditForm::GameEditForm(std::string id, QWidget* parent) : QWidget(parent), id_(std::move(id)) {
-  auto* layout = new QVBoxLayout(this);
+  // Two columns: the art preview reads as a sidebar next to the fields
+  // rather than another stacked row above them, so it stays put instead of
+  // scrolling out of view with the rest of the form.
+  auto* layout = new QHBoxLayout(this);
   layout->setContentsMargins(0, 0, 0, 0);
-  layout->setSpacing(12);
+  layout->setSpacing(16);
 
-  hero_art_ = new HeroArtWidget(this);
-  layout->addWidget(hero_art_);
+  auto* art_column = new QWidget(this);
+  art_column->setFixedWidth(220);
+  auto* art_layout = new QVBoxLayout(art_column);
+  art_layout->setContentsMargins(0, 0, 0, 0);
+  art_layout->setSpacing(10);
 
-  auto* art_buttons = new QHBoxLayout();
+  hero_art_ = new HeroArtWidget(art_column);
+  art_layout->addWidget(hero_art_);
+
   auto* choose_cover = new QPushButton("Choose cover art…", this);
   connect(choose_cover, &QPushButton::clicked, this,
           [this] { emit ArtworkPickRequested("cover"); });
@@ -42,10 +50,15 @@ GameEditForm::GameEditForm(std::string id, QWidget* parent) : QWidget(parent), i
                           "if it has any cached.");
   connect(choose_hero, &QPushButton::clicked, this,
           [this] { emit ArtworkPickRequested("hero"); });
-  art_buttons->addWidget(choose_cover);
-  art_buttons->addWidget(choose_hero);
-  art_buttons->addStretch(1);
-  layout->addLayout(art_buttons);
+  art_layout->addWidget(choose_cover);
+  art_layout->addWidget(choose_hero);
+  art_layout->addStretch(1);
+  layout->addWidget(art_column);
+
+  auto* fields_column = new QWidget(this);
+  auto* fields_layout = new QVBoxLayout(fields_column);
+  fields_layout->setContentsMargins(0, 0, 0, 0);
+  fields_layout->setSpacing(12);
 
   form_ = new QFormLayout();
   auto* form = form_;
@@ -147,12 +160,12 @@ GameEditForm::GameEditForm(std::string id, QWidget* parent) : QWidget(parent), i
   add_row("Data directory:", data_dir_edit_);
   add_row("Runner config:", runner_config_edit_);
   add_row("Environment:", env_edit_);
-  layout->addLayout(form);
-  layout->addWidget(last_error_label_);
+  fields_layout->addLayout(form);
+  fields_layout->addWidget(last_error_label_);
 
   // Without a stretch factor here, Qt spreads the QScrollArea's leftover
   // height evenly across every form row instead of leaving one gap below.
-  layout->addStretch(1);
+  fields_layout->addStretch(1);
 
   // After the stretch, not right below the form: pushed to the very bottom
   // of the page, next to the containing page's own Save/Cancel, rather than
@@ -163,7 +176,8 @@ GameEditForm::GameEditForm(std::string id, QWidget* parent) : QWidget(parent), i
   advanced_button->setSizePolicy(QSizePolicy::Ignored, advanced_button->sizePolicy().verticalPolicy());
   advanced_button->setToolTip("Per-game overrides of the global settings.");
   connect(advanced_button, &QPushButton::clicked, this, &GameEditForm::OpenAdvanced);
-  layout->addWidget(advanced_button);
+  fields_layout->addWidget(advanced_button);
+  layout->addWidget(fields_column, /*stretch=*/1);
 
   // Built now, shown later: overrides_->Load() (in Load(), below) needs
   // somewhere to live before the dialog's ever opened. Its own window, not
