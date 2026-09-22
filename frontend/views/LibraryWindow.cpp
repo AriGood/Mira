@@ -1302,9 +1302,9 @@ QWidget* LibraryWindow::BuildSidebar() {
   layout->addWidget(library_heading);
 
   // Filled in later by PopulateLibraryActions(), once BuildShortcuts() has
-  // populated common_ -- a 2-column icon-button grid, everything the old
-  // hamburger menu held that still belongs to the library rather than the
-  // top bar (see BuildTopBar) or nowhere at all (see PopulateLibraryActions).
+  // populated common_ -- everything the old hamburger menu held that still
+  // belongs to the library rather than the top bar (see BuildTopBar) or
+  // nowhere at all (see PopulateLibraryActions).
   library_actions_layout_ = new QVBoxLayout();
   library_actions_layout_->setSpacing(2);
   layout->addLayout(library_actions_layout_);

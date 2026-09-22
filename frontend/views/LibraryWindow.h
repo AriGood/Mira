@@ -77,7 +77,7 @@ private:
   // theme change — the popover's own rows restyle themselves separately.
   void UpdateFilterSortSummary();
   // Runners/Fetch cover art/Regenerate desktop entries/Remove desktop
-  // entries, as a 2-column icon-button grid — everything else the old
+  // entries, as vertical icon+label rows — everything else the old
   // hamburger menu held either moved to the top bar (Refresh, Keyboard
   // shortcuts, About) or was dropped as redundant (Close window, Quit: the
   // frameless window's own × and the tray icon already cover those).
