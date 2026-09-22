@@ -993,6 +993,7 @@ void Server::RegisterRoutes() {
       } else {
         log::Info("{} {} finished: {}", source, is_update ? "update" : "install", ref);
         SyncDesktopEntries(config_, games_);
+        if (const auto game = games_.Find(source + "-" + ref)) metadata_fetches_.Enqueue(config_, events_, *game);
         events_.Publish("library.install.finished", {{"source", source}, {"ref", ref}, {"update", is_update}});
       }
     }).detach();
