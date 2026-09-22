@@ -12,17 +12,15 @@
 namespace mira::library {
 
 // One storefront Mira can read entitlements from and, where the source
-// actually supports it, install/update titles through. Implemented once
-// per source that fits this shape (epic, steam, gog, itch) and held
-// polymorphically by SourceRegistry.h's AllSources() -- see the
-// storefronts plan for why Humble doesn't fit here (no install/update
-// state of its own to report on).
+// supports it, install/update titles through. Implemented once per
+// source that fits this shape (epic, steam, gog, itch) and held
+// polymorphically by SourceRegistry.h's AllSources() -- not Humble,
+// which has no install/update state of its own to report on.
 //
-// Install/Update are blocking, same convention EpicInstaller already
-// used: the caller (api::Server's POST /v1/library/install|update) runs
-// them on a detached thread and reports progress over EventBus. Each
-// implementation is responsible for its own preconditions (tool
-// installed, authenticated, ...) -- the caller does not special-case any
+// Install/Update are blocking: the caller (api::Server's POST
+// /v1/library/install|update) runs them on a detached thread and reports
+// progress over EventBus. Each implementation owns its own preconditions
+// (tool installed, authenticated, ...) -- the caller never special-cases
 // one source.
 class ILibrarySource {
 public:

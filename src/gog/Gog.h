@@ -9,23 +9,14 @@
 #include "runner/Downloader.h"
 
 // Wraps gogdl (github.com/Heroic-Games-Launcher/heroic-gogdl), the GOG
-// downloader Heroic itself uses. Confirmed live against a real release
-// (v1.3.0, no account needed for --help): gogdl ships as a self-executing
-// Python zipapp ("#!/usr/bin/env python3" shebang baked in), not a static
-// binary the way Legendary/butler are -- it needs a system python3, a real
-// new failure mode Legendary's own detection never had.
+// downloader Heroic itself uses. It's a self-executing Python zipapp, not
+// a static binary like Legendary/butler -- needs a system python3.
 //
-// Unlike Legendary, gogdl has no "list what's installed" or "list owned"
-// subcommand at all -- {import,redist,dependencies,auth,download,repair,
-// update,info,launch,save-sync,save-clear,lang-match} is the whole set
-// (confirmed via `gogdl --help`). "import" reads metadata for a game
-// already unpacked at a given local path; it doesn't discover installs on
-// its own. Catalog/ownership instead comes from GOG's own embed.gog.com
-// API directly (confirmed against heroic-gogdl's own source,
-// gogdl/api.py/auth.py: GET embed.gog.com/user/data/games with the access
-// token gogdl's own `auth` step already obtained and wrote to
-// --auth-config-path -- see GogCatalog.h), the same way every other GOG
-// Linux tool (lgogdownloader included) gets a library listing.
+// gogdl has no "list what's installed"/"list owned" subcommand at all
+// (confirmed via `gogdl --help`); "import" only identifies a game already
+// unpacked at a given path. Catalog/ownership instead comes from GOG's
+// own embed.gog.com API directly (see GogSource.cpp), using the token
+// gogdl's own `auth` step already obtained.
 namespace mira::gog {
 
 struct GogStatus {

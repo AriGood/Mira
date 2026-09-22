@@ -9,19 +9,12 @@
 #include "core/Result.h"
 #include "runner/Downloader.h"
 
-// Wraps humble-cli (github.com/smbl64/humble-cli, unofficial), the one
-// real native-Linux CLI for Humble Bundle. Deliberately not built on
-// library::ILibrarySource the way epic/steam/gog/itch are: Humble Bundle
-// has no "installed" concept of its own at all, just purchased bundles of
-// downloadable files (a mix of installers, archives, and DRM-free
-// builds), so there's no catalog/install/update lifecycle to wrap —
-// GET /v1/humble/library lists what's purchased, POST
-// /v1/humble/download fetches files from one bundle into a plain
-// directory, and that's the whole surface. Confirmed live against a real
-// release (v0.23.2, no account needed for --help): humble-cli has no
-// --json output, only human-readable tables (`--field` selects columns) —
-// parsed defensively (see HumbleSource.cpp... actually Humble.cpp's
-// ParseTable) rather than assumed stable.
+// Wraps humble-cli (github.com/smbl64/humble-cli, unofficial). Not built
+// on library::ILibrarySource like epic/steam/gog/itch: Humble Bundle has
+// no "installed" concept, just purchased bundles of downloadable files,
+// so there's no catalog/install/update lifecycle to wrap — GET
+// /v1/humble/library lists what's purchased, POST /v1/humble/download
+// fetches files from one bundle into a plain directory.
 namespace mira::humble {
 
 struct HumbleStatus {
@@ -75,12 +68,9 @@ std::filesystem::path DownloadDir(const config::Config& config, const std::strin
 // optionally narrowed by `item_numbers` (humble-cli's own "1,3,5-7" range
 // syntax, passed through as-is). Blocking, same convention as every other
 // install-shaped call here -- the caller runs it on a detached thread.
-// Returns whether anything actually landed on disk: some owned "bundle"
-// entries are a redeemed Steam key with no Humble-hosted files at all
-// (confirmed live: `humble-cli details` reporting "No items to show",
-// "Total size: 0 B") -- humble-cli itself exits 0 and prints "Nothing to
-// download" for these, which isn't a failure, but isn't the same as a
-// real download landing either.
+// Returns whether anything actually landed on disk: a redeemed
+// Steam-key-only entry has no Humble-hosted files at all, and humble-cli
+// exits 0 printing "Nothing to download" for those rather than failing.
 Result<bool> Download(const config::Config& config, const std::string& bundle_key, const std::string& item_numbers);
 
 }  // namespace mira::humble

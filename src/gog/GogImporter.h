@@ -19,29 +19,22 @@ struct GogImportSummary {
 };
 
 // Unlike epic::EpicImporter, gogdl has no "list what's installed" of its
-// own to read through (see Gog.h's class comment) — the only source of
-// truth for "what GOG games are here" is gog.install_root, the directory
-// Mira itself installs into (GogInstaller.h). Import() walks that
-// directory's immediate subdirectories and runs `gogdl import <dir>` on
-// each one to identify it, so a game GogInstaller already put there is
-// picked up the same way on a fresh `mirad` start as any other source's
-// pre-existing install, and a game a user drops in by hand (e.g. moved
-// from another GOG tool) is picked up too.
+// own (see Gog.h) — the only source of truth is gog.install_root, the
+// directory Mira itself installs into. Import() walks its immediate
+// subdirectories and runs `gogdl import <dir>` on each to identify it, so
+// a game GogInstaller already put there is picked up on a fresh `mirad`
+// start, and one a user drops in by hand is picked up too.
 class GogImporter {
 public:
   GogImporter(config::Config& config, store::GameStore& games, api::EventBus& events);
 
   Result<GogImportSummary> Import();
 
-  // Identifies and upserts one already-unpacked install at `path`,
-  // without touching the rest of install_root — what GogInstaller calls
-  // right after a fresh download (which already knows `id`, GOG's own
-  // product id, from what it just asked gogdl to download), and what
-  // `mira gog import <id> <path>` uses for an install living somewhere
-  // else entirely. `gogdl import <path>` fills in the title (best-effort
-  // — its exact output hasn't been confirmed live against a real account
-  // yet; a missing/unparseable title just falls back to `id`, same as
-  // every other source here does).
+  // Identifies and upserts one already-unpacked install at `path` --
+  // what GogInstaller calls right after a fresh download (already knows
+  // `id`, GOG's product id), and what `mira gog import <id> <path>` uses
+  // for an install living somewhere else. A missing/unparseable title
+  // falls back to `id`, same as every other source here.
   Result<model::Game> ImportPath(const std::string& id, const std::filesystem::path& path);
 
 private:
