@@ -74,8 +74,12 @@ struct Fixture {
     games.Load();
   }
 
-  void UseFakeGogdl(const std::string& auth_success_body = R"({"access_token": "tok", "refresh_token": "ref", )"
-                                                            R"("expires_in": 3600, "loginTime": 9999999999})",
+  // gogdl nests the real fields one level down, keyed by client_id --
+  // confirmed live (see Gog.cpp's ReadAuthConfig comment), not the flat
+  // shape it'd be natural to assume.
+  void UseFakeGogdl(const std::string& auth_success_body =
+                       R"({"46899977096215655": {"access_token": "tok", "refresh_token": "ref", )"
+                       R"("expires_in": 3600, "loginTime": 9999999999}})",
                     const std::string& import_body = R"({"title": "A GOG Game"})") {
     const fs::path bin = dir / "gogdl";
     WriteFakeGogdl(bin, auth_success_body, import_body);
@@ -135,7 +139,8 @@ TEST_CASE("AccessToken refreshes an expired token by re-invoking gogdl auth") {
   // is the state Mira finds on a real second run after the token's
   // expires_in has elapsed.
   std::ofstream expired(gog::AuthConfigPath(fixture.config));
-  expired << R"({"access_token": "stale", "refresh_token": "ref", "expires_in": 60, "loginTime": 0})";
+  expired << R"({"46899977096215655": {"access_token": "stale", "refresh_token": "ref", )"
+             R"("expires_in": 60, "loginTime": 0}})";
   expired.close();
 
   const Result<std::string> token = gog::AccessToken(fixture.config);

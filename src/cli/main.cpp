@@ -610,17 +610,28 @@ int CmdGogLogin() {
 
   std::printf(
       "Visit https://auth.gog.com/auth?client_id=46899977096215655&redirect_uri=https%%3A%%2F%%2Fembed.gog.com"
-      "%%2Fon_login_success%%3Forigin%%3Dclient&response_type=code&layout=client2, log in, and paste back the "
-      "\"code\" query param from the page it redirects to:\ncode: ");
-  std::string code;
-  std::getline(std::cin, code);
-  while (!code.empty() && std::isspace(static_cast<unsigned char>(code.back()))) code.pop_back();
+      "%%2Fon_login_success%%3Forigin%%3Dclient&response_type=code&layout=client2, log in, and log in. It "
+      "redirects to a blank page — GOG's own client_id, not something Mira can point at a nicer landing page.\n"
+      "Paste the whole address-bar URL from that blank page (or just the \"code\" value, if you'd rather pull "
+      "it out yourself):\nurl or code: ");
+  std::string pasted;
+  std::getline(std::cin, pasted);
+  while (!pasted.empty() && std::isspace(static_cast<unsigned char>(pasted.back()))) pasted.pop_back();
   size_t start = 0;
-  while (start < code.size() && std::isspace(static_cast<unsigned char>(code[start]))) ++start;
-  code.erase(0, start);
-  if (code.empty()) {
+  while (start < pasted.size() && std::isspace(static_cast<unsigned char>(pasted[start]))) ++start;
+  pasted.erase(0, start);
+  if (pasted.empty()) {
     std::fprintf(stderr, "mira: nothing entered\n");
     return 2;
+  }
+
+  // Accept the whole redirected URL too, not just the bare code -- GOG's
+  // redirect page is blank, no JSON to eyeball the way Epic's is.
+  std::string code = pasted;
+  if (const size_t marker = pasted.find("code="); marker != std::string::npos) {
+    const size_t value_start = marker + 5;
+    const size_t amp = pasted.find('&', value_start);
+    code = pasted.substr(value_start, amp == std::string::npos ? std::string::npos : amp - value_start);
   }
 
   auto client = Connect();

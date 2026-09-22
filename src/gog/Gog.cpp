@@ -38,8 +38,14 @@ std::optional<json> ReadAuthConfig(const config::Config& config) {
   std::ifstream file(AuthConfigPath(config));
   if (!file) return std::nullopt;
   const json parsed = json::parse(file, nullptr, false);
-  if (parsed.is_discarded() || !parsed.is_object()) return std::nullopt;
-  return parsed;
+  if (parsed.is_discarded() || !parsed.is_object() || parsed.empty()) return std::nullopt;
+
+  // gogdl nests the token fields one level down, keyed by client_id:
+  // {"<client_id>": {"access_token": ..., ...}} -- confirmed live, not
+  // documented anywhere.
+  const json& inner = parsed.begin().value();
+  if (!inner.is_object()) return std::nullopt;
+  return inner;
 }
 
 }  // namespace

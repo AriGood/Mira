@@ -21,6 +21,25 @@ void AddTag(std::vector<std::string>& tags, const std::string& tag) {
 
 std::filesystem::path InstallRoot(const config::Config& config) { return config.GetPath("gog.install_root"); }
 
+// gogdl's `download --path P` creates one subdirectory under P named for
+// the game's title, not P itself (confirmed live: `download --path
+// .../1207660413` put the game under `.../1207660413/Shadowrun Returns/`)
+// -- `gogdl import` needs pointing at that inner directory or it crashes
+// looking for a goggame-*.info file that isn't there. Falls back to `dir`
+// itself if it doesn't look like that shape (zero or multiple
+// subdirectories), rather than guessing wrong.
+fs::path ResolveGameDir(const fs::path& dir) {
+  std::error_code ec;
+  fs::path only;
+  int count = 0;
+  for (const auto& entry : fs::directory_iterator(dir, ec)) {
+    if (!entry.is_directory()) continue;
+    only = entry.path();
+    if (++count > 1) break;
+  }
+  return count == 1 ? only : dir;
+}
+
 }  // namespace
 
 GogImporter::GogImporter(config::Config& config, store::GameStore& games, api::EventBus& events)
@@ -29,16 +48,23 @@ GogImporter::GogImporter(config::Config& config, store::GameStore& games, api::E
 Result<model::Game> GogImporter::ImportPath(const std::string& id, const std::filesystem::path& path) {
   const std::string game_id = "gog-" + id;
   const auto existing = games_.Find(game_id);
+  const fs::path game_dir = ResolveGameDir(path);
 
   // gogdl's own `import <path>` output only confirms the install and
-  // (best-effort) names it -- everything Mira itself owns (id, source,
-  // tags, prefix) is set here regardless of what that call returns.
+  // (best-effort) names/points at it -- everything Mira itself owns (id,
+  // source, tags, prefix) is set here regardless of what that call
+  // returns.
+  // gogdl import's real field names for the title/executable aren't
+  // confirmed yet (its own output crashed until game_dir pointed at the
+  // right directory) -- title only for now, exe_path stays whatever it
+  // already was (empty on a fresh install, needing a manual `mira set
+  // --exe`, same as any detected-but-unconfirmed game).
   std::string title;
-  if (const Result<std::string> imported = RunGogdl(config_, {"import", path.string()}); imported) {
+  if (const Result<std::string> imported = RunGogdl(config_, {"import", game_dir.string()}); imported) {
     const json parsed = core::ParseJsonTail(*imported);
-    if (!parsed.is_discarded() && parsed.is_object()) {
-      title = parsed.value("title", parsed.value("name", std::string()));
-    }
+    if (!parsed.is_discarded() && parsed.is_object()) title = parsed.value("title", std::string());
+  } else {
+    log::Warn("gogdl import at {} failed: {}", game_dir.string(), imported.error().message);
   }
 
   model::Game game = existing.value_or(model::Game{});
@@ -46,7 +72,7 @@ Result<model::Game> GogImporter::ImportPath(const std::string& id, const std::fi
   game.source = "gog";
   game.source_ref = id;
   game.name = title.empty() ? id : title;
-  game.install_path = path.string();
+  game.install_path = game_dir.string();
   game.platform = model::Platform::Windows;
   game.last_error.clear();
   game.updated_at = model::NowSeconds();
