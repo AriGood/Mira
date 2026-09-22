@@ -93,10 +93,36 @@ src/
             its own auth/metadata cache directly), EpicImporter (detect ->
             upsert into GameStore, the Epic equivalent of
             steam::SteamScanner), EpicInstaller (install/update via
-            `legendary install|update`, then re-imports). Never runs a
+            `legendary install|update`, then re-imports), EpicSource (wraps
+            the above behind library::ILibrarySource). Never runs a
             game through Legendary itself: an installed Epic title is
             launched through Mira's own Wine/Proton runners, exactly like
             any other Windows game.
+  gog/      Same shape as epic/, wrapping gogdl instead of Legendary — but
+            gogdl has no catalog/list-installed subcommand of its own, so
+            GogSource's Catalog() talks to GOG's own embed.gog.com API
+            directly, and GogImporter re-identifies whatever's under
+            gog.install_root rather than scanning the whole system.
+  itch/     Butlerd (a minimal JSON-RPC client for butlerd, itch.io's own
+            launcher-integration daemon — a long-lived connection, not a
+            one-shot subprocess per call, the one source here shaped that
+            way), Itch (detect/install/auth), ItchImporter/ItchInstaller/
+            ItchSource, same overall shape as epic/gog otherwise.
+  humble/   Humble — wraps humble-cli (unofficial). Deliberately outside
+            library::ILibrarySource: Humble Bundle has no install/update
+            state of its own, just purchased bundles of downloadable
+            files, so it's a smaller, separate surface (GET
+            /v1/humble/library, POST /v1/humble/download) rather than
+            forcing every ILibrarySource method to exist just to return
+            "unsupported".
+  library/  (in addition to the detection/scanning module described
+            above) ILibrarySource — the interface every storefront that
+            fits Legendary's shape (epic/steam/gog/itch) implements,
+            SourceRegistry (AllSources()/FindSource(), what GET /v1/library
+            and POST /v1/library/install|update dispatch through instead
+            of a hand-written per-source branch), Catalog (CatalogEntry,
+            the entitlement-vs-tracked-game split — see api.md's Library
+            section for why entitlements are never persisted).
   wrapper/  main.cpp for `mira-run` — the process mirad actually spawns
             for a direct launch; see "Built: launching a game" below.
   api/      EventBus (in-memory pub/sub) and Server (the REST routes) —
@@ -641,3 +667,23 @@ Recorded here so intent isn't lost between sessions:
   may still fail to launch or fail anti-cheat validation until a follow-up
   designs EAC/EOS provisioning as an additional `Provision()`-time step,
   gated by whatever flag Legendary's own catalog metadata reports for it.
+- **itch install path needs live verification.** `butlerd`'s documented
+  install sequence is `Install.Queue` → `Install.PlanUpload` →
+  `Install.Perform`; `ItchInstaller` only calls `Queue` then `Perform`,
+  skipping `PlanUpload` because its exact parameters weren't confirmed
+  against a real account (see `src/itch/Butlerd.h`'s class comment). If a
+  title turns out to need it, `Perform` fails with a clear error rather
+  than silently doing the wrong thing — but this needs a real logged-in
+  itch.io account to actually exercise before it's trusted. Same caveat for
+  `ItchImporter`'s `Fetch.Caves` field parsing (the exact `Cave` JSON shape
+  is per-documentation, not source-confirmed) and `GogSource`'s
+  `api.gog.com/products` title lookup.
+- **Battle.net and Ubisoft Connect.** Deliberately not attempted yet —
+  neither has anything resembling Legendary/gogdl/butlerd: no public API,
+  no reverse-engineered account/entitlement client (checked; the closest
+  thing, Blizzard's NGDP tools, only pull raw game files, not auth or
+  install state). The only route for either is running the real Windows
+  client in a Mira-managed Wine prefix, Lutris-style, with Mira only adding
+  value on top by keeping the *game* launching through `mira-run` once
+  installed rather than through the store client. Scoped as a separate,
+  smaller-ambition follow-up.

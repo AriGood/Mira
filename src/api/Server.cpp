@@ -22,12 +22,21 @@
 #include "desktop/DesktopEntries.h"
 #include "library/Catalog.h"
 #include "library/Scanner.h"
+#include "library/SourceRegistry.h"
 #include "desktop/DesktopEntryScanner.h"
 #include "epic/EpicImporter.h"
 #include "epic/EpicInstaller.h"
 #include "epic/Legendary.h"
+#include "gog/Gog.h"
+#include "gog/GogImporter.h"
+#include "gog/GogInstaller.h"
+#include "humble/Humble.h"
+#include "itch/Itch.h"
+#include "itch/ItchImporter.h"
+#include "itch/ItchInstaller.h"
 #include "lutris/LutrisImporter.h"
 #include "metadata/MetadataFetcher.h"
+#include "proc/ProcessSupervisor.h"
 #include "proc/Session.h"
 #include "runner/Downloader.h"
 #include "runner/Exec.h"
@@ -62,6 +71,18 @@ void SendResult(Response& res, const Result<void>& result) {
   } else {
     SendError(res, 400, result.error().code, result.error().message);
   }
+}
+
+// model::ToJson(game) plus whether it's actually running right now --
+// ProcessSupervisor already tracks this live (IsRunning), it just never
+// used to be exposed anywhere. Letting a client read this on every
+// GET /v1/games refresh is what makes "is this running" self-correcting
+// after a reconnect, instead of a value only ever pieced together from a
+// stream of events with nothing authoritative to re-sync against.
+json GameJson(const model::Game& game, const proc::ProcessSupervisor& supervisor) {
+  json body = model::ToJson(game);
+  body["running"] = supervisor.IsRunning(game.id);
+  return body;
 }
 
 model::Game ParseGamePatch(const model::Game& base, const json& patch) {
@@ -304,7 +325,10 @@ Server::Server(config::Config& config, store::GameStore& games, EventBus& events
 
 Server::~Server() = default;
 
-void Server::ReconcileSessions() { supervisor_.Reconcile(games_.Dir() / "sessions"); }
+void Server::ReconcileSessions() {
+  supervisor_.Reconcile(games_.Dir() / "sessions");
+  supervisor_.ReconcileSteamLaunches(games_.Dir() / "sessions");
+}
 
 Result<void> Server::Serve(const std::filesystem::path& socket_path) {
   std::error_code ec;
@@ -417,7 +441,7 @@ void Server::RegisterRoutes() {
       } else if (std::ranges::contains(game.tags, std::string("hidden"))) {
         continue;
       }
-      out.push_back(model::ToJson(game));
+      out.push_back(GameJson(game, supervisor_));
     }
     SendJson(res, std::move(out));
   });
@@ -425,7 +449,7 @@ void Server::RegisterRoutes() {
   http_->Get(R"(/v1/games/([^/]+))", [this](const Request& req, Response& res) {
     auto game = games_.Find(req.matches[1]);
     if (!game) return SendError(res, 404, "game_not_found", "no such game");
-    SendJson(res, model::ToJson(*game));
+    SendJson(res, GameJson(*game, supervisor_));
   });
 
   // The tail of the log mira-run writes for this game (src/wrapper/main.cpp):
@@ -473,8 +497,8 @@ void Server::RegisterRoutes() {
     auto result = games_.Update(id, [&](model::Game& game) { game = ParseGamePatch(game, patch); });
     if (!result) return SendError(res, 404, result.error().code, result.error().message);
     SyncDesktopEntries(config_, games_);
-    events_.Publish("game.updated", model::ToJson(*result));
-    SendJson(res, model::ToJson(*result));
+    events_.Publish("game.updated", GameJson(*result, supervisor_));
+    SendJson(res, GameJson(*result, supervisor_));
   });
 
   // Everything about how this game's *global settings* are overridden lives
@@ -510,7 +534,7 @@ void Server::RegisterRoutes() {
     // so a game's own .desktop entry never got removed until something else
     // happened to trigger a sync.
     SyncDesktopEntries(config_, games_);
-    SendJson(res, model::ToJson(*result));
+    SendJson(res, GameJson(*result, supervisor_));
   });
 
   http_->Delete(R"(/v1/games/([^/]+))", [this](const Request& req, Response& res) {
@@ -698,6 +722,248 @@ void Server::RegisterRoutes() {
     SendJson(res, {{"added", summary->added}, {"updated", summary->updated}});
   });
 
+  // --- gog ----------------------------------------------------------------
+  //
+  // Wraps gogdl (Heroic's GOG downloader) for auth and install/update.
+  // Unlike Legendary, gogdl has no catalog/status subcommand of its own —
+  // GET /v1/gog/status only ever reports whether gogdl itself is
+  // installed and whether Mira has a stored, unexpired token; catalog
+  // listing (GET /v1/library?source=gog) talks to GOG's own embed.gog.com
+  // API directly (see src/gog/GogSource.cpp). Mira never runs GOG Galaxy —
+  // an installed GOG game launches through Mira's own Wine/Proton runners
+  // like any other Windows game, or natively when GOG shipped a Linux
+  // build.
+
+  http_->Get("/v1/gog/status", [this](const Request&, Response& res) {
+    const gog::GogAuthStatus status = gog::Status(config_);
+    SendJson(res, {{"gogdl", {{"installed", status.gogdl.installed},
+                              {"source", status.gogdl.source},
+                              {"path", status.gogdl.path},
+                              {"version", status.gogdl.version}}},
+                  {"authenticated", status.authenticated}});
+  });
+
+  http_->Post("/v1/gog/setup", [this](const Request&, Response& res) {
+    auto releases = runner::ListReleases(config_, "gog");
+    if (!releases) return SendError(res, 502, releases.error().code, releases.error().message);
+    if (releases->empty()) return SendError(res, 404, "no_release_found", "no matching gogdl release found");
+
+    const runner::ReleaseAsset asset = releases->front();
+    events_.Publish("gog.setup.started", {{"tag", asset.tag}});
+    std::thread([this, asset] {
+      if (auto installed = gog::InstallGogBinary(config_, asset); !installed) {
+        log::Error("gogdl install failed ({}): {}", asset.tag, installed.error().message);
+        events_.Publish("gog.setup.failed", {{"tag", asset.tag}, {"error", installed.error().message}});
+      } else {
+        log::Info("installed gogdl {}", asset.tag);
+        events_.Publish("gog.setup.finished", {{"tag", asset.tag}});
+      }
+    }).detach();
+
+    SendJson(res, {{"status", "downloading"}, {"tag", asset.tag}}, 202);
+  });
+
+  // The user pastes back the "code" query param from the GOG login-success
+  // redirect URL — mirad itself never opens a browser (same posture as
+  // /v1/epic/auth).
+  http_->Post("/v1/gog/auth", [this](const Request& req, Response& res) {
+    json body = json::parse(req.body, nullptr, false);
+    if (body.is_discarded() || !body.contains("code") || !body["code"].is_string()) {
+      return SendError(res, 400, "invalid_body", R"(expected {"code": "..."})");
+    }
+    if (auto logged_in = gog::Login(config_, body["code"]); !logged_in) {
+      return SendError(res, 400, logged_in.error().code, logged_in.error().message);
+    }
+    const gog::GogAuthStatus status = gog::Status(config_);
+    SendJson(res, {{"authenticated", status.authenticated}});
+  });
+
+  http_->Post("/v1/gog/logout", [this](const Request&, Response& res) {
+    if (auto logged_out = gog::Logout(config_); !logged_out) {
+      return SendError(res, 400, logged_out.error().code, logged_out.error().message);
+    }
+    SendJson(res, {{"status", "logged_out"}});
+  });
+
+  // Unlike epic/steam/itch, this doesn't scan for already-installed
+  // titles system-wide — gogdl has no such concept (see gog/Gog.h's class
+  // comment). It re-identifies whatever's already under gog.install_root,
+  // which is what GogInstaller itself installs into.
+  http_->Post("/v1/gog/import", [this](const Request&, Response& res) {
+    gog::GogImporter importer(config_, games_, events_);
+    auto summary = importer.Import();
+    if (!summary) return SendError(res, 404, summary.error().code, summary.error().message);
+    SyncDesktopEntries(config_, games_);
+    for (const model::Game& game : summary->added_games) metadata_fetches_.Enqueue(config_, events_, game);
+    SendJson(res, {{"added", summary->added}, {"updated", summary->updated}});
+  });
+
+  // --- itch -----------------------------------------------------------
+  //
+  // Wraps butlerd (itch.io's own launcher-integration daemon) for auth,
+  // catalog, and install/update. Mira never runs the itch app — an
+  // installed title launches through Mira's own Wine/Proton runners, or
+  // natively for the many itch.io titles that ship a Linux build.
+
+  http_->Get("/v1/itch/status", [this](const Request&, Response& res) {
+    const itch::ItchAuthStatus status = itch::Status(config_);
+    SendJson(res, {{"butler", {{"installed", status.butler.installed},
+                               {"source", status.butler.source},
+                               {"path", status.butler.path},
+                               {"version", status.butler.version}}},
+                  {"authenticated", status.authenticated}});
+  });
+
+  http_->Post("/v1/itch/setup", [this](const Request&, Response& res) {
+    auto releases = runner::ListReleases(config_, "itch");
+    if (!releases) return SendError(res, 502, releases.error().code, releases.error().message);
+    if (releases->empty()) return SendError(res, 404, "no_release_found", "no matching butler release found");
+
+    const runner::ReleaseAsset asset = releases->front();
+    events_.Publish("itch.setup.started", {{"tag", asset.tag}});
+    std::thread([this, asset] {
+      if (auto installed = itch::InstallButlerBinary(config_, asset); !installed) {
+        log::Error("butler install failed ({}): {}", asset.tag, installed.error().message);
+        events_.Publish("itch.setup.failed", {{"tag", asset.tag}, {"error", installed.error().message}});
+      } else {
+        log::Info("installed butler {}", asset.tag);
+        events_.Publish("itch.setup.finished", {{"tag", asset.tag}});
+      }
+    }).detach();
+
+    SendJson(res, {{"status", "downloading"}, {"tag", asset.tag}}, 202);
+  });
+
+  // The user's itch.io API key (itch.io/user/settings/api-keys) — unlike
+  // Epic/GOG this isn't a pasted redirect code, so there's no login URL to
+  // print (see CmdItchLogin in the CLI).
+  http_->Post("/v1/itch/auth", [this](const Request& req, Response& res) {
+    json body = json::parse(req.body, nullptr, false);
+    if (body.is_discarded() || !body.contains("api_key") || !body["api_key"].is_string()) {
+      return SendError(res, 400, "invalid_body", R"(expected {"api_key": "..."})");
+    }
+    if (auto logged_in = itch::Login(config_, body["api_key"]); !logged_in) {
+      return SendError(res, 400, logged_in.error().code, logged_in.error().message);
+    }
+    SendJson(res, {{"authenticated", true}});
+  });
+
+  http_->Post("/v1/itch/logout", [this](const Request&, Response& res) {
+    if (auto logged_out = itch::Logout(config_); !logged_out) {
+      return SendError(res, 400, logged_out.error().code, logged_out.error().message);
+    }
+    SendJson(res, {{"status", "logged_out"}});
+  });
+
+  http_->Post("/v1/itch/import", [this](const Request&, Response& res) {
+    itch::ItchImporter importer(config_, games_, events_);
+    auto summary = importer.Import();
+    if (!summary) return SendError(res, 404, summary.error().code, summary.error().message);
+    SyncDesktopEntries(config_, games_);
+    for (const model::Game& game : summary->added_games) metadata_fetches_.Enqueue(config_, events_, game);
+    SendJson(res, {{"added", summary->added}, {"updated", summary->updated}});
+  });
+
+  // --- humble -------------------------------------------------------------
+  //
+  // Wraps humble-cli (unofficial). Deliberately outside the
+  // library::ILibrarySource registry — Humble Bundle has no
+  // install/update/uninstall state of its own to report on, just
+  // purchased bundles of downloadable files (see src/humble/Humble.h's
+  // class comment). A downloaded item is never auto-imported as a
+  // model::Game.
+
+  http_->Get("/v1/humble/status", [this](const Request&, Response& res) {
+    const humble::HumbleAuthStatus status = humble::Status(config_);
+    SendJson(res, {{"humble_cli", {{"installed", status.humble_cli.installed},
+                                   {"source", status.humble_cli.source},
+                                   {"path", status.humble_cli.path},
+                                   {"version", status.humble_cli.version}}},
+                  {"authenticated", status.authenticated}});
+  });
+
+  http_->Post("/v1/humble/setup", [this](const Request&, Response& res) {
+    auto releases = runner::ListReleases(config_, "humble");
+    if (!releases) return SendError(res, 502, releases.error().code, releases.error().message);
+    if (releases->empty()) return SendError(res, 404, "no_release_found", "no matching humble-cli release found");
+
+    const runner::ReleaseAsset asset = releases->front();
+    events_.Publish("humble.setup.started", {{"tag", asset.tag}});
+    std::thread([this, asset] {
+      if (auto installed = humble::InstallHumbleCliBinary(config_, asset); !installed) {
+        log::Error("humble-cli install failed ({}): {}", asset.tag, installed.error().message);
+        events_.Publish("humble.setup.failed", {{"tag", asset.tag}, {"error", installed.error().message}});
+      } else {
+        log::Info("installed humble-cli {}", asset.tag);
+        events_.Publish("humble.setup.finished", {{"tag", asset.tag}});
+      }
+    }).detach();
+
+    SendJson(res, {{"status", "downloading"}, {"tag", asset.tag}}, 202);
+  });
+
+  // The _simpleauth_sess cookie value from a logged-in browser session —
+  // no login URL/code flow exists for Humble Bundle the way Epic/GOG have.
+  http_->Post("/v1/humble/auth", [this](const Request& req, Response& res) {
+    json body = json::parse(req.body, nullptr, false);
+    if (body.is_discarded() || !body.contains("session_key") || !body["session_key"].is_string()) {
+      return SendError(res, 400, "invalid_body", R"(expected {"session_key": "..."})");
+    }
+    if (auto logged_in = humble::Login(config_, body["session_key"]); !logged_in) {
+      return SendError(res, 400, logged_in.error().code, logged_in.error().message);
+    }
+    SendJson(res, {{"authenticated", true}});
+  });
+
+  http_->Get("/v1/humble/library", [this](const Request&, Response& res) {
+    auto bundles = humble::ListBundles(config_);
+    if (!bundles) return SendError(res, 400, bundles.error().code, bundles.error().message);
+    json out = json::array();
+    for (const humble::BundleSummary& bundle : *bundles) {
+      out.push_back({{"key", bundle.key}, {"name", bundle.name}, {"claimed", bundle.claimed}});
+    }
+    SendJson(res, std::move(out));
+  });
+
+  // Detached, same "don't block the request thread on a slow download"
+  // pattern as everything else here — humble.download.started/finished/
+  // failed on the event stream is how a caller finds out it's done.
+  http_->Post("/v1/humble/download", [this](const Request& req, Response& res) {
+    json body = json::parse(req.body, nullptr, false);
+    if (body.is_discarded() || !body.contains("bundle_key") || !body["bundle_key"].is_string()) {
+      return SendError(res, 400, "invalid_body", R"(expected {"bundle_key": "...", "item_numbers": "..."})");
+    }
+    const std::string bundle_key = body["bundle_key"];
+    const std::string item_numbers = body.value("item_numbers", std::string());
+
+    events_.Publish("humble.download.started", {{"bundle_key", bundle_key}});
+    std::thread([this, bundle_key, item_numbers] {
+      const Result<bool> result = humble::Download(config_, bundle_key, item_numbers);
+      if (!result) {
+        log::Error("humble download failed ({}): {}", bundle_key, result.error().message);
+        events_.Publish("humble.download.failed", {{"bundle_key", bundle_key}, {"error", result.error().message}});
+      } else if (!*result) {
+        log::Warn("humble download for {} had nothing to download (a redeemed key with no Humble-hosted "
+                 "files, most likely)",
+                 bundle_key);
+        events_.Publish("humble.download.finished",
+                       {{"bundle_key", bundle_key},
+                        {"path", humble::DownloadDir(config_, bundle_key).string()},
+                        {"downloaded", false}});
+      } else {
+        log::Info("humble download finished: {}", bundle_key);
+        events_.Publish("humble.download.finished",
+                       {{"bundle_key", bundle_key},
+                        {"path", humble::DownloadDir(config_, bundle_key).string()},
+                        {"downloaded", true}});
+      }
+    }).detach();
+
+    SendJson(res, {{"status", "downloading"}, {"bundle_key", bundle_key},
+                  {"path", humble::DownloadDir(config_, bundle_key).string()}},
+            202);
+  });
+
   // --- library (what the account owns, across sources) ------------------
   //
   // Distinct from GET /v1/games, which is what Mira *tracks*. An
@@ -732,50 +998,28 @@ void Server::RegisterRoutes() {
     json body = json::parse(req.body, nullptr, false);
     if (body.is_discarded() || !body.contains("source") || !body["source"].is_string() ||
         !body.contains("ref") || !body["ref"].is_string()) {
-      return SendError(res, 400, "invalid_body", R"(expected {"source": "epic"|"steam", "ref": "..."})");
+      return SendError(res, 400, "invalid_body", R"(expected {"source": "epic"|"steam"|"gog"|"itch", "ref": "..."})");
     }
     const std::string source = body["source"];
     const std::string ref = body["ref"];
 
-    if (source == "steam") {
-      // Steam's own client owns downloading — same handoff posture as
-      // steam.launch_mode "steam" (see /launch above). Nothing to track
-      // here: the game shows up in POST /v1/steam/scan once Steam has
-      // actually put it on disk.
-      if (is_update) {
-        return SendError(res, 400, "unsupported", "Steam updates its own games; nothing for Mira to do");
-      }
-      Command command;
-      command.argv = {"steam", std::format("steam://install/{}", ref)};
-      if (auto spawned = runner::SpawnDetached(command); !spawned) {
-        return SendError(res, 500, spawned.error().code, spawned.error().message);
-      }
-      return SendJson(res, {{"status", "handed_off_to_steam"}, {"ref", ref}}, 202);
-    }
-
-    if (source != "epic") {
+    library::ILibrarySource* src = library::FindSource(source);
+    if (src == nullptr) {
       return SendError(res, 400, "unknown_source", std::format("no installable source named \"{}\"", source));
     }
 
-    const epic::EpicAuthStatus auth = epic::Status(config_);
-    if (!auth.legendary.installed) {
-      return SendError(res, 409, "legendary_missing", "run \"mira epic setup\" first");
-    }
-    if (!auth.authenticated) {
-      return SendError(res, 409, "not_authenticated", "run \"mira epic login\" first");
-    }
-
     events_.Publish("library.install.started", {{"source", source}, {"ref", ref}, {"update", is_update}});
-    std::thread([this, source, ref, is_update] {
-      epic::EpicInstaller installer(config_, games_, events_);
-      const Result<void> result = is_update ? installer.Update(ref) : installer.Install(ref);
+    std::thread([this, src, source, ref, is_update] {
+      const Result<void> result = is_update ? src->Update(config_, games_, events_, ref)
+                                            : src->Install(config_, games_, events_, ref);
       if (!result) {
-        log::Error("epic {} failed ({}): {}", is_update ? "update" : "install", ref, result.error().message);
+        log::Error("{} {} failed ({}): {}", source, is_update ? "update" : "install", ref, result.error().message);
         events_.Publish("library.install.failed",
                        {{"source", source}, {"ref", ref}, {"update", is_update}, {"error", result.error().message}});
       } else {
-        log::Info("epic {} finished: {}", is_update ? "update" : "install", ref);
+        log::Info("{} {} finished: {}", source, is_update ? "update" : "install", ref);
         SyncDesktopEntries(config_, games_);
+        if (const auto game = games_.Find(source + "-" + ref)) metadata_fetches_.Enqueue(config_, events_, *game);
         events_.Publish("library.install.finished", {{"source", source}, {"ref", ref}, {"update", is_update}});
       }
     }).detach();
@@ -891,8 +1135,8 @@ void Server::RegisterRoutes() {
 
     SyncDesktopEntries(config_, games_);
     if (!existing) metadata_fetches_.Enqueue(config_, events_, game);
-    events_.Publish(existing ? "game.updated" : "game.added", model::ToJson(game));
-    SendJson(res, model::ToJson(game));
+    events_.Publish(existing ? "game.updated" : "game.added", GameJson(game, supervisor_));
+    SendJson(res, GameJson(game, supervisor_));
   });
 
   // --- launching ------------------------------------------------------------
@@ -939,7 +1183,8 @@ void Server::RegisterRoutes() {
         events_.Publish("game.launched",
                         {{"id", game->id}, {"via", "steam"}, {"tracked", track}});
         if (track) {
-          if (auto started = supervisor_.TrackSteamLaunch(*game, appid, post_script); !started) {
+          if (auto started = supervisor_.TrackSteamLaunch(*game, appid, games_.Dir() / "sessions", post_script);
+              !started) {
             log::Warn("couldn't start tracking {}: {}", game->id, started.error().message);
           }
         }
@@ -1130,8 +1375,8 @@ void Server::RegisterRoutes() {
     });
     if (!result) return SendError(res, 404, result.error().code, result.error().message);
     SyncDesktopEntries(config_, games_);
-    events_.Publish("game.updated", model::ToJson(*result));
-    SendJson(res, model::ToJson(*result));
+    events_.Publish("game.updated", GameJson(*result, supervisor_));
+    SendJson(res, GameJson(*result, supervisor_));
   });
 
   // Runs one winetricks verb against this game's own prefix — see

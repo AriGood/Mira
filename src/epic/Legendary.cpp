@@ -8,6 +8,7 @@
 #include <string>
 #include <string_view>
 
+#include "core/Json.h"
 #include "core/Log.h"
 #include "runner/Exec.h"
 
@@ -21,41 +22,6 @@ std::string Trim(std::string text) {
   text.erase(text.begin(), std::ranges::find_if(text, not_space));
   text.erase(std::ranges::find_if(text | std::views::reverse, not_space).base(), text.end());
   return text;
-}
-
-// runner::ExecResult combines stdout+stderr into one string, but legendary
-// writes its own log lines (e.g. "[Core] INFO: Trying to re-use existing
-// login session...", "[cli] INFO: Getting game list...") to stderr and only
-// the actual --json payload to stdout -- so that combined text has log
-// noise around the JSON whenever there's something to log about (confirmed
-// against a real install: `status --json` is noisy once authenticated,
-// `list --json` always logs while it works). A naive "first '{' or '['"
-// scan isn't enough either: legendary's own log lines are tagged
-// "[Core] ...", "[cli] ..." -- a literal '[' that isn't the JSON's own
-// opener. Instead: legendary always emits the actual --json payload as one
-// complete line, the last line of output that's valid JSON on its own --
-// scanned for from the end so real log lines (which never parse as JSON)
-// are skipped over regardless of what stray brackets they contain.
-json ParseJsonTail(const std::string& text) {
-  size_t line_end = text.size();
-  while (line_end > 0) {
-    size_t line_start = text.rfind('\n', line_end - 1);
-    line_start = (line_start == std::string::npos) ? 0 : line_start + 1;
-    const std::string_view line(text.data() + line_start, line_end - line_start);
-    const size_t first = line.find_first_not_of(" \t\r");
-    if (first != std::string_view::npos && (line[first] == '{' || line[first] == '[')) {
-      const json parsed = json::parse(line.substr(first), nullptr, false);
-      if (!parsed.is_discarded()) return parsed;
-    }
-    if (line_start == 0) break;
-    line_end = line_start - 1;
-  }
-  // Not json() -- that's a valid null value, is_discarded() false, so a
-  // caller checking only is_discarded() (every caller here) would read "no
-  // JSON line found anywhere" as a successful null result instead of the
-  // parse failure it actually is. Parsing an empty string reliably comes
-  // back discarded.
-  return json::parse("", nullptr, false);
 }
 
 std::string VersionOf(const std::string& path) {
@@ -155,7 +121,7 @@ Result<json> RunLegendaryJson(const config::Config& config, std::vector<std::str
   const Result<std::string> output = RunLegendary(config, args);
   if (!output) return std::unexpected(output.error());
 
-  const json parsed = ParseJsonTail(*output);
+  const json parsed = core::ParseJsonTail(*output);
   if (parsed.is_discarded()) return Err("legendary_json_error", "legendary's output wasn't valid JSON");
   return parsed;
 }
@@ -174,7 +140,7 @@ EpicAuthStatus Status(const config::Config& config) {
   const Result<runner::ExecResult> result = runner::RunAndWait(command);
   if (!result) return status;
 
-  const json parsed = ParseJsonTail(result->output);
+  const json parsed = core::ParseJsonTail(result->output);
   if (parsed.is_discarded() || !parsed.is_object()) return status;
 
   // legendary always includes this key -- logged out isn't its absence, it's

@@ -1,0 +1,32 @@
+#pragma once
+
+#include <string>
+
+#include <json.hpp>
+
+#include "config/Config.h"
+#include "core/Result.h"
+
+// Minimal JSON-RPC 2.0 client for butlerd (itch.io's own
+// launcher-integration daemon). Confirmed live: `butler daemon --json
+// --dbpath ...` prints a mix of its own JSON log lines and one
+// butlerd/listen-notification line to stdout, then serves JSON-RPC 2.0
+// over that TCP address, one message per line.
+//
+// Unlike every other source here, this is a long-lived daemon connection,
+// not a one-shot subprocess per call -- Call() starts butler once,
+// lazily, on first use, and keeps the connection for the rest of this
+// mirad's run rather than paying its startup cost (subprocess spawn +
+// database open) on every call.
+namespace mira::itch {
+
+// One request/response round trip. `method`/`params` are butlerd's own
+// (Meta.Authenticate, Profile.LoginWithAPIKey, Fetch.ProfileOwnedKeys,
+// Fetch.Caves, Install.Queue/Perform, ...). Connects and authenticates
+// the transport (Meta.Authenticate -- not the itch.io account, see
+// itch::Login) on first use. A notification received while waiting for
+// this call's response is skipped, not surfaced here.
+Result<nlohmann::json> Call(const config::Config& config, const std::string& method,
+                           const nlohmann::json& params);
+
+}  // namespace mira::itch

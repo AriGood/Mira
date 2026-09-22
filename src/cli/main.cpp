@@ -561,6 +561,329 @@ int CmdEpic(int argc, char** argv) {
   return 2;
 }
 
+int CmdGogSetup() {
+  auto client = Connect();
+  auto res = client.Post("/v1/gog/setup");
+  if (!Ok(res)) {
+    PrintError(res);
+    return 1;
+  }
+  json body = json::parse(res->body);
+  std::printf("downloading gogdl %s — watch `mira watch` for gog.setup.finished\n",
+             body.value("tag", std::string()).c_str());
+  return 0;
+}
+
+int CmdGogStatus() {
+  auto client = Connect();
+  auto res = client.Get("/v1/gog/status");
+  if (!Ok(res)) {
+    PrintError(res);
+    return 1;
+  }
+  json status = json::parse(res->body);
+  const json& gogdl = status["gogdl"];
+  if (!gogdl.value("installed", false)) {
+    std::puts("gogdl: not installed — run \"mira gog setup\"");
+    return 0;
+  }
+  std::printf("gogdl: installed (%s, %s) at %s\n", gogdl.value("source", "").c_str(),
+             gogdl.value("version", "").c_str(), gogdl.value("path", "").c_str());
+  std::puts(status.value("authenticated", false) ? "authenticated" : "not authenticated — run \"mira gog login\"");
+  return 0;
+}
+
+int CmdGogLogin() {
+  {
+    auto client = Connect();
+    auto res = client.Get("/v1/gog/status");
+    if (!Ok(res)) {
+      PrintError(res);
+      return 1;
+    }
+    json status = json::parse(res->body);
+    if (!status["gogdl"].value("installed", false)) {
+      std::fprintf(stderr, "mira: gogdl isn't installed — run \"mira gog setup\" first\n");
+      return 1;
+    }
+  }
+
+  std::printf(
+      "Visit https://auth.gog.com/auth?client_id=46899977096215655&redirect_uri=https%%3A%%2F%%2Fembed.gog.com"
+      "%%2Fon_login_success%%3Forigin%%3Dclient&response_type=code&layout=client2, log in, and log in. It "
+      "redirects to a blank page — GOG's own client_id, not something Mira can point at a nicer landing page.\n"
+      "Paste the whole address-bar URL from that blank page (or just the \"code\" value, if you'd rather pull "
+      "it out yourself):\nurl or code: ");
+  std::string pasted;
+  std::getline(std::cin, pasted);
+  while (!pasted.empty() && std::isspace(static_cast<unsigned char>(pasted.back()))) pasted.pop_back();
+  size_t start = 0;
+  while (start < pasted.size() && std::isspace(static_cast<unsigned char>(pasted[start]))) ++start;
+  pasted.erase(0, start);
+  if (pasted.empty()) {
+    std::fprintf(stderr, "mira: nothing entered\n");
+    return 2;
+  }
+
+  // Accept the whole redirected URL too, not just the bare code -- GOG's
+  // redirect page is blank, no JSON to eyeball the way Epic's is.
+  std::string code = pasted;
+  if (const size_t marker = pasted.find("code="); marker != std::string::npos) {
+    const size_t value_start = marker + 5;
+    const size_t amp = pasted.find('&', value_start);
+    code = pasted.substr(value_start, amp == std::string::npos ? std::string::npos : amp - value_start);
+  }
+
+  auto client = Connect();
+  json body = {{"code", code}};
+  auto res = client.Post("/v1/gog/auth", body.dump(), "application/json");
+  if (!Ok(res)) {
+    PrintError(res);
+    return 1;
+  }
+  std::puts("authenticated");
+  return 0;
+}
+
+int CmdGogLogout() {
+  auto client = Connect();
+  auto res = client.Post("/v1/gog/logout");
+  if (!Ok(res)) {
+    PrintError(res);
+    return 1;
+  }
+  std::puts("logged out");
+  return 0;
+}
+
+int CmdGogImport() {
+  auto client = Connect();
+  auto res = client.Post("/v1/gog/import");
+  if (!Ok(res)) {
+    PrintError(res);
+    return 1;
+  }
+  json summary = json::parse(res->body);
+  std::printf("added: %lld  updated: %lld\n", summary.value("added", 0LL), summary.value("updated", 0LL));
+  return 0;
+}
+
+int CmdGog(int argc, char** argv) {
+  if (argc > 0 && std::string_view(argv[0]) == "setup") return CmdGogSetup();
+  if (argc > 0 && std::string_view(argv[0]) == "status") return CmdGogStatus();
+  if (argc > 0 && std::string_view(argv[0]) == "login") return CmdGogLogin();
+  if (argc > 0 && std::string_view(argv[0]) == "logout") return CmdGogLogout();
+  if (argc > 0 && std::string_view(argv[0]) == "import") return CmdGogImport();
+  std::fprintf(stderr,
+              "usage: mira gog setup|status|login|logout|import\n"
+              "       (installing is source-generic: mira library install gog <id>)\n");
+  return 2;
+}
+
+int CmdItchSetup() {
+  auto client = Connect();
+  auto res = client.Post("/v1/itch/setup");
+  if (!Ok(res)) {
+    PrintError(res);
+    return 1;
+  }
+  json body = json::parse(res->body);
+  std::printf("downloading butler %s — watch `mira watch` for itch.setup.finished\n",
+             body.value("tag", std::string()).c_str());
+  return 0;
+}
+
+int CmdItchStatus() {
+  auto client = Connect();
+  auto res = client.Get("/v1/itch/status");
+  if (!Ok(res)) {
+    PrintError(res);
+    return 1;
+  }
+  json status = json::parse(res->body);
+  const json& butler = status["butler"];
+  if (!butler.value("installed", false)) {
+    std::puts("butler: not installed — run \"mira itch setup\"");
+    return 0;
+  }
+  std::printf("butler: installed (%s, %s) at %s\n", butler.value("source", "").c_str(),
+             butler.value("version", "").c_str(), butler.value("path", "").c_str());
+  std::puts(status.value("authenticated", false) ? "authenticated" : "not authenticated — run \"mira itch login\"");
+  return 0;
+}
+
+int CmdItchLogin() {
+  {
+    auto client = Connect();
+    auto res = client.Get("/v1/itch/status");
+    if (!Ok(res)) {
+      PrintError(res);
+      return 1;
+    }
+    json status = json::parse(res->body);
+    if (!status["butler"].value("installed", false)) {
+      std::fprintf(stderr, "mira: butler isn't installed — run \"mira itch setup\" first\n");
+      return 1;
+    }
+  }
+
+  std::printf("Paste an API key from https://itch.io/user/settings/api-keys:\napi key: ");
+  std::string key;
+  std::getline(std::cin, key);
+  while (!key.empty() && std::isspace(static_cast<unsigned char>(key.back()))) key.pop_back();
+  size_t start = 0;
+  while (start < key.size() && std::isspace(static_cast<unsigned char>(key[start]))) ++start;
+  key.erase(0, start);
+  if (key.empty()) {
+    std::fprintf(stderr, "mira: nothing entered\n");
+    return 2;
+  }
+
+  auto client = Connect();
+  json body = {{"api_key", key}};
+  auto res = client.Post("/v1/itch/auth", body.dump(), "application/json");
+  if (!Ok(res)) {
+    PrintError(res);
+    return 1;
+  }
+  std::puts("authenticated");
+  return 0;
+}
+
+int CmdItchLogout() {
+  auto client = Connect();
+  auto res = client.Post("/v1/itch/logout");
+  if (!Ok(res)) {
+    PrintError(res);
+    return 1;
+  }
+  std::puts("logged out");
+  return 0;
+}
+
+int CmdItchImport() {
+  auto client = Connect();
+  auto res = client.Post("/v1/itch/import");
+  if (!Ok(res)) {
+    PrintError(res);
+    return 1;
+  }
+  json summary = json::parse(res->body);
+  std::printf("added: %lld  updated: %lld\n", summary.value("added", 0LL), summary.value("updated", 0LL));
+  return 0;
+}
+
+int CmdItch(int argc, char** argv) {
+  if (argc > 0 && std::string_view(argv[0]) == "setup") return CmdItchSetup();
+  if (argc > 0 && std::string_view(argv[0]) == "status") return CmdItchStatus();
+  if (argc > 0 && std::string_view(argv[0]) == "login") return CmdItchLogin();
+  if (argc > 0 && std::string_view(argv[0]) == "logout") return CmdItchLogout();
+  if (argc > 0 && std::string_view(argv[0]) == "import") return CmdItchImport();
+  std::fprintf(stderr,
+              "usage: mira itch setup|status|login|logout|import\n"
+              "       (installing is source-generic: mira library install itch <id>)\n");
+  return 2;
+}
+
+int CmdHumbleSetup() {
+  auto client = Connect();
+  auto res = client.Post("/v1/humble/setup");
+  if (!Ok(res)) {
+    PrintError(res);
+    return 1;
+  }
+  json body = json::parse(res->body);
+  std::printf("downloading humble-cli %s — watch `mira watch` for humble.setup.finished\n",
+             body.value("tag", std::string()).c_str());
+  return 0;
+}
+
+int CmdHumbleStatus() {
+  auto client = Connect();
+  auto res = client.Get("/v1/humble/status");
+  if (!Ok(res)) {
+    PrintError(res);
+    return 1;
+  }
+  json status = json::parse(res->body);
+  const json& cli = status["humble_cli"];
+  if (!cli.value("installed", false)) {
+    std::puts("humble-cli: not installed — run \"mira humble setup\"");
+    return 0;
+  }
+  std::printf("humble-cli: installed (%s, %s) at %s\n", cli.value("source", "").c_str(),
+             cli.value("version", "").c_str(), cli.value("path", "").c_str());
+  std::puts(status.value("authenticated", false) ? "authenticated"
+                                                 : "not authenticated — run \"mira humble login\"");
+  return 0;
+}
+
+int CmdHumbleLogin(int argc, char** argv) {
+  if (argc < 1) {
+    std::fprintf(stderr,
+                "usage: mira humble login <session-key>\n"
+                "       (the _simpleauth_sess cookie value from a logged-in humblebundle.com session)\n");
+    return 2;
+  }
+  auto client = Connect();
+  json body = {{"session_key", argv[0]}};
+  auto res = client.Post("/v1/humble/auth", body.dump(), "application/json");
+  if (!Ok(res)) {
+    PrintError(res);
+    return 1;
+  }
+  std::puts("authenticated");
+  return 0;
+}
+
+int CmdHumbleLibrary() {
+  auto client = Connect();
+  auto res = client.Get("/v1/humble/library");
+  if (!Ok(res)) {
+    PrintError(res);
+    return 1;
+  }
+  json bundles = json::parse(res->body);
+  if (bundles.empty()) {
+    std::puts("(nothing — is humble-cli set up and logged in? try `mira humble status`)");
+    return 0;
+  }
+  for (const json& bundle : bundles) {
+    std::printf("%-24s %-8s %s\n", bundle.value("key", "").c_str(),
+               bundle.value("claimed", false) ? "claimed" : "", bundle.value("name", "").c_str());
+  }
+  return 0;
+}
+
+int CmdHumbleDownload(int argc, char** argv) {
+  if (argc < 1) {
+    std::fprintf(stderr, "usage: mira humble download <bundle-key> [item-numbers]\n");
+    return 2;
+  }
+  auto client = Connect();
+  json body = {{"bundle_key", argv[0]}};
+  if (argc > 1) body["item_numbers"] = argv[1];
+  auto res = client.Post("/v1/humble/download", body.dump(), "application/json");
+  if (!Ok(res)) {
+    PrintError(res);
+    return 1;
+  }
+  json status = json::parse(res->body);
+  std::printf("downloading into %s — watch `mira watch` for humble.download.finished\n",
+             status.value("path", std::string()).c_str());
+  return 0;
+}
+
+int CmdHumble(int argc, char** argv) {
+  if (argc > 0 && std::string_view(argv[0]) == "setup") return CmdHumbleSetup();
+  if (argc > 0 && std::string_view(argv[0]) == "status") return CmdHumbleStatus();
+  if (argc > 0 && std::string_view(argv[0]) == "login") return CmdHumbleLogin(argc - 1, argv + 1);
+  if (argc > 0 && std::string_view(argv[0]) == "library") return CmdHumbleLibrary();
+  if (argc > 0 && std::string_view(argv[0]) == "download") return CmdHumbleDownload(argc - 1, argv + 1);
+  std::fprintf(stderr, "usage: mira humble setup|status|login|library|download\n");
+  return 2;
+}
+
 int CmdDesktopEntriesList() {
   auto client = Connect();
   auto res = client.Get("/v1/desktop-entries/candidates");
@@ -1025,6 +1348,9 @@ int main(int argc, char** argv) {
   if (command == "steam") return CmdSteam(rest_argc, rest);
   if (command == "lutris") return CmdLutris(rest_argc, rest);
   if (command == "epic") return CmdEpic(rest_argc, rest);
+  if (command == "gog") return CmdGog(rest_argc, rest);
+  if (command == "itch") return CmdItch(rest_argc, rest);
+  if (command == "humble") return CmdHumble(rest_argc, rest);
   if (command == "library") return CmdLibrary(rest_argc, rest);
   if (command == "desktop-entries") return CmdDesktopEntries(rest_argc, rest);
   if (command == "gamemode") return CmdGameMode(rest_argc, rest);

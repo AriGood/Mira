@@ -94,6 +94,11 @@ ScanSummary Scanner::ScanRoot(const fs::path& root) {
   }
 
   const fs::path prefix_root = config_.GetPath("prefix_root");
+  // Sources with their own structured tracking (gog-<id>/itch-<id> rows,
+  // via GogImporter/ItchImporter) shouldn't also get double-detected here
+  // as one big bogus game named after the wrapper folder itself.
+  const std::vector<fs::path> excluded_roots = {prefix_root, config_.GetPath("gog.install_root"),
+                                                config_.GetPath("itch.install_root")};
   const DetectorSettings detector_settings = SettingsFromConfig(config_);
   const Detector detector(detector_settings);
   AutoSetup auto_setup(config_, games_, events_);
@@ -105,8 +110,11 @@ ScanSummary Scanner::ScanRoot(const fs::path& root) {
     if (!entry.is_directory(ec)) continue;
     const fs::path& dir = entry.path();
 
-    std::error_code eq;
-    if (fs::equivalent(dir, prefix_root, eq) || (!eq && dir == prefix_root)) continue;
+    const bool excluded = std::ranges::any_of(excluded_roots, [&](const fs::path& excluded_root) {
+      std::error_code eq;
+      return fs::equivalent(dir, excluded_root, eq) || (!eq && dir == excluded_root);
+    });
+    if (excluded) continue;
 
     const std::string install_path = dir.string();
     auto existing = games_.FindByInstallPath(install_path);

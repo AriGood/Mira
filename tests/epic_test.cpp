@@ -233,7 +233,7 @@ TEST_CASE("ListCatalog reports entitlements read-through and marks tracked ones"
 TEST_CASE("ListCatalog rejects a source it doesn't know") {
   Fixture fixture("epic-catalog-bad-source");
   const Result<std::vector<library::CatalogEntry>> entries =
-      library::ListCatalog(fixture.config, fixture.games, "gog");
+      library::ListCatalog(fixture.config, fixture.games, "bogus");
   REQUIRE_FALSE(entries);
   CHECK(entries.error().code == "unknown_source");
 }
