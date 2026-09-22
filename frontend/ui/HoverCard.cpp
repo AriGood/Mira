@@ -103,9 +103,7 @@ void HoverCard::ShowMetadata(const GameMetadata& metadata) {
     label[0] = label[0].toUpper();
     const QColor background = ProtonDbTierColor(metadata.protondb_tier);
     // A real QSS-painted background, not rich-text HTML: Qt's rich text
-    // engine only crudely rounds an inline span's background, where a
-    // QLabel stylesheet gets the same proper anti-aliased pill every QSS
-    // control on radius_control already gets.
+    // engine only crudely rounds a span's background.
     protondb_->setText(label);
     protondb_->setStyleSheet(QString("QLabel { background-color: %1; color: %2; "
                                      "padding: 2px 10px; border-radius: 10px; font-weight: 700; }")

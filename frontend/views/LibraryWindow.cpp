@@ -241,12 +241,9 @@ bool HasTag(const mira_gui::GameSummary& game, const std::string& tag) {
   return std::find(game.tags.begin(), game.tags.end(), tag) != game.tags.end();
 }
 
-// One filter row: an icon, a label (stashed in Qt::UserRole + 1 too, so the
-// pill can show it without digging back into the row widget) and a
-// right-aligned live count (see LibraryWindow::UpdateFilterCounts, which
-// finds the count label back by its "count" object name). Transparent
-// background so the list's own selection highlight, not this widget, is
-// what shows a row as active.
+// Icon + label (label also stashed in Qt::UserRole + 1, for the pill) + a
+// live count (see UpdateFilterCounts). Transparent background: the list's
+// own selection highlight marks the active row.
 QWidget* MakeFilterRow(mira_gui::icons::Glyph glyph, const QString& label, QWidget* parent) {
   auto* row = new QWidget(parent);
   auto* layout = new QHBoxLayout(row);
@@ -323,10 +320,9 @@ private:
   QMainWindow* window_;
 };
 
-// The sidebar's filter+sort pill. A plain QWidget rather than QPushButton:
-// it lays out two icon+label pairs and a chevron side by side, more than
-// QPushButton's single icon+text can arrange. Matches LibraryGrid's own
-// plain-callback pattern rather than adding a signal to a class this small.
+// Sidebar's filter+sort pill. Plain QWidget, not QPushButton: needs two
+// icon+label pairs and a chevron, not one icon+text. Plain callback (like
+// LibraryGrid), not a signal — too small to need one.
 class FilterSortButton : public QWidget {
 public:
   explicit FilterSortButton(QWidget* parent) : QWidget(parent) {
@@ -388,22 +384,18 @@ LibraryWindow::LibraryWindow(QWidget* parent) : QMainWindow(parent) {
   splitter_->setSizes({232, 850});
   splitter_->setChildrenCollapsible(false);
 
-  // page 1 (settings) and page 2 (a game's edit page) are built lazily by
-  // OpenSettings/OpenGameDialog and cover this entire slot, sidebar included
-  // — neither has anywhere else to go with no right sidebar left. page 3
-  // (classic table) is built once here instead, since it has no per-open
-  // state to go stale.
+  // Settings is built lazily by OpenSettings() and covers this slot; the
+  // classic table is built once here since it has no per-open state to go
+  // stale. A game's edit card is a separate overlay, not a page here.
   content_stack_ = new QStackedWidget(this);
   content_stack_->addWidget(splitter_);
   classic_page_ = BuildClassicPage();
   content_stack_->addWidget(classic_page_);
 
   auto* central = new RootWidget(this);
-  // StackAll: the game-edit card overlay is a sibling of the normal chrome,
-  // not one of content_stack_'s pages, so the grid and sidebar stay on
-  // screen (dimmed) underneath it instead of being swapped away. Both
-  // children fill the whole window either way; current_widget just decides
-  // which one is raised on top when both would otherwise be visible.
+  // StackAll: the game-edit overlay is a chrome sibling, not a
+  // content_stack_ page, so the grid/sidebar stay visible (dimmed)
+  // underneath. current_widget only picks which one is raised.
   root_stack_ = new QStackedLayout(central);
   root_stack_->setStackingMode(QStackedLayout::StackAll);
   root_stack_->setContentsMargins(0, 0, 0, 0);
@@ -444,12 +436,9 @@ void LibraryWindow::PopulateLibraryActions() {
   using mira_gui::icons::Glyph;
   QVBoxLayout* actions = library_actions_layout_;
 
-  // Same flat, icon+label, full-width row as library_nav_/classic_view_nav_
-  // above (QWidget#left_sidebar QPushButton in base.qss already covers it by
-  // parentage) -- Refresh/Keyboard shortcuts/About moved to the top bar
-  // (BuildTopBar) and Close window/Quit were dropped entirely: the
-  // frameless window's own × already closes it, and Quit is one tray-icon
-  // click or Ctrl+Q away, so neither earned a sidebar row.
+  // Same flat row style as library_nav_ above (QSS already covers it by
+  // parentage). Refresh/Shortcuts/About moved to the top bar; Close
+  // window/Quit dropped (the × and tray icon already cover them).
   auto row = [this, actions](Glyph glyph, const QString& text, auto slot) {
     auto* button = new QPushButton(text, actions->parentWidget());
     button->setFlat(true);
@@ -997,10 +986,8 @@ QWidget* LibraryWindow::BuildTopBar() {
   settings_actions_widget_->hide();
   layout->addWidget(settings_actions_widget_);
 
-  // Moved here from the sidebar's old hamburger-menu rows -- generic,
-  // always-available actions that don't need library context, so the top
-  // bar (already home to window chrome) suits them better than a sidebar
-  // that's supposed to be about the library.
+  // Moved from the sidebar's old hamburger menu -- generic actions that fit
+  // the top bar (window chrome) better than a library-focused sidebar.
   refresh_button_ = new QToolButton(top_bar_);
   refresh_button_->setAutoRaise(true);
   refresh_button_->setToolTip("Refresh library");
@@ -1078,11 +1065,8 @@ QWidget* LibraryWindow::BuildFilterSortPopover() {
     item->setSizeHint(row->sizeHint());
     filters_->setItemWidget(item, row);
   }
-  // setItemWidget replaces an item's own rendering entirely, so the QSS
-  // ::item:selected rule (and the palette's Highlight/HighlightedText roles
-  // it would normally use) never reaches these rows -- restyled by hand
-  // instead, on_accent when selected (icon included), otherwise back to
-  // muted, so it still reads correctly in a light theme.
+  // setItemWidget bypasses QSS's ::item:selected -- restyled by hand
+  // instead (icon included), on_accent when active, else muted.
   auto restyle_filter_rows = [this] {
     for (int row = 0; row < filters_->count(); ++row) {
       QWidget* row_widget = filters_->itemWidget(filters_->item(row));
@@ -1253,11 +1237,8 @@ QWidget* LibraryWindow::BuildSidebar() {
 
   layout->addSpacing(10);
 
-  // The one filter+sort control: a pill summarizing both, opening a popover
-  // (Qt::Popup, so it dismisses itself) with the actual filter rows and sort
-  // buttons — replaces the always-visible filter list + sort combo with one
-  // row most of the time, matching everything else here reading as buttons
-  // rather than a settled-in list.
+  // Pill summarizing filter+sort, opening a self-dismissing Qt::Popup with
+  // the actual rows/buttons.
   filter_sort_popover_ = BuildFilterSortPopover();
 
   auto* pill = new FilterSortButton(sidebar);
@@ -1301,10 +1282,8 @@ QWidget* LibraryWindow::BuildSidebar() {
   library_heading->setStyleSheet("font-weight: 600; letter-spacing: 0.04em;");
   layout->addWidget(library_heading);
 
-  // Filled in later by PopulateLibraryActions(), once BuildShortcuts() has
-  // populated common_ -- everything the old hamburger menu held that still
-  // belongs to the library rather than the top bar (see BuildTopBar) or
-  // nowhere at all (see PopulateLibraryActions).
+  // Filled in by PopulateLibraryActions(), after BuildShortcuts() populates
+  // common_.
   library_actions_layout_ = new QVBoxLayout();
   library_actions_layout_->setSpacing(2);
   layout->addLayout(library_actions_layout_);
@@ -1690,10 +1669,8 @@ void LibraryWindow::RemoveGame(const std::string& id) {
 }
 
 void LibraryWindow::SelectionChanged() {
-  // Not the grid on screen (Settings or a game's edit page instead) — can't
-  // fire from a grid click at all while it's hidden behind either, but a
-  // stray signal (e.g. from ApplyFilter rebuilding the grid) should still be
-  // a no-op rather than touch selected_id_.
+  // Not the grid on screen (Settings or classic table instead) — a stray
+  // signal (e.g. ApplyFilter rebuilding the grid) should stay a no-op.
   if (content_stack_->currentWidget() != splitter_) return;
 
   const QList<QListWidgetItem*> selected = grid_->selectedItems();
@@ -2074,11 +2051,8 @@ void LibraryWindow::SetGridControlsEnabled(bool enabled) {
   // The grid itself is what's leaving the screen either way -- nothing left
   // to preview.
   if (!enabled) ShowHoverCard(nullptr);
-  // These act on a grid that isn't on screen while Settings, the classic
-  // table, or a game's edit card covers it. library_nav_ is deliberately not
-  // here — it's the way back out of any of them, so it has to stay
-  // clickable while they're up. Disabling filter_sort_button_ alone is
-  // enough to block the popover behind it too.
+  // These act on a hidden grid. library_nav_ stays clickable — it's the way
+  // back out. Disabling filter_sort_button_ alone blocks its popover too.
   for (QWidget* control :
        {filter_sort_button_, static_cast<QWidget*>(add_games_), static_cast<QWidget*>(search_),
         static_cast<QWidget*>(zoom_), static_cast<QWidget*>(settings_button_),
@@ -2160,10 +2134,8 @@ QWidget* LibraryWindow::BuildGameEditOverlay() {
   // to central, same as any other widget added to a layout.
   auto* overlay = new ModalOverlay(nullptr);
   overlay->setObjectName("game_edit_overlay");
-  // Plain black, not theme::window: the theme's own dark surfaces already
-  // sit close to black, so tinting toward window barely read as "dimmed" at
-  // all -- black at a real alpha is what actually separates the card from
-  // the grid behind it.
+  // Plain black, not theme::window -- the theme's dark surfaces already
+  // sit close to black, so tinting toward window barely dims anything.
   QColor scrim(0, 0, 0, 150);
   overlay->setStyleSheet(
       QString("QWidget#game_edit_overlay { background: rgba(%1, %2, %3, %4); }")
@@ -2182,10 +2154,8 @@ QWidget* LibraryWindow::BuildGameEditOverlay() {
 QWidget* LibraryWindow::BuildGameEditCard(const std::string& id) {
   auto* card = new QWidget();
   card->setObjectName("game_edit_card");
-  // ~70% of the window, not a fixed size -- big enough for the two-column
-  // form to breathe, small enough that the dimmed grid around it still
-  // reads as "still there", recomputed per open since the window can resize
-  // between two games' edits.
+  // ~70% of the window, not a hardcoded constant -- recomputed per open
+  // since the window can resize between edits.
   card->setFixedSize(qRound(width() * 0.7), qRound(height() * 0.7));
 
   auto* layout = new QVBoxLayout(card);

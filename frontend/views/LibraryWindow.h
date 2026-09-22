@@ -48,11 +48,9 @@ class SettingsPanel;
 // native titlebar. Frameless, so it owns its own
 // move/resize/minimize/maximize/close.
 //
-// `mira-gui --classic` still opens MainWindow (table view) standalone, for
-// scripted/headless auditing of a freshly scanned library — but inside this
-// window, the sidebar's Classic table view row shows the same table as a
-// content_stack_ page instead of a second top-level window, both reading the
-// same games_/running_ids_ this window already keeps in sync.
+// `mira-gui --classic` still opens MainWindow standalone; the sidebar's
+// Classic table view row instead shows the same table as a content_stack_
+// page, reading this window's own games_/running_ids_.
 //
 // Selection model: one click selects a tile, a second (double) click
 // launches, right-click opens the per-game menu. Hovering a tile shows a
@@ -76,11 +74,9 @@ private:
   // Refreshes the pill's own summary text/icons after a filter, sort, or
   // theme change — the popover's own rows restyle themselves separately.
   void UpdateFilterSortSummary();
-  // Runners/Fetch cover art/Regenerate desktop entries/Remove desktop
-  // entries, as vertical icon+label rows — everything else the old
-  // hamburger menu held either moved to the top bar (Refresh, Keyboard
-  // shortcuts, About) or was dropped as redundant (Close window, Quit: the
-  // frameless window's own × and the tray icon already cover those).
+  // Library-only actions as vertical icon+label rows. Refresh/Shortcuts/
+  // About moved to the top bar; Close window/Quit dropped (the frameless ×
+  // and the tray icon already cover them).
   void PopulateLibraryActions();
   void BuildShortcuts();
 
@@ -138,10 +134,9 @@ private:
   void BatchHide(const std::vector<std::string>& ids);
   void LaunchGame(const std::string& id);
   void OpenGameDialog(const std::string& id);
-  // The overlay itself (scrim + centered card slot), built once at startup —
-  // shown/hidden per open rather than added/removed from content_stack_, so
-  // the grid and sidebar stay live underneath it instead of being swapped
-  // away.
+  // Scrim + centered card slot, built once. Shown/hidden per open rather
+  // than swapped into content_stack_, so the grid and sidebar stay live
+  // underneath it.
   QWidget* BuildGameEditOverlay();
   // The card's own content, rebuilt fresh on every open — same reasoning as
   // settings_page_: starts synced to what's actually saved, not stale edits
@@ -243,19 +238,17 @@ private:
   QVBoxLayout* library_actions_layout_ = nullptr;
 
   QSplitter* splitter_ = nullptr;
-  // Swaps the whole splitter (sidebar + grid) out for Settings or the
-  // classic table, full-screen — a game's edit card is a separate overlay
-  // instead (game_edit_overlay_), since that one stays over the grid rather
-  // than replacing it.
+  // Swaps the splitter out for Settings/classic table, full-screen. A
+  // game's edit card is a separate overlay (game_edit_overlay_) that stays
+  // over the grid instead.
   QStackedWidget* content_stack_ = nullptr;
   // Rebuilt on every OpenSettings() so it starts synced to what's actually
   // saved, not stale edits left over from a discarded previous open.
   QWidget* settings_page_ = nullptr;
   mira_gui::SettingsPanel* settings_panel_ = nullptr;
-  // A game's editable form, in a centered overlay card (game_settings_in_sidebar_
-  // pref) or a modal dialog instead — see OpenGameDialog. The overlay is a
-  // sibling of content_stack_'s chrome, not one of its pages: the grid and
-  // sidebar stay visible (dimmed) underneath instead of being swapped away.
+  // A game's editable form, in a centered overlay card (game_settings_in_sidebar_)
+  // or a modal dialog — see OpenGameDialog. The overlay is a chrome sibling,
+  // not a content_stack_ page, so the grid stays visible (dimmed) underneath.
   QWidget* game_edit_overlay_ = nullptr;
   QGridLayout* game_edit_overlay_layout_ = nullptr;
   QWidget* game_edit_card_ = nullptr;

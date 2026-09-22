@@ -6,10 +6,9 @@ class QColor;
 
 namespace mira_gui::icons {
 
-// Every glyph the top bar and sidebar draw. Deliberately not
-// QStyle::standardIcon: those are the platform style's, which under Fusion
-// are the dated 3D-ish titlebar buttons, and they take their color from the
-// platform rather than from the theme.
+// Every glyph the top bar and sidebar draw. Not QStyle::standardIcon --
+// under Fusion those are dated 3D titlebar buttons in the platform's color,
+// not the theme's.
 enum class Glyph {
   Menu,
   Settings,
@@ -46,9 +45,8 @@ enum class Glyph {
 // (see LibraryWindow's theme::Notifier connection).
 QIcon For(Glyph glyph);
 
-// Same, in a caller-chosen color — a muted filter row next to the active
-// one, or an icon painted in on_accent over an accent background, neither of
-// which is the plain theme text color the no-argument overload assumes.
+// Same, in a caller-chosen color — a muted row or an on_accent icon,
+// neither the plain text color the no-argument overload assumes.
 QIcon For(Glyph glyph, const QColor& color);
 
 }  // namespace mira_gui::icons

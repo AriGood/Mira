@@ -26,9 +26,8 @@
 namespace mira_gui {
 
 GameEditForm::GameEditForm(std::string id, QWidget* parent) : QWidget(parent), id_(std::move(id)) {
-  // Two columns: the art preview reads as a sidebar next to the fields
-  // rather than another stacked row above them, so it stays put instead of
-  // scrolling out of view with the rest of the form.
+  // Two columns, not one: the art preview would otherwise scroll out of
+  // view with the rest of the form.
   auto* layout = new QHBoxLayout(this);
   layout->setContentsMargins(0, 0, 0, 0);
   layout->setSpacing(16);
