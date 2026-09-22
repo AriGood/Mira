@@ -57,6 +57,13 @@ public:
   // `incomplete`. Never fails outright -- a bad file is logged and skipped.
   void Reconcile(const std::filesystem::path& sessions_dir);
 
+  // Same idea as Reconcile(), for a Steam-tracked launch (TrackSteamLaunch
+  // below): re-detects a still-running one via a marker file dropped
+  // alongside the mira-run session records, rather than losing track of it
+  // entirely across a mirad restart. A marker whose process is gone gets
+  // quietly removed instead of resumed.
+  void ReconcileSteamLaunches(const std::filesystem::path& sessions_dir);
+
   // For a game Steam's own client launched (steam.launch_mode "steam"), which
   // Mira can't waitpid() on. Polls /proc for SteamAppId=<appid> or
   // SteamGameId=<appid> in a process's environment, since the actual game
@@ -64,8 +71,11 @@ public:
   // fixed pid. Reports running/exited like Launch(), minus a real exit
   // code/signal. Gives up quietly if nothing matches within a startup
   // window — Steam may still be launching, or the player cancelled.
+  // `sessions_dir` is where the marker ReconcileSteamLaunches looks for
+  // gets written/removed -- same directory mira-run's own session records
+  // live in, just a different file extension.
   Result<void> TrackSteamLaunch(const model::Game& game, const std::string& appid,
-                                std::string post_script = "");
+                                std::filesystem::path sessions_dir, std::string post_script = "");
 
   // SIGTERM to the running game's whole process group, if any. Returns as
   // soon as the signal is sent; if the game ignores it, the watcher escalates
@@ -81,7 +91,7 @@ private:
   void FinalizeWrappedSession(const std::string& game_id, const proc::SessionRecord& record,
                               const std::filesystem::path& session_path);
   void WatchSteam(std::string game_id, std::string appid, std::int64_t requested_at,
-                  std::string post_script);
+                  std::filesystem::path sessions_dir, std::string post_script);
 
   store::GameStore& games_;
   api::EventBus& events_;

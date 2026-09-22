@@ -37,6 +37,29 @@ constexpr std::int64_t kCheckpointSeconds = 60;
 // exists at all.
 constexpr auto kSteamDetectTimeout = std::chrono::seconds(60);
 
+// A Steam-tracked launch has no mira-run session record of its own (there's
+// no wrapper process, nothing Mira spawned) -- this small marker file is
+// what lets ReconcileSteamLaunches find and resume one across a mirad
+// restart, dropped alongside proc::Session.h's own session files but with
+// a distinct extension so Reconcile() itself never tries to read it as one.
+std::filesystem::path SteamMarkerPath(const std::filesystem::path& sessions_dir, const std::string& game_id) {
+  return sessions_dir / (game_id + ".steam.json");
+}
+
+void WriteSteamMarker(const std::filesystem::path& sessions_dir, const std::string& game_id,
+                      const std::string& appid) {
+  std::error_code ec;
+  std::filesystem::create_directories(sessions_dir, ec);
+  std::ofstream file(SteamMarkerPath(sessions_dir, game_id));
+  if (!file) return;  // best-effort -- a missing marker just means no reconcile, not a launch failure
+  file << json{{"game_id", game_id}, {"appid", appid}}.dump();
+}
+
+void RemoveSteamMarker(const std::filesystem::path& sessions_dir, const std::string& game_id) {
+  std::error_code ec;
+  std::filesystem::remove(SteamMarkerPath(sessions_dir, game_id), ec);
+}
+
 void RunScript(const std::string& script, const std::string& game_id, const char* which) {
   if (script.empty()) return;
   Command command;
@@ -565,8 +588,47 @@ void ProcessSupervisor::Reconcile(const std::filesystem::path& sessions_dir) {
   }
 }
 
+void ProcessSupervisor::ReconcileSteamLaunches(const std::filesystem::path& sessions_dir) {
+  std::error_code ec;
+  if (!std::filesystem::exists(sessions_dir, ec)) return;
+
+  for (const auto& entry :
+       std::filesystem::directory_iterator(sessions_dir, std::filesystem::directory_options::skip_permission_denied,
+                                           ec)) {
+    if (ec) break;
+    if (!entry.is_regular_file(ec) || !entry.path().string().ends_with(".steam.json")) continue;
+
+    const std::filesystem::path path = entry.path();
+    std::ifstream file(path);
+    const json parsed = file ? json::parse(file, nullptr, false) : json();
+    const std::string game_id = parsed.value("game_id", std::string());
+    const std::string appid = parsed.value("appid", std::string());
+    if (parsed.is_discarded() || game_id.empty() || appid.empty()) {
+      log::Warn("skipping unreadable steam-launch marker {}", path.string());
+      std::filesystem::remove(path, ec);
+      continue;
+    }
+
+    if (FindSteamProcesses(appid).empty()) {
+      // Genuinely stopped while mirad was down -- nothing to resume, and
+      // no exit event to publish either (there's no live watcher's worth
+      // of state to report against; the game already stopped).
+      log::Info("steam-launch marker for {} (appid {}) has no live process; dropping it", game_id, appid);
+      std::filesystem::remove(path, ec);
+      continue;
+    }
+
+    log::Info("re-adopting live Steam-launched {} (appid {})", game_id, appid);
+    std::lock_guard lock(mutex_);
+    running_[game_id] = 0;  // WatchSteam confirms the real pid on its own first tick
+    steam_appids_[game_id] = appid;
+    watchers_[game_id] =
+        std::thread(&ProcessSupervisor::WatchSteam, this, game_id, appid, model::NowSeconds(), sessions_dir, "");
+  }
+}
+
 Result<void> ProcessSupervisor::TrackSteamLaunch(const model::Game& game, const std::string& appid,
-                                                 std::string post_script) {
+                                                 std::filesystem::path sessions_dir, std::string post_script) {
   {
     std::lock_guard lock(mutex_);
     if (running_.contains(game.id)) {
@@ -585,13 +647,13 @@ Result<void> ProcessSupervisor::TrackSteamLaunch(const model::Game& game, const 
       watchers_.erase(stale);
     }
     watchers_[game.id] = std::thread(&ProcessSupervisor::WatchSteam, this, game.id, appid,
-                                     model::NowSeconds(), std::move(post_script));
+                                     model::NowSeconds(), std::move(sessions_dir), std::move(post_script));
   }
   return {};
 }
 
 void ProcessSupervisor::WatchSteam(std::string game_id, std::string appid, std::int64_t requested_at,
-                                   std::string post_script) {
+                                   std::filesystem::path sessions_dir, std::string post_script) {
   std::set<pid_t> matched;
   std::int64_t started_at = 0;
 
@@ -619,6 +681,7 @@ void ProcessSupervisor::WatchSteam(std::string game_id, std::string appid, std::
   }
   auto stamped = games_.Update(game_id, [&](model::Game& stored) { stored.last_played_at = started_at; });
   if (!stamped) log::Error("failed to record launch time for {}: {}", game_id, stamped.error().message);
+  WriteSteamMarker(sessions_dir, game_id, appid);
   log::Info("detected {} running (appid {}, {} process(es))", game_id, appid, matched.size());
   json running_event = stamped ? model::ToJson(*stamped) : json{{"id", game_id}};
   running_event["state"] = "running";
@@ -669,6 +732,7 @@ void ProcessSupervisor::WatchSteam(std::string game_id, std::string appid, std::
     kill_deadlines_.erase(game_id);
     stop_requested_.erase(game_id);
   }
+  RemoveSteamMarker(sessions_dir, game_id);
 
   // No real exit code/signal available for a process Mira didn't spawn, so
   // no crash detection here -- Steam's own client already shows that;

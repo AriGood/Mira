@@ -36,6 +36,7 @@
 #include "itch/ItchInstaller.h"
 #include "lutris/LutrisImporter.h"
 #include "metadata/MetadataFetcher.h"
+#include "proc/ProcessSupervisor.h"
 #include "proc/Session.h"
 #include "runner/Downloader.h"
 #include "runner/Exec.h"
@@ -70,6 +71,18 @@ void SendResult(Response& res, const Result<void>& result) {
   } else {
     SendError(res, 400, result.error().code, result.error().message);
   }
+}
+
+// model::ToJson(game) plus whether it's actually running right now --
+// ProcessSupervisor already tracks this live (IsRunning), it just never
+// used to be exposed anywhere. Letting a client read this on every
+// GET /v1/games refresh is what makes "is this running" self-correcting
+// after a reconnect, instead of a value only ever pieced together from a
+// stream of events with nothing authoritative to re-sync against.
+json GameJson(const model::Game& game, const proc::ProcessSupervisor& supervisor) {
+  json body = model::ToJson(game);
+  body["running"] = supervisor.IsRunning(game.id);
+  return body;
 }
 
 model::Game ParseGamePatch(const model::Game& base, const json& patch) {
@@ -312,7 +325,10 @@ Server::Server(config::Config& config, store::GameStore& games, EventBus& events
 
 Server::~Server() = default;
 
-void Server::ReconcileSessions() { supervisor_.Reconcile(games_.Dir() / "sessions"); }
+void Server::ReconcileSessions() {
+  supervisor_.Reconcile(games_.Dir() / "sessions");
+  supervisor_.ReconcileSteamLaunches(games_.Dir() / "sessions");
+}
 
 Result<void> Server::Serve(const std::filesystem::path& socket_path) {
   std::error_code ec;
@@ -425,7 +441,7 @@ void Server::RegisterRoutes() {
       } else if (std::ranges::contains(game.tags, std::string("hidden"))) {
         continue;
       }
-      out.push_back(model::ToJson(game));
+      out.push_back(GameJson(game, supervisor_));
     }
     SendJson(res, std::move(out));
   });
@@ -433,7 +449,7 @@ void Server::RegisterRoutes() {
   http_->Get(R"(/v1/games/([^/]+))", [this](const Request& req, Response& res) {
     auto game = games_.Find(req.matches[1]);
     if (!game) return SendError(res, 404, "game_not_found", "no such game");
-    SendJson(res, model::ToJson(*game));
+    SendJson(res, GameJson(*game, supervisor_));
   });
 
   // The tail of the log mira-run writes for this game (src/wrapper/main.cpp):
@@ -481,8 +497,8 @@ void Server::RegisterRoutes() {
     auto result = games_.Update(id, [&](model::Game& game) { game = ParseGamePatch(game, patch); });
     if (!result) return SendError(res, 404, result.error().code, result.error().message);
     SyncDesktopEntries(config_, games_);
-    events_.Publish("game.updated", model::ToJson(*result));
-    SendJson(res, model::ToJson(*result));
+    events_.Publish("game.updated", GameJson(*result, supervisor_));
+    SendJson(res, GameJson(*result, supervisor_));
   });
 
   // Everything about how this game's *global settings* are overridden lives
@@ -518,7 +534,7 @@ void Server::RegisterRoutes() {
     // so a game's own .desktop entry never got removed until something else
     // happened to trigger a sync.
     SyncDesktopEntries(config_, games_);
-    SendJson(res, model::ToJson(*result));
+    SendJson(res, GameJson(*result, supervisor_));
   });
 
   http_->Delete(R"(/v1/games/([^/]+))", [this](const Request& req, Response& res) {
@@ -1109,8 +1125,8 @@ void Server::RegisterRoutes() {
 
     SyncDesktopEntries(config_, games_);
     if (!existing) metadata_fetches_.Enqueue(config_, events_, game);
-    events_.Publish(existing ? "game.updated" : "game.added", model::ToJson(game));
-    SendJson(res, model::ToJson(game));
+    events_.Publish(existing ? "game.updated" : "game.added", GameJson(game, supervisor_));
+    SendJson(res, GameJson(game, supervisor_));
   });
 
   // --- launching ------------------------------------------------------------
@@ -1157,7 +1173,8 @@ void Server::RegisterRoutes() {
         events_.Publish("game.launched",
                         {{"id", game->id}, {"via", "steam"}, {"tracked", track}});
         if (track) {
-          if (auto started = supervisor_.TrackSteamLaunch(*game, appid, post_script); !started) {
+          if (auto started = supervisor_.TrackSteamLaunch(*game, appid, games_.Dir() / "sessions", post_script);
+              !started) {
             log::Warn("couldn't start tracking {}: {}", game->id, started.error().message);
           }
         }
@@ -1348,8 +1365,8 @@ void Server::RegisterRoutes() {
     });
     if (!result) return SendError(res, 404, result.error().code, result.error().message);
     SyncDesktopEntries(config_, games_);
-    events_.Publish("game.updated", model::ToJson(*result));
-    SendJson(res, model::ToJson(*result));
+    events_.Publish("game.updated", GameJson(*result, supervisor_));
+    SendJson(res, GameJson(*result, supervisor_));
   });
 
   // Runs one winetricks verb against this game's own prefix — see

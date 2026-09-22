@@ -51,18 +51,26 @@ Result<model::Game> GogImporter::ImportPath(const std::string& id, const std::fi
   const fs::path game_dir = ResolveGameDir(path);
 
   // gogdl's own `import <path>` output only confirms the install and
-  // (best-effort) names/points at it -- everything Mira itself owns (id,
-  // source, tags, prefix) is set here regardless of what that call
-  // returns.
-  // gogdl import's real field names for the title/executable aren't
-  // confirmed yet (its own output crashed until game_dir pointed at the
-  // right directory) -- title only for now, exe_path stays whatever it
-  // already was (empty on a fresh install, needing a manual `mira set
-  // --exe`, same as any detected-but-unconfirmed game).
+  // names/points at it -- everything Mira itself owns (id, source, tags,
+  // prefix) is set here regardless of what that call returns. Confirmed
+  // live: {"appName": "...", "title": "...", "tasks": [{"category":
+  // "game", "type": "FileTask", "isPrimary": true, "path": "Game.exe"},
+  // ...]} -- the primary "game" FileTask's path is the real launch target,
+  // no heuristic detection needed the way EpicImporter/ItchImporter use.
   std::string title;
+  std::string exe_path;
   if (const Result<std::string> imported = RunGogdl(config_, {"import", game_dir.string()}); imported) {
     const json parsed = core::ParseJsonTail(*imported);
-    if (!parsed.is_discarded() && parsed.is_object()) title = parsed.value("title", std::string());
+    if (!parsed.is_discarded() && parsed.is_object()) {
+      title = parsed.value("title", std::string());
+      for (const json& task : parsed.value("tasks", json::array())) {
+        if (task.value("category", std::string()) == "game" && task.value("type", std::string()) == "FileTask" &&
+            task.value("isPrimary", false)) {
+          exe_path = task.value("path", std::string());
+          break;
+        }
+      }
+    }
   } else {
     log::Warn("gogdl import at {} failed: {}", game_dir.string(), imported.error().message);
   }
@@ -73,6 +81,7 @@ Result<model::Game> GogImporter::ImportPath(const std::string& id, const std::fi
   game.source_ref = id;
   game.name = title.empty() ? id : title;
   game.install_path = game_dir.string();
+  if (!exe_path.empty()) game.exe_path = exe_path;
   game.platform = model::Platform::Windows;
   game.last_error.clear();
   game.updated_at = model::NowSeconds();
