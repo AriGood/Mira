@@ -3,6 +3,7 @@
 #include <QLabel>
 #include <QPainter>
 #include <QPainterPath>
+#include <QSizePolicy>
 #include <QVBoxLayout>
 
 #include "../client/MiradClient.h"
@@ -19,16 +20,6 @@ std::string Join(const std::vector<std::string>& values) {
     joined += value;
   }
   return joined;
-}
-
-QString ProtonDbPillHtml(const std::string& tier) {
-  if (tier.empty()) return QString();
-  QString label = QString::fromStdString(tier);
-  label[0] = label[0].toUpper();
-  const QColor background = ProtonDbTierColor(tier);
-  return QString("<span style='background-color:%1; color:%2; padding:1px 8px; "
-                 "border-radius:8px; font-weight:600;'>%3</span>")
-      .arg(background.name(), ContrastingTextColor(background).name(), label);
 }
 
 }  // namespace
@@ -55,7 +46,9 @@ HoverCard::HoverCard(QWidget* parent) : QWidget(parent) {
   layout->addWidget(status_);
 
   protondb_ = new QLabel(this);
-  protondb_->setTextFormat(Qt::RichText);
+  // Fixed, not the layout's default: a QSS-painted pill should hug its own
+  // text, not stretch to the card's width like every other line here.
+  protondb_->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
   protondb_->hide();
   layout->addWidget(protondb_);
 
@@ -104,9 +97,21 @@ void HoverCard::ShowGame(const GameSummary& game, bool running) {
 }
 
 void HoverCard::ShowMetadata(const GameMetadata& metadata) {
-  const QString pill = ProtonDbPillHtml(metadata.protondb_tier);
-  protondb_->setText(pill);
-  protondb_->setVisible(!pill.isEmpty());
+  const QString tier = QString::fromStdString(metadata.protondb_tier);
+  if (!tier.isEmpty()) {
+    QString label = tier;
+    label[0] = label[0].toUpper();
+    const QColor background = ProtonDbTierColor(metadata.protondb_tier);
+    // A real QSS-painted background, not rich-text HTML: Qt's rich text
+    // engine only crudely rounds an inline span's background, where a
+    // QLabel stylesheet gets the same proper anti-aliased pill every QSS
+    // control on radius_control already gets.
+    protondb_->setText(label);
+    protondb_->setStyleSheet(QString("QLabel { background-color: %1; color: %2; "
+                                     "padding: 2px 10px; border-radius: 10px; font-weight: 700; }")
+                                 .arg(background.name(), ContrastingTextColor(background).name()));
+  }
+  protondb_->setVisible(!tier.isEmpty());
 
   const std::string developer_genre = Join(metadata.developers) +
       (!metadata.developers.empty() && !metadata.genres.empty() ? " · " : "") + Join(metadata.genres);
