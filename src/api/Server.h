@@ -3,6 +3,7 @@
 #include <atomic>
 #include <filesystem>
 #include <memory>
+#include <thread>
 
 #include "api/EventBus.h"
 #include "config/Config.h"
@@ -46,6 +47,7 @@ public:
 
 private:
   void RegisterRoutes();
+  void WatchLauncherGames();
 
   config::Config& config_;
   store::GameStore& games_;
@@ -56,6 +58,7 @@ private:
   BackgroundQueue tricks_queue_;
   BackgroundQueue artwork_selects_;
   std::atomic<bool> stopping_{false};  // checked by open SSE connections; see EventBus::WaitNext
+  std::thread launcher_watch_;
 };
 
 }  // namespace mira::api

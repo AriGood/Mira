@@ -183,6 +183,21 @@ Result<ImportSummary> Import(config::Config& config, store::GameStore& games, ap
       summary.added_games.push_back(game);
     }
   }
+
+  // Uninstalled through the launcher: handled like a scanned game whose
+  // folder disappeared.
+  for (const model::Game& game : games.All()) {
+    std::error_code ec;
+    if (game.source != launcher.id || game.status == model::GameStatus::Missing) continue;
+    if (fs::is_directory(game.install_path, ec)) continue;
+    if (config.GetBool("library.remove_missing")) {
+      if (games.Remove(game.id)) events.Publish("game.removed", {{"id", game.id}});
+      continue;
+    }
+    if (auto missing = games.Update(game.id, [](model::Game& g) { g.status = model::GameStatus::Missing; })) {
+      events.Publish("game.updated", model::ToJson(*missing));
+    }
+  }
   return summary;
 }
 

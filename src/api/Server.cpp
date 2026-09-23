@@ -329,7 +329,34 @@ Server::Server(config::Config& config, store::GameStore& games, EventBus& events
       http_(std::make_unique<httplib::Server>()),
       supervisor_(games, events, config.GetInt("launch.stop_timeout_s")) {}
 
-Server::~Server() = default;
+Server::~Server() {
+  stopping_.store(true, std::memory_order_relaxed);
+  if (launcher_watch_.joinable()) launcher_watch_.join();
+}
+
+// A game started from inside a running launcher (not through Mira) is
+// picked up here, so it still shows as playing and its playtime counts.
+void Server::WatchLauncherGames() {
+  constexpr auto kTick = std::chrono::milliseconds(500);
+  constexpr int kTicksPerScan = 6;
+  for (int tick = 0; !stopping_.load(std::memory_order_relaxed); ++tick) {
+    std::this_thread::sleep_for(kTick);
+    if (tick % kTicksPerScan != 0) continue;
+    for (const launchers::Launcher& launcher : launchers::All()) {
+      const auto host = games_.Find(launchers::GameId(launcher));
+      if (!host || host->data_dir.empty() || proc::FindPrefixProcesses(host->data_dir).empty()) continue;
+      for (const model::Game& game : games_.All()) {
+        if (game.source != launcher.id || supervisor_.IsRunning(game.id)) continue;
+        const std::string win_dir = launchers::WindowsDir(game);
+        if (proc::FindDirProcesses(game.data_dir, win_dir).empty()) continue;
+        const config::Resolver resolver(config_, game.overrides);
+        if (supervisor_.TrackLauncherLaunch(game, win_dir, 10, resolver.GetString("launch.post_script"))) {
+          events_.Publish("game.launched", {{"id", game.id}, {"via", "launcher"}, {"tracked", true}});
+        }
+      }
+    }
+  }
+}
 
 void Server::ReconcileSessions() {
   supervisor_.Reconcile(games_.Dir() / "sessions");
@@ -359,6 +386,7 @@ Result<void> Server::Serve(const std::filesystem::path& socket_path) {
                                ec);
 
   log::Info("listening on {}", socket_path.string());
+  launcher_watch_ = std::thread(&Server::WatchLauncherGames, this);
   if (!http_->listen_after_bind()) {
     return Err("socket_listen_failed", "httplib server exited unexpectedly");
   }
