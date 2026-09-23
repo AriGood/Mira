@@ -138,7 +138,7 @@ Result<RunnerRegistry::Resolved> RunnerRegistry::Resolve(const std::string& runn
   return Resolved{runner, *match};
 }
 
-model::Game RunnerRegistry::ProvisionGame(model::Game game) const {
+std::string RunnerRegistry::ResolveRef(const model::Game& game) const {
   std::string ref = game.runner_ref;
   if (ref.empty()) {
     ref = config_.GetString(game.platform == model::Platform::Native ? "default_runner.native"
@@ -148,7 +148,11 @@ model::Game RunnerRegistry::ProvisionGame(model::Game game) const {
   // runner": Proton if a build is installed (protonfixes come with it),
   // else plain Wine, else nothing usable and Resolve below says so clearly.
   if (ref == "auto") ref = BuildsFor("proton").empty() ? "wine:latest" : "proton:latest";
+  return ref;
+}
 
+model::Game RunnerRegistry::ProvisionGame(model::Game game) const {
+  const std::string ref = ResolveRef(game);
   const Result<Resolved> resolved = Resolve(ref);
   if (!resolved) {
     game.status = model::GameStatus::Broken;

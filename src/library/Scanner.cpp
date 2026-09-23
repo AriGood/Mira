@@ -1,11 +1,14 @@
 #include "library/Scanner.h"
 
 #include <algorithm>
+#include <format>
 #include <iterator>
+#include <thread>
 
 #include "core/Log.h"
 #include "core/Strings.h"
 #include "desktop/DesktopEntries.h"
+#include "library/AutoInstall.h"
 #include "library/AutoSetup.h"
 #include "library/Detector.h"
 #include "library/WinePrefix.h"
@@ -35,20 +38,6 @@ model::GameStatus RestoredStatus(const model::Game& game) {
   return provisioned ? model::GameStatus::Ready : model::GameStatus::SettingUp;
 }
 
-DetectorSettings SettingsFromConfig(const config::Config& config) {
-  DetectorSettings settings;
-  settings.max_depth = static_cast<int>(config.GetInt("scan.max_depth"));
-  settings.rules = config.GetStringArray("detect.rules");
-  settings.name_match_bonus = config.GetDouble("detect.name_match_bonus");
-  settings.depth_penalty = config.GetDouble("detect.depth_penalty");
-  settings.low_confidence_threshold = config.GetDouble("detect.low_confidence_threshold");
-  settings.deny_name_patterns = config.GetStringArray("detect.deny_name_patterns");
-  settings.installer_name_patterns = config.GetStringArray("detect.installer_name_patterns");
-  settings.installer_min_size_mb = config.GetInt("detect.installer_min_size_mb");
-  settings.ignore_globs = config.GetStringArray("scan.ignore_globs");
-  return settings;
-}
-
 // Provisions `game` if it's a Windows game still SettingUp, and writes back
 // only the fields provisioning owns (see the writeback comment at the call
 // site for why not a full Upsert). No-op for anything already past SettingUp.
@@ -66,6 +55,24 @@ void TryProvision(model::Game game, const runner::RunnerRegistry& runners, store
     return;
   }
   events.Publish("game.updated", model::ToJson(*result));
+}
+
+// Silently runs a recognized installer off the scan thread (installs can
+// take minutes). A failed attempt sets last_error and isn't retried.
+void QueueAutoInstall(const model::Game& game, config::Config& config, store::GameStore& games,
+                      api::EventBus& events) {
+  if (game.status != model::GameStatus::NeedsInstall) return;
+  if (!config.GetBool("scan.auto_run_installers")) return;
+  if (!config.GetBool("install.retry_failed") && game.last_error.starts_with("Install didn't finish")) return;
+  if (DetectInstallerFormat(fs::path(game.install_path) / game.exe_path) == InstallerFormat::kUnknown) return;
+  if (!BeginInstall(game.id)) return;
+  std::thread([id = game.id, &config, &games, &events] {
+    if (const auto done = Install(config, games, id, InstallMode::kSilentOnly, std::nullopt)) {
+      events.Publish("game.updated", model::ToJson(*done));
+    } else if (const auto stored = games.Find(id)) {
+      events.Publish("game.updated", model::ToJson(*stored));
+    }
+  }).detach();
 }
 
 }  // namespace
@@ -156,7 +163,10 @@ ScanSummary Scanner::ScanRoot(const fs::path& root) {
       // previous attempt may have failed transiently, or the daemon may have
       // restarted mid-provision last time. Without this, SettingUp is a dead
       // end reachable only by the one provisioning attempt at detection time.
-      if (config_.GetBool("auto_setup")) TryProvision(*existing, runners, games_, events_);
+      if (config_.GetBool("auto_setup")) {
+        TryProvision(*existing, runners, games_, events_);
+        QueueAutoInstall(*existing, config_, games_, events_);
+      }
       continue;  // already known; never re-detect over a user's configuration
     }
 
@@ -172,7 +182,10 @@ ScanSummary Scanner::ScanRoot(const fs::path& root) {
     // ready immediately, broken if nothing was found). Provisioning blocks —
     // umu/Proton's first-run init is a real few-second cost — but there's no
     // job queue yet to move it off this thread; see docs/architecture.md.
-    if (config_.GetBool("auto_setup")) TryProvision(game, runners, games_, events_);
+    if (config_.GetBool("auto_setup")) {
+      TryProvision(game, runners, games_, events_);
+      QueueAutoInstall(game, config_, games_, events_);
+    }
   }
 
   // Anything previously known under this root but not seen this pass has

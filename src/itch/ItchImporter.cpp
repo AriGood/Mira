@@ -8,6 +8,7 @@
 #include "itch/Butlerd.h"
 #include "itch/Itch.h"
 #include "library/Detector.h"
+#include "library/PrefixNaming.h"
 #include "runner/RunnerRegistry.h"
 
 namespace mira::itch {
@@ -105,7 +106,7 @@ Result<ItchImportSummary> ItchImporter::Import() {
 
     if (game.platform == model::Platform::Windows &&
         (!existing || existing->runner_ref.empty() || existing->data_dir.empty())) {
-      game.data_dir = (config_.GetPath("prefix_root") / game.id).string();
+      if (game.data_dir.empty()) game.data_dir = library::PrefixDir(config_, game).string();
       const model::Game provisioned = provisioner.ProvisionGame(game);
       game.runner_ref = provisioned.runner_ref;
       game.data_dir = provisioned.data_dir;

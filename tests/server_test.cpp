@@ -697,3 +697,68 @@ TEST_CASE("GET /v1/gamemode/status reports both installed and daemon_running") {
   CHECK(body["installed"].is_boolean());
   CHECK(body["daemon_running"].is_boolean());
 }
+
+TEST_CASE("POST /v1/games/{id}/finish-install refuses while exe_path is still the installer") {
+  LiveServer server(TempDir("server-finish-install-state"));
+  const fs::path dir = TempDir("server-finish-install-game");
+  std::ofstream(dir / "setup.exe") << "installer";
+
+  model::Game game;
+  game.id = "pending";
+  game.name = "Pending";
+  game.install_path = dir.string();
+  game.exe_path = "setup.exe";
+  game.status = model::GameStatus::NeedsInstall;
+  game.candidates = {{.rel_path = "setup.exe", .is_installer = true}};
+  REQUIRE(server.games().Upsert(game));
+
+  httplib::Client client = server.Client();
+  auto res = client.Post("/v1/games/pending/finish-install");
+  REQUIRE(res != nullptr);
+  CHECK(res->status == 409);
+
+  std::ofstream(dir / "game.exe") << "game";
+  REQUIRE(client.Patch("/v1/games/pending", R"({"exe_path": "game.exe"})", "application/json"));
+  res = client.Post("/v1/games/pending/finish-install");
+  REQUIRE(res != nullptr);
+  CHECK(res->status == 200);
+}
+
+TEST_CASE("POST /v1/games/{id}/install refuses a game that isn't needs_install") {
+  LiveServer server(TempDir("server-install-ready-state"));
+  model::Game game;
+  game.id = "done";
+  game.name = "Done";
+  game.status = model::GameStatus::Ready;
+  REQUIRE(server.games().Upsert(game));
+
+  httplib::Client client = server.Client();
+  auto res = client.Post("/v1/games/done/install");
+  REQUIRE(res != nullptr);
+  CHECK(res->status == 409);
+}
+
+TEST_CASE("GET /v1/games/{id}/installer describes a hand-picked file; progress is idle before any install") {
+  LiveServer server(TempDir("server-installer-info-state"));
+  const fs::path dir = TempDir("server-installer-info-game");
+  std::ofstream(dir / "picked.exe") << "...Inno Setup...";
+
+  model::Game game;
+  game.id = "pick";
+  game.name = "Pick";
+  game.install_path = dir.string();
+  game.status = model::GameStatus::NeedsInstall;
+  REQUIRE(server.games().Upsert(game));
+
+  httplib::Client client = server.Client();
+  auto res = client.Get("/v1/games/pick/installer", httplib::Params{{"path", "picked.exe"}}, httplib::Headers{});
+  REQUIRE(res != nullptr);
+  REQUIRE(res->status == 200);
+  const auto parsed = nlohmann::json::parse(res->body);
+  CHECK(parsed.value("format", "") == "inno");
+  CHECK(parsed.value("silent", false));
+
+  res = client.Get("/v1/games/pick/install/progress");
+  REQUIRE(res != nullptr);
+  CHECK(nlohmann::json::parse(res->body).value("state", "") == "idle");
+}

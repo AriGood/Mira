@@ -293,7 +293,42 @@ arbitrary exe, `/tricks` below is the better fit.
 ### `POST /v1/games/{id}/finish-install` — implemented
 The other half of the `needs_install` escape hatch: after running the
 installer via `/run` and `PATCH`ing `exe_path` to whatever it actually
-produced, this flips status to `ready`. 409 if `exe_path` is still empty.
+produced, this flips status to `ready`. 409 `no_executable` if `exe_path`
+is empty, still points at an installer candidate, or doesn't exist.
+
+### `POST /v1/games/{id}/install` — implemented
+Body (optional): `{"interactive": bool, "installer": "path"}`. Runs a
+`needs_install` game's installer in its prefix: silent for Inno Setup and
+NSIS (`install.inno_args`/`install.nsis_args`, with `/DIR=`/`/D=` set to
+the game folder), otherwise shown for the user to click through.
+`installer` (absolute, or relative to `install_path`) picks the file by
+hand and is also allowed for a `broken` game. One installer runs at a
+time. Afterwards the game exe is detected in `install_path`, or in a new
+folder under `install.detect_dirs` in the prefix's `drive_c`. `202`
+immediately; `game.install.started` / `.finished` / `.failed` and
+`game.updated` report the outcome. 409 `not_needs_install`,
+`install_running`; 404 `installer_missing`.
+
+### `GET /v1/games/{id}/installer[?path=]` — implemented
+`{"path", "size_bytes", "format": "inno"|"nsis"|"unknown", "silent",
+"silent_args"}` for the game's installer, or for `path` when choosing one.
+
+### `GET /v1/games/{id}/install/progress` — implemented
+`{"state": "idle"|"queued"|"running"|"finished"|"failed", "mode":
+"silent"|"interactive", "started_at", "finished_at", "error",
+"bytes_written"}`. Silent installers report no percentage, so
+`bytes_written` (growth of the game folder plus new `drive_c` folders) is
+the progress signal. In memory only; `idle` after a `mirad` restart.
+
+### `POST /v1/games/{id}/relocate` — implemented
+Body (optional): `{"install_path"?, "data_dir"?}`. Moves the game's files
+and prefix to the given paths, or with no body into Mira's layout
+(`relocate.install_root` or the first library root, and `prefix_root`,
+named per `prefix_naming`). Targets must be inside a library root /
+`prefix_root`. With no `install_path`, Steam/Epic/GOG/itch games keep their
+install folder (their store tool tracks it); only the prefix moves.
+Cross-filesystem moves copy then delete unless
+`relocate.allow_copy` is off. Publishes `game.updated`.
 
 ### `POST /v1/games/{id}/tricks` — implemented
 Body: `{"verb": "corefonts"}`. Runs `winetricks --unattended <verb>`
@@ -316,6 +351,10 @@ minutes, not request-scale) and returns `202` immediately;
 through `GET`/`PATCH /v1/config` like any other — there is no separate
 roots resource, because a plain string array is all the current design
 needs; see `docs/architecture.md` if that stops being true.
+
+### `POST /v1/library/relocate` — implemented
+Runs `/v1/games/{id}/relocate` with no body for every game. Returns
+`{"moved": N, "failed": N}`.
 
 ### `POST /v1/library/scan` — implemented
 Walks every enabled library root immediately: detects new game folders,

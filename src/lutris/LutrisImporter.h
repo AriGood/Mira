@@ -1,5 +1,7 @@
 #pragma once
 
+#include <filesystem>
+#include <optional>
 #include <vector>
 
 #include "api/EventBus.h"
@@ -9,6 +11,12 @@
 #include "store/GameStore.h"
 
 namespace mira::lutris {
+
+// Lutris's own data dir (~/.local/share/lutris, or lutris.data_dir if set),
+// found by locating pga.db inside it. Shared with metadata::FetchLutrisOwned,
+// which joins Lutris's own cached banner/coverart/icon files by slug under
+// this same directory.
+std::optional<std::filesystem::path> FindLutrisDataDir(const config::Config& config);
 
 struct LutrisImportSummary {
   int added = 0;

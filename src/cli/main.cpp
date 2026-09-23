@@ -81,6 +81,18 @@ int CmdScan() {
   return 0;
 }
 
+int CmdLibraryRelocate() {
+  auto client = Connect();
+  auto res = client.Post("/v1/library/relocate");
+  if (!Ok(res)) {
+    PrintError(res);
+    return 1;
+  }
+  json summary = json::parse(res->body);
+  std::printf("moved: %lld  failed: %lld\n", summary.value("moved", 0LL), summary.value("failed", 0LL));
+  return 0;
+}
+
 int CmdRunnersList() {
   auto client = Connect();
   auto res = client.Get("/v1/runners");
@@ -287,6 +299,60 @@ int CmdAdd(int argc, char** argv) {
   return 0;
 }
 
+int CmdInstall(int argc, char** argv) {
+  if (argc < 1) {
+    std::fprintf(stderr,
+                 "usage: mira install <id> [--interactive] [--installer PATH]\n"
+                 "       mira install <id> --info [--installer PATH]\n"
+                 "       mira install <id> --progress\n");
+    return 2;
+  }
+  const std::string id = argv[0];
+  bool interactive = false;
+  bool info = false;
+  bool progress = false;
+  std::string installer;
+  for (int i = 1; i < argc; ++i) {
+    const std::string_view arg = argv[i];
+    if (arg == "--interactive") {
+      interactive = true;
+    } else if (arg == "--info") {
+      info = true;
+    } else if (arg == "--progress") {
+      progress = true;
+    } else if (arg == "--installer" && i + 1 < argc) {
+      installer = std::filesystem::absolute(argv[++i]).string();
+    } else {
+      std::fprintf(stderr, "mira: unknown install option \"%s\"\n", argv[i]);
+      return 2;
+    }
+  }
+
+  auto client = Connect();
+  httplib::Result res;
+  if (info) {
+    httplib::Params params;
+    if (!installer.empty()) params.emplace("path", installer);
+    res = client.Get(std::format("/v1/games/{}/installer", id), params, httplib::Headers{});
+  } else if (progress) {
+    res = client.Get(std::format("/v1/games/{}/install/progress", id));
+  } else {
+    json body = {{"interactive", interactive}};
+    if (!installer.empty()) body["installer"] = installer;
+    res = client.Post(std::format("/v1/games/{}/install", id), body.dump(), "application/json");
+  }
+  if (!Ok(res)) {
+    PrintError(res);
+    return 1;
+  }
+  if (info || progress) {
+    std::puts(json::parse(res->body).dump(2).c_str());
+  } else {
+    std::printf("installing — `mira install %s --progress` to check on it\n", id.c_str());
+  }
+  return 0;
+}
+
 int CmdFinishInstall(int argc, char** argv) {
   if (argc < 1) {
     std::fprintf(stderr,
@@ -303,6 +369,27 @@ int CmdFinishInstall(int argc, char** argv) {
     return 1;
   }
   std::puts("ready");
+  return 0;
+}
+
+int CmdRelocate(int argc, char** argv) {
+  if (argc < 1) {
+    std::fprintf(stderr,
+                 "usage: mira relocate <id>\n"
+                 "  moves this game's files into Mira's own canonical layout under\n"
+                 "  library_roots/prefix_root (see prefix_naming) -- the escape hatch after a\n"
+                 "  Lutris import, or after changing where prefix_root points.\n");
+    return 2;
+  }
+  auto client = Connect();
+  auto res = client.Post(std::format("/v1/games/{}/relocate", argv[0]));
+  if (!Ok(res)) {
+    PrintError(res);
+    return 1;
+  }
+  json game = json::parse(res->body);
+  std::printf("%s: install_path=%s data_dir=%s\n", game.value("id", "").c_str(),
+             game.value("install_path", "").c_str(), game.value("data_dir", "").c_str());
   return 0;
 }
 
@@ -534,6 +621,7 @@ int CmdLibrary(int argc, char** argv) {
   if (argc > 0 && std::string_view(argv[0]) == "update") {
     return CmdLibraryInstallOrUpdate(argc - 1, argv + 1, true);
   }
+  if (argc > 0 && std::string_view(argv[0]) == "relocate") return CmdLibraryRelocate();
   // `mira library` / `mira library <source>` both list.
   return CmdLibraryList(argc, argv);
 }
@@ -1397,6 +1485,9 @@ void PrintUsage() {
       "  run <id> --exe PATH [--args ARGS]        run an arbitrary exe in this\n"
       "                         game's prefix — how you run a needs_install game's\n"
       "                         installer\n"
+      "  install <id> [--interactive] [--installer PATH]   run a needs_install game's\n"
+      "                         installer (silent for Inno/NSIS, otherwise shown)\n"
+      "  install <id> --info|--progress           describe the installer / check progress\n"
       "  finish-install <id>    mark a needs_install game ready after installing\n"
       "  list [--status S] [--tag T]        list games (hidden-tagged ones excluded\n"
       "                         by default; --tag hidden lists exactly those)\n"
@@ -1404,6 +1495,8 @@ void PrintUsage() {
       "  set <id> [flags...]    correct a game's auto-detected configuration\n"
       "  remove <id> [--delete-files] [--delete-prefix] [--delete-metadata] [--purge]\n"
       "  add <install_path> <exe_path> [--name N] [--platform windows|native] [--installer]\n"
+      "  relocate <id>           move a game's files into Mira's canonical layout\n"
+      "  library relocate        relocate every tracked game (see `mira relocate`)\n"
       "  steam scan             detect installed Steam games\n"
       "  lutris import          import games from Lutris's own database\n"
       "  desktop-entries list    list already-installed .desktop entries that could become games\n"
@@ -1436,7 +1529,9 @@ int main(int argc, char** argv) {
   if (command == "launch") return CmdLaunch(rest_argc, rest);
   if (command == "stop") return CmdStop(rest_argc, rest);
   if (command == "run") return CmdRun(rest_argc, rest);
+  if (command == "install") return CmdInstall(rest_argc, rest);
   if (command == "finish-install") return CmdFinishInstall(rest_argc, rest);
+  if (command == "relocate") return CmdRelocate(rest_argc, rest);
   if (command == "remove") return CmdRemove(rest_argc, rest);
   if (command == "add") return CmdAdd(rest_argc, rest);
   if (command == "steam") return CmdSteam(rest_argc, rest);
