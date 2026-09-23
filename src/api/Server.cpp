@@ -325,10 +325,7 @@ Server::Server(config::Config& config, store::GameStore& games, EventBus& events
 
 Server::~Server() = default;
 
-void Server::ReconcileSessions() {
-  supervisor_.Reconcile(games_.Dir() / "sessions");
-  supervisor_.ReconcileSteamLaunches(games_.Dir() / "sessions");
-}
+void Server::ReconcileSessions() { supervisor_.Reconcile(games_.Dir() / "sessions"); }
 
 Result<void> Server::Serve(const std::filesystem::path& socket_path) {
   std::error_code ec;
@@ -1183,8 +1180,7 @@ void Server::RegisterRoutes() {
         events_.Publish("game.launched",
                         {{"id", game->id}, {"via", "steam"}, {"tracked", track}});
         if (track) {
-          if (auto started = supervisor_.TrackSteamLaunch(*game, appid, games_.Dir() / "sessions", post_script);
-              !started) {
+          if (auto started = supervisor_.TrackSteamLaunch(*game, appid, post_script); !started) {
             log::Warn("couldn't start tracking {}: {}", game->id, started.error().message);
           }
         }
