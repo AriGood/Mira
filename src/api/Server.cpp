@@ -329,7 +329,17 @@ Server::Server(config::Config& config, store::GameStore& games, EventBus& events
 
 Server::~Server() = default;
 
-void Server::ReconcileSessions() { supervisor_.Reconcile(games_.Dir() / "sessions"); }
+void Server::ReconcileSessions() {
+  supervisor_.Reconcile(games_.Dir() / "sessions");
+  // A client that stayed open across a restart may still show games from
+  // the old daemon as running.
+  for (const model::Game& game : games_.All()) {
+    if (supervisor_.IsRunning(game.id)) continue;
+    json event = GameJson(game, supervisor_);
+    event["state"] = "idle";
+    events_.Publish("game.state", std::move(event));
+  }
+}
 
 Result<void> Server::Serve(const std::filesystem::path& socket_path) {
   std::error_code ec;
@@ -1436,6 +1446,17 @@ void Server::RegisterRoutes() {
 
   http_->Post(R"(/v1/games/([^/]+)/stop)", [this](const Request& req, Response& res) {
     if (auto stopped = supervisor_.Stop(req.matches[1]); !stopped) {
+      // A client that still shows it running (it missed the exit, e.g. across
+      // a mirad restart) gets told it's stopped instead of an error it can't
+      // get out of.
+      if (stopped.error().code == "not_running") {
+        if (const auto game = games_.Find(req.matches[1])) {
+          json event = GameJson(*game, supervisor_);
+          event["state"] = "idle";
+          events_.Publish("game.state", std::move(event));
+          return SendJson(res, {{"status", "not_running"}});
+        }
+      }
       return SendError(res, 409, stopped.error().code, stopped.error().message);
     }
     SendJson(res, {{"status", "stopping"}});

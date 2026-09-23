@@ -81,7 +81,7 @@ bool WaitForExit(httplib::Client& client, const std::string& id,
   const auto deadline = std::chrono::steady_clock::now() + timeout;
   while (std::chrono::steady_clock::now() < deadline) {
     auto res = client.Post(std::format("/v1/games/{}/stop", id));
-    if (res && res->status == 409) return true;
+    if (res && res->status == 200 && res->body.find("not_running") != std::string::npos) return true;
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
   }
   return false;

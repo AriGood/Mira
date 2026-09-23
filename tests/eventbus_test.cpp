@@ -77,7 +77,9 @@ TEST_CASE("many publishers and many subscribers race safely") {
   stop.store(true);
   for (auto& t : subscribers) t.join();
 
-  CHECK(bus.LatestId() == 100);
+  const auto all = bus.Since(0);
+  REQUIRE(all.size() == 100);
+  CHECK(all.back().id - all.front().id == 99);
   CHECK(delivered.load() > 0);
   CHECK(bus.Since(0).size() <= 100);  // ring buffer capacity may have trimmed some
 }

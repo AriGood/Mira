@@ -23,7 +23,9 @@ namespace mira::api {
 // gain from writing every event to disk.
 class EventBus {
 public:
-  explicit EventBus(size_t capacity = 500) : capacity_(capacity) {}
+  // Ids start from the clock, not 1, so a client resuming with an id from
+  // before a mirad restart still receives the new daemon's events.
+  explicit EventBus(size_t capacity = 500);
 
   // Assigns the next monotonic id and appends to the ring buffer, waking any
   // blocked subscriber. Thread-safe; called from any thread.
@@ -58,7 +60,7 @@ private:
   mutable std::mutex mutex_;
   std::condition_variable cv_;
   std::deque<model::Event> events_;
-  std::int64_t next_id_ = 1;
+  std::int64_t next_id_;
   size_t capacity_;
 };
 

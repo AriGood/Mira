@@ -270,8 +270,11 @@ if it's already over `launch.log_max_mb` (default 64).
 
 ### `POST /v1/games/{id}/stop` — implemented
 Sends SIGTERM to the game's process group **and** every process running in
-its prefix, escalating to SIGKILL after `launch.stop_timeout_s`. 409 if not
-running.
+its prefix, escalating to SIGKILL after `launch.stop_timeout_s`. If it isn't running,
+returns `{"status": "not_running"}` and publishes `game.state` with state
+`idle`, so a client that missed the exit can clear it. mirad also publishes
+`idle` for every game at startup, and event ids start from the clock, so a
+client reconnecting across a restart resumes cleanly.
 
 The prefix half matters on Proton/Wine: `setsid()`/`setpgid()` during startup
 leaves the process group nearly empty (measured: 1 of 16 processes reached).
