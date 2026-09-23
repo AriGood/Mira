@@ -22,6 +22,7 @@
 #include "config/Config.h"
 #include "core/Paths.h"
 #include "epic/Legendary.h"
+#include "setup/Setup.h"
 
 namespace {
 using nlohmann::json;
@@ -1286,6 +1287,96 @@ int CmdDaemon(int argc, char** argv, const char* self) {
   return 1;
 }
 
+int CmdSetup(int argc, char** argv) {
+  // Local only, like `daemon`: writes user-level files, no mirad involved.
+  bool remove = false;
+  bool uninstall = false;
+  bool enable_service = false;
+  for (int i = 0; i < argc; ++i) {
+    const std::string_view arg = argv[i];
+    if (arg == "--remove") {
+      remove = true;
+    } else if (arg == "--uninstall") {
+      remove = true;
+      uninstall = true;
+    } else if (arg == "--enable-service") {
+      enable_service = true;
+    } else {
+      std::fprintf(stderr, "usage: mira setup [--enable-service] [--remove] [--uninstall]\n");
+      return 2;
+    }
+  }
+
+  const mira::setup::SetupPaths paths = mira::setup::DefaultPaths();
+  const char* appimage_env = std::getenv("APPIMAGE");
+  if (uninstall) {
+    // Launched from the menu there's no terminal to ask in, so use whichever
+    // dialog tool is installed; refuse if there's none.
+    constexpr const char* kQuestion = "Uninstall Mira? Your games, settings and prefixes are kept.";
+    if (!isatty(STDIN_FILENO)) {
+      const std::string ask = std::format(
+          "if command -v zenity >/dev/null; then zenity --question --text='{0}'; "
+          "elif command -v kdialog >/dev/null; then kdialog --yesno '{0}'; "
+          "elif command -v yad >/dev/null; then yad --text='{0}'; "
+          "else exit 1; fi 2>/dev/null",
+          kQuestion);
+      if (std::system(ask.c_str()) != 0) return 1;
+    } else {
+      std::printf("%s [y/N] ", kQuestion);
+      std::string answer;
+      std::getline(std::cin, answer);
+      if (answer != "y" && answer != "Y") return 1;
+    }
+  }
+  if (remove) {
+    std::system("systemctl --user disable --now mirad.service >/dev/null 2>&1");
+    const auto removed = mira::setup::Remove(paths);
+    for (const auto& path : *removed) std::printf("removed %s\n", path.c_str());
+    if (removed->empty()) std::puts("nothing to remove");
+    std::system("systemctl --user daemon-reload >/dev/null 2>&1");
+    if (uninstall) {
+      std::error_code ec;
+      std::filesystem::remove_all(mira::paths::Home() / ".cache/mira-appimage", ec);
+      if (appimage_env && *appimage_env && std::filesystem::remove(appimage_env, ec)) {
+        std::printf("removed %s\n", appimage_env);
+      }
+    }
+    return 0;
+  }
+
+  const char* appimage = appimage_env;
+  if (!appimage || !*appimage) {
+    std::fprintf(stderr, "mira: run this from the AppImage: ./Mira-x86_64.AppImage setup\n");
+    return 1;
+  }
+  const std::filesystem::path self = std::filesystem::read_symlink("/proc/self/exe");
+  const std::filesystem::path icon = self.parent_path().parent_path() / "share/icons/hicolor/256x256/apps/mira.png";
+
+  const auto written = mira::setup::Install(paths, appimage, icon);
+  if (!written) {
+    std::fprintf(stderr, "mira: %s\n", written.error().message.c_str());
+    return 1;
+  }
+  for (const auto& path : *written) std::printf("wrote %s\n", path.c_str());
+  std::system("systemctl --user daemon-reload >/dev/null 2>&1");
+  std::system("update-desktop-database -q ~/.local/share/applications >/dev/null 2>&1");
+
+  const char* path_env = std::getenv("PATH");
+  if (!path_env || std::string(path_env).find(paths.bin_dir.string()) == std::string::npos) {
+    std::printf("note: %s isn't on PATH -- add it to use `mira` from a shell\n", paths.bin_dir.c_str());
+  }
+  if (enable_service) {
+    if (std::system("systemctl --user enable --now mirad.service") != 0) {
+      std::fprintf(stderr, "mira: couldn't enable mirad.service\n");
+      return 1;
+    }
+    std::puts("mirad.service enabled");
+  } else {
+    std::puts("mirad starts with the GUI; `systemctl --user enable --now mirad` keeps it running instead");
+  }
+  return 0;
+}
+
 void PrintUsage() {
   std::puts(
       "usage: mira <command> [args...]\n"
@@ -1293,6 +1384,9 @@ void PrintUsage() {
       "commands:\n"
       "  status                 check whether mirad is reachable\n"
       "  daemon [args...]       exec mirad in the foreground\n"
+      "  setup [--enable-service] [--remove|--uninstall]   add mira to PATH, the app\n"
+      "                         menu and systemd; --uninstall also deletes the AppImage\n"
+      "                         (run from the AppImage: Mira-x86_64.AppImage setup)\n"
       "  scan                   scan all library roots now\n"
       "  runners                list installed Proton/Wine builds\n"
       "  runners catalog [--kind proton|wine]     list downloadable versions\n"
@@ -1356,6 +1450,7 @@ int main(int argc, char** argv) {
   if (command == "gamemode") return CmdGameMode(rest_argc, rest);
   if (command == "metadata") return CmdMetadata(rest_argc, rest);
   if (command == "tricks") return CmdTricks(rest_argc, rest);
+  if (command == "setup") return CmdSetup(rest_argc, rest);
   if (command == "daemon") return CmdDaemon(rest_argc, rest, argv[0]);
   if (command == "list") return CmdList(rest_argc, rest);
   if (command == "show") return CmdShow(rest_argc, rest);

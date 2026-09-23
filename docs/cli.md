@@ -31,6 +31,15 @@ listening yet. Equivalent to just running `mirad` directly; exists mainly
 so `mira daemon` is discoverable from the one tool a new user
 already knows to reach for.
 
+## `mira setup [--enable-service] [--remove|--uninstall]`
+Local, no API call. Run from the AppImage (`./Mira-x86_64.AppImage setup`).
+Writes a `~/.local/bin/mira` wrapper (plus `mirad`/`mira-run` links) that
+runs the binaries bundled in the AppImage, a desktop entry with an
+"Uninstall Mira" action, the icon, and a systemd user unit.
+`--enable-service` also enables the unit. `--remove` undoes it all;
+`--uninstall` also asks for confirmation and deletes the AppImage. Games,
+settings and prefixes are never touched.
+
 ## `mira scan`
 Triggers `POST /v1/library/scan` — walks every enabled library root right
 now rather than waiting for `mirad`'s own inotify watcher to notice.

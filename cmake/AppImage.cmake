@@ -111,6 +111,7 @@ fi
 #!/bin/sh
 HERE=\"$(dirname \"$(readlink -f \"$0\")\")\"
 export QT_QPA_PLATFORM=\"\${QT_QPA_PLATFORM:-xcb}\"
+if [ \"\$1\" = setup ]; then exec \"\$HERE/usr/bin/mira\" \"$@\"; fi
 exec \"\$HERE/usr/bin/mira-gui\" \"$@\"
 ")
   file(CHMOD "${MIRA_APPRUN}" PERMISSIONS
