@@ -120,7 +120,7 @@ TEST_CASE("ProcessSupervisor::TrackSteamLaunch detects and tracks a process by S
   reaper.detach();
 
   const std::string post_script = "touch " + marker.string();
-  REQUIRE(supervisor.TrackSteamLaunch(game, "999999", state / "sessions", post_script).has_value());
+  REQUIRE(supervisor.TrackSteamLaunch(game, "999999", post_script).has_value());
 
   CHECK(WaitFor([&] { return supervisor.IsRunning("steam-game"); }, std::chrono::seconds(5)));
   CHECK(WaitFor(
@@ -156,7 +156,7 @@ TEST_CASE("ProcessSupervisor::Stop refuses a not-yet-confirmed TrackSteamLaunch 
   // the slot immediately (pid 0 sentinel) and only replaces it once
   // detection succeeds, so Stop() called in that window must not try to
   // kill(-0, ...) (every process in mirad's own process group).
-  REQUIRE(supervisor.TrackSteamLaunch(game, "111111111", state / "sessions").has_value());
+  REQUIRE(supervisor.TrackSteamLaunch(game, "111111111").has_value());
   CHECK(supervisor.IsRunning("never-shows-up"));
 
   const auto stopped = supervisor.Stop("never-shows-up");

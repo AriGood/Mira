@@ -42,6 +42,14 @@ public:
   };
   Result<Resolved> Resolve(const std::string& runner_ref) const;
 
+  // Turns game.runner_ref into a concrete "kind:name" string, without
+  // provisioning anything: empty -> default_runner.<platform>, "auto" ->
+  // best available windows runner. Used by launch paths that must not
+  // re-run a runner's Provision() (wineboot, prefix init, ...) on every
+  // launch the way ProvisionGame does -- only ProvisionGame's own callers
+  // (install/scan/finish-install) should provision.
+  std::string ResolveRef(const model::Game& game) const;
+
   // Resolves game.runner_ref (or, if unset, default_runner.<platform>),
   // pins the concrete reference onto the returned copy, and provisions it.
   // Can't fail in the Result sense — "no runner found" or "provisioning

@@ -10,10 +10,14 @@
 
 #include <json.hpp>
 
+#include <cstdlib>
+
 #include "core/Command.h"
 #include "core/Log.h"
+#include "core/Paths.h"
 #include "core/Strings.h"
 #include "epic/Legendary.h"
+#include "lutris/LutrisImporter.h"
 #include "runner/Exec.h"
 
 namespace mira::metadata {
@@ -447,6 +451,45 @@ void FetchEpicOwned(const config::Config& config, const std::string& app_name, c
   }
 }
 
+// Lutris caches its own per-game art on disk, confirmed against a real
+// install and joined by slug: <lutris_data_dir>/coverart/<slug>.jpg,
+// <lutris_data_dir>/banners/<slug>.jpg, and (under XDG_DATA_HOME directly,
+// not the lutris subdir) icons/hicolor/128x128/apps/lutris_<slug>.png.
+// Lutris's has_custom_* pga.db columns mean "user overrode Lutris's own
+// art", not "art exists" -- so the files are probed directly rather than
+// trusting those columns. `url` is a file:// URI: FetchArtworkInto's own
+// curl download already handles that scheme with no changes needed.
+// Returns whether any Lutris art was found.
+bool FetchLutrisOwned(const config::Config& config, const std::string& slug, const std::string& game_id,
+                      json& info) {
+  if (slug.empty()) return false;
+  bool found = false;
+
+  // Steam CDN candidates use id -1, Epic -2 -- any small negative id is
+  // safe as a fixed marker since a real SteamGridDB id is always positive.
+  constexpr std::int64_t kLutrisCandidateId = -3;
+  auto try_slot = [&](const fs::path& file, std::string_view slot) {
+    std::error_code ec;
+    if (!fs::exists(file, ec)) return;
+    const std::string url = "file://" + file.string();
+    if (FetchArtworkInto(config, url, game_id, "lutris", slot, info, kLutrisCandidateId)) {
+      info["art_candidates"][std::string(slot)] =
+          json::array({{{"id", kLutrisCandidateId}, {"url", url}, {"source", "lutris"}}});
+      found = true;
+    }
+  };
+
+  if (const auto data_dir = lutris::FindLutrisDataDir(config)) {
+    try_slot(*data_dir / "coverart" / (slug + ".jpg"), "cover");
+    try_slot(*data_dir / "banners" / (slug + ".jpg"), "hero");
+  }
+  const char* xdg_data_home = std::getenv("XDG_DATA_HOME");
+  const fs::path data_home = (xdg_data_home && *xdg_data_home) ? fs::path(xdg_data_home) : paths::Home() / ".local" / "share";
+  try_slot(data_home / "icons" / "hicolor" / "128x128" / "apps" / ("lutris_" + slug + ".png"), "icon");
+
+  return found;
+}
+
 Result<void> FetchNonSteam(const config::Config& config, const std::string& name,
                            const std::string& game_id, json& info) {
   // Independent of the SteamGridDB key below -- ProtonDB's own by-AppID
@@ -499,6 +542,14 @@ Result<void> Fetch(const config::Config& config, const model::Game& game) {
   if (game.source == "epic") {
     info["source"] = "epic";
     FetchEpicOwned(config, game.source_ref, game.name, game.id, info);
+  } else if (game.source == "lutris") {
+    // Lutris's cached art first; the generic fetch still adds ProtonDB and
+    // SteamGridDB alternates, and covers games with no Lutris art.
+    info["source"] = "lutris";
+    const bool found = config.GetBool("lutris.import_art") && FetchLutrisOwned(config, game.source_ref, game.id, info);
+    if (Result<void> fetched = FetchNonSteam(config, game.name, game.id, info); !fetched && !found) {
+      return std::unexpected(fetched.error());
+    }
   } else if (game.runner_ref.starts_with("steam:")) {
     info["source"] = "steam";
     FetchSteamOwned(config, game.runner_ref.substr(std::string_view("steam:").size()), game.name, game.id, info);

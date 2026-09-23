@@ -181,3 +181,21 @@ TEST_CASE("GogImporter::Import scans install_root's subdirectories") {
   CHECK(summary->added == 2);
   CHECK(fixture.games.All().size() == 2);
 }
+
+TEST_CASE("GogImporter::Import reads the id from goggame-<id>.info in a title-named folder") {
+  Fixture fixture("gog-import-title-dir");
+  fixture.UseFakeGogdl();
+
+  const fs::path root = fixture.dir / "install_root";
+  fs::create_directories(root / "Hollow Knight" / "Hollow Knight_Data");
+  std::ofstream(root / "Hollow Knight" / "goggame-1328670078.info") << "{}";
+  REQUIRE(fixture.config.Set("gog.install_root", root.string()));
+
+  CHECK(gog::FindGameDir(fixture.config, "1328670078") == root / "Hollow Knight");
+
+  gog::GogImporter importer(fixture.config, fixture.games, fixture.events);
+  REQUIRE(importer.Import());
+  const auto game = fixture.games.Find("gog-1328670078");
+  REQUIRE(game);
+  CHECK(game->install_path == (root / "Hollow Knight").string());
+}

@@ -21,6 +21,9 @@
 #include "core/Strings.h"
 #include "desktop/DesktopEntries.h"
 #include "library/Catalog.h"
+#include "library/AutoInstall.h"
+#include "library/PrefixNaming.h"
+#include "library/Relocate.h"
 #include "library/Scanner.h"
 #include "library/SourceRegistry.h"
 #include "desktop/DesktopEntryScanner.h"
@@ -325,10 +328,7 @@ Server::Server(config::Config& config, store::GameStore& games, EventBus& events
 
 Server::~Server() = default;
 
-void Server::ReconcileSessions() {
-  supervisor_.Reconcile(games_.Dir() / "sessions");
-  supervisor_.ReconcileSteamLaunches(games_.Dir() / "sessions");
-}
+void Server::ReconcileSessions() { supervisor_.Reconcile(games_.Dir() / "sessions"); }
 
 Result<void> Server::Serve(const std::filesystem::path& socket_path) {
   std::error_code ec;
@@ -604,6 +604,38 @@ void Server::RegisterRoutes() {
     for (const model::Game& game : summary.added_games) metadata_fetches_.Enqueue(config_, events_, game);
     SendJson(res, {{"added", summary.added}, {"missing", summary.missing},
                    {"restored", summary.restored}});
+  });
+
+  // Runs library::Relocate across every tracked game, moving each into
+  // Mira's canonical layout (see the per-game /relocate route's own
+  // comment) — what "changed prefix_root/prefix_naming, now migrate what's
+  // already on disk" actually means: neither setting alone moves anything.
+  // Explicit-trigger only, same as the per-game route.
+  http_->Post("/v1/library/relocate", [this](const Request&, Response& res) {
+    int moved = 0;
+    int failed = 0;
+    for (const model::Game& game : games_.All()) {
+      auto relocated = library::Relocate(config_, game);
+      if (!relocated) {
+        ++failed;
+        log::Warn("relocate failed for {}: {}", game.id, relocated.error().message);
+        continue;
+      }
+      if (relocated->install_path == game.install_path && relocated->data_dir == game.data_dir) continue;
+      auto saved = games_.Update(game.id, [&](model::Game& g) {
+        g.install_path = relocated->install_path;
+        g.data_dir = relocated->data_dir;
+        g.updated_at = model::NowSeconds();
+      });
+      if (!saved) {
+        ++failed;
+        continue;
+      }
+      events_.Publish("game.updated", GameJson(*saved, supervisor_));
+      ++moved;
+    }
+    SyncDesktopEntries(config_, games_);
+    SendJson(res, {{"moved", moved}, {"failed", failed}});
   });
 
   // --- steam ------------------------------------------------------------
@@ -1112,9 +1144,11 @@ void Server::RegisterRoutes() {
       game.last_error = "This is an installer, not the game itself — run it first, then point Mira at the "
                         "installed game.";
     } else {
-      game.data_dir = platform == model::Platform::Windows
-                          ? (config_.GetPath("prefix_root") / game.id).string()
-                          : std::string();
+      if (platform != model::Platform::Windows) {
+        game.data_dir.clear();
+      } else if (game.data_dir.empty()) {
+        game.data_dir = library::PrefixDir(config_, game).string();
+      }
       game.status = model::GameStatus::Ready;
       game.last_error.clear();
     }
@@ -1183,8 +1217,7 @@ void Server::RegisterRoutes() {
         events_.Publish("game.launched",
                         {{"id", game->id}, {"via", "steam"}, {"tracked", track}});
         if (track) {
-          if (auto started = supervisor_.TrackSteamLaunch(*game, appid, games_.Dir() / "sessions", post_script);
-              !started) {
+          if (auto started = supervisor_.TrackSteamLaunch(*game, appid, post_script); !started) {
             log::Warn("couldn't start tracking {}: {}", game->id, started.error().message);
           }
         }
@@ -1193,8 +1226,14 @@ void Server::RegisterRoutes() {
     }
 
     const runner::RunnerRegistry registry(config_);
-    auto resolved = registry.Resolve(game->runner_ref.empty() ? "native:native" : game->runner_ref);
+    auto resolved = registry.Resolve(registry.ResolveRef(*game));
     if (!resolved) return SendError(res, 400, resolved.error().code, resolved.error().message);
+
+    if (game->runner_ref.empty() && resolved->build && config_.GetBool("launch.pin_runner")) {
+      const std::string pinned = std::format("{}:{}", resolved->runner->kind(), resolved->build->name);
+      game->runner_ref = pinned;
+      [[maybe_unused]] auto _ = games_.Update(game->id, [&](model::Game& g) { g.runner_ref = pinned; });
+    }
 
     auto command = resolved->runner->BuildCommand(*game, resolved->build);
     if (!command) return SendError(res, 400, command.error().code, command.error().message);
@@ -1336,8 +1375,14 @@ void Server::RegisterRoutes() {
     }
 
     const runner::RunnerRegistry registry(config_);
-    auto resolved = registry.Resolve(game->runner_ref.empty() ? "native:native" : game->runner_ref);
+    auto resolved = registry.Resolve(registry.ResolveRef(*game));
     if (!resolved) return SendError(res, 400, resolved.error().code, resolved.error().message);
+
+    if (game->runner_ref.empty() && resolved->build && config_.GetBool("launch.pin_runner")) {
+      const std::string pinned = std::format("{}:{}", resolved->runner->kind(), resolved->build->name);
+      game->runner_ref = pinned;
+      [[maybe_unused]] auto _ = games_.Update(game->id, [&](model::Game& g) { g.runner_ref = pinned; });
+    }
 
     model::Game run_as = *game;
     run_as.exe_path = exe_path;
@@ -1362,12 +1407,95 @@ void Server::RegisterRoutes() {
   // The escape hatch out of needs_install: run the installer via /run
   // above, PATCH exe_path to whatever it actually installed, then call
   // this to make the game launchable through the normal /launch path.
+  // Describes a game's installer, or the file at ?path= (absolute, or
+  // relative to install_path) when choosing one by hand.
+  http_->Get(R"(/v1/games/([^/]+)/installer)", [this](const Request& req, Response& res) {
+    auto game = games_.Find(req.matches[1]);
+    if (!game) return SendError(res, 404, "game_not_found", "no such game");
+    if (req.has_param("path")) game->exe_path = req.get_param_value("path");
+    const auto info = library::DescribeInstaller(config_, *game);
+    if (!info) return SendError(res, 404, info.error().code, info.error().message);
+    SendJson(res, {{"path", info->path.string()},
+                   {"size_bytes", info->size_bytes},
+                   {"format", library::ToString(info->format)},
+                   {"silent", info->silent},
+                   {"silent_args", info->silent_args}});
+  });
+
+  http_->Get(R"(/v1/games/([^/]+)/install/progress)", [this](const Request& req, Response& res) {
+    const std::string id = req.matches[1];
+    if (!games_.Find(id)) return SendError(res, 404, "game_not_found", "no such game");
+    const auto progress = library::Progress(id);
+    if (!progress) return SendJson(res, {{"state", "idle"}});
+    SendJson(res, {{"state", progress->state},
+                   {"mode", progress->mode},
+                   {"started_at", progress->started_at},
+                   {"finished_at", progress->finished_at},
+                   {"error", progress->error},
+                   {"bytes_written", progress->bytes_written}});
+  });
+
+  // Runs a game's installer: silent for Inno/NSIS, otherwise (or with
+  // "interactive": true) shown to click through. "installer" picks the
+  // file by hand. Detached; poll .../install/progress or watch
+  // game.install.finished/failed.
+  http_->Post(R"(/v1/games/([^/]+)/install)", [this](const Request& req, Response& res) {
+    const auto game = games_.Find(req.matches[1]);
+    if (!game) return SendError(res, 404, "game_not_found", "no such game");
+    const json body = json::parse(req.body.empty() ? "{}" : req.body, nullptr, false);
+    if (body.is_discarded() || !body.is_object()) return SendError(res, 400, "invalid_body", "expected a JSON object");
+    const bool interactive = body.value("interactive", false);
+    std::optional<std::filesystem::path> installer;
+    if (body.contains("installer")) {
+      if (!body["installer"].is_string()) return SendError(res, 400, "invalid_body", "installer must be a string");
+      installer = std::filesystem::path(game->install_path) / body["installer"].get<std::string>();
+      std::error_code ec;
+      if (!std::filesystem::is_regular_file(*installer, ec)) {
+        return SendError(res, 404, "installer_missing", std::format("no installer at {}", installer->string()));
+      }
+    }
+    const bool installable = game->status == model::GameStatus::NeedsInstall ||
+                             (installer && game->status == model::GameStatus::Broken);
+    if (!installable) return SendError(res, 409, "not_needs_install", "game isn't waiting on an installer");
+    if (!library::BeginInstall(game->id)) {
+      return SendError(res, 409, "install_running", "an install is already running for this game");
+    }
+
+    events_.Publish("game.install.started", {{"id", game->id}});
+    std::thread([this, id = game->id, interactive, installer] {
+      const auto done = library::Install(config_, games_, id,
+                                         interactive ? library::InstallMode::kInteractive : library::InstallMode::kAuto,
+                                         installer);
+      if (done) {
+        SyncDesktopEntries(config_, games_);
+        events_.Publish("game.updated", GameJson(*done, supervisor_));
+        events_.Publish("game.install.finished", {{"id", id}});
+      } else {
+        if (const auto stored = games_.Find(id)) events_.Publish("game.updated", GameJson(*stored, supervisor_));
+        events_.Publish("game.install.failed", {{"id", id}, {"error", done.error().message}});
+      }
+    }).detach();
+    SendJson(res, {{"status", "installing"}, {"id", game->id}}, 202);
+  });
+
   http_->Post(R"(/v1/games/([^/]+)/finish-install)", [this](const Request& req, Response& res) {
     auto game = games_.Find(req.matches[1]);
     if (!game) return SendError(res, 404, "game_not_found", "no such game");
     if (game->exe_path.empty()) {
       return SendError(res, 409, "no_executable",
                        "PATCH exe_path to the installed game's real executable first");
+    }
+    const bool still_installer = std::ranges::any_of(game->candidates, [&](const model::Candidate& c) {
+      return c.is_installer && c.rel_path == game->exe_path;
+    });
+    if (still_installer) {
+      return SendError(res, 409, "no_executable",
+                       "exe_path still points at the installer — PATCH it to the installed game's real "
+                       "executable first");
+    }
+    std::error_code ec;
+    if (!std::filesystem::exists(std::filesystem::path(game->install_path) / game->exe_path, ec)) {
+      return SendError(res, 409, "no_executable", "exe_path doesn't exist under install_path");
     }
     auto result = games_.Update(game->id, [](model::Game& g) {
       g.status = model::GameStatus::Ready;
@@ -1377,6 +1505,44 @@ void Server::RegisterRoutes() {
     SyncDesktopEntries(config_, games_);
     events_.Publish("game.updated", GameJson(*result, supervisor_));
     SendJson(res, GameJson(*result, supervisor_));
+  });
+
+  // Moves this game's install_path/data_dir -- to the given target(s), or,
+  // with no body (or a body omitting a field), into Mira's own canonical
+  // layout for whichever field is omitted (see library::Relocate). The
+  // escape hatch for a Lutris import or any game whose files sit outside
+  // where prefix_root/prefix_naming now say they should — neither setting
+  // moves anything by itself; this is the only thing that does.
+  http_->Post(R"(/v1/games/([^/]+)/relocate)", [this](const Request& req, Response& res) {
+    auto game = games_.Find(req.matches[1]);
+    if (!game) return SendError(res, 404, "game_not_found", "no such game");
+
+    library::RelocateRequest request;
+    if (!req.body.empty()) {
+      const json body = json::parse(req.body, nullptr, false);
+      if (body.is_discarded() || !body.is_object()) {
+        return SendError(res, 400, "invalid_body", R"(expected {"install_path"?: "...", "data_dir"?: "..."})");
+      }
+      if (body.contains("install_path") && body["install_path"].is_string()) {
+        request.install_path = std::filesystem::path(body["install_path"].get<std::string>());
+      }
+      if (body.contains("data_dir") && body["data_dir"].is_string()) {
+        request.data_dir = std::filesystem::path(body["data_dir"].get<std::string>());
+      }
+    }
+
+    auto relocated = library::Relocate(config_, *game, request);
+    if (!relocated) return SendError(res, 400, relocated.error().code, relocated.error().message);
+
+    auto saved = games_.Update(game->id, [&](model::Game& g) {
+      g.install_path = relocated->install_path;
+      g.data_dir = relocated->data_dir;
+      g.updated_at = model::NowSeconds();
+    });
+    if (!saved) return SendError(res, 404, saved.error().code, saved.error().message);
+    SyncDesktopEntries(config_, games_);
+    events_.Publish("game.updated", GameJson(*saved, supervisor_));
+    SendJson(res, GameJson(*saved, supervisor_));
   });
 
   // Runs one winetricks verb against this game's own prefix — see

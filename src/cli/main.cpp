@@ -22,6 +22,7 @@
 #include "config/Config.h"
 #include "core/Paths.h"
 #include "epic/Legendary.h"
+#include "setup/Setup.h"
 
 namespace {
 using nlohmann::json;
@@ -77,6 +78,18 @@ int CmdScan() {
   std::printf("added: %lld  missing: %lld  restored: %lld\n",
              summary.value("added", 0LL), summary.value("missing", 0LL),
              summary.value("restored", 0LL));
+  return 0;
+}
+
+int CmdLibraryRelocate() {
+  auto client = Connect();
+  auto res = client.Post("/v1/library/relocate");
+  if (!Ok(res)) {
+    PrintError(res);
+    return 1;
+  }
+  json summary = json::parse(res->body);
+  std::printf("moved: %lld  failed: %lld\n", summary.value("moved", 0LL), summary.value("failed", 0LL));
   return 0;
 }
 
@@ -286,6 +299,60 @@ int CmdAdd(int argc, char** argv) {
   return 0;
 }
 
+int CmdInstall(int argc, char** argv) {
+  if (argc < 1) {
+    std::fprintf(stderr,
+                 "usage: mira install <id> [--interactive] [--installer PATH]\n"
+                 "       mira install <id> --info [--installer PATH]\n"
+                 "       mira install <id> --progress\n");
+    return 2;
+  }
+  const std::string id = argv[0];
+  bool interactive = false;
+  bool info = false;
+  bool progress = false;
+  std::string installer;
+  for (int i = 1; i < argc; ++i) {
+    const std::string_view arg = argv[i];
+    if (arg == "--interactive") {
+      interactive = true;
+    } else if (arg == "--info") {
+      info = true;
+    } else if (arg == "--progress") {
+      progress = true;
+    } else if (arg == "--installer" && i + 1 < argc) {
+      installer = std::filesystem::absolute(argv[++i]).string();
+    } else {
+      std::fprintf(stderr, "mira: unknown install option \"%s\"\n", argv[i]);
+      return 2;
+    }
+  }
+
+  auto client = Connect();
+  httplib::Result res;
+  if (info) {
+    httplib::Params params;
+    if (!installer.empty()) params.emplace("path", installer);
+    res = client.Get(std::format("/v1/games/{}/installer", id), params, httplib::Headers{});
+  } else if (progress) {
+    res = client.Get(std::format("/v1/games/{}/install/progress", id));
+  } else {
+    json body = {{"interactive", interactive}};
+    if (!installer.empty()) body["installer"] = installer;
+    res = client.Post(std::format("/v1/games/{}/install", id), body.dump(), "application/json");
+  }
+  if (!Ok(res)) {
+    PrintError(res);
+    return 1;
+  }
+  if (info || progress) {
+    std::puts(json::parse(res->body).dump(2).c_str());
+  } else {
+    std::printf("installing — `mira install %s --progress` to check on it\n", id.c_str());
+  }
+  return 0;
+}
+
 int CmdFinishInstall(int argc, char** argv) {
   if (argc < 1) {
     std::fprintf(stderr,
@@ -302,6 +369,27 @@ int CmdFinishInstall(int argc, char** argv) {
     return 1;
   }
   std::puts("ready");
+  return 0;
+}
+
+int CmdRelocate(int argc, char** argv) {
+  if (argc < 1) {
+    std::fprintf(stderr,
+                 "usage: mira relocate <id>\n"
+                 "  moves this game's files into Mira's own canonical layout under\n"
+                 "  library_roots/prefix_root (see prefix_naming) -- the escape hatch after a\n"
+                 "  Lutris import, or after changing where prefix_root points.\n");
+    return 2;
+  }
+  auto client = Connect();
+  auto res = client.Post(std::format("/v1/games/{}/relocate", argv[0]));
+  if (!Ok(res)) {
+    PrintError(res);
+    return 1;
+  }
+  json game = json::parse(res->body);
+  std::printf("%s: install_path=%s data_dir=%s\n", game.value("id", "").c_str(),
+             game.value("install_path", "").c_str(), game.value("data_dir", "").c_str());
   return 0;
 }
 
@@ -533,6 +621,7 @@ int CmdLibrary(int argc, char** argv) {
   if (argc > 0 && std::string_view(argv[0]) == "update") {
     return CmdLibraryInstallOrUpdate(argc - 1, argv + 1, true);
   }
+  if (argc > 0 && std::string_view(argv[0]) == "relocate") return CmdLibraryRelocate();
   // `mira library` / `mira library <source>` both list.
   return CmdLibraryList(argc, argv);
 }
@@ -1286,6 +1375,96 @@ int CmdDaemon(int argc, char** argv, const char* self) {
   return 1;
 }
 
+int CmdSetup(int argc, char** argv) {
+  // Local only, like `daemon`: writes user-level files, no mirad involved.
+  bool remove = false;
+  bool uninstall = false;
+  bool enable_service = false;
+  for (int i = 0; i < argc; ++i) {
+    const std::string_view arg = argv[i];
+    if (arg == "--remove") {
+      remove = true;
+    } else if (arg == "--uninstall") {
+      remove = true;
+      uninstall = true;
+    } else if (arg == "--enable-service") {
+      enable_service = true;
+    } else {
+      std::fprintf(stderr, "usage: mira setup [--enable-service] [--remove] [--uninstall]\n");
+      return 2;
+    }
+  }
+
+  const mira::setup::SetupPaths paths = mira::setup::DefaultPaths();
+  const char* appimage_env = std::getenv("APPIMAGE");
+  if (uninstall) {
+    // Launched from the menu there's no terminal to ask in, so use whichever
+    // dialog tool is installed; refuse if there's none.
+    constexpr const char* kQuestion = "Uninstall Mira? Your games, settings and prefixes are kept.";
+    if (!isatty(STDIN_FILENO)) {
+      const std::string ask = std::format(
+          "if command -v zenity >/dev/null; then zenity --question --text='{0}'; "
+          "elif command -v kdialog >/dev/null; then kdialog --yesno '{0}'; "
+          "elif command -v yad >/dev/null; then yad --text='{0}'; "
+          "else exit 1; fi 2>/dev/null",
+          kQuestion);
+      if (std::system(ask.c_str()) != 0) return 1;
+    } else {
+      std::printf("%s [y/N] ", kQuestion);
+      std::string answer;
+      std::getline(std::cin, answer);
+      if (answer != "y" && answer != "Y") return 1;
+    }
+  }
+  if (remove) {
+    std::system("systemctl --user disable --now mirad.service >/dev/null 2>&1");
+    const auto removed = mira::setup::Remove(paths);
+    for (const auto& path : *removed) std::printf("removed %s\n", path.c_str());
+    if (removed->empty()) std::puts("nothing to remove");
+    std::system("systemctl --user daemon-reload >/dev/null 2>&1");
+    if (uninstall) {
+      std::error_code ec;
+      std::filesystem::remove_all(mira::paths::Home() / ".cache/mira-appimage", ec);
+      if (appimage_env && *appimage_env && std::filesystem::remove(appimage_env, ec)) {
+        std::printf("removed %s\n", appimage_env);
+      }
+    }
+    return 0;
+  }
+
+  const char* appimage = appimage_env;
+  if (!appimage || !*appimage) {
+    std::fprintf(stderr, "mira: run this from the AppImage: ./Mira-x86_64.AppImage setup\n");
+    return 1;
+  }
+  const std::filesystem::path self = std::filesystem::read_symlink("/proc/self/exe");
+  const std::filesystem::path icon = self.parent_path().parent_path() / "share/icons/hicolor/256x256/apps/mira.png";
+
+  const auto written = mira::setup::Install(paths, appimage, icon);
+  if (!written) {
+    std::fprintf(stderr, "mira: %s\n", written.error().message.c_str());
+    return 1;
+  }
+  for (const auto& path : *written) std::printf("wrote %s\n", path.c_str());
+  std::system("systemctl --user daemon-reload >/dev/null 2>&1");
+  std::system("update-desktop-database -q ~/.local/share/applications >/dev/null 2>&1");
+
+  const char* path_env = std::getenv("PATH");
+  if (!path_env || std::string(path_env).find(paths.bin_dir.string()) == std::string::npos) {
+    std::printf("note: %s isn't on PATH -- add it to use `mira` from a shell\n", paths.bin_dir.c_str());
+  }
+  if (enable_service) {
+    if (std::system("systemctl --user enable --now mirad.service") != 0) {
+      std::fprintf(stderr, "mira: couldn't enable mirad.service\n");
+      return 1;
+    }
+    std::puts("mirad.service enabled");
+  } else {
+    std::puts("mirad starts with the GUI; `systemctl --user enable --now mirad` keeps it running instead");
+  }
+  return 0;
+}
+
 void PrintUsage() {
   std::puts(
       "usage: mira <command> [args...]\n"
@@ -1293,6 +1472,9 @@ void PrintUsage() {
       "commands:\n"
       "  status                 check whether mirad is reachable\n"
       "  daemon [args...]       exec mirad in the foreground\n"
+      "  setup [--enable-service] [--remove|--uninstall]   add mira to PATH, the app\n"
+      "                         menu and systemd; --uninstall also deletes the AppImage\n"
+      "                         (run from the AppImage: Mira-x86_64.AppImage setup)\n"
       "  scan                   scan all library roots now\n"
       "  runners                list installed Proton/Wine builds\n"
       "  runners catalog [--kind proton|wine]     list downloadable versions\n"
@@ -1303,6 +1485,9 @@ void PrintUsage() {
       "  run <id> --exe PATH [--args ARGS]        run an arbitrary exe in this\n"
       "                         game's prefix — how you run a needs_install game's\n"
       "                         installer\n"
+      "  install <id> [--interactive] [--installer PATH]   run a needs_install game's\n"
+      "                         installer (silent for Inno/NSIS, otherwise shown)\n"
+      "  install <id> --info|--progress           describe the installer / check progress\n"
       "  finish-install <id>    mark a needs_install game ready after installing\n"
       "  list [--status S] [--tag T]        list games (hidden-tagged ones excluded\n"
       "                         by default; --tag hidden lists exactly those)\n"
@@ -1310,6 +1495,8 @@ void PrintUsage() {
       "  set <id> [flags...]    correct a game's auto-detected configuration\n"
       "  remove <id> [--delete-files] [--delete-prefix] [--delete-metadata] [--purge]\n"
       "  add <install_path> <exe_path> [--name N] [--platform windows|native] [--installer]\n"
+      "  relocate <id>           move a game's files into Mira's canonical layout\n"
+      "  library relocate        relocate every tracked game (see `mira relocate`)\n"
       "  steam scan             detect installed Steam games\n"
       "  lutris import          import games from Lutris's own database\n"
       "  desktop-entries list    list already-installed .desktop entries that could become games\n"
@@ -1342,7 +1529,9 @@ int main(int argc, char** argv) {
   if (command == "launch") return CmdLaunch(rest_argc, rest);
   if (command == "stop") return CmdStop(rest_argc, rest);
   if (command == "run") return CmdRun(rest_argc, rest);
+  if (command == "install") return CmdInstall(rest_argc, rest);
   if (command == "finish-install") return CmdFinishInstall(rest_argc, rest);
+  if (command == "relocate") return CmdRelocate(rest_argc, rest);
   if (command == "remove") return CmdRemove(rest_argc, rest);
   if (command == "add") return CmdAdd(rest_argc, rest);
   if (command == "steam") return CmdSteam(rest_argc, rest);
@@ -1356,6 +1545,7 @@ int main(int argc, char** argv) {
   if (command == "gamemode") return CmdGameMode(rest_argc, rest);
   if (command == "metadata") return CmdMetadata(rest_argc, rest);
   if (command == "tricks") return CmdTricks(rest_argc, rest);
+  if (command == "setup") return CmdSetup(rest_argc, rest);
   if (command == "daemon") return CmdDaemon(rest_argc, rest, argv[0]);
   if (command == "list") return CmdList(rest_argc, rest);
   if (command == "show") return CmdShow(rest_argc, rest);

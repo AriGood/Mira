@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 
+#include "config/Config.h"
 #include "model/Types.h"
 
 namespace mira::library {
@@ -26,6 +27,11 @@ struct DetectorSettings {
   // include scan.ignore_globs plus the caller's prefix_root exclusion.
   std::vector<std::string> ignore_globs;
 };
+
+// Reads every detect.*/scan.max_depth/scan.ignore_globs key into one
+// DetectorSettings -- shared by Scanner (a fresh scan) and AutoInstall (a
+// post-install re-detect), so both score/flag candidates identically.
+DetectorSettings SettingsFromConfig(const config::Config& config);
 
 // Scores the executables inside one already-identified game folder — it does
 // not discover game folders itself (that is Scanner's job) and does not know

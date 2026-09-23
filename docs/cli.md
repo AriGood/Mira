@@ -31,6 +31,15 @@ listening yet. Equivalent to just running `mirad` directly; exists mainly
 so `mira daemon` is discoverable from the one tool a new user
 already knows to reach for.
 
+## `mira setup [--enable-service] [--remove|--uninstall]`
+Local, no API call. Run from the AppImage (`./Mira-x86_64.AppImage setup`).
+Writes a `~/.local/bin/mira` wrapper (plus `mirad`/`mira-run` links) that
+runs the binaries bundled in the AppImage, a desktop entry with an
+"Uninstall Mira" action, the icon, and a systemd user unit.
+`--enable-service` also enables the unit. `--remove` undoes it all;
+`--uninstall` also asks for confirmation and deletes the AppImage. Games,
+settings and prefixes are never touched.
+
 ## `mira scan`
 Triggers `POST /v1/library/scan` — walks every enabled library root right
 now rather than waiting for `mirad`'s own inotify watcher to notice.
@@ -107,7 +116,23 @@ mira finish-install my-game                  # mark it ready
 ## `mira finish-install <id>`
 `POST /v1/games/{id}/finish-install` — the last step of the sequence
 above: flips a `needs_install`/`broken` game to `ready` once `exe_path` has
-been corrected. Fails with a clear error if `exe_path` is still empty.
+been corrected. Fails if `exe_path` is empty, still the installer, or
+doesn't exist.
+
+## `mira install <id> [--interactive] [--installer PATH]`
+`POST /v1/games/{id}/install` — runs a `needs_install` game's installer
+and marks it ready once the game exe is found. Inno Setup/NSIS run
+silently; anything else (or `--interactive`) opens so you can click
+through it. `--installer` picks the installer by hand (also works for a
+`broken` game).
+- `mira install <id> --info [--installer PATH]` — `GET .../installer`:
+  path, size, format, and the silent arguments.
+- `mira install <id> --progress` — `GET .../install/progress`.
+
+## `mira relocate <id>` / `mira library relocate`
+`POST /v1/games/{id}/relocate` / `POST /v1/library/relocate` — move a
+game's files and prefix into Mira's layout (named per `prefix_naming`).
+Only ever runs when asked.
 
 ## `mira remove <id> [--delete-files] [--delete-prefix]`
 `DELETE /v1/games/{id}`, with the matching query params if either flag is
@@ -305,6 +330,6 @@ yet either (`docs/api.md` marks them **planned** — the latter isn't needed
 today since `GET /v1/runners` already rediscovers on every call). There's
 also no equivalent of the old-plan `resetup` — a game stuck at
 `setting_up` is retried automatically on the next scan, and a
-`needs_install` game uses `mira run` + `mira finish-install` instead (see
-above), which cover the same need more precisely than a single
+`needs_install` game uses `mira install` (or `mira run` + `mira
+finish-install`) instead (see above), which cover the same need more precisely than a single
 "re-run everything from scratch" command would.

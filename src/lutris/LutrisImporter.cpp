@@ -33,20 +33,6 @@ fs::path EnvOr(const char* name, const fs::path& fallback) {
 // per-game YAML actually lives on a system that never had ~/.config/lutris
 // (confirmed against a real install: no ~/.config/lutris at all, configs
 // under ~/.local/share/lutris/games/).
-std::optional<fs::path> FindLutrisDataDir(const config::Config& config) {
-  std::vector<fs::path> candidates;
-  if (const fs::path configured = config.GetPath("lutris.data_dir"); !configured.empty()) {
-    candidates.push_back(configured);
-  }
-  candidates.push_back(EnvOr("XDG_DATA_HOME", paths::Home() / ".local" / "share") / "lutris");
-
-  std::error_code ec;
-  for (const fs::path& candidate : candidates) {
-    if (fs::exists(candidate / "pga.db", ec)) return candidate;
-  }
-  return std::nullopt;
-}
-
 struct LutrisRow {
   int id = 0;
   std::string name;
@@ -186,6 +172,25 @@ std::optional<LutrisGameConfig> ReadGameConfig(const fs::path& yaml_path, bool r
 
 }  // namespace
 
+// Lutris's own settings.py: CONFIG_DIR = get_user_config_dir()/lutris, but
+// falls back to DATA_DIR when that doesn't exist — which is where the
+// per-game YAML actually lives on a system that never had ~/.config/lutris
+// (confirmed against a real install: no ~/.config/lutris at all, configs
+// under ~/.local/share/lutris/games/).
+std::optional<fs::path> FindLutrisDataDir(const config::Config& config) {
+  std::vector<fs::path> candidates;
+  if (const fs::path configured = config.GetPath("lutris.data_dir"); !configured.empty()) {
+    candidates.push_back(configured);
+  }
+  candidates.push_back(EnvOr("XDG_DATA_HOME", paths::Home() / ".local" / "share") / "lutris");
+
+  std::error_code ec;
+  for (const fs::path& candidate : candidates) {
+    if (fs::exists(candidate / "pga.db", ec)) return candidate;
+  }
+  return std::nullopt;
+}
+
 LutrisImporter::LutrisImporter(config::Config& config, store::GameStore& games, api::EventBus& events)
     : config_(config), games_(games), events_(events) {}
 
@@ -274,6 +279,7 @@ Result<LutrisImportSummary> LutrisImporter::Import() {
     model::Game game = existing.value_or(model::Game{});
     game.id = existing ? game.id : games_.NextId(row.slug.empty() ? row.name : row.slug);
     game.source = "lutris";
+    game.source_ref = row.slug;  // joins Lutris's own cached banner/cover/icon files by slug
     game.name = row.name;
     game.install_path = install_path;
     game.exe_path = exe_path;

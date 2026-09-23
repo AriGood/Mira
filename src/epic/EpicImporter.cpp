@@ -6,6 +6,7 @@
 
 #include "core/Log.h"
 #include "epic/Legendary.h"
+#include "library/PrefixNaming.h"
 #include "runner/RunnerRegistry.h"
 
 namespace mira::epic {
@@ -82,7 +83,7 @@ Result<EpicImportSummary> EpicImporter::Import() {
       // ProvisionGame creates the prefix AT data_dir, it doesn't invent a
       // path -- the caller has to say where first (same convention
       // AutoSetup.cpp uses for a fresh scan-detected Windows game).
-      game.data_dir = (config_.GetPath("prefix_root") / game.id).string();
+      if (game.data_dir.empty()) game.data_dir = library::PrefixDir(config_, game).string();
       const model::Game provisioned = provisioner.ProvisionGame(game);
       game.runner_ref = provisioned.runner_ref;
       game.data_dir = provisioned.data_dir;

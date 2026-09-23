@@ -205,4 +205,18 @@ Detector::Result Detector::Detect(const fs::path& folder) const {
   return result;
 }
 
+DetectorSettings SettingsFromConfig(const config::Config& config) {
+  DetectorSettings settings;
+  settings.max_depth = static_cast<int>(config.GetInt("scan.max_depth"));
+  settings.rules = config.GetStringArray("detect.rules");
+  settings.name_match_bonus = config.GetDouble("detect.name_match_bonus");
+  settings.depth_penalty = config.GetDouble("detect.depth_penalty");
+  settings.low_confidence_threshold = config.GetDouble("detect.low_confidence_threshold");
+  settings.deny_name_patterns = config.GetStringArray("detect.deny_name_patterns");
+  settings.installer_name_patterns = config.GetStringArray("detect.installer_name_patterns");
+  settings.installer_min_size_mb = config.GetInt("detect.installer_min_size_mb");
+  settings.ignore_globs = config.GetStringArray("scan.ignore_globs");
+  return settings;
+}
+
 }  // namespace mira::library

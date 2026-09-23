@@ -334,6 +334,50 @@ TEST_CASE("Resolve reports an uninstalled build instead of succeeding with none"
   CHECK_FALSE(native->build.has_value());
 }
 
+TEST_CASE("ResolveRef leaves a non-empty runner_ref untouched") {
+  config::Config config(TempFile("resolveref-explicit.toml"));
+  config.Load();
+  runner::RunnerRegistry registry(config);
+
+  model::Game game;
+  game.platform = model::Platform::Windows;
+  game.runner_ref = "wine:system";
+  CHECK(registry.ResolveRef(game) == "wine:system");
+}
+
+TEST_CASE("ResolveRef falls back to default_runner.native for an empty ref on a native game") {
+  config::Config config(TempFile("resolveref-native.toml"));
+  config.Load();
+  runner::RunnerRegistry registry(config);
+
+  model::Game game;
+  game.platform = model::Platform::Native;
+  CHECK(registry.ResolveRef(game) == "native:native");
+}
+
+TEST_CASE("ResolveRef expands \"auto\" to a real installed windows runner, not native") {
+  // Regression: /launch and /run used to hardcode native:native for any
+  // empty runner_ref, silently ignoring default_runner.windows entirely
+  // (including its "auto" case) for every Windows game with no runner_ref
+  // set yet -- e.g. a fresh Lutris import.
+  config::Config config(TempFile("resolveref-windows-auto.toml"));
+  config.Load();
+  runner::RunnerRegistry registry(config);
+
+  model::Game game;
+  game.platform = model::Platform::Windows;
+  const std::string ref = registry.ResolveRef(game);
+  CHECK(ref != "native:native");
+
+  const bool has_proton =
+      std::ranges::any_of(registry.DiscoverAll(), [](const model::RunnerBuild& b) { return b.kind == "proton"; });
+  if (has_proton) {
+    CHECK(ref == "proton:latest");
+  } else {
+    CHECK(ref == "wine:latest");
+  }
+}
+
 TEST_CASE("the old proton_umu: runner_ref spelling still resolves after the rename") {
   // umu was briefly modelled as its own runner kind; it's the mechanism
   // Proton runs through, not a runner. A games.toml written before the

@@ -88,6 +88,7 @@ std::string CategoryFor(std::string_view key) {
       {"library.remove_missing", "Library"},
       {"metadata.enabled", "Metadata"},
       {"steamgriddb.api_key", "Metadata"},
+      {"prefix_naming", "Library"},
   };
   if (const auto it = kOverrides.find(key); it != kOverrides.end()) return std::string(it->second);
 
@@ -128,6 +129,14 @@ Schema::Schema() {
        "Where per-game data directories (Wine/Proton prefixes) are created. Always "
        "excluded from scanning, wherever it points."},
 
+      {"prefix_naming", Type::String, "name", Tier::Advanced,
+       "How a new prefix directory under prefix_root is named: \"name\" derives it from the "
+       "game's title (e.g. \"celeste\", \"celeste-2\" on a collision); \"id\" uses the game's "
+       "own id verbatim (e.g. \"gog-1207660413\"). Only affects newly-provisioned games -- "
+       "already-provisioned ones keep their existing directory until explicitly relocated "
+       "(POST /v1/games/{id}/relocate).",
+       OneOf({"name", "id"})},
+
       {"auto_setup", Type::Bool, true, Tier::Basic,
        "Configure and provision newly detected games automatically. With this off, games "
        "are detected but wait for the frontend to configure them."},
@@ -135,6 +144,49 @@ Schema::Schema() {
       {"open_config_on_add", Type::Bool, true, Tier::Basic,
        "Ask the frontend to open its configuration menu when a game is added, so the "
        "auto-detected settings can be reviewed."},
+
+      {"relocate.install_root", Type::String, "", Tier::Advanced,
+       "Library root that `mira relocate` moves game files into. Empty uses the first "
+       "library_roots entry. Must be one of library_roots."},
+
+      {"relocate.allow_copy", Type::Bool, true, Tier::Advanced,
+       "When a relocate crosses filesystems, copy then delete the original. Off refuses "
+       "cross-filesystem moves instead."},
+
+      {"launch.pin_runner", Type::Bool, true, Tier::Advanced,
+       "When a Windows game with no runner set is launched, save the Proton/Wine build it "
+       "resolved to so later launches use the same one."},
+
+      {"scan.auto_run_installers", Type::Bool, true, Tier::Advanced,
+       "Silently run a detected installer (Inno Setup, NSIS) as soon as it's found, the same "
+       "way a detected archive auto-extracts. Unrecognized formats and failed runs stay "
+       "needs_install for `mira install`."},
+
+      {"install.timeout_s", Type::Int, 0, Tier::Advanced,
+       "Kill a silent installer after this many seconds. 0 = no limit.", Range(0, 86400)},
+
+      {"install.runner", Type::String, "", Tier::Advanced,
+       "Runner used to run installers, e.g. \"proton:GE-Proton11-7\" or \"wine:latest\". "
+       "Empty uses the game's own default (default_runner.windows). The game keeps it afterward, "
+       "since its prefix was made with it."},
+
+      {"install.detect_dirs", Type::StringArray,
+       json::array({"Program Files", "Program Files (x86)", "GOG Games", "Games"}), Tier::Advanced,
+       "Folders under the prefix's drive_c checked for a newly installed game when the installer "
+       "didn't install into the game folder."},
+
+      {"install.retry_failed", Type::Bool, false, Tier::Advanced,
+       "Retry a failed automatic install on every scan instead of waiting for `mira install`."},
+
+      {"install.show_progress", Type::Bool, false, Tier::Advanced,
+       "Show Inno Setup's progress window during a silent install (/SILENT instead of "
+       "/VERYSILENT). Still asks no questions. NSIS has no visible silent mode."},
+
+      {"install.inno_args", Type::String, "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-",
+       Tier::Advanced, "Arguments for a silent Inno Setup install (GOG offline installers). /DIR is added."},
+
+      {"install.nsis_args", Type::String, "/S", Tier::Advanced,
+       "Arguments for a silent NSIS install. /D is added."},
 
       {"scan.tag_by_root", Type::Bool, true, Tier::Basic,
        "Automatically tag each newly-detected game with the name of the library root folder "
@@ -368,6 +420,9 @@ Schema::Schema() {
        "game database (pga.db) and per-game configs and add them alongside "
        "Mira's own library."},
 
+      {"lutris.import_art", Type::Bool, true, Tier::Basic,
+       "Use the cover, banner and icon Lutris already downloaded for a Lutris-imported game."},
+
       {"lutris.data_dir", Type::String, "", Tier::Advanced,
        "Override for where Lutris keeps pga.db and its per-game configs. "
        "Empty auto-detects $XDG_DATA_HOME/lutris, then ~/.local/share/lutris."},
@@ -395,8 +450,12 @@ Schema::Schema() {
        "Path to the gogdl binary. Empty tries Mira's own managed download "
        "(see \"mira gog setup\"), then $PATH."},
 
+      {"gog.folder_naming", Type::String, "title", Tier::Advanced,
+       "How a GOG install folder under gog.install_root is named: \"title\" (e.g. "
+       "\"Hollow Knight\") or \"id\" (the GOG product id).", OneOf({"title", "id"})},
+
       {"gog.install_root", Type::String, "~/.local/share/mira/gog", Tier::Advanced,
-       "Where GOG titles are installed to, one subdirectory per game id — "
+       "Where GOG titles are installed to, one folder per game (see gog.folder_naming) — "
        "unlike Legendary/butler, gogdl doesn't choose or remember an "
        "install location on its own, so Mira has to. Deliberately outside "
        "library_roots' usual defaults (e.g. ~/Games) — a real game install "

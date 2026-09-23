@@ -2,12 +2,14 @@
 
 #include <algorithm>
 #include <fstream>
+#include <optional>
 
 #include <json.hpp>
 
 #include "core/Json.h"
 #include "core/Log.h"
 #include "gog/Gog.h"
+#include "library/PrefixNaming.h"
 #include "runner/RunnerRegistry.h"
 
 namespace mira::gog {
@@ -21,14 +23,22 @@ void AddTag(std::vector<std::string>& tags, const std::string& tag) {
 
 std::filesystem::path InstallRoot(const config::Config& config) { return config.GetPath("gog.install_root"); }
 
-// gogdl's `download --path P` creates one subdirectory under P named for
-// the game's title, not P itself (confirmed live: `download --path
-// .../1207660413` put the game under `.../1207660413/Shadowrun Returns/`)
-// -- `gogdl import` needs pointing at that inner directory or it crashes
-// looking for a goggame-*.info file that isn't there. Falls back to `dir`
-// itself if it doesn't look like that shape (zero or multiple
-// subdirectories), rather than guessing wrong.
+// GOG's product id, from the goggame-<id>.info every gogdl install carries.
+std::optional<std::string> GogIdIn(const fs::path& dir) {
+  std::error_code ec;
+  for (const auto& entry : fs::directory_iterator(dir, ec)) {
+    const std::string name = entry.path().filename().string();
+    if (!name.starts_with("goggame-") || !name.ends_with(".info")) continue;
+    const std::string id = name.substr(8, name.size() - 8 - 5);
+    if (!id.empty() && std::ranges::all_of(id, [](char c) { return c >= '0' && c <= '9'; })) return id;
+  }
+  return std::nullopt;
+}
+
+// The game directory itself when it holds a goggame-*.info; otherwise the
+// legacy <install_root>/<id>/<Title>/ layout's single subdirectory, or `dir`.
 fs::path ResolveGameDir(const fs::path& dir) {
+  if (GogIdIn(dir)) return dir;
   std::error_code ec;
   fs::path only;
   int count = 0;
@@ -41,6 +51,16 @@ fs::path ResolveGameDir(const fs::path& dir) {
 }
 
 }  // namespace
+
+std::filesystem::path FindGameDir(const config::Config& config, const std::string& id) {
+  std::error_code ec;
+  for (const auto& entry : fs::directory_iterator(InstallRoot(config), ec)) {
+    if (!entry.is_directory()) continue;
+    const fs::path dir = ResolveGameDir(entry.path());
+    if (GogIdIn(dir) == id) return dir;
+  }
+  return {};
+}
 
 GogImporter::GogImporter(config::Config& config, store::GameStore& games, api::EventBus& events)
     : config_(config), games_(games), events_(events) {}
@@ -90,7 +110,7 @@ Result<model::Game> GogImporter::ImportPath(const std::string& id, const std::fi
 
   if (!existing || existing->runner_ref.empty() || existing->data_dir.empty()) {
     const runner::RunnerRegistry provisioner(config_);
-    game.data_dir = (config_.GetPath("prefix_root") / game.id).string();
+    if (game.data_dir.empty()) game.data_dir = library::PrefixDir(config_, game).string();
     const model::Game provisioned = provisioner.ProvisionGame(game);
     game.runner_ref = provisioned.runner_ref;
     game.data_dir = provisioned.data_dir;
@@ -117,7 +137,7 @@ Result<GogImportSummary> GogImporter::Import() {
 
   for (const auto& entry : fs::directory_iterator(root, ec)) {
     if (!entry.is_directory()) continue;
-    const std::string id = entry.path().filename().string();
+    const std::string id = GogIdIn(ResolveGameDir(entry.path())).value_or(entry.path().filename().string());
     const bool existed = games_.Find("gog-" + id).has_value();
 
     const Result<model::Game> imported = ImportPath(id, entry.path());
