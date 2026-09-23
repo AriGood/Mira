@@ -1,7 +1,5 @@
 #include "SettingsPanel.h"
 
-#include "../dialogs/SettingsCategories.h"
-
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDoubleSpinBox>
@@ -25,7 +23,6 @@
 #include <QWidget>
 
 #include <algorithm>
-#include <map>
 #include <optional>
 #include <utility>
 
@@ -38,10 +35,6 @@ SettingsPanel::SettingsPanel(QWidget* parent) : QWidget(parent) {
 
   nav_ = new SettingsNavWidget(this);
   layout->addWidget(nav_, /*stretch=*/1);
-
-  show_advanced_ = new QCheckBox("Show advanced && expert settings", this);
-  connect(show_advanced_, &QCheckBox::toggled, this, &SettingsPanel::SetAdvancedVisible);
-  nav_->SetHeaderWidget(show_advanced_);
 
   BuildInterfaceGroup();
   BuildShortcutsGroup();
@@ -310,7 +303,6 @@ void SettingsPanel::FocusKey(const QString& key) {
     return;
   }
 
-  if (it->entry.tier != "basic") show_advanced_->setChecked(true);
   nav_->RevealRow(it->row_widget);
 
   QWidget* field_widget = it->check   ? static_cast<QWidget*>(it->check)
@@ -323,23 +315,19 @@ void SettingsPanel::FocusKey(const QString& key) {
 }
 
 void SettingsPanel::BuildRows() {
-  std::map<QString, std::vector<size_t>> buckets;
-  for (size_t i = 0; i < fields_.size(); ++i) {
-    buckets[QString::fromStdString(fields_[i].entry.category)].push_back(i);
-  }
+  std::vector<std::string> categories;
+  for (const Field& field : fields_) categories.push_back(field.entry.category);
 
-  QStringList ordered_categories;
-  for (const QString& category : mira_gui::settings::CategoryOrder()) {
-    if (buckets.contains(category)) ordered_categories.push_back(category);
-  }
-  for (const auto& [category, indices] : buckets) {
-    if (!ordered_categories.contains(category)) ordered_categories.push_back(category);
-  }
-
-  for (const QString& category : ordered_categories) {
+  for (const auto& [category, rows] : GroupByCategory(categories)) {
     QFormLayout* form = nav_->AddCategory(category);
+    int group = fields_[rows.front()].entry.group;
 
-    for (const size_t i : buckets[category]) {
+    for (const size_t i : rows) {
+      if (fields_[i].entry.group != group) {
+        nav_->AddDivider(form);
+        group = fields_[i].entry.group;
+      }
+
       Field& field = fields_[i];
       field.owner_form = form;
 
@@ -404,15 +392,17 @@ void SettingsPanel::BuildRows() {
         row_layout->addWidget(reset_button);
       }
 
-      auto* label = new QLabel(QString::fromStdString(field.entry.key), this);
+      const QString label_text = QString::fromStdString(
+          field.entry.label.empty() ? field.entry.key : field.entry.label);
+      auto* label = new QLabel(label_text, this);
       label->setToolTip(QString::fromStdString(field.entry.doc));
       row_widget->setToolTip(QString::fromStdString(field.entry.doc));
 
       field.row_widget = row_widget;
       form->addRow(label, row_widget);
       nav_->RegisterRow(form, row_widget,
-                        QString("%1 %2 %3").arg(QString::fromStdString(field.entry.key), category,
-                                                 QString::fromStdString(field.entry.doc)));
+                        QString("%1 %2 %3 %4").arg(QString::fromStdString(field.entry.key), label_text,
+                                                    category, QString::fromStdString(field.entry.doc)));
     }
 
     if (category == "Launching") {
@@ -423,8 +413,6 @@ void SettingsPanel::BuildRows() {
       LoadGameModeStatus();
     }
   }
-
-  SetAdvancedVisible(show_advanced_->isChecked());
 }
 
 void SettingsPanel::LoadGameModeStatus() {
@@ -466,12 +454,6 @@ void SettingsPanel::PopulateRunnerCombos(const mira_gui::RunnersResult& result) 
     }
     field.combo->setEditText(current);
     field.combo->blockSignals(false);
-  }
-}
-
-void SettingsPanel::SetAdvancedVisible(bool show) {
-  for (const Field& field : fields_) {
-    if (field.entry.tier != "basic") nav_->SetRowGateVisible(field.row_widget, show);
   }
 }
 
@@ -518,6 +500,8 @@ void SettingsPanel::ResetField(size_t index) {
         field.original = CurrentText(field);
       });
 }
+
+void SettingsPanel::SetFooterActions(QWidget* actions) { nav_->AddFooterWidget(actions); }
 
 bool SettingsPanel::IsDirty() const {
   if (scan_on_startup_->isChecked() != scan_on_startup_original_) return true;

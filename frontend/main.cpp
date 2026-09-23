@@ -2,6 +2,8 @@
 #include <QDir>
 #include <QGuiApplication>
 #include <QIcon>
+#include <QLocalServer>
+#include <QLocalSocket>
 #include <QLockFile>
 #include <QStandardPaths>
 #include <QStringList>
@@ -28,6 +30,15 @@ int main(int argc, char** argv) {
   QDir().mkpath(runtime_dir);
   QLockFile single_instance_lock(runtime_dir + "/mira-gui.lock");
   if (!single_instance_lock.tryLock(0)) {
+    // Ask the instance already holding the lock to raise its own window
+    // instead of just quietly doing nothing -- see the QLocalServer set up
+    // below, alongside window creation.
+    QLocalSocket socket;
+    socket.connectToServer("mira-gui-activate");
+    if (socket.waitForConnected(200)) {
+      socket.write("activate");
+      socket.waitForBytesWritten(200);
+    }
     return 0;
   }
   // Matches packaging/mira.desktop, which is how the compositor and the
@@ -67,6 +78,19 @@ int main(int argc, char** argv) {
     // means exactly what it always did.
     mira_gui::tray::Attach(window);
     window->show();
+
+    // Raises this window when a second launch pings "activate". removeServer
+    // clears a stale socket left by a crashed instance.
+    QLocalServer::removeServer("mira-gui-activate");
+    auto* activation_server = new QLocalServer(window);
+    activation_server->listen("mira-gui-activate");
+    QObject::connect(activation_server, &QLocalServer::newConnection, window, [activation_server, window] {
+      QLocalSocket* client = activation_server->nextPendingConnection();
+      window->show();
+      window->raise();
+      window->activateWindow();
+      client->disconnectFromServer();
+    });
   });
   QObject::connect(supervisor, &mira_gui::DaemonSupervisor::Failed, &app, [](QString error) {
     mira_gui::notify::FailedWithHint(

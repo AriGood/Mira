@@ -294,13 +294,11 @@ struct PatchGameResult {
 // settings screen exist with zero hardcoded knowledge of what settings
 // there are. `type` is one of the human strings config::ToString(Type)
 // produces: "a boolean" | "an integer" | "a number" | "a string" |
-// "an array of strings" | "an object". `tier` is "basic" | "advanced" |
-// "expert" — a frontend should show basic by default and fold the rest
-// behind a disclosure, never omit them.
+// "an array of strings" | "an object". Entries arrive in display order.
 struct ConfigSchemaEntry {
   std::string key;
+  std::string label;  // display name; the key is only what's stored
   std::string type;
-  std::string tier;
   std::string doc;
   std::string default_display;
 
@@ -314,6 +312,8 @@ struct ConfigSchemaEntry {
   std::optional<double> minimum;
   std::optional<double> maximum;
   std::string category;        // UI grouping; always present
+  int group = 0;               // a divider goes where this changes within a category
+  bool per_game = false;       // also overridable per game (scope "per_game")
   bool is_secret = false;      // mask this value's field
   bool is_runner_ref = false;  // offer a runner picker (GET /v1/runners) instead of free text
 };

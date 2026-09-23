@@ -178,7 +178,9 @@ This matters more than it looks:
 - **`settings.toml`** holds backend settings. Every key is declared in
   `src/config/Schema.cpp`, and `ui/SettingsPanel` is generated entirely from
   `GET /v1/config/schema` — almost no setting name is hardcoded in the
-  frontend. Adding a backend setting requires no frontend change.
+  frontend. Adding a backend setting requires no frontend change, and where
+  it shows (section, order, label, divider, per-game or not) is decided in
+  the schema too.
 - **`frontend.toml`** holds the frontend's own state and preferences:
   window size, tile size, which filter and sort were selected,
   the left sidebar's splitter width, and whether to scan the library on

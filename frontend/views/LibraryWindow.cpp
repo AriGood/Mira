@@ -132,6 +132,10 @@ protected:
         }
         base_selection_.clear();
         for (QListWidgetItem* selected : selectedItems()) base_selection_.insert(selected);
+        // A hover dwell timer started before the drag threshold was crossed
+        // otherwise fires mid-drag and pops the hover card up anchored to
+        // wherever the drag started, well after the cursor has moved on.
+        TrackHover(nullptr);
         rubber_band_ = new QRubberBand(QRubberBand::Rectangle, viewport());
         rubber_band_->setGeometry(QRect(drag_origin_, QSize()));
         rubber_band_->show();
@@ -962,30 +966,6 @@ QWidget* LibraryWindow::BuildTopBar() {
   connect(zoom_, &QSlider::valueChanged, this, &LibraryWindow::SetTileWidth);
   layout->addWidget(zoom_);
 
-  // The gear itself now lives in the sidebar (BuildSidebar) — this is just
-  // the Back/Reset/Save trio that replaces the top bar's usual right side
-  // while Settings is open (see SetSettingsChromeVisible).
-  settings_actions_widget_ = new QWidget(top_bar_);
-  auto* settings_actions_layout = new QHBoxLayout(settings_actions_widget_);
-  settings_actions_layout->setContentsMargins(0, 0, 0, 0);
-  settings_actions_layout->setSpacing(6);
-  settings_back_button_ = new QPushButton("← Back", settings_actions_widget_);
-  connect(settings_back_button_, &QPushButton::clicked, this, &LibraryWindow::RequestCloseSettings);
-  settings_reset_button_ = new QPushButton("Reset", settings_actions_widget_);
-  settings_reset_button_->setToolTip("Discard unsaved changes on this screen — back to what was last saved.");
-  connect(settings_reset_button_, &QPushButton::clicked, this, [this] {
-    if (settings_panel_ != nullptr) settings_panel_->DiscardChanges();
-  });
-  settings_save_button_ = new QPushButton("Save", settings_actions_widget_);
-  connect(settings_save_button_, &QPushButton::clicked, this, [this] {
-    if (settings_panel_ != nullptr) settings_panel_->Save();
-  });
-  settings_actions_layout->addWidget(settings_back_button_);
-  settings_actions_layout->addWidget(settings_reset_button_);
-  settings_actions_layout->addWidget(settings_save_button_);
-  settings_actions_widget_->hide();
-  layout->addWidget(settings_actions_widget_);
-
   // Moved from the sidebar's old hamburger menu -- generic actions that fit
   // the top bar (window chrome) better than a library-focused sidebar.
   refresh_button_ = new QToolButton(top_bar_);
@@ -1600,10 +1580,13 @@ void LibraryWindow::ApplyFilter() {
     item->setData(mira_gui::GameTileDelegate::StatusRole, QString::fromStdString(game.status));
     item->setData(mira_gui::GameTileDelegate::RunningRole, running_ids_.contains(game.id));
     item->setData(Qt::DecorationRole, CoverFor(game));
-    item->setToolTip(game.last_error.empty()
-                         ? QString::fromStdString(game.name)
-                         : QString("%1\n%2").arg(QString::fromStdString(game.name),
-                                                 QString::fromStdString(game.last_error)));
+    // Only for an error: the plain name case is already covered by the
+    // HoverCard, and Qt's own tooltip popping up alongside it just doubled
+    // up on the same text in a worse-looking box.
+    if (!game.last_error.empty()) {
+      item->setToolTip(QString("%1\n%2").arg(QString::fromStdString(game.name),
+                                             QString::fromStdString(game.last_error)));
+    }
     if (game.id == previously_selected) to_select = item;
   }
   grid_->blockSignals(false);
@@ -2042,7 +2025,6 @@ bool LibraryWindow::SettingsOpen() const {
 }
 
 void LibraryWindow::SetSettingsChromeVisible(bool settings_open) {
-  settings_actions_widget_->setVisible(settings_open);
   SetGridControlsEnabled(!settings_open);
   UpdateLibraryNavActive();
 }
@@ -2126,6 +2108,27 @@ QWidget* LibraryWindow::BuildSettingsPage() {
           });
   layout->addWidget(settings_panel_, /*stretch=*/1);
 
+  // Pinned under the settings nav's category list.
+  auto* actions = new QWidget();
+  auto* actions_layout = new QHBoxLayout(actions);
+  actions_layout->setContentsMargins(0, 0, 0, 0);
+  actions_layout->setSpacing(6);
+  auto* back = new QPushButton("← Back", actions);
+  connect(back, &QPushButton::clicked, this, &LibraryWindow::RequestCloseSettings);
+  auto* reset = new QPushButton("Reset", actions);
+  reset->setToolTip("Discard unsaved changes on this screen — back to what was last saved.");
+  connect(reset, &QPushButton::clicked, this, [this] {
+    if (settings_panel_ != nullptr) settings_panel_->DiscardChanges();
+  });
+  auto* save = new QPushButton("Save", actions);
+  connect(save, &QPushButton::clicked, this, [this] {
+    if (settings_panel_ != nullptr) settings_panel_->Save();
+  });
+  actions_layout->addWidget(back);
+  actions_layout->addWidget(reset);
+  actions_layout->addWidget(save);
+  settings_panel_->SetFooterActions(actions);
+
   return page;
 }
 
@@ -2189,8 +2192,14 @@ QWidget* LibraryWindow::BuildGameEditCard(const std::string& id) {
   auto* scroll = new QScrollArea(card);
   scroll->setWidgetResizable(true);
   scroll->setFrameShape(QFrame::NoFrame);
-  game_edit_form_ = new mira_gui::GameEditForm(id, scroll);
+  // GameEditForm has no margins of its own; pad it here, 16px to match
+  // GameDetailDialog.
+  auto* form_container = new QWidget();
+  auto* form_container_layout = new QVBoxLayout(form_container);
+  form_container_layout->setContentsMargins(16, 16, 16, 16);
+  game_edit_form_ = new mira_gui::GameEditForm(id, form_container);
   game_edit_form_->SetArtworkStore(artwork_);
+  form_container_layout->addWidget(game_edit_form_);
   connect(game_edit_form_, &mira_gui::GameEditForm::ArtworkPickRequested, this,
           [this, id](const QString& slot) { OpenArtworkPicker(id, slot.toStdString()); });
   connect(game_edit_form_, &mira_gui::GameEditForm::LoadFailed, this, [this](QString error) {
@@ -2208,7 +2217,7 @@ QWidget* LibraryWindow::BuildGameEditCard(const std::string& id) {
             // case a toast is for.
             CloseGameEdit();
           });
-  scroll->setWidget(game_edit_form_);
+  scroll->setWidget(form_container);
   layout->addWidget(scroll, /*stretch=*/1);
 
   auto* footer = new QWidget(card);

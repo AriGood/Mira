@@ -173,9 +173,11 @@ ConfigSchemaResult GetConfigSchemaSync() {
     ConfigSchemaEntry e;
     e.key = entry.value("key", std::string());
     e.type = entry.value("type", std::string());
-    e.tier = entry.value("tier", std::string());
+    e.label = entry.value("label", std::string());
     e.doc = entry.value("doc", std::string());
     e.category = entry.value("category", std::string());
+    e.group = entry.value("group", 0);
+    e.per_game = entry.value("scope", std::string()) == "per_game";
     e.is_secret = entry.value("is_secret", false);
     e.is_runner_ref = entry.value("is_runner_ref", false);
     if (entry.contains("default")) e.default_display = mapping::ToDisplayString(entry["default"]);
