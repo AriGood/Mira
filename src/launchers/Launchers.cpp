@@ -123,21 +123,28 @@ Result<model::Game> InstallInto(config::Config& config, store::GameStore& games,
   if (auto saved = games.Upsert(game); !saved) return std::unexpected(saved.error());
 
   const runner::RunnerRegistry runners(config);
-  const model::Game provisioned = runners.ProvisionGame(game);
-  if (provisioned.status == model::GameStatus::Broken) return Err("provision_failed", provisioned.last_error);
-  game.runner_ref = provisioned.runner_ref;
-  game.data_dir = provisioned.data_dir;
+  std::error_code ec;
+  // Provisioning an existing prefix waits on anything running in it, such
+  // as the launcher itself.
+  if (game.runner_ref.empty() || !fs::exists(fs::path(game.data_dir) / "drive_c", ec)) {
+    const model::Game provisioned = runners.ProvisionGame(game);
+    if (provisioned.status == model::GameStatus::Broken) return Err("provision_failed", provisioned.last_error);
+    game.runner_ref = provisioned.runner_ref;
+    game.data_dir = provisioned.data_dir;
+  }
 
   WriteDefaults(config, launcher, game.data_dir);
-  for (const std::string& verb : launcher.tricks) {
-    log::Info("winetricks {} for {}", verb, launcher.name);
-    if (auto tricked = runner::RunTricksVerb(runners, game, verb); !tricked) return std::unexpected(tricked.error());
+  auto exe = FindExe(launcher, game.data_dir);  // already there: just register it
+  if (!exe) {
+    for (const std::string& verb : launcher.tricks) {
+      log::Info("winetricks {} for {}", verb, launcher.name);
+      if (auto tricked = runner::RunTricksVerb(runners, game, verb); !tricked) return std::unexpected(tricked.error());
+    }
+    if (!launcher.installer_url.empty()) {
+      if (auto ran = RunInstaller(config, launcher, game); !ran) return std::unexpected(ran.error());
+    }
+    exe = FindExe(launcher, game.data_dir);
   }
-  if (!launcher.installer_url.empty()) {
-    if (auto ran = RunInstaller(config, launcher, game); !ran) return std::unexpected(ran.error());
-  }
-
-  const auto exe = FindExe(launcher, game.data_dir);
   if (!exe) return Err("install_incomplete", std::format("{} didn't finish installing", launcher.name));
   game.install_path = exe->parent_path().string();
   game.exe_path = exe->filename().string();
@@ -157,7 +164,7 @@ const std::vector<Launcher>& All() {
     battlenet.installer_url = "https://downloader.battle.net/download/getInstaller?os=win&installer=Battle.net-Setup.exe";
     battlenet.installer_args = {"--lang=enUS", "--installpath=C:\\Program Files (x86)\\Battle.net"};
     battlenet.interactive = true;
-    battlenet.env = {{"WINEDLLOVERRIDES", "locationapi=d"}};
+    battlenet.env = {{"WINEDLLOVERRIDES", "locationapi=d"}, {"WINE_SIMULATE_WRITECOPY", "1"}};
 
     Launcher ubisoft;
     ubisoft.id = "ubisoft";
@@ -245,8 +252,12 @@ Result<Command> BuildCommand(config::Config& config, const store::GameStore& gam
   if (!resolved) return std::unexpected(resolved.error());
   model::Game run_as = *host;
   run_as.args.clear();
+  // The game's own id, so its window is its own app rather than the launcher's.
+  run_as.id = game.id;
   if (const auto gameid = game.runner_config.find("gameid"); gameid != game.runner_config.end()) {
     run_as.runner_config["gameid"] = *gameid;
+  } else {
+    run_as.runner_config.erase("gameid");
   }
   for (const auto& [key, value] : game.env) run_as.env[key] = value;
   auto command = resolved->runner->BuildCommand(run_as, resolved->build);
