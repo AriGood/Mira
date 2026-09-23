@@ -47,4 +47,9 @@ inline constexpr std::string_view kHumbleCliRepo = "smbl64/humble-cli";
 inline constexpr std::string_view kHumbleCliAssetPattern = "humble-cli-linux-amd64.tar.gz";
 inline constexpr std::string_view kHumbleCliBinaryName = "humble-cli-linux-amd64";
 
+// nile (Heroic's Amazon Games client) ships one standalone binary per
+// release, same shape as gogdl.
+inline constexpr std::string_view kNileRepo = "imLinguin/nile";
+inline constexpr std::string_view kNileAssetPattern = "nile_linux_x86_64";
+
 }  // namespace mira::config::runner_sources

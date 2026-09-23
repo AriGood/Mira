@@ -254,6 +254,16 @@ plug in there.
   prefix; add it manually once it's landed (`mira add`, same as any other
   manually-acquired game).
 
+## `mira amazon setup|status|login|logout|import`
+Amazon Games / Prime Gaming, via [nile](https://github.com/imLinguin/nile).
+- `setup` — downloads nile's latest release.
+- `status` — whether nile is installed and logged in.
+- `login` — prints an Amazon login URL, then asks for the amazon.com URL
+  the browser ends on.
+- `import` — adds games nile has installed.
+
+Install with `mira library install amazon <product id>`.
+
 ## `mira launcher list|install|import|open`
 Battle.net (`battlenet`), Ubisoft Connect (`ubisoft`) and the EA app (`ea`),
 each installed into its own prefix. See [the API](api.md#store-launchers).

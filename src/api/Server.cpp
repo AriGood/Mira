@@ -26,6 +26,8 @@
 #include "library/Relocate.h"
 #include "library/Scanner.h"
 #include "library/SourceRegistry.h"
+#include "amazon/AmazonImporter.h"
+#include "amazon/Nile.h"
 #include "desktop/DesktopEntryScanner.h"
 #include "epic/EpicImporter.h"
 #include "epic/EpicInstaller.h"
@@ -841,6 +843,75 @@ void Server::RegisterRoutes() {
     SendJson(res, {{"added", summary->added}, {"updated", summary->updated}});
   });
 
+  // --- amazon -------------------------------------------------------------
+  //
+  // Wraps nile (Heroic's Amazon Games client) for login, library and
+  // downloads; installing goes through /v1/library/install like the other
+  // stores. Installed games run through Mira's own runners.
+
+  http_->Get("/v1/amazon/status", [this](const Request&, Response& res) {
+    const amazon::AmazonAuthStatus status = amazon::Status(config_);
+    SendJson(res, {{"nile", {{"installed", status.nile.installed},
+                             {"source", status.nile.source},
+                             {"path", status.nile.path},
+                             {"version", status.nile.version}}},
+                  {"authenticated", status.authenticated}});
+  });
+
+  http_->Post("/v1/amazon/setup", [this](const Request&, Response& res) {
+    auto releases = runner::ListReleases(config_, "amazon");
+    if (!releases) return SendError(res, 502, releases.error().code, releases.error().message);
+    if (releases->empty()) return SendError(res, 404, "no_release_found", "no matching nile release found");
+
+    const runner::ReleaseAsset asset = releases->front();
+    events_.Publish("amazon.setup.started", {{"tag", asset.tag}});
+    std::thread([this, asset] {
+      if (auto installed = amazon::InstallNileBinary(config_, asset); !installed) {
+        log::Error("nile install failed ({}): {}", asset.tag, installed.error().message);
+        events_.Publish("amazon.setup.failed", {{"tag", asset.tag}, {"error", installed.error().message}});
+      } else {
+        log::Info("installed nile {}", asset.tag);
+        events_.Publish("amazon.setup.finished", {{"tag", asset.tag}});
+      }
+    }).detach();
+    SendJson(res, {{"status", "downloading"}, {"tag", asset.tag}}, 202);
+  });
+
+  // Two steps: this returns the Amazon login URL; /v1/amazon/auth takes the
+  // amazon.com URL the browser ends on after logging in.
+  http_->Post("/v1/amazon/login", [this](const Request&, Response& res) {
+    const auto url = amazon::BeginLogin(config_);
+    if (!url) return SendError(res, 409, url.error().code, url.error().message);
+    SendJson(res, {{"url", *url}});
+  });
+
+  http_->Post("/v1/amazon/auth", [this](const Request& req, Response& res) {
+    const json body = json::parse(req.body, nullptr, false);
+    if (body.is_discarded() || !body.contains("redirect") || !body["redirect"].is_string()) {
+      return SendError(res, 400, "invalid_body", R"(expected {"redirect": "..."})");
+    }
+    if (auto logged_in = amazon::FinishLogin(config_, body["redirect"]); !logged_in) {
+      return SendError(res, 400, logged_in.error().code, logged_in.error().message);
+    }
+    SendJson(res, {{"authenticated", true}});
+  });
+
+  http_->Post("/v1/amazon/logout", [this](const Request&, Response& res) {
+    if (auto logged_out = amazon::Logout(config_); !logged_out) {
+      return SendError(res, 400, logged_out.error().code, logged_out.error().message);
+    }
+    SendJson(res, {{"status", "logged_out"}});
+  });
+
+  http_->Post("/v1/amazon/import", [this](const Request&, Response& res) {
+    amazon::AmazonImporter importer(config_, games_, events_);
+    auto summary = importer.Import();
+    if (!summary) return SendError(res, 404, summary.error().code, summary.error().message);
+    SyncDesktopEntries(config_, games_);
+    for (const model::Game& game : summary->added_games) metadata_fetches_.Enqueue(config_, events_, game);
+    SendJson(res, {{"added", summary->added}, {"updated", summary->updated}});
+  });
+
   // --- store launchers --------------------------------------------------
   //
   // Battle.net, Ubisoft Connect and the EA app, each installed into its own
@@ -1123,7 +1194,7 @@ void Server::RegisterRoutes() {
     json body = json::parse(req.body, nullptr, false);
     if (body.is_discarded() || !body.contains("source") || !body["source"].is_string() ||
         !body.contains("ref") || !body["ref"].is_string()) {
-      return SendError(res, 400, "invalid_body", R"(expected {"source": "epic"|"steam"|"gog"|"itch", "ref": "..."})");
+      return SendError(res, 400, "invalid_body", R"(expected {"source": "epic"|"steam"|"gog"|"itch"|"amazon", "ref": "..."})");
     }
     const std::string source = body["source"];
     const std::string ref = body["ref"];

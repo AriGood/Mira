@@ -547,7 +547,7 @@ entitlements meant 120 rows in a file the README promises stays
 hand-editable, each carrying a meaningless `data_dir`/`runner_ref`/
 `play_seconds`.
 
-### `GET /v1/library[?source=epic|steam|gog|itch]` — implemented
+### `GET /v1/library[?source=epic|steam|gog|itch|amazon]` — implemented
 Every entitlement the configured sources can report, or one source's with
 `?source=`:
 ```json
@@ -834,6 +834,33 @@ humble-cli itself exits 0 and prints "Nothing to download" for these,
 which isn't a failure, but isn't a real download either.
 
 ---
+
+## Amazon Games
+
+Wraps [nile](https://github.com/imLinguin/nile) (Heroic's Amazon Games
+client). Install and update go through `POST /v1/library/install|update`
+with `source: "amazon"` and the product id as `ref`; titles land in
+`amazon.install_root`. An installed game (`amazon-<product id>`) runs its
+`fuel.json` launch command through Mira's own runner, with the Amazon SDK
+variables `nile launch` would set.
+
+### `GET /v1/amazon/status` — implemented
+`{nile: {installed, source, path, version}, authenticated}`.
+
+### `POST /v1/amazon/setup` — implemented
+`202`; downloads nile's latest release. Events `amazon.setup.started/finished/failed`.
+
+### `POST /v1/amazon/login` — implemented
+`{url}` to open in a browser. The login ends on an amazon.com page.
+
+### `POST /v1/amazon/auth` — implemented
+Body `{redirect}`: that page's URL, or its `openid.oa2.authorization_code`
+value. Finishes the login started above.
+
+### `POST /v1/amazon/logout` — implemented
+
+### `POST /v1/amazon/import` — implemented
+`{added, updated}` from nile's `installed.json`.
 
 ## Store launchers
 

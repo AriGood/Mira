@@ -501,6 +501,19 @@ Schema::Schema() {
        "an install location on first use. Deliberately outside "
        "library_roots' usual defaults, same reasoning as gog.install_root."},
 
+      {"amazon.enabled", Type::Bool, true, Tier::Basic,
+       "Use nile (Heroic's Amazon Games client) to log in, list and install Amazon Games / Prime "
+       "Gaming titles. Installed games run through Mira's own Wine/Proton runner. See \"mira amazon "
+       "setup\" if nile isn't already installed."},
+
+      {"amazon.nile_bin", Type::String, "", Tier::Advanced,
+       "Path to the nile binary. Empty tries Mira's own managed download "
+       "(see \"mira amazon setup\"), then $PATH."},
+
+      {"amazon.install_root", Type::String, "~/.local/share/mira/amazon", Tier::Advanced,
+       "Where Amazon titles are installed to, one folder per game. Outside library_roots for the "
+       "same reason as gog.install_root."},
+
       {"humble.enabled", Type::Bool, true, Tier::Basic,
        "Use humble-cli (an unofficial Humble Bundle CLI) to list purchased "
        "bundles and download items from them. Humble Bundle has no "
@@ -557,6 +570,12 @@ Schema::Schema() {
        Tier::Expert,
        "Glob a release's assets are filtered to before offering one to download — "
        "gogdl ships one standalone Linux binary per release, not an archive."},
+
+      {"runner_sources.amazon.repo", Type::String, std::string(runner_sources::kNileRepo),
+       Tier::Advanced, "GitHub \"owner/repo\" nile (the Amazon Games client) is downloaded from."},
+
+      {"runner_sources.amazon.asset_pattern", Type::String, std::string(runner_sources::kNileAssetPattern),
+       Tier::Expert, "Glob a release's assets are filtered to before offering one to download."},
 
       {"runner_sources.itch.repo", Type::String, std::string(runner_sources::kButlerRepo),
        Tier::Advanced, "GitHub \"owner/repo\" butler (itch.io's launcher-integration daemon) is downloaded from."},
