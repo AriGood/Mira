@@ -1,13 +1,18 @@
 #include "launchers/Launchers.h"
 
+#include <sys/wait.h>
+
 #include <algorithm>
+#include <chrono>
 #include <cstdlib>
 #include <format>
 #include <fstream>
 #include <mutex>
 #include <optional>
+#include <thread>
 
 #include "core/Log.h"
+#include "proc/ProcessSupervisor.h"
 #include "core/Paths.h"
 #include "core/Strings.h"
 #include "library/PrefixNaming.h"
@@ -96,10 +101,22 @@ Result<void> RunInstaller(config::Config& config, const Launcher& launcher, cons
   command->argv.insert(command->argv.end(), launcher.installer_args.begin(), launcher.installer_args.end());
 
   log::Info("running the {} installer", launcher.name);
-  const auto ran = runner::RunAndWait(*command);
-  if (!ran) return std::unexpected(ran.error());
-  // Exit codes aren't reliable here (the EA installer returns 768 on
-  // success); whether the launcher exe exists afterwards decides.
+  const auto pid = runner::SpawnDetached(*command);
+  if (!pid) return std::unexpected(pid.error());
+  // umu-run only exits once everything in the prefix has, and a freshly
+  // installed launcher (and the EA app's background service) keeps
+  // running. So wait for the setup process itself instead. Exit codes
+  // aren't reliable either (EA's returns 768 on success); whether the
+  // launcher exe exists afterwards decides.
+  const std::string setup_dir = strings::ToLower("z:" + downloads.string());
+  // Battle.net's setup hands off to a second stage, so the exe must exist too.
+  while (::waitpid(*pid, nullptr, WNOHANG) != *pid) {
+    if (proc::FindDirProcesses(game.data_dir, setup_dir).empty() && FindExe(launcher, game.data_dir)) {
+      std::thread([pid = *pid] { ::waitpid(pid, nullptr, 0); }).detach();  // reaped whenever it ends
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::seconds(2));
+  }
   return {};
 }
 
@@ -251,6 +268,14 @@ Result<Command> BuildCommand(config::Config& config, const store::GameStore& gam
   const auto resolved = runners.Resolve(runners.ResolveRef(*host));
   if (!resolved) return std::unexpected(resolved.error());
   model::Game run_as = *host;
+  // The EA app moves into a new version folder when it updates.
+  std::error_code ec;
+  if (!fs::exists(fs::path(host->install_path) / host->exe_path, ec)) {
+    if (const auto exe = FindExe(*launcher, host->data_dir)) {
+      run_as.install_path = exe->parent_path().string();
+      run_as.exe_path = exe->filename().string();
+    }
+  }
   run_as.args.clear();
   // The game's own id, so its window is its own app rather than the launcher's.
   run_as.id = game.id;
