@@ -37,6 +37,7 @@
 #include "itch/Itch.h"
 #include "itch/ItchImporter.h"
 #include "itch/ItchInstaller.h"
+#include "launchers/Launchers.h"
 #include "lutris/LutrisImporter.h"
 #include "metadata/MetadataFetcher.h"
 #include "proc/ProcessSupervisor.h"
@@ -830,6 +831,88 @@ void Server::RegisterRoutes() {
     SendJson(res, {{"added", summary->added}, {"updated", summary->updated}});
   });
 
+  // --- store launchers --------------------------------------------------
+  //
+  // Battle.net, Ubisoft Connect and the EA app, each installed into its own
+  // prefix. Their games are imported as Mira games and launched through them.
+
+  http_->Get("/v1/launchers", [this](const Request&, Response& res) {
+    json list = json::array();
+    for (const launchers::Launcher& launcher : launchers::All()) {
+      const auto game = games_.Find(launchers::GameId(launcher));
+      list.push_back({{"id", launcher.id},
+                      {"name", launcher.name},
+                      {"game_id", launchers::GameId(launcher)},
+                      {"installed", launchers::Installed(games_, launcher)},
+                      {"install_state", launchers::InstallState(launcher)},
+                      {"interactive_install", launcher.interactive},
+                      {"prefix", game ? game->data_dir : ""},
+                      {"error", game ? game->last_error : ""}});
+    }
+    SendJson(res, list);
+  });
+
+  http_->Post(R"(/v1/launchers/([^/]+)/install)", [this](const Request& req, Response& res) {
+    const launchers::Launcher* launcher = launchers::Find(req.matches[1].str());
+    if (!launcher) return SendError(res, 404, "launcher_not_found", "no such launcher");
+    if (!launchers::BeginInstall(*launcher)) {
+      return SendError(res, 409, "install_running", std::format("{} is already installing", launcher->name));
+    }
+    events_.Publish("launcher.install.started", {{"id", launcher->id}});
+    std::thread([this, launcher] {
+      const auto done = launchers::Install(config_, games_, *launcher);
+      if (const auto stored = games_.Find(launchers::GameId(*launcher))) {
+        events_.Publish("game.updated", GameJson(*stored, supervisor_));
+      }
+      if (!done) {
+        events_.Publish("launcher.install.failed", {{"id", launcher->id}, {"error", done.error().message}});
+        return;
+      }
+      if (const auto imported = launchers::Import(config_, games_, events_, *launcher)) {
+        for (const model::Game& game : imported->added_games) metadata_fetches_.Enqueue(config_, events_, game);
+      }
+      SyncDesktopEntries(config_, games_);
+      events_.Publish("launcher.install.finished", {{"id", launcher->id}});
+    }).detach();
+    SendJson(res, {{"status", "installing"}, {"id", launcher->id}}, 202);
+  });
+
+  http_->Post(R"(/v1/launchers/([^/]+)/import)", [this](const Request& req, Response& res) {
+    const launchers::Launcher* launcher = launchers::Find(req.matches[1].str());
+    if (!launcher) return SendError(res, 404, "launcher_not_found", "no such launcher");
+    const auto summary = launchers::Import(config_, games_, events_, *launcher);
+    if (!summary) return SendError(res, 409, summary.error().code, summary.error().message);
+    SyncDesktopEntries(config_, games_);
+    for (const model::Game& game : summary->added_games) metadata_fetches_.Enqueue(config_, events_, game);
+    SendJson(res, {{"added", summary->added}, {"updated", summary->updated}});
+  });
+
+  // Opens the launcher, optionally asking it to launch or install a game by
+  // its store id (Battle.net product code, Ubisoft id, EA offer ids).
+  http_->Post(R"(/v1/launchers/([^/]+)/open)", [this](const Request& req, Response& res) {
+    const launchers::Launcher* launcher = launchers::Find(req.matches[1].str());
+    if (!launcher) return SendError(res, 404, "launcher_not_found", "no such launcher");
+    const json body = json::parse(req.body.empty() ? "{}" : req.body, nullptr, false);
+    if (body.is_discarded() || !body.is_object()) return SendError(res, 400, "invalid_body", "expected a JSON object");
+    const std::string action = body.value("action", std::string("launch"));
+    if (action != "launch" && action != "install") {
+      return SendError(res, 400, "invalid_action", "action must be launch or install");
+    }
+    model::Game target;
+    target.source = "launcher";
+    target.source_ref = launcher->id;
+    if (const std::string ref = body.value("ref", std::string()); !ref.empty()) {
+      target.source = launcher->id;
+      target.source_ref = ref;
+    }
+    auto command = launchers::BuildCommand(config_, games_, target, action);
+    if (!command) return SendError(res, 409, command.error().code, command.error().message);
+    if (auto spawned = runner::SpawnDetached(*command); !spawned) {
+      return SendError(res, 500, spawned.error().code, spawned.error().message);
+    }
+    SendJson(res, {{"status", "opened"}});
+  });
+
   // --- itch -----------------------------------------------------------
   //
   // Wraps butlerd (itch.io's own launcher-integration daemon) for auth,
@@ -1190,6 +1273,33 @@ void Server::RegisterRoutes() {
     const config::Resolver resolver(config_, game->overrides);
     const std::string pre_script = resolver.GetString("launch.pre_script");
     const std::string post_script = resolver.GetString("launch.post_script");
+
+    // A store launcher game (Battle.net, Ubisoft, EA) is started by its
+    // launcher, which keeps running after the game exits; the game's own
+    // processes are what's tracked.
+    if (launchers::ForGame(*game)) {
+      if (supervisor_.IsRunning(game->id)) {
+        return SendError(res, 409, "already_running", std::format("\"{}\" is already running", game->id));
+      }
+      auto command = launchers::BuildCommand(config_, games_, *game);
+      if (!command) return SendError(res, 409, command.error().code, command.error().message);
+      if (auto ran = RunPreScriptInline(pre_script); !ran) {
+        return SendError(res, 409, ran.error().code, ran.error().message);
+      }
+      ApplyLaunchEnv(*command, resolver.GetStringArray("launch.env"));
+      if (auto spawned = runner::SpawnDetached(*command); !spawned) {
+        return SendError(res, 500, spawned.error().code, spawned.error().message);
+      }
+      [[maybe_unused]] auto _ =
+          games_.Update(game->id, [](model::Game& g) { g.last_played_at = model::NowSeconds(); });
+      events_.Publish("game.launched", {{"id", game->id}, {"via", "launcher"}, {"tracked", true}});
+      if (auto started = supervisor_.TrackLauncherLaunch(*game, launchers::WindowsDir(*game),
+                                                         config_.GetInt("launchers.detect_timeout_s"), post_script);
+          !started) {
+        log::Warn("couldn't start tracking {}: {}", game->id, started.error().message);
+      }
+      return SendJson(res, {{"status", "launched_via_launcher"}, {"tracked", true}});
+    }
 
     // A Steam-sourced game defaults to asking the Steam client to launch it
     // (steam://rungameid/<appid>) rather than Mira execing it directly: full

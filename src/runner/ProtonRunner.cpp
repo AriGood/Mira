@@ -16,6 +16,9 @@ void ApplyGameId(Command& command, const model::Game& game) {
   if (auto it = game.runner_config.find("gameid"); it != game.runner_config.end() && it->is_string()) {
     command.env["GAMEID"] = it->get<std::string>();
   }
+  if (auto it = game.runner_config.find("store"); it != game.runner_config.end() && it->is_string()) {
+    command.env["STORE"] = it->get<std::string>();
+  }
 }
 
 }  // namespace
@@ -119,6 +122,10 @@ nlohmann::json ProtonRunner::SettingsSchema() const {
        {"doc", "Steam AppID umu should report via the GAMEID env var — affects which "
                "protonfixes/compat-DB entry Proton applies. Optional; umu falls back to a "
                "generic default (\"umu-default\") without it."}},
+      {{"key", "store"},
+       {"type", "string"},
+       {"doc", "Store umu should report via the STORE env var (e.g. \"ubisoft\", \"battlenet\", \"ea\"), "
+               "so store-specific protonfixes apply. Set automatically for store launcher games."}},
   });
 }
 

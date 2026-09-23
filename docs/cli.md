@@ -254,6 +254,18 @@ plug in there.
   prefix; add it manually once it's landed (`mira add`, same as any other
   manually-acquired game).
 
+## `mira launcher list|install|import|open`
+Battle.net (`battlenet`), Ubisoft Connect (`ubisoft`) and the EA app (`ea`),
+each installed into its own prefix. See [the API](api.md#store-launchers).
+- `list` — each launcher and whether it's installed.
+- `install <id>` — sets up the prefix and installs the launcher, then
+  imports its games. Battle.net's installer is shown to click through.
+- `import <id>` — imports games installed through the launcher since.
+- `open <id> [--launch REF | --install REF]` — opens the launcher, or asks
+  it to launch or install a game by store id.
+
+Imported games launch with `mira launch` like any other.
+
 ## `mira metadata <id> [--refresh]`
 `GET /v1/games/{id}/metadata` — prints the cached cover-art/store-info JSON
 (description, genres, release date, developers/publishers, price, Steam

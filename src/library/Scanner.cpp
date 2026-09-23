@@ -12,6 +12,7 @@
 #include "library/AutoSetup.h"
 #include "library/Detector.h"
 #include "library/WinePrefix.h"
+#include "launchers/Launchers.h"
 #include "runner/RunnerRegistry.h"
 
 namespace mira::library {
@@ -88,6 +89,11 @@ ScanSummary Scanner::ScanAll() {
     total.missing += partial.missing;
     total.restored += partial.restored;
     std::ranges::move(partial.added_games, std::back_inserter(total.added_games));
+  }
+  if (config_.GetBool("launchers.auto_import")) {
+    launchers::ImportSummary imported = launchers::ImportAll(config_, games_, events_);
+    total.added += imported.added;
+    std::ranges::move(imported.added_games, std::back_inserter(total.added_games));
   }
   return total;
 }

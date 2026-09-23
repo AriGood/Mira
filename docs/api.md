@@ -832,6 +832,37 @@ which isn't a failure, but isn't a real download either.
 
 ---
 
+## Store launchers
+
+Battle.net, Ubisoft Connect and the EA app have no Linux client, so each is
+installed once into its own prefix (game `launcher-<id>`). Games installed
+through a launcher are imported as their own games (`<id>-<ref>`, source
+`battlenet`/`ubisoft`/`ea`) sharing its prefix and runner. Launching one asks
+the launcher to start it; the game's own processes are tracked for playtime
+and `stop`, and the launcher keeps running. `launchers.auto_import` imports
+on every scan. umu's `STORE` and, when found, `GAMEID` are set so
+protonfixes apply.
+
+### `GET /v1/launchers` — implemented
+`[{id, name, game_id, installed, install_state, interactive_install, prefix, error}]`.
+`install_state` is `idle`, `running`, `finished` or `failed`.
+
+### `POST /v1/launchers/{id}/install` — implemented
+`202`. Makes the prefix, runs the winetricks steps, then the launcher's
+installer: silent for Ubisoft and EA, shown for Battle.net. Imports its
+games afterwards. `409 install_running`. Events
+`launcher.install.started/finished/failed`.
+
+### `POST /v1/launchers/{id}/import` — implemented
+`{added, updated}`. Battle.net games are found by their default folders,
+Ubisoft by the launcher's registry keys, EA by each game's
+`__Installer/installerdata.xml`. `409 launcher_not_installed`.
+
+### `POST /v1/launchers/{id}/open` — implemented
+Body `{action?: "launch"|"install", ref?}`. Opens the launcher, or asks it
+to launch or install a game by store id (Battle.net product code such as
+`WTCG`, Ubisoft id, EA offer ids). Not tracked.
+
 ## Desktop entries
 
 Two directions, both covered here: reading someone else's already-installed

@@ -5,12 +5,14 @@
 #include <string.h>
 #include <sys/wait.h>
 
+#include <algorithm>
 #include <cctype>
 #include <cerrno>
 #include <chrono>
 #include <cstdlib>
 #include <format>
 #include <fstream>
+#include <optional>
 #include <set>
 
 #include "core/Log.h"
@@ -30,12 +32,6 @@ constexpr auto kPollInterval = std::chrono::milliseconds(1000);
 // anything not yet checkpointed is lost. This bounds that loss to a minute
 // instead of the whole session.
 constexpr std::int64_t kCheckpointSeconds = 60;
-
-// How long to wait for a Steam-launched game to actually show up in /proc
-// before giving up -- Steam itself has real startup latency (client
-// wakeup, update checks, Proton's own prefix work) before the game process
-// exists at all.
-constexpr auto kSteamDetectTimeout = std::chrono::seconds(60);
 
 void RunScript(const std::string& script, const std::string& game_id, const char* which) {
   if (script.empty()) return;
@@ -95,28 +91,19 @@ bool AnyAlive(const std::set<pid_t>& pids) {
   return false;
 }
 
-}  // namespace
-
-// Every pid whose WINEPREFIX/STEAM_COMPAT_DATA_PATH points at data_dir.
-//
-// The process group alone isn't enough: on Proton/Wine, setsid()/setpgid()
-// during startup leaves the group with just umu-run by the time a game is
-// on screen. Measured against a real launch: signalling the group reached
-// 1 of 16 processes.
-std::set<pid_t> FindPrefixProcesses(const std::string& data_dir) {
-  std::set<pid_t> found;
-  if (data_dir.empty()) return found;
-
-  // Entry-by-entry, not substring: "…/prefix/animal" must not match
-  // "…/prefix/animal-well". umu rewrites WINEPREFIX to "<data_dir>/pfx/".
+// Calls fn(pid) for every process whose WINEPREFIX/STEAM_COMPAT_DATA_PATH is
+// data_dir or under it. Entry-by-entry, not substring: "…/prefix/animal"
+// must not match "…/prefix/animal-well". umu rewrites WINEPREFIX to
+// "<data_dir>/pfx/".
+template <typename Fn>
+void ForEachPrefixProcess(const std::string& data_dir, Fn&& fn) {
   const auto matches = [&data_dir](std::string_view value) {
     if (value == data_dir) return true;
-    return value.size() > data_dir.size() && value.starts_with(data_dir) &&
-           value[data_dir.size()] == '/';
+    return value.size() > data_dir.size() && value.starts_with(data_dir) && value[data_dir.size()] == '/';
   };
 
   DIR* proc_dir = ::opendir("/proc");
-  if (!proc_dir) return found;
+  if (!proc_dir) return;
   while (const dirent* entry = ::readdir(proc_dir)) {
     const std::string name = entry->d_name;
     if (name.empty() || !std::isdigit(static_cast<unsigned char>(name[0]))) continue;
@@ -137,15 +124,46 @@ std::set<pid_t> FindPrefixProcesses(const std::string& data_dir) {
       const std::string_view key = item.substr(0, equals);
       if (key != "WINEPREFIX" && key != "STEAM_COMPAT_DATA_PATH") continue;
       if (matches(item.substr(equals + 1))) {
-        found.insert(std::atoi(name.c_str()));
+        fn(name);
         break;
       }
     }
   }
   ::closedir(proc_dir);
+}
+
+std::set<pid_t> FindExternal(const ExternalMatch& match) {
+  return match.appid.empty() ? FindDirProcesses(match.data_dir, match.win_dir) : FindSteamProcesses(match.appid);
+}
+
+}  // namespace
+
+// Every pid whose WINEPREFIX/STEAM_COMPAT_DATA_PATH points at data_dir.
+//
+// The process group alone isn't enough: on Proton/Wine, setsid()/setpgid()
+// during startup leaves the group with just umu-run by the time a game is
+// on screen. Measured against a real launch: signalling the group reached
+// 1 of 16 processes.
+std::set<pid_t> FindPrefixProcesses(const std::string& data_dir) {
+  std::set<pid_t> found;
+  if (data_dir.empty()) return found;
+  ForEachPrefixProcess(data_dir, [&](const std::string& pid) { found.insert(std::atoi(pid.c_str())); });
   return found;
 }
 
+std::set<pid_t> FindDirProcesses(const std::string& data_dir, const std::string& win_dir) {
+  std::set<pid_t> found;
+  if (data_dir.empty() || win_dir.empty()) return found;
+  ForEachPrefixProcess(data_dir, [&](const std::string& pid) {
+    std::ifstream cmdline_file("/proc/" + pid + "/cmdline", std::ios::binary);
+    std::string argv0;
+    std::getline(cmdline_file, argv0, '\0');
+    std::ranges::replace(argv0, '\\', '/');
+    for (char& ch : argv0) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    if (argv0.starts_with(win_dir + "/")) found.insert(std::atoi(pid.c_str()));
+  });
+  return found;
+}
 
 ProcessSupervisor::ProcessSupervisor(store::GameStore& games, api::EventBus& events,
                                      std::int64_t stop_timeout_s)
@@ -248,7 +266,7 @@ Result<void> ProcessSupervisor::LaunchWrapped(const model::Game& game, pid_t wra
 Result<void> ProcessSupervisor::Stop(const std::string& game_id) {
   pid_t pid = 0;
   std::string data_dir;
-  std::string appid;
+  std::optional<ExternalMatch> match;
   {
     std::lock_guard lock(mutex_);
     const auto it = running_.find(game_id);
@@ -259,8 +277,8 @@ Result<void> ProcessSupervisor::Stop(const std::string& game_id) {
     if (const auto prefix = prefixes_.find(game_id); prefix != prefixes_.end()) {
       data_dir = prefix->second;
     }
-    if (const auto steam = steam_appids_.find(game_id); steam != steam_appids_.end()) {
-      appid = steam->second;
+    if (const auto external = external_.find(game_id); external != external_.end()) {
+      match = external->second;
     }
   }
   // 0 is TrackSteamLaunch's "reserved, not confirmed yet" sentinel — kill(0,
@@ -275,9 +293,9 @@ Result<void> ProcessSupervisor::Stop(const std::string& game_id) {
   // for a Steam-launched game — every pid FindSteamProcesses finds under its
   // appid: that tree is Steam's own (reaper/pressure-vessel/proton/the game),
   // not a child of mirad and not one shared process group, so the group
-  // signal above only ever reaches whichever single pid WatchSteam recorded.
+  // signal above only ever reaches whichever single pid WatchExternal recorded.
   const std::set<pid_t> in_prefix = FindPrefixProcesses(data_dir);
-  const std::set<pid_t> in_steam_tree = appid.empty() ? std::set<pid_t>() : FindSteamProcesses(appid);
+  const std::set<pid_t> in_steam_tree = match ? FindExternal(*match) : std::set<pid_t>();
   bool signalled = ::kill(-pid, SIGTERM) == 0 || ::kill(pid, SIGTERM) == 0;
   for (pid_t found : in_prefix) { ::kill(found, SIGTERM); signalled = true; }
   for (pid_t found : in_steam_tree) { ::kill(found, SIGTERM); signalled = true; }
@@ -567,6 +585,25 @@ void ProcessSupervisor::Reconcile(const std::filesystem::path& sessions_dir) {
 
 Result<void> ProcessSupervisor::TrackSteamLaunch(const model::Game& game, const std::string& appid,
                                                  std::string post_script) {
+  // Steam has real startup latency (client wakeup, update checks, Proton's
+  // own prefix work) before the game process exists at all.
+  ExternalMatch match;
+  match.appid = appid;
+  match.detect_timeout_s = 60;
+  return TrackExternal(game, std::move(match), std::move(post_script));
+}
+
+Result<void> ProcessSupervisor::TrackLauncherLaunch(const model::Game& game, const std::string& win_dir,
+                                                    std::int64_t detect_timeout_s, std::string post_script) {
+  ExternalMatch match;
+  match.data_dir = game.data_dir;
+  match.win_dir = win_dir;
+  match.detect_timeout_s = detect_timeout_s;
+  return TrackExternal(game, std::move(match), std::move(post_script));
+}
+
+Result<void> ProcessSupervisor::TrackExternal(const model::Game& game, ExternalMatch match,
+                                              std::string post_script) {
   {
     std::lock_guard lock(mutex_);
     if (running_.contains(game.id)) {
@@ -575,37 +612,36 @@ Result<void> ProcessSupervisor::TrackSteamLaunch(const model::Game& game, const 
     // Reserved immediately, before detection even starts, for the same
     // reason Launch() reserves it before its process even exists yet:
     // without this, firing /launch twice in quick succession for the same
-    // Steam game starts two independent detection watchers that could both
+    // game starts two independent detection watchers that could both
     // eventually find the same real process. 0 is never a real pid (see
     // Stop()'s guard below) so it's unambiguous as "not confirmed yet".
     running_[game.id] = 0;
-    steam_appids_[game.id] = appid;  // for Stop()/WatchSteam()'s kill escalation
+    external_[game.id] = match;  // for Stop()/WatchExternal()'s kill escalation
     if (auto stale = watchers_.find(game.id); stale != watchers_.end()) {
       if (stale->second.joinable()) stale->second.detach();
       watchers_.erase(stale);
     }
-    watchers_[game.id] = std::thread(&ProcessSupervisor::WatchSteam, this, game.id, appid,
+    watchers_[game.id] = std::thread(&ProcessSupervisor::WatchExternal, this, game.id, std::move(match),
                                      model::NowSeconds(), std::move(post_script));
   }
   return {};
 }
 
-void ProcessSupervisor::WatchSteam(std::string game_id, std::string appid, std::int64_t requested_at,
-                                   std::string post_script) {
+void ProcessSupervisor::WatchExternal(std::string game_id, ExternalMatch match, std::int64_t requested_at,
+                                      std::string post_script) {
   std::set<pid_t> matched;
   std::int64_t started_at = 0;
 
   // Detection phase: wait for the launch to actually produce a process.
   while (!stopping_.load(std::memory_order_relaxed) && matched.empty()) {
-    matched = FindSteamProcesses(appid);
+    matched = FindExternal(match);
     if (!matched.empty()) break;
-    if (model::NowSeconds() - requested_at >= kSteamDetectTimeout.count()) {
-      log::Warn("never detected a process for {} (appid {}) after {}s -- giving up", game_id, appid,
-               kSteamDetectTimeout.count());
+    if (model::NowSeconds() - requested_at >= match.detect_timeout_s) {
+      log::Warn("never detected a process for {} after {}s -- giving up", game_id, match.detect_timeout_s);
       std::lock_guard lock(mutex_);
       running_.erase(game_id);
       prefixes_.erase(game_id);
-      steam_appids_.erase(game_id);
+      external_.erase(game_id);
       return;
     }
     std::this_thread::sleep_for(kPollInterval);
@@ -619,7 +655,7 @@ void ProcessSupervisor::WatchSteam(std::string game_id, std::string appid, std::
   }
   auto stamped = games_.Update(game_id, [&](model::Game& stored) { stored.last_played_at = started_at; });
   if (!stamped) log::Error("failed to record launch time for {}: {}", game_id, stamped.error().message);
-  log::Info("detected {} running (appid {}, {} process(es))", game_id, appid, matched.size());
+  log::Info("detected {} running ({} process(es))", game_id, matched.size());
   json running_event = stamped ? model::ToJson(*stamped) : json{{"id", game_id}};
   running_event["state"] = "running";
   events_.Publish("game.state", std::move(running_event));
@@ -630,7 +666,7 @@ void ProcessSupervisor::WatchSteam(std::string game_id, std::string appid, std::
   // report "exited" the moment the first-seen process happens to reap.
   std::int64_t credited = 0;
   while (!stopping_.load(std::memory_order_relaxed)) {
-    const std::set<pid_t> current = FindSteamProcesses(appid);
+    const std::set<pid_t> current = FindExternal(match);
     if (current.empty() && !AnyAlive(matched)) break;
     if (!current.empty()) matched = current;
 
@@ -642,7 +678,7 @@ void ProcessSupervisor::WatchSteam(std::string game_id, std::string appid, std::
       std::lock_guard lock(mutex_);
       const auto deadline = kill_deadlines_.find(game_id);
       if (deadline != kill_deadlines_.end() && model::NowSeconds() >= deadline->second) {
-        log::Warn("{} (Steam-launched) ignored SIGTERM; sending SIGKILL", game_id);
+        log::Warn("{} (launched externally) ignored SIGTERM; sending SIGKILL", game_id);
         for (pid_t found : matched) ::kill(found, SIGKILL);
         kill_deadlines_.erase(deadline);
       }
@@ -665,7 +701,7 @@ void ProcessSupervisor::WatchSteam(std::string game_id, std::string appid, std::
     std::lock_guard lock(mutex_);
     running_.erase(game_id);
     prefixes_.erase(game_id);
-    steam_appids_.erase(game_id);
+    external_.erase(game_id);
     kill_deadlines_.erase(game_id);
     stop_requested_.erase(game_id);
   }
@@ -677,7 +713,7 @@ void ProcessSupervisor::WatchSteam(std::string game_id, std::string appid, std::
       games_.Update(game_id, [&](model::Game& game) { game.play_seconds += played - credited; });
   if (!updated) log::Error("failed to record playtime for {}: {}", game_id, updated.error().message);
 
-  log::Info("{} (Steam-launched) exited after {}s", game_id, played);
+  log::Info("{} (launched externally) exited after {}s", game_id, played);
   // Same reasoning as Watch()'s exit event: the full updated record rides
   // along so a listener can patch its one row instead of relisting.
   json event = updated ? model::ToJson(*updated) : json{{"id", game_id}};

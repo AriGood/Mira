@@ -423,6 +423,27 @@ Schema::Schema() {
       {"lutris.import_art", Type::Bool, true, Tier::Basic,
        "Use the cover, banner and icon Lutris already downloaded for a Lutris-imported game."},
 
+      {"launchers.runner", Type::String, "", Tier::Advanced,
+       "Runner for a store launcher's prefix (Battle.net, Ubisoft Connect, EA app), e.g. "
+       "\"proton:GE-Proton11-7\". Empty uses default_runner.windows. Games it installs use the same one."},
+
+      {"launchers.auto_import", Type::Bool, true, Tier::Basic,
+       "Import games installed through a store launcher on every scan."},
+
+      {"launchers.detect_timeout_s", Type::Int, 300, Tier::Advanced,
+       "How long to wait for a launcher to start a game (updates, login) before giving up tracking it.",
+       Range(10, 3600)},
+
+      {"launchers.umu_lookup", Type::Bool, true, Tier::Advanced,
+       "Look up each newly imported launcher game at umu.openwinecomponents.org so its protonfixes apply. "
+       "Sends only the store name and the game's store id."},
+
+      {"launchers.ubisoft.disable_overlay", Type::Bool, true, Tier::Advanced,
+       "Turn off the Ubisoft Connect overlay when installing it; it often breaks games under Wine."},
+
+      {"launchers.battlenet.disable_hw_accel", Type::Bool, true, Tier::Advanced,
+       "Turn off Battle.net's hardware acceleration when installing it; its UI renders blank under Wine otherwise."},
+
       {"lutris.data_dir", Type::String, "", Tier::Advanced,
        "Override for where Lutris keeps pga.db and its per-game configs. "
        "Empty auto-detects $XDG_DATA_HOME/lutris, then ~/.local/share/lutris."},
