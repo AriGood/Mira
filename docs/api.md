@@ -45,11 +45,14 @@ Every backend setting at its current value, plus the opaque `frontend` table
 the backend stores but never interprets (see `docs/architecture.md`).
 
 ### `GET /v1/config/schema` — implemented
-Every setting's type, default, tier (`basic | advanced | expert` — a
-frontend should show `basic` and fold the rest behind a disclosure, never
-omit them), one-line doc string, and `category` (a UI grouping label, e.g.
-"Library", "Runners" — always present, guessed from the key's dotted prefix
-when nothing more specific applies).
+Every setting, in display order: its `key` (the name on disk), `label` (the
+name a settings screen shows), type, default, one-line doc string,
+`category` (the settings-screen section, e.g. "Library", "Runners"), `group`
+(an integer; a settings screen draws a divider where it changes within one
+category), and `scope`: `global`, or `per_game` when a game can also
+override it via `PATCH /v1/games/{id}/config`. All of it is declared in
+`src/config/Schema.cpp`, which says how to add a setting at the top of
+`Schema::Schema()`.
 
 A setting with a describable shape also carries it: `one_of` (an enum's
 array) or `minimum`/`maximum`. `is_secret` and `is_runner_ref` are booleans,
@@ -57,17 +60,11 @@ present only when true — a settings screen should mask a secret's value and
 offer a runner picker (`GET /v1/runners`) for a runner_ref instead of a
 plain text box. All four are absent, not empty/false, when they don't apply.
 
-The tier is a judgement about the user, not about the value's complexity:
-`basic` means someone who just wants their games to work may have to change
-it, however fiddly it looks; `advanced` is tuning something that already
-works; `expert` is changing how Mira works rather than what it does. The bar
-for `basic` is deliberately low — see `src/config/Schema.h`, where the test
-is written down, and the `steamgriddb.api_key` that sat under `expert` and
-left whole libraries showing placeholder covers with no visible reason.
-
 ```json
-[{ "key": "scan.debounce_ms", "type": "an integer", "default": 3000,
-   "tier": "advanced", "doc": "How long a new folder must stop changing before it is scanned." }]
+[{ "key": "scan.debounce_ms", "label": "Debounce Time (ms)", "type": "an integer",
+   "default": 3000, "scope": "global", "category": "Scanning", "group": 0,
+   "doc": "How long a new folder must stop changing before it is scanned. ...",
+   "minimum": 0, "maximum": 600000 }]
 ```
 
 ### `PATCH /v1/config` — implemented
@@ -182,7 +179,7 @@ Every schema key resolved through `default -> settings.toml -> this game's
 overrides`, tagged with which layer supplied it — mirrors `GET /v1/config`
 but scoped to one game:
 ```json
-{ "scan.max_depth": { "value": 8, "layer": "game", "overridable": true },
+{ "launch.gamemode": { "value": true, "layer": "game", "overridable": true },
   "library_roots": { "value": ["~/Games"], "layer": "default", "overridable": false } }
 ```
 This is what lets a frontend show "Runner: GE-Proton11-7 *(default)*" next
@@ -191,9 +188,9 @@ to a reset button, without separately tracking where each value came from.
 ### `PATCH /v1/games/{id}/config` — implemented
 Sets or removes this game's overrides of global settings: a flat
 `{"dotted.key": value}` body, where a `null` value removes that override.
-Rejects (with nothing applied) if a key isn't overridable — some settings,
-like `library_roots`, describe the daemon rather than a game, see
-`config::Resolver::IsOverridable` — or if a value fails schema validation.
+Rejects (with nothing applied) if a key isn't overridable — only keys with
+`scope: "per_game"` in the schema are — or if a value fails schema
+validation.
 
 ### `POST /v1/games/{id}/launch` — implemented
 Resolves `runner_ref` (defaulting to `native:native`) and execs the game,
@@ -1006,7 +1003,8 @@ specially is `no_steamgriddb_key`, which is not a transient failure and is
 fixed by setting a config key rather than by retrying.
 
 `?announce=1` marks this as user-initiated: mirad also publishes a
-`notification` event (below) reporting the outcome, so a caller doesn't
+`notification` event (below) if it fails — success needs none, the cover
+changes on its own — so a caller doesn't
 have to build its own message from `game.metadata_failed`. Omit it (or
 `announce=0`) for a background/bulk refresh, where one notification per
 game would be noise. `no_steamgriddb_key` is never wrapped in a

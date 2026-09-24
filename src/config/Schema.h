@@ -10,16 +10,12 @@
 
 namespace mira::config {
 
-// Which settings the GUI shows before the user asks for more. A tier only
-// folds a setting away, never removes it. Basic = needed to make Mira visibly
-// work (e.g. steamgriddb.api_key); Advanced = tuning something that already
-// works; Expert = changes how Mira works, not just what it does.
-enum class Tier { Basic, Advanced, Expert };
+// Global: one value for the whole daemon. PerGame: the same value, but a game
+// can also override it (games.toml overrides, PATCH /v1/games/{id}/config).
+enum class Scope { Global, PerGame };
 
 enum class Type { Bool, Int, Double, String, StringArray, Object };
 
-// Returns an error message when the value is unacceptable. Invalid input is
-// rejected with a reason rather than silently clamped.
 using Validator = std::function<std::optional<std::string>(const nlohmann::json&)>;
 
 // A Validator plus the shape it enforces, so /v1/config/schema can publish
@@ -36,36 +32,23 @@ struct Constraint {
   explicit operator bool() const { return static_cast<bool>(validate); }
 };
 
+// Declared with designated initializers in Schema.cpp, under the section it
+// shows in. See the comment at the top of Schema::Schema() for the pattern.
 struct Entry {
-  std::string key;  // dotted, e.g. "scan.debounce_ms"
+  std::string key;    // dotted, e.g. "scan.debounce_ms"
+  std::string label;  // what a settings screen calls it
   Type type;
   nlohmann::json default_value;
-  Tier tier;
+  Scope scope = Scope::Global;
   std::string doc;
   Constraint constraint = {};  // optional
 
-  // UI hints the schema itself can carry, so a settings screen doesn't need
-  // its own hardcoded list of "which keys are secrets/runner refs/what group
-  // they're in" — filled in by Schema's constructor, not written per entry
-  // above (category defaults from the dotted prefix; is_secret/is_runner_ref
-  // default false and are set for the handful of keys that need them).
-  bool is_secret = false;
-  bool is_runner_ref = false;
-  std::string category;
+  bool is_secret = false;      // a credential: mask it
+  bool is_runner_ref = false;  // a runner reference: offer a runner picker
 
-  // A real constructor rather than relying on aggregate init: the fields
-  // above are filled in after the fact by Schema's constructor, and letting
-  // every one of entries_'s ~30 brace-init entries stay a plain 5/6-argument
-  // list (rather than growing a trailing run of {false, false, ""} on each)
-  // needs Entry to no longer be a plain aggregate.
-  Entry(std::string key, Type type, nlohmann::json default_value, Tier tier, std::string doc,
-        Constraint constraint = {})
-      : key(std::move(key)),
-        type(type),
-        default_value(std::move(default_value)),
-        tier(tier),
-        doc(std::move(doc)),
-        constraint(std::move(constraint)) {}
+  // Set by the section the entry is declared under, never per entry.
+  std::string category = {};
+  int group = 0;  // index within its category; a divider sits between groups
 };
 
 // Every configurable value in the daemon is declared here exactly once. The
@@ -97,8 +80,7 @@ private:
   std::vector<Entry> entries_;
 };
 
-std::string_view ToString(Tier tier);
+std::string_view ToString(Scope scope);
 std::string_view ToString(Type type);
-std::optional<Tier> TierFromString(std::string_view text);
 
 }  // namespace mira::config

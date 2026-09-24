@@ -173,9 +173,11 @@ ConfigSchemaResult GetConfigSchemaSync() {
     ConfigSchemaEntry e;
     e.key = entry.value("key", std::string());
     e.type = entry.value("type", std::string());
-    e.tier = entry.value("tier", std::string());
+    e.label = entry.value("label", std::string());
     e.doc = entry.value("doc", std::string());
     e.category = entry.value("category", std::string());
+    e.group = entry.value("group", 0);
+    e.per_game = entry.value("scope", std::string()) == "per_game";
     e.is_secret = entry.value("is_secret", false);
     e.is_runner_ref = entry.value("is_runner_ref", false);
     if (entry.contains("default")) e.default_display = mapping::ToDisplayString(entry["default"]);
@@ -306,7 +308,6 @@ FrontendPrefsResult GetFrontendPrefsSync() {
   read_string("sort_by", result.prefs.sort_by);
   read_bool("sort_descending", result.prefs.sort_descending);
   read_bool("scan_on_startup", result.prefs.scan_on_startup);
-  read_int("notification_timeout_s", result.prefs.notification_timeout_s);
   read_string("theme", result.prefs.theme);
   read_bool("game_settings_in_sidebar", result.prefs.game_settings_in_sidebar);
   read_int("tile_spacing", result.prefs.tile_spacing);
@@ -334,9 +335,6 @@ PatchConfigResult SaveFrontendPrefsSync(const FrontendPrefs& prefs) {
   if (prefs.sort_by) table["sort_by"] = *prefs.sort_by;
   if (prefs.sort_descending) table["sort_descending"] = *prefs.sort_descending;
   if (prefs.scan_on_startup) table["scan_on_startup"] = *prefs.scan_on_startup;
-  if (prefs.notification_timeout_s) {
-    table["notification_timeout_s"] = *prefs.notification_timeout_s;
-  }
   if (prefs.theme) table["theme"] = *prefs.theme;
   if (prefs.game_settings_in_sidebar) {
     table["game_settings_in_sidebar"] = *prefs.game_settings_in_sidebar;

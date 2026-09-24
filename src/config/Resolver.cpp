@@ -3,16 +3,8 @@
 #include "config/Schema.h"
 
 namespace mira::config {
-namespace {
-using nlohmann::json;
 
-// Settings that describe the daemon itself rather than how a game behaves.
-// Overriding these per game would be meaningless.
-constexpr std::string_view kDaemonOnlyKeys[] = {
-    "socket_path", "log.level", "library_roots", "events.sse_keepalive_s",
-    "scan.periodic_interval_s",
-};
-}  // namespace
+using nlohmann::json;
 
 std::string_view ToString(Layer layer) {
   switch (layer) {
@@ -29,11 +21,8 @@ Resolver::Resolver(const Config& config, json game_overrides)
 }
 
 bool Resolver::IsOverridable(std::string_view key) {
-  if (Schema::Instance().Find(key) == nullptr) return false;
-  for (const std::string_view daemon_key : kDaemonOnlyKeys) {
-    if (daemon_key == key) return false;
-  }
-  return true;
+  const Entry* entry = Schema::Instance().Find(key);
+  return entry != nullptr && entry->scope == Scope::PerGame;
 }
 
 Resolved Resolver::Resolve(std::string_view key) const {

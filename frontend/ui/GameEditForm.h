@@ -15,11 +15,11 @@ class OverridesEditor;
 }
 
 class QComboBox;
-class QDialog;
 class QFormLayout;
 class QLabel;
 class QLineEdit;
 class QPlainTextEdit;
+class QStackedWidget;
 class QWidget;
 
 namespace mira_gui {
@@ -68,6 +68,7 @@ private:
   void OnRunnerComboActivated(int index);
   void BrowseExecutable();
   void OpenAdvanced();
+  void ResetScroll();
   mira_gui::GamePatch CurrentPatch() const;
 
   std::string id_;
@@ -87,10 +88,10 @@ private:
   QLineEdit* tags_edit_;
   QComboBox* runner_combo_;
 
-  // Non-modal window holding just the per-game overrides table (its own
-  // category tabs, one row per overridable key) — long enough on its own to
-  // cramp the sidebar if it were inline.
-  QDialog* advanced_dialog_ = nullptr;
+  // Swaps the fields column (art stays on screen) for the per-game overrides
+  // table and back — not a separate dialog, so opening it never covers the
+  // art side or needs its own window chrome beyond a Back button.
+  QStackedWidget* fields_stack_ = nullptr;
   QLineEdit* data_dir_edit_;
   QPlainTextEdit* runner_config_edit_;
   QPlainTextEdit* env_edit_;

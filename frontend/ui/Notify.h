@@ -9,18 +9,11 @@ class QWidget;
 
 namespace mira_gui::notify {
 
-// How Mira says things, in one place, so two screens never disagree about
-// what a failure looks like.
-//
-// Three shapes:
-//  - **Popup** — something you just asked for did not happen, or Mira needs
-//    an answer before continuing. Interrupts, correctly.
-//  - **Toast** — something finished on the daemon's schedule, not yours (a
-//    runner download, a metadata fetch, a winetricks verb). A modal by then
-//    would be an ambush.
-//  - **Inline status** — a dialog that owns a long operation reports it in
-//    its own status line (see RunnerDialog); the only shape that can say
-//    "still going".
+// Failed/Warn: desktop notification that stays until dismissed. Notice: one
+// that times out; skip it when the result is already on screen. Popups are
+// only for questions (Confirm) and content (Info). With no notification
+// service running, Failed falls back to a popup and Warn/Notice to an
+// in-window card, so nothing is lost.
 
 enum class Level { Info, Success, Warning, Error };
 
@@ -28,26 +21,35 @@ enum class Level { Info, Success, Warning, Error };
 // An unknown string reads as Info rather than as an error.
 Level LevelFromString(const QString& text);
 
-// The theme color a level reads as. Shared by ToastCard and PopupDialog.
+// The theme color a level reads as. Shared by the fallback card and
+// PopupDialog.
 QColor AccentFor(Level level);
 
-// --- Popups ----------------------------------------------------------------
+// --- Notifications -----------------------------------------------------------
 
-// The standard failure popup. `what` names what failed, as a sentence the
-// user could have said themselves; `detail` is mirad's own message, shown
-// verbatim underneath.
+// The standard failure. `what` names what failed, as a sentence the user
+// could have said themselves; `detail` is mirad's own message, verbatim.
 void Failed(QWidget* parent, const QString& what, const QString& detail);
 
 // Same, plus one line of what to do about it.
 void FailedWithHint(QWidget* parent, const QString& what, const QString& detail,
                     const QString& hint);
 
-// Same, plus a clickable `action` link that runs `activate` — a route to
-// wherever actually fixes the problem, not just an explanation of it.
+// Same, plus an `action` button that raises the window and runs `activate`.
 void FailedWithAction(QWidget* parent, const QString& what, const QString& detail,
                       const QString& hint, const QString& action,
                       std::function<void()> activate);
 
+// A persistent one-liner with no separate detail — mirad's own warnings.
+void Warn(QWidget* parent, const QString& text);
+
+// A transient one-liner.
+void Notice(QWidget* parent, const QString& text);
+
+// --- Popups ------------------------------------------------------------------
+
+// Content the user asked to see (e.g. a runner kind's config keys) — not a
+// notification, the answer to a button.
 void Info(QWidget* parent, const QString& title, const QString& message);
 
 // A question the caller must not proceed without an answer to. `accept`
@@ -63,26 +65,5 @@ enum class UnsavedAction { Cancel, SaveAndExit, DiscardAndExit };
 // what's unsaved, as a sentence ("This game's edits aren't saved."). No
 // separate Cancel button — the popup's own top-right X is that answer.
 UnsavedAction ConfirmUnsaved(QWidget* parent, const QString& what);
-
-// --- Toasts ----------------------------------------------------------------
-
-// Always the desktop's own notification service (ui/SystemNotifier), never
-// an in-window card — the user has usually moved on to another window by
-// the time one of these fires, and only Mira's own window could show a
-// card. The one exception: no notification service reachable at all (a bare
-// window manager, no daemon), where `Toast` falls back to a card itself so
-// the message isn't just lost. Not a preference — there's nothing to set.
-
-// Seconds a toast stays up. Zero (the default) means until dismissed. Also
-// the desktop notification's own expire timeout. Clamped to
-// kMaxTimeoutSeconds since the value is hand-editable.
-constexpr int kMaxTimeoutSeconds = 600;
-void SetTimeoutSeconds(int seconds);
-int CurrentTimeoutSeconds();
-
-// Sends to the desktop's notification service, or — only when none is
-// reachable — a card stacked bottom-right of `parent`'s window. Attaches to
-// the top-level window, not `parent`, so it survives a dialog closing.
-void Toast(QWidget* parent, Level level, const QString& text);
 
 }  // namespace mira_gui::notify

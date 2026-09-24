@@ -383,11 +383,13 @@ void Server::RegisterRoutes() {
     for (const config::Entry& entry : config::Schema::Instance().Entries()) {
       entries.push_back({
           {"key", entry.key},
+          {"label", entry.label},
           {"type", config::ToString(entry.type)},
           {"default", entry.default_value},
-          {"tier", config::ToString(entry.tier)},
+          {"scope", config::ToString(entry.scope)},
           {"doc", entry.doc},
           {"category", entry.category},
+          {"group", entry.group},
       });
       // Present only when there's a shape to describe.
       if (!entry.constraint.one_of.empty()) entries.back()["one_of"] = entry.constraint.one_of;

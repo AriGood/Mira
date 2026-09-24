@@ -38,10 +38,13 @@ public:
   // decides what "done" means (close a dialog, switch back to the grid).
   void Save();
 
-  // Switches to `key`'s tab (revealing advanced settings first if needed)
-  // and focuses its field. No-op for an unknown key; retried once the
-  // schema loads if called too early.
+  // Switches to `key`'s tab and focuses its field. No-op for an unknown key;
+  // retried once the schema loads if called too early.
   void FocusKey(const QString& key);
+
+  // A widget pinned under the nav's category list, e.g. LibraryWindow's
+  // Back/Reset/Save row.
+  void SetFooterActions(QWidget* actions);
 
   // True if anything differs from what Load() last fetched or Save() last
   // confirmed — the signal a caller uses to warn before discarding.
@@ -96,19 +99,15 @@ private:
   void BuildRows();
   void LoadGameModeStatus();
   void PopulateRunnerCombos(const mira_gui::RunnersResult& result);
-  void SetAdvancedVisible(bool show);
   void ResetField(size_t index);
   std::string CurrentText(const Field& field) const;
   void SetFieldText(Field& field, const std::string& text);
 
   SettingsNavWidget* nav_ = nullptr;
-  QCheckBox* show_advanced_ = nullptr;
   QCheckBox* scan_on_startup_ = nullptr;
   bool scan_on_startup_original_ = true;
   QComboBox* theme_ = nullptr;
   QString theme_original_;
-  QSpinBox* notification_timeout_ = nullptr;
-  int notification_timeout_original_ = 0;
   QCheckBox* game_settings_in_sidebar_ = nullptr;
   bool game_settings_in_sidebar_original_ = true;
   ShapeField tile_spacing_;

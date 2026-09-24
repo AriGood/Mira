@@ -17,6 +17,8 @@ TEST_CASE("every schema entry is well-formed") {
   for (const Entry& entry : Schema::Instance().Entries()) {
     INFO("key: ", entry.key);
     CHECK_FALSE(entry.doc.empty());
+    CHECK_FALSE(entry.label.empty());
+    CHECK_FALSE(entry.category.empty());
     CHECK_FALSE(Schema::Instance().Validate(entry.key, entry.default_value).has_value());
   }
 }
@@ -111,19 +113,20 @@ TEST_CASE("Resolver layers game overrides above the config file above defaults")
   fs::remove(file);
   Config config(file);
   config.Load();
-  REQUIRE(config.Set("scan.max_depth", 6).has_value());
+  REQUIRE(config.Set("launch.log_max_mb", 6).has_value());
 
   Resolver no_override(config, nlohmann::json::object());
-  CHECK(no_override.GetInt("scan.max_depth") == 6);
-  CHECK(no_override.Resolve("scan.max_depth").layer == Layer::ConfigFile);
+  CHECK(no_override.GetInt("launch.log_max_mb") == 6);
+  CHECK(no_override.Resolve("launch.log_max_mb").layer == Layer::ConfigFile);
 
-  Resolver with_override(config, nlohmann::json{{"scan.max_depth", 10}});
-  CHECK(with_override.GetInt("scan.max_depth") == 10);
-  CHECK(with_override.Resolve("scan.max_depth").layer == Layer::Game);
+  Resolver with_override(config, nlohmann::json{{"launch.log_max_mb", 10}});
+  CHECK(with_override.GetInt("launch.log_max_mb") == 10);
+  CHECK(with_override.Resolve("launch.log_max_mb").layer == Layer::Game);
 
   // Daemon-only keys must not be overridable per game, even if a game
   // document somehow carries one.
   Resolver bogus(config, nlohmann::json{{"library_roots", nlohmann::json::array({"/tmp"})}});
   CHECK_FALSE(Resolver::IsOverridable("library_roots"));
+  CHECK_FALSE(Resolver::IsOverridable("scan.max_depth"));
   CHECK(bogus.Resolve("library_roots").layer != Layer::Game);
 }

@@ -296,8 +296,8 @@ hand-edited path, can't be removed this way.
   `scan.debounce_ms`).
 - `set <key> <value>` — `PATCH /v1/config` with that one key. Value is
   parsed as JSON first, same fallback-to-string rule as `--override` above.
-- `list` — every setting from `GET /v1/config/schema`: key, type, tier,
-  one-line doc. This is the whole settings reference; there's no need to
+- `list` — every setting from `GET /v1/config/schema`: key, type, scope
+  (`global` or `per_game`), one-line doc. This is the whole settings reference; there's no need to
   cross-reference `docs/api.md`'s schema section by hand.
 - `reset [key]` — `POST /v1/config/reset`, one key or everything.
 

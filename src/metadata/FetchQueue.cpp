@@ -11,11 +11,6 @@ void FetchQueue::Enqueue(const config::Config& config, api::EventBus& events, mo
                          bool announce) {
   if (!force && !config.GetBool("metadata.enabled")) return;
 
-  if (announce) {
-    events.PublishNotification(model::NotifyLevel::Info,
-                               std::format("Fetching metadata and cover art for \"{}\"…", game.id));
-  }
-
   queue_.Run([&config, &events, game = std::move(game), announce] {
     if (auto fetched = Fetch(config, game); !fetched) {
       log::Warn("metadata fetch failed for {}: {}", game.id, fetched.error().message);
