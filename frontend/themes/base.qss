@@ -136,19 +136,60 @@ QWidget#filter_sort_popover QPushButton:checked {
 }
 
 QWidget#left_sidebar QToolButton#add_games {
-  background: transparent;
-  border: 1px solid @border;
+  background: @accent;
+  color: @on_accent;
+  border: 1px solid @accent;
   border-radius: @radius_control;
   padding: 7px 10px;
+  font-weight: 600;
 }
 
 QWidget#left_sidebar QToolButton#add_games:hover {
+  background: @info;
+  border-color: @info;
+}
+
+QWidget#left_sidebar QToolButton#add_games::menu-indicator {
+  image: none;
+  width: 0px;
+}
+
+QWidget#left_sidebar QToolButton#fetch_art {
+  background: transparent;
+  border: 1px solid @border;
+  border-radius: @radius_control;
+  padding: 6px;
+}
+
+QWidget#left_sidebar QToolButton#fetch_art:hover {
   border-color: @accent;
   background: @surface_alt;
 }
 
+QLabel#sidebar_badge {
+  background: @accent;
+  color: @on_accent;
+  border-radius: 6px;
+  font-weight: 700;
+}
+
+QLabel#sidebar_title {
+  font-weight: 700;
+  font-size: 15px;
+}
+
+QWidget#view_toggle QToolButton {
+  border: 1px solid @border;
+  padding: 3px 6px;
+  border-radius: 0px;
+}
+
+QWidget#view_toggle QToolButton:checked {
+  background: @surface_alt;
+}
+
 /* --- Left sidebar ---------------------------------------------------------
- * Library/Classic view/Settings are plain QPushButtons made to read as rows
+ * The nav, source and recently played rows are plain QPushButtons made to read as rows
  * (see ui/GameTileDelegate.cpp's own status-dot styling for the same
  * "flatten it, then restyle by objectName" approach elsewhere). */
 
@@ -176,11 +217,6 @@ QWidget#left_sidebar QPushButton:pressed {
 QWidget#left_sidebar QPushButton:checked {
   background: @accent;
   color: @on_accent;
-}
-
-/* A source with nothing set up yet (LibraryWindow::UpdateSourceNavs). */
-QWidget#left_sidebar QPushButton[unset="true"]:!checked {
-  color: @text_muted;
 }
 
 /* setItemWidget rows (LibraryWindow.cpp's MakeFilterRow) draw their own

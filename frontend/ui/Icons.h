@@ -39,6 +39,8 @@ enum class Glyph {
   Keyboard,
   Info,
   Store,
+  Sliders,
+  Dot,
 };
 
 // Drawn on demand in the current theme's text color, at the handful of sizes

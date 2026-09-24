@@ -4,6 +4,7 @@
 #include <QList>
 #include <QMainWindow>
 #include <QPixmap>
+#include <QSet>
 #include <QSize>
 #include <QString>
 
@@ -82,7 +83,6 @@ private:
   // Library-only actions as vertical icon+label rows. Refresh/Shortcuts/
   // About moved to the top bar; Close window/Quit dropped (the frameless ×
   // and the tray icon already cover them).
-  void PopulateLibraryActions();
   void BuildShortcuts();
 
   // Frontend's own state (size, tile size, which filter) round-trips through
@@ -167,6 +167,9 @@ private:
   // Highlights the sidebar's "Library" row exactly when the grid is the
   // visible content (not Settings, not a game's edit page).
   void UpdateLibraryNavActive();
+  void ShowLibrary();
+  void OpenManageSources();
+  void RefreshRecentlyPlayed();
   void OpenRunners();
   void OpenAbout();
   void OpenGameDetailPage(const std::string& id);
@@ -234,7 +237,7 @@ private:
   QSlider* zoom_ = nullptr;
   QToolButton* sort_direction_ = nullptr;
   QToolButton* add_games_ = nullptr;
-  // Sidebar row, styled like library_nav_/classic_view_nav_. Settings' own
+  // Sidebar nav row, styled like library_nav_. Settings' own
   // Back/Reset/Save row lives on the settings page itself (BuildSettingsPage),
   // rebuilt fresh alongside settings_panel_ on each open.
   QPushButton* settings_button_ = nullptr;
@@ -247,14 +250,26 @@ private:
   QToolButton* maximize_button_ = nullptr;
   QToolButton* close_button_ = nullptr;
 
-  // The left sidebar's two nav rows — Library is checked/highlighted
-  // whenever content_stack_ shows splitter_ (see UpdateLibraryNavActive).
+  // Library is checked/highlighted whenever content_stack_ shows splitter_
+  // (see UpdateLibraryNavActive).
   QPushButton* library_nav_ = nullptr;
-  QPushButton* classic_view_nav_ = nullptr;
-  // Where PopulateLibraryActions() adds its icon+label rows.
-  QVBoxLayout* library_actions_layout_ = nullptr;
-  // One sidebar row per mira_gui::AllSources() entry, same order.
+  QPushButton* sources_nav_ = nullptr;
+  QLabel* sources_nav_count_ = nullptr;  // "N of M" set up
+  QPushButton* runners_nav_ = nullptr;
+  QToolButton* manage_sources_button_ = nullptr;
+  QToolButton* fetch_art_button_ = nullptr;
+  // Top bar grid/table switch, in place of the old classic view row.
+  QWidget* view_toggle_ = nullptr;
+  QToolButton* grid_view_button_ = nullptr;
+  QToolButton* table_view_button_ = nullptr;
+  // One sidebar row per mira_gui::AllSources() entry, same order; only set up
+  // sources that aren't hidden are visible.
   QList<QPushButton*> source_navs_;
+  QList<QLabel*> source_counts_;
+  QSet<QString> hidden_sources_;    // unticked "In sidebar"
+  QSet<QString> disabled_sources_;  // <id>.enabled = false
+  QLabel* recent_heading_ = nullptr;
+  QVBoxLayout* recent_layout_ = nullptr;
   QVBoxLayout* source_nav_layout_ = nullptr;
   // Store signed in / launcher installed, by source id, as last asked.
   QHash<QString, bool> source_ready_;
