@@ -3,6 +3,7 @@
 #include <json.hpp>
 
 #include <cctype>
+#include <chrono>
 #include <optional>
 #include <string_view>
 #include <utility>
@@ -894,6 +895,62 @@ std::string QueryEncode(const std::string& text) {
   return out;
 }
 
+GriddbMatchesResult GetGriddbMatchesSync(const std::string& id, const std::string& query) {
+  GriddbMatchesResult result;
+  std::string url = "/v1/games/" + id + "/metadata/matches";
+  if (!query.empty()) url += "?q=" + QueryEncode(query);
+  const transport::Reply reply = transport::Get(url, {.read_timeout = std::chrono::seconds(30)});
+  if (!reply.ok) {
+    result.error = reply.error;
+    return result;
+  }
+  result.ok = true;
+  result.query = reply.body.value("query", std::string());
+  result.chosen = reply.body.value("chosen", std::int64_t{0});
+  for (const json& entry : reply.body.value("matches", json::array())) {
+    GriddbMatch match;
+    match.id = entry.value("id", std::int64_t{0});
+    match.name = entry.value("name", std::string());
+    if (const std::int64_t released = entry.value("release_date", std::int64_t{0}); released > 0) {
+      const auto day = std::chrono::floor<std::chrono::days>(std::chrono::sys_seconds{std::chrono::seconds{released}});
+      match.year = static_cast<int>(std::chrono::year_month_day{day}.year());
+    }
+    result.matches.push_back(std::move(match));
+  }
+  return result;
+}
+
+GameActionResult SetGriddbMatchSync(const std::string& id, std::int64_t griddb_id) {
+  const transport::Reply reply =
+      transport::PostJson("/v1/games/" + id + "/metadata/match", {{"steamgriddb_id", griddb_id}});
+  return {reply.ok, reply.error};
+}
+
+ArtworkResult GetTitleArtworkSync(const std::string& source, const std::string& ref) {
+  ArtworkResult result;
+  const transport::Blob blob =
+      transport::GetBinary("/v1/library/artwork?source=" + QueryEncode(source) + "&ref=" + QueryEncode(ref));
+  if (blob.status == 404) {
+    result.missing = true;
+    return result;
+  }
+  if (!blob.ok) {
+    result.error = blob.error;
+    return result;
+  }
+  result.ok = true;
+  result.bytes = blob.bytes;
+  result.content_type = blob.content_type;
+  return result;
+}
+
+StoreActionResult QueueTitleArtworkSync(const std::string& source, const std::vector<StoreTitle>& titles) {
+  json list = json::array();
+  for (const StoreTitle& title : titles) list.push_back({{"ref", title.ref}, {"title", title.title}});
+  const transport::Reply reply = transport::PostJson("/v1/library/artwork", {{"source", source}, {"titles", list}});
+  return {reply.ok, reply.error};
+}
+
 InstallerInfoResult GetInstallerInfoSync(const std::string& id, const std::string& path) {
   InstallerInfoResult result;
   std::string url = "/v1/games/" + id + "/installer";
@@ -1333,6 +1390,42 @@ void MiradClient::InstallStoreTitleAsync(QObject* context, const std::string& so
              std::move(callback));
 }
 
+void MiradClient::GetGriddbMatchesAsync(QObject* context, const std::string& id, const std::string& query,
+                                        std::function<void(GriddbMatchesResult)> callback) {
+  async::Run(context, [id, query] { return GetGriddbMatchesSync(id, query); }, std::move(callback));
+}
+
+void MiradClient::SetGriddbMatchAsync(QObject* context, const std::string& id, std::int64_t griddb_id,
+                                      std::function<void(GameActionResult)> callback) {
+  async::Run(context, [id, griddb_id] { return SetGriddbMatchSync(id, griddb_id); }, std::move(callback));
+}
+
+void MiradClient::GetTitleArtworkAsync(QObject* context, const std::string& source, const std::string& ref,
+                                       std::function<void(ArtworkResult)> callback) {
+  async::Run(context, [source, ref] { return GetTitleArtworkSync(source, ref); }, std::move(callback));
+}
+
+void MiradClient::QueueTitleArtworkAsync(QObject* context, const std::string& source,
+                                         std::vector<StoreTitle> titles,
+                                         std::function<void(StoreActionResult)> callback) {
+  async::Run(context, [source, titles = std::move(titles)] { return QueueTitleArtworkSync(source, titles); },
+             std::move(callback));
+}
+
+bool MiradClient::ParseTitleArtworkEvent(const std::string& event_type, const std::string& data,
+                                         StoreEvent* out) {
+  constexpr std::string_view kPrefix = "library.artwork_";
+  if (!event_type.starts_with(kPrefix)) return false;
+  const json entry = json::parse(data, nullptr, false);
+  if (entry.is_discarded() || !entry.is_object()) return false;
+  out->kind = "artwork";
+  out->state = event_type.substr(kPrefix.size());  // "ready" | "failed"
+  out->source = entry.value("source", std::string());
+  out->ref = entry.value("ref", std::string());
+  out->error = entry.value("code", std::string());
+  return !out->ref.empty();
+}
+
 void MiradClient::GetHumbleLibraryAsync(QObject* context,
                                         std::function<void(HumbleLibraryResult)> callback) {
   async::Run(context, [] { return GetHumbleLibrarySync(); }, std::move(callback));
@@ -1453,6 +1546,7 @@ bool MiradClient::ParseStoreEvent(const std::string& event_type, const std::stri
   if (out->kind == "install") {
     out->source = entry.value("source", std::string());
     out->ref = entry.value("ref", std::string());
+    out->update = entry.value("update", false);
   } else if (out->kind == "download") {
     out->ref = entry.value("bundle_key", std::string());
   } else if (event_type.starts_with(kLauncher)) {

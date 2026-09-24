@@ -21,6 +21,7 @@ class QVBoxLayout;
 namespace mira_gui {
 
 class ArtworkStore;
+class DownloadTracker;
 class TileGrid;
 
 struct SourceInfo {
@@ -46,7 +47,8 @@ class SourcePage : public QWidget {
   Q_OBJECT
 
 public:
-  SourcePage(const SourceInfo& source, ArtworkStore* artwork, QWidget* parent = nullptr);
+  SourcePage(const SourceInfo& source, ArtworkStore* artwork, DownloadTracker* downloads,
+             QWidget* parent = nullptr);
 
   // The whole library; the page shows the games whose source is this one.
   void SetGames(const std::vector<GameSummary>& games, const std::set<std::string>& running);
@@ -91,6 +93,7 @@ private:
   SourceInfo source_;
   std::string id_;
   ArtworkStore* artwork_ = nullptr;
+  DownloadTracker* downloads_ = nullptr;
   bool tool_installed_ = false;
   bool authenticated_ = false;
   bool launcher_installed_ = false;
@@ -125,11 +128,13 @@ private:
   QPushButton* owned_refresh_ = nullptr;
   QLabel* owned_note_ = nullptr;
   QPushButton* steam_settings_ = nullptr;
+  QPushButton* art_key_ = nullptr;  // covers need a SteamGridDB key
   TileGrid* owned_grid_ = nullptr;
 
   // What the account owns and isn't installed, by ref, with its title.
   std::vector<std::pair<QString, QString>> owned_;
-  // Refs mid install/update/download, and the ones done this session.
+  // Refs asked to install/update/download and not yet started by mirad, and
+  // the ones done this session. What's running comes from downloads_.
   QHash<QString, QString> owned_state_;  // ref -> "Installing…", "Downloaded", ...
 
   EventStream event_stream_;

@@ -41,6 +41,11 @@ public:
   // what to show instead. The first call for an id also queues the fetch.
   QPixmap Cover(const GameSummary& game, QSize tile, qreal device_pixel_ratio);
 
+  // The same for a store title that isn't installed yet. Keyed by the id it
+  // gets once installed, "<source>-<ref>", so the cover carries over.
+  QPixmap TitleCover(const QString& source, const QString& ref, const QString& title, QSize tile,
+                     qreal device_pixel_ratio);
+
   // True only if real artwork is held for this id. False covers both "asked
   // and there was none" and "not asked yet", which is what a bulk re-fetch
   // wants: neither one has a cover to show.
@@ -59,6 +64,10 @@ public:
   // For `game.metadata_ready`, and for an explicit refresh.
   void Invalidate(const std::string& id);
 
+  // mirad fetched a store title's cover. Refetches it if TitleCover has
+  // asked for it and got nothing yet; otherwise the first ask gets it.
+  void TitleArtworkReady(const std::string& id);
+
   // Drop the scaled copies only — the originals are still good. For a
   // rename, which changes the placeholder's initials but not the artwork.
   void InvalidateRendering(const std::string& id);
@@ -74,6 +83,7 @@ signals:
   void CoverChanged(const QString& id);
 
 private:
+  QPixmap CoverFor(const QString& id, const QString& name, QSize tile, qreal device_pixel_ratio);
   void Request(const QString& id);
   void Pump();
 
@@ -83,7 +93,9 @@ private:
   QHash<QString, QPixmap> scaled_;    // by "id@tile_width"
   QSet<QString> answered_;            // asked and heard back, either way
   QSet<QString> queued_;              // in `pending_` or in flight
+  QSet<QString> ask_again_;           // in flight when mirad said it has art now
   QQueue<QString> pending_;
+  QHash<QString, std::pair<std::string, std::string>> titles_;  // id -> {source, ref}
   int in_flight_ = 0;
 };
 

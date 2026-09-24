@@ -8,7 +8,9 @@
 #include "../client/EventStream.h"
 #include "../client/Types.h"
 
+class QComboBox;
 class QLabel;
+class QLineEdit;
 class QListWidget;
 class QPushButton;
 
@@ -36,6 +38,10 @@ private:
   // than as a desktop notification.
   void SetStatus(const QString& text, bool error = false);
   void FetchFromSteamGridDb();
+  // Which SteamGridDB game the candidates come from; `query` empty for the
+  // game's own name.
+  void LoadMatches(const QString& query);
+  void ChooseMatch(int index);
   void HandleEvent(const std::string& type, const std::string& data);
 
   std::string id_;
@@ -49,6 +55,9 @@ private:
   // an in-flight Select().
   bool fetching_ = false;
 
+  QWidget* match_row_ = nullptr;
+  QComboBox* match_ = nullptr;
+  QLineEdit* match_search_ = nullptr;
   QListWidget* list_ = nullptr;
   QLabel* preview_ = nullptr;
   QLabel* status_ = nullptr;

@@ -11,7 +11,9 @@
 #include <json.hpp>
 
 #include <cstdlib>
+#include <cstring>
 
+#include "amazon/Nile.h"
 #include "core/Command.h"
 #include "config/Resolver.h"
 #include "core/Log.h"
@@ -193,20 +195,22 @@ void FetchGriddbSlot(const config::Config& config, const std::string& auth_heade
 // a hard error beforehand) and one that already has Steam's own art
 // (FetchSteamOwned, where a missing key or no name match just means no
 // alternates to offer).
+// SteamGridDB's top match for `name`, or 0.
+std::int64_t FindGriddbId(const std::string& auth_header, const std::string& name) {
+  const json search = CurlJson({"curl", "-sSL", "-H", auth_header,
+                                std::format("https://www.steamgriddb.com/api/v2/search/autocomplete/{}",
+                                           UrlEncode(name))});
+  if (search.is_discarded() || !Value(search, "success", false) || Value(search, "data", json::array()).empty()) {
+    return 0;
+  }
+  return Value(search["data"][0], "id", std::int64_t{0});
+}
+
 void FetchGriddbCandidates(const config::Config& config, const std::string& api_key, const std::string& name,
                            const std::string& game_id, std::int64_t chosen_id, json& info) {
   const std::string auth_header = std::format("Authorization: Bearer {}", api_key);
-  std::int64_t griddb_id = chosen_id;  // metadata.steamgriddb_id, when the top match was wrong
-  if (griddb_id == 0) {
-    const json search = CurlJson({"curl", "-sSL", "-H", auth_header,
-                                  std::format("https://www.steamgriddb.com/api/v2/search/autocomplete/{}",
-                                             UrlEncode(name))});
-    if (search.is_discarded() || !Value(search, "success", false) ||
-        Value(search, "data", json::array()).empty()) {
-      return;
-    }
-    griddb_id = Value(search["data"][0], "id", std::int64_t{0});
-  }
+  // metadata.steamgriddb_id, when the top match was wrong
+  const std::int64_t griddb_id = chosen_id != 0 ? chosen_id : FindGriddbId(auth_header, name);
   if (griddb_id == 0) return;
   info["steamgriddb_id"] = griddb_id;
 
@@ -246,16 +250,149 @@ void FetchProtonDb(const std::string& appid, json& info) {
 // file already gives SteamGridDB's own top autocomplete result
 // (FetchGriddbCandidates) -- a generic title can still match the wrong
 // game, which is the accepted tradeoff of matching by name at all.
-std::string FindSteamAppId(const std::string& name) {
+//
+// `exact` only accepts a result whose name matches `name` ignoring case,
+// spaces and punctuation: for art, where a wrong match shows.
+std::string FindSteamAppId(const std::string& name, bool exact = false) {
+  const auto normalize = [](std::string_view text) {
+    std::string out;
+    for (const unsigned char c : text) {
+      if (std::isalnum(c)) out += static_cast<char>(std::tolower(c));
+    }
+    return out;
+  };
+  // A scanned game's name is its folder's: "CloneDroneintheDangerZone" or
+  // "Hollow_Knight" finds nothing until split into words.
+  std::string term;
+  for (std::size_t i = 0; i < name.size(); ++i) {
+    const unsigned char c = name[i];
+    if (c == '_' || c == '.' || c == '-') {
+      term += ' ';
+      continue;
+    }
+    if (i > 0 && std::isupper(c) && std::islower(static_cast<unsigned char>(name[i - 1]))) term += ' ';
+    term += static_cast<char>(c);
+  }
   const json search = CurlJson(
       {"curl", "-sSL", std::format("https://store.steampowered.com/api/storesearch/?term={}&l=english&cc=us",
-                                   UrlEncode(name))});
+                                   UrlEncode(term))});
   if (search.is_discarded()) return {};
   for (const auto& item : Value(search, "items", json::array())) {
-    if (Value(item, "type", std::string()) != "game") continue;
+    // "app" (games, DLC, demos), not "sub"/"bundle". It was checked against
+    // "game", which Steam never sends, so this never matched anything.
+    if (Value(item, "type", std::string()) != "app") continue;
+    if (exact && normalize(Value(item, "name", std::string())) != normalize(name)) continue;
     if (const std::int64_t id = Value(item, "id", std::int64_t{0}); id != 0) return std::to_string(id);
   }
   return {};
+}
+
+// One of Epic's keyImages by type, from Legendary's cached metadata.
+std::string FindKeyImage(const json& key_images, std::string_view type) {
+  for (const auto& image : key_images) {
+    if (Value(image, "type", std::string()) == type) return Value(image, "url", std::string());
+  }
+  return {};
+}
+
+// Steam's vertical library cover for `appid`. Newer apps keep their art
+// under a hashed path, so the fixed library_600x900.jpg 404s for them; the
+// store browse API says where it really is. No key needed.
+std::string SteamCoverUrl(const std::string& appid) {
+  const std::string input = std::format(
+      R"({{"ids":[{{"appid":{}}}],"context":{{"language":"english","country_code":"US"}},)"
+      R"("data_request":{{"include_assets":true}}}})",
+      appid);
+  const json items = CurlJson(
+      {"curl", "-sSL",
+       "https://api.steampowered.com/IStoreBrowseService/GetItems/v1?input_json=" + UrlEncode(input)});
+  json assets;
+  if (const json list = Value(Value(items, "response", json::object()), "store_items", json::array());
+      !list.empty()) {
+    assets = Value(list[0], "assets", json::object());
+  }
+  const std::string format = Value(assets, "asset_url_format", std::string());
+  const std::string file = Value(assets, "library_capsule", std::string());
+  if (format.empty() || file.empty()) {
+    return std::format("https://cdn.akamai.steamstatic.com/steam/apps/{}/library_600x900.jpg", appid);
+  }
+  std::string path = format;
+  if (const std::size_t at = path.find("${FILENAME}"); at != std::string::npos) {
+    path.replace(at, std::string_view("${FILENAME}").size(), file);
+  }
+  return "https://shared.akamai.steamstatic.com/store_item_assets/" + path;
+}
+
+// GOG Galaxy's games database: art for a release on any store it
+// integrates with ("gog", "steam", "itch", "amazon", ...), keyed by that
+// store's own id. Public, no key. Returns the image URL for `field`
+// ("vertical_cover", "horizontal_artwork", "logo"), or empty.
+std::string GamesDbImageUrl(std::string_view platform, const std::string& external_id, std::string_view field) {
+  const json release = CurlJson({"curl", "-sSL",
+                                 std::format("https://gamesdb.gog.com/platforms/{}/external_releases/{}", platform,
+                                             UrlEncode(external_id))});
+  std::string url = Value(Value(Value(release, "game", json::object()), std::string(field).c_str(), json::object()),
+                          "url_format", std::string());
+  if (url.empty()) return {};
+  for (const auto& [token, value] : {std::pair{"{formatter}", ""}, std::pair{"{ext}", "jpg"}}) {
+    if (const std::size_t at = url.find(token); at != std::string::npos) url.replace(at, std::strlen(token), value);
+  }
+  return url;
+}
+
+// gamesdb's name for a Mira source, where it has one.
+std::string_view GamesDbPlatform(const std::string& source) {
+  if (source == "gog" || source == "itch" || source == "steam" || source == "amazon") return source;
+  return {};
+}
+
+// nile's cached library entry art for an Amazon product: square-ish, but
+// better than nothing when gamesdb doesn't know the game.
+std::string AmazonImageUrl(const std::string& product_id) {
+  const json library = amazon::ReadNileFile("library.json");
+  if (!library.is_array()) return {};
+  for (const json& item : library) {
+    const json product = Value(item, "product", json::object());
+    if (Value(product, "id", std::string()) != product_id) continue;
+    const json detail = Value(product, "productDetail", json::object());
+    const json details = Value(detail, "details", json::object());
+    for (const char* key : {"iconUrl", "logoUrl"}) {
+      if (std::string url = Value(details, key, std::string()); !url.empty()) return url;
+      if (std::string url = Value(detail, key, std::string()); !url.empty()) return url;
+    }
+  }
+  return {};
+}
+
+// A store's own cover for one of its games, from wherever it has one, into
+// info's cover slot. Returns whether one landed.
+bool FetchStoreCover(const config::Config& config, const model::Game& game, json& info) {
+  if (game.runner_ref.starts_with("steam:")) {
+    const std::string appid = game.runner_ref.substr(std::string_view("steam:").size());
+    if (FetchArtworkInto(config, SteamCoverUrl(appid), game.id, "steam_cdn", "cover", info)) return true;
+  }
+  if (game.source == "epic") {
+    std::ifstream in(epic::LegendaryMetadataFile(game.source_ref));
+    const json parsed = in ? json::parse(in, nullptr, false) : json();
+    const json key_images = Value(Value(parsed, "metadata", json::object()), "keyImages", json::array());
+    if (const std::string url = FindKeyImage(key_images, "DieselStoreFrontTall");
+        !url.empty() && FetchArtworkInto(config, url, game.id, "epic", "cover", info)) {
+      return true;
+    }
+  }
+  if (const std::string_view platform = GamesDbPlatform(game.source); !platform.empty() && !game.source_ref.empty()) {
+    if (const std::string url = GamesDbImageUrl(platform, game.source_ref, "vertical_cover");
+        !url.empty() && FetchArtworkInto(config, url, game.id, "gog_gamesdb", "cover", info)) {
+      return true;
+    }
+  }
+  if (game.source == "amazon") {
+    if (const std::string url = AmazonImageUrl(game.source_ref);
+        !url.empty() && FetchArtworkInto(config, url, game.id, "amazon", "cover", info)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 void FetchSteamOwned(const config::Config& config, const std::string& appid, const std::string& name,
@@ -361,8 +498,7 @@ void FetchSteamOwned(const config::Config& config, const std::string& appid, con
   // alternate. Negative id: a real SteamGridDB id is always positive.
   constexpr std::int64_t kSteamCdnCandidateId = -1;
 
-  const std::string cover_url =
-      std::format("https://cdn.akamai.steamstatic.com/steam/apps/{}/library_600x900.jpg", appid);
+  const std::string cover_url = SteamCoverUrl(appid);
   if (FetchArtworkInto(config, cover_url, game_id, "steam_cdn", "cover", info, kSteamCdnCandidateId)) {
     info["art_candidates"]["cover"] = json::array({{{"id", kSteamCdnCandidateId},
                                                      {"url", cover_url},
@@ -424,12 +560,7 @@ void FetchEpicOwned(const config::Config& config, const std::string& app_name, c
     // banner-equivalent hero — same two slots Steam's own CDN fills in
     // FetchSteamOwned above.
     const json key_images = Value(meta, "keyImages", json::array());
-    auto find_image = [&](std::string_view type) -> std::string {
-      for (const auto& image : key_images) {
-        if (Value(image, "type", std::string()) == type) return Value(image, "url", std::string());
-      }
-      return {};
-    };
+    auto find_image = [&](std::string_view type) { return FindKeyImage(key_images, type); };
 
     // Steam CDN candidates use id -1 above; a real SteamGridDB id is always
     // positive, so any small negative id is safe as a fixed marker.
@@ -509,21 +640,30 @@ Result<void> FetchNonSteam(const config::Config& config, const std::string& name
   }
 
   const std::string api_key = config.GetString("steamgriddb.api_key");
-  // An error rather than a silent skip. There is no other free cover-art
-  // source for a non-Steam game, so with no key there is nothing this
-  // function can ever do — and reporting success left the caller with a
-  // cache entry, a game.metadata_ready event and no picture, which reads as
-  // "Mira looked and there was nothing" rather than "Mira was never given
-  // the one thing it needed". A found ProtonDB tier is still something,
-  // though, so that alone is not treated the same as finding nothing at all.
-  if (api_key.empty()) {
-    if (found_protondb) return {};
-    return Err("no_steamgriddb_key",
-               "non-Steam games need a SteamGridDB API key for cover art — set "
-               "steamgriddb.api_key (it is free, from steamgriddb.com)");
+  if (!api_key.empty()) FetchGriddbCandidates(config, api_key, name, game_id, griddb_id, info);
+
+  // No key, or SteamGridDB had nothing: Steam's own art, if Steam sells a
+  // game of exactly this name.
+  if (!info.contains("artwork") && config.GetBool("metadata.steam_art_by_name")) {
+    if (const std::string appid = FindSteamAppId(name, /*exact=*/true); !appid.empty()) {
+      FetchArtworkInto(config, SteamCoverUrl(appid), game_id, "steam_cdn", "cover", info);
+      if (!info.contains("hero")) {
+        FetchArtworkInto(config, std::format("https://cdn.akamai.steamstatic.com/steam/apps/{}/library_hero.jpg", appid),
+                         game_id, "steam_cdn", "hero", info);
+      }
+    }
   }
 
-  FetchGriddbCandidates(config, api_key, name, game_id, griddb_id, info);
+  // An error rather than a silent skip when there's nothing to show and no
+  // key: reporting success left the caller with a cache entry, a
+  // game.metadata_ready event and no picture, which reads as "Mira looked
+  // and there was nothing" rather than "Mira was never given the one thing
+  // it needed". A found ProtonDB tier is still something, though.
+  if (api_key.empty() && !info.contains("artwork") && !found_protondb) {
+    return Err("no_steamgriddb_key",
+               "no cover found for this game — a SteamGridDB API key finds more; set "
+               "steamgriddb.api_key (it is free, from steamgriddb.com)");
+  }
   return {};
 }
 
@@ -579,10 +719,20 @@ Result<void> Fetch(const config::Config& config, const model::Game& game) {
     FetchSteamOwned(config, game.runner_ref.substr(std::string_view("steam:").size()), game.name, game.id,
                     griddb_id, info);
   } else {
-    info["source"] = "steamgriddb";
+    // GOG, itch and Amazon games have their store's own art in gamesdb;
+    // SteamGridDB then only adds alternates, so it may fail.
+    const bool found = FetchStoreCover(config, game, info);
+    info["source"] = found ? game.source : "steamgriddb";
+    if (found) {
+      if (const std::string_view platform = GamesDbPlatform(game.source); !platform.empty()) {
+        if (const std::string hero = GamesDbImageUrl(platform, game.source_ref, "horizontal_artwork"); !hero.empty()) {
+          FetchArtworkInto(config, hero, game.id, "gog_gamesdb", "hero", info);
+        }
+      }
+    }
     // Returned before anything is written: a failure here means nothing was
     // fetched, and a cache file would make the next attempt look answered.
-    if (Result<void> fetched = FetchNonSteam(config, game.name, game.id, griddb_id, info); !fetched) {
+    if (Result<void> fetched = FetchNonSteam(config, game.name, game.id, griddb_id, info); !fetched && !found) {
       return std::unexpected(fetched.error());
     }
   }
@@ -592,6 +742,36 @@ Result<void> Fetch(const config::Config& config, const model::Game& game) {
   fs::create_directories(metadata_file.parent_path(), ec);
   if (ec) return Err("metadata_dir_failed", ec.message());
 
+  std::ofstream out(metadata_file, std::ios::trunc);
+  if (!out) return Err("metadata_write_failed", "couldn't open " + metadata_file.string() + " for writing");
+  out << info.dump(2);
+  return {};
+}
+
+Result<void> FetchCover(const config::Config& config, const model::Game& game) {
+  json info = {{"fetched_at", model::NowSeconds()}, {"source", game.source}};
+  const std::string api_key = config.GetString("steamgriddb.api_key");
+  if (!FetchStoreCover(config, game, info) && !api_key.empty()) {
+    const std::string auth_header = std::format("Authorization: Bearer {}", api_key);
+    if (const std::int64_t griddb_id = FindGriddbId(auth_header, game.name); griddb_id != 0) {
+      FetchGriddbSlot(config, auth_header, griddb_id, game.id, "grids", "cover", info);
+    }
+  }
+  // Same last resort as a tracked game's: Steam's art for the same name.
+  if (!info.contains("artwork") && game.source != "steam" && config.GetBool("metadata.steam_art_by_name")) {
+    if (const std::string appid = FindSteamAppId(game.name, /*exact=*/true); !appid.empty()) {
+      FetchArtworkInto(config, SteamCoverUrl(appid), game.id, "steam_cdn", "cover", info);
+    }
+  }
+  if (!info.contains("artwork")) {
+    if (api_key.empty()) return Err("no_steamgriddb_key", "no cover found; set steamgriddb.api_key to look further");
+    return Err("no_artwork", "no cover found for \"" + game.name + "\"");
+  }
+
+  const fs::path metadata_file = MetadataFile(config, game.id);
+  std::error_code ec;
+  fs::create_directories(metadata_file.parent_path(), ec);
+  if (ec) return Err("metadata_dir_failed", ec.message());
   std::ofstream out(metadata_file, std::ios::trunc);
   if (!out) return Err("metadata_write_failed", "couldn't open " + metadata_file.string() + " for writing");
   out << info.dump(2);

@@ -557,6 +557,22 @@ struct GameActionResult {
   std::string error;
 };
 
+// GET /v1/games/{id}/metadata/matches: SteamGridDB games whose art could
+// be this one's, best first.
+struct GriddbMatch {
+  std::int64_t id = 0;
+  std::string name;
+  int year = 0;  // 0 when SteamGridDB has no release date
+};
+
+struct GriddbMatchesResult {
+  bool ok = false;
+  std::string error;
+  std::string query;
+  std::int64_t chosen = 0;  // 0: the top match, nothing chosen
+  std::vector<GriddbMatch> matches;
+};
+
 // POST /v1/library/relocate.
 struct RelocateLibraryResult {
   bool ok = false;
@@ -731,6 +747,7 @@ struct StoreEvent {
   std::string state;   // "started" | "finished" | "failed"
   std::string ref;     // install: the title's ref; download: the bundle key
   std::string error;   // only on "failed"
+  bool update = false;  // install: an update rather than a first install
 };
 
 }  // namespace mira_gui

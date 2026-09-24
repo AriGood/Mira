@@ -413,6 +413,55 @@ TEST_CASE("POST /v1/games/{id}/artwork validates before enqueuing a candidate do
   CHECK(ok->status == 202);
 }
 
+TEST_CASE("/v1/library/artwork serves a store title's cached cover and skips it when queuing") {
+  LiveServer server(TempDir("server-library-artwork"));
+
+  const fs::path artwork_dir = metadata::ArtworkDir(server.config(), "epic-Fortnite");
+  fs::create_directories(artwork_dir);
+  std::ofstream(artwork_dir / "cover.jpg") << "cover-bytes";
+  const fs::path metadata_file = metadata::MetadataFile(server.config(), "epic-Fortnite");
+  fs::create_directories(metadata_file.parent_path());
+  std::ofstream(metadata_file) << R"({"artwork": {"file": "cover.jpg", "content_type": "image/jpeg"}})";
+
+  httplib::Client client = server.Client();
+
+  auto cached = client.Get("/v1/library/artwork?source=epic&ref=Fortnite");
+  REQUIRE(cached != nullptr);
+  CHECK(cached->status == 200);
+  CHECK(cached->body == "cover-bytes");
+
+  auto missing = client.Get("/v1/library/artwork?source=epic&ref=Other");
+  REQUIRE(missing != nullptr);
+  CHECK(missing->status == 404);
+
+  auto bad_ref = client.Get("/v1/library/artwork?source=epic&ref=..%2F..%2Fetc");
+  REQUIRE(bad_ref != nullptr);
+  CHECK(bad_ref->status == 400);
+
+  auto bad_source = client.Get("/v1/library/artwork?source=nope&ref=Fortnite");
+  REQUIRE(bad_source != nullptr);
+  CHECK(bad_source->status == 400);
+
+  auto bad_body = client.Post("/v1/library/artwork", R"({"source": "epic"})", "application/json");
+  REQUIRE(bad_body != nullptr);
+  CHECK(bad_body->status == 400);
+
+  // Only cached or unusable titles, so nothing reaches the network.
+  auto skipped = client.Post("/v1/library/artwork",
+                             R"({"source": "epic", "titles": [{"ref": "Fortnite", "title": "Fortnite"},
+                                 {"ref": "a/b", "title": "Slash"}, {"ref": "NoName"}, 7]})",
+                             "application/json");
+  REQUIRE(skipped != nullptr);
+  CHECK(skipped->status == 202);
+  CHECK(nlohmann::json::parse(skipped->body)["queued"] == 0);
+
+  REQUIRE(server.MutableConfig().Set("metadata.enabled", false).has_value());
+  auto disabled = client.Post("/v1/library/artwork", R"({"source": "epic", "titles": [{"ref": "X", "title": "X"}]})",
+                              "application/json");
+  REQUIRE(disabled != nullptr);
+  CHECK(nlohmann::json::parse(disabled->body)["queued"] == 0);
+}
+
 TEST_CASE("GET /v1/runners/{kind}/schema reflects what each runner actually reads out of runner_config") {
   LiveServer server(TempDir("server-runner-schema"));
   httplib::Client client = server.Client();

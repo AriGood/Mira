@@ -28,6 +28,7 @@ TestEnv::TestEnv(std::string_view name)
   [[maybe_unused]] auto a = config.Set("prefix_root", (dir / "prefixes").string());
   [[maybe_unused]] auto b = config.Set("default_runner.windows", "native:native");
   [[maybe_unused]] auto c = config.Set("metadata.enabled", false);
+  [[maybe_unused]] auto d = config.Set("metadata.steam_art_by_name", false);  // no network in tests
 }
 
 fs::path SharedProtonPrefix() {

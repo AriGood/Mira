@@ -18,6 +18,7 @@
 #include "../client/MiradClient.h"
 #include "../ui/ArtworkStore.h"
 #include "../ui/CoverArt.h"
+#include "../ui/DownloadTracker.h"
 #include "../ui/GameTileDelegate.h"
 #include "../ui/Icons.h"
 #include "../ui/Theme.h"
@@ -166,8 +167,9 @@ const std::vector<SourceInfo>& AllSources() {
   return sources;
 }
 
-SourcePage::SourcePage(const SourceInfo& source, ArtworkStore* artwork, QWidget* parent)
-    : QWidget(parent), source_(source), id_(source.id.toStdString()), artwork_(artwork) {
+SourcePage::SourcePage(const SourceInfo& source, ArtworkStore* artwork, DownloadTracker* downloads,
+                       QWidget* parent)
+    : QWidget(parent), source_(source), id_(source.id.toStdString()), artwork_(artwork), downloads_(downloads) {
   auto* outer = new QVBoxLayout(this);
   outer->setContentsMargins(0, 0, 0, 0);
 
@@ -188,6 +190,9 @@ SourcePage::SourcePage(const SourceInfo& source, ArtworkStore* artwork, QWidget*
 
   event_stream_.Start(this,
                       [this](std::string type, std::string data) { HandleEvent(type, data); });
+  connect(downloads_, &DownloadTracker::Changed, this, [this](const QString& key) {
+    if (owned_grid_ != nullptr && (key.isEmpty() || key.startsWith(source_.id + ":"))) RebuildOwnedTiles();
+  });
 
   RefreshStatus();
   if (id_ == "steam") RefreshOwned();
@@ -407,6 +412,19 @@ QWidget* SourcePage::BuildOwnedSection() {
     row->addStretch(1);
     layout->addLayout(row);
   }
+  if (id_ != "humble") {
+    art_key_ = new QPushButton("Add a SteamGridDB key for covers", owned_section_);
+    art_key_->setIcon(icons::For(icons::Glyph::Image));
+    art_key_->setToolTip(source_.name + " doesn't provide covers Mira can use; SteamGridDB does, "
+                         "with a free API key.");
+    art_key_->setVisible(false);
+    connect(art_key_, &QPushButton::clicked, this,
+            [this] { emit OpenSettingsRequested("steamgriddb.api_key"); });
+    auto* row = new QHBoxLayout();
+    row->addWidget(art_key_);
+    row->addStretch(1);
+    layout->addLayout(row);
+  }
 
   owned_grid_ = new TileGrid(kTile, owned_section_);
   owned_grid_->on_action = [this](QListWidgetItem* item) {
@@ -454,6 +472,18 @@ void SourcePage::SetGames(const std::vector<GameSummary>& games, const std::set<
 }
 
 void SourcePage::UpdateCover(const QString& id) {
+  // A not-installed title's cover is keyed "<source>-<ref>".
+  const QString prefix = source_.id + "-";
+  if (owned_grid_ != nullptr && id_ != "humble" && id.startsWith(prefix)) {
+    const QString ref = id.mid(prefix.size());
+    for (int row = 0; row < owned_grid_->count(); ++row) {
+      QListWidgetItem* item = owned_grid_->item(row);
+      if (item->data(GameTileDelegate::IdRole).toString() != ref) continue;
+      item->setData(Qt::DecorationRole,
+                    artwork_->TitleCover(source_.id, ref, item->data(GameTileDelegate::NameRole).toString(),
+                                         kTile, devicePixelRatioF()));
+    }
+  }
   if (library_grid_ == nullptr) return;
   for (int row = 0; row < library_grid_->count(); ++row) {
     QListWidgetItem* item = library_grid_->item(row);
@@ -661,10 +691,17 @@ void SourcePage::ShowOwned(const StoreLibraryResult& result) {
     RebuildOwnedTiles();
     return;
   }
+  std::vector<StoreTitle> uninstalled;
   for (const StoreTitle& title : result.titles) {
+    downloads_->NoteTitle(source_.id, QString::fromStdString(title.ref), QString::fromStdString(title.title));
     if (!title.installed) {
       owned_.emplace_back(QString::fromStdString(title.ref), QString::fromStdString(title.title));
+      uninstalled.push_back(title);
     }
+  }
+  // Covers already fetched are skipped; the rest arrive as events.
+  if (!uninstalled.empty()) {
+    MiradClient::QueueTitleArtworkAsync(this, id_, std::move(uninstalled), [](StoreActionResult) {});
   }
   if (result.titles.empty() && id_ == "steam") {
     ShowLine(owned_note_,
@@ -694,6 +731,7 @@ void SourcePage::ShowBundles(const HumbleLibraryResult& result) {
   }
   for (const HumbleBundle& bundle : result.bundles) {
     owned_.emplace_back(QString::fromStdString(bundle.key), QString::fromStdString(bundle.name));
+    downloads_->NoteTitle("humble", QString::fromStdString(bundle.key), QString::fromStdString(bundle.name));
   }
   ShowLine(owned_note_,
            owned_.empty() ? QString("No purchases on this account.")
@@ -711,9 +749,15 @@ void SourcePage::RebuildOwnedTiles() {
     item->setData(GameTileDelegate::IdRole, ref);
     item->setData(GameTileDelegate::NameRole, title);
     item->setData(GameTileDelegate::StatusRole, QString("ready"));
+    // Bundles aren't games, so there's no cover to look up.
     item->setData(Qt::DecorationRole,
-                  PlaceholderCover(title, source_.id + "-" + ref, kTile, devicePixelRatioF()));
-    const QString state = owned_state_.value(ref);
+                  id_ == "humble" ? PlaceholderCover(title, source_.id + "-" + ref, kTile, devicePixelRatioF())
+                                  : artwork_->TitleCover(source_.id, ref, title, kTile, devicePixelRatioF()));
+    QString state = owned_state_.value(ref);
+    const DownloadTracker::Entry* running = downloads_->Find(source_.id + ":" + ref);
+    if (running != nullptr && running->state == DownloadTracker::State::Running) {
+      state = id_ == "humble" ? "Downloading…" : running->update ? "Updating…" : "Installing…";
+    }
     item->setData(GameTileDelegate::ActionRole, state.isEmpty() ? idle : state);
     item->setData(GameTileDelegate::ActionEnabledRole, state.isEmpty());
     item->setToolTip(title);
@@ -765,6 +809,14 @@ void SourcePage::ShowLibraryMenu(const QPoint& pos) {
 }
 
 void SourcePage::HandleEvent(const std::string& type, const std::string& data) {
+  if (StoreEvent art; MiradClient::ParseTitleArtworkEvent(type, data, &art)) {
+    // "ready" is LibraryWindow's: it has to land while this page is closed too.
+    if (art.source == id_ && art.state == "failed" && art.error == "no_steamgriddb_key" && art_key_ != nullptr) {
+      art_key_->setVisible(true);
+    }
+    return;
+  }
+
   StoreEvent event;
   if (!MiradClient::ParseStoreEvent(type, data, &event) || event.source != id_) return;
 

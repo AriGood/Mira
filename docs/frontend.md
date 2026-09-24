@@ -36,7 +36,10 @@ place, with the sidebar still up. There are three kinds:
   the helper tool mirad drives (Legendary, gogdl, butler, nile, humble-cli),
   sign in by pasting what the store's login page shows, import what's
   installed. What the account owns but hasn't installed is a second tile grid
-  with an Install pill on each tile (Humble: Download).
+  with an Install pill on each tile (Humble: Download). Its covers are fetched
+  when the page lists them, from the store's own art where mirad can find it.
+  A title with none needs a SteamGridDB key, and the page offers a button to
+  Settings when one is missing.
 - **Launchers** (Battle.net, Ubisoft Connect, EA app): install the launcher
   into its own prefix, open it, import the games installed through it.
 - **Local** (Steam, Lutris): import what the other program installed. Steam
@@ -45,10 +48,23 @@ place, with the sidebar still up. There are three kinds:
 Every page opens on a banner in the source's color with its status, then the
 games from that source (`GameSummary::source`) as cover tiles
 (`ui/TileGrid`, which grows to fit instead of scrolling). A setup card appears
-only while a step is left. A tile not yet installed has no artwork to show:
-mirad reports only a title for it, so it gets the generated placeholder. A
-source turned off in Settings (`<id>.enabled`) is left out of the list. Paste
+only while a step is left. A tile not yet installed gets its cover from
+`/v1/library/artwork`, the placeholder until that arrives (Humble bundles
+always: they aren't games). A source turned off in Settings (`<id>.enabled`) is left out of the list. Paste
 parsing and login URLs come from mirad, so the page holds only wording.
+
+### Downloads
+
+The top bar's download button (with a count while anything runs) opens
+`ui/DownloadsPanel`, listing what `ui/DownloadTracker` has seen, newest
+first: game installers, store installs and updates, Humble downloads,
+launcher installs, store helper downloads and runner downloads. The tracker
+is fed from the library window's event stream, which mirad replays on
+connect, so work started before the GUI shows too. Only game installers
+report progress (bytes written); the rest show a busy bar until they finish
+or fail. A finished install offers *Show*, which selects the game in the
+grid. Source pages read the tracker too, so an Install pill still says
+"Installing…" after leaving and reopening the page.
 
 Neither is a fallback for the other. The grid is the better browser; the
 table is the better audit tool for a library that was just scanned, where
@@ -268,10 +284,12 @@ Everything `api.md` marks implemented has a path through the UI:
 | `GET /v1/games/{id}/metadata` | `ui/HoverCard` (ProtonDB tier, developer, genres) on hover; `GameDetailPageDialog` (context menu → *More details…*) for screenshots, trailers, requirements, DLC, content descriptors, achievements; also `art_candidates.cover`/`.hero` for `ArtworkPickerDialog` |
 | `POST /v1/games/{id}/metadata/refresh` | the tile context menu's *Refresh metadata && cover art*, and *Library → Fetch missing cover art* |
 | `POST /v1/games/{id}/artwork?type=` | *Choose cover art…* / *Choose hero art…* (`ArtworkPickerDialog`) |
+| `GET /v1/games/{id}/metadata/matches`, `POST .../metadata/match` | `ArtworkPickerDialog`'s SteamGridDB game row: which game the art comes from, with a search for another name |
 | `POST /v1/games/{id}/run` | *Run in prefix…* (`RunInPrefixDialog`) |
 | `POST /v1/games/{id}/finish-install` | *Mark as installed* |
 | `GET /v1/games/{id}/installer`, `POST .../install` | *Install…* (`InstallGameDialog`), for a `needs_install` or `broken` game |
-| `GET /v1/games/{id}/install/progress` | the tile's "Installing… 1.2 GB" while `game.install.*` says one runs |
+| `GET /v1/games/{id}/install/progress` | `ui/DownloadTracker`, for the tile's and the downloads panel's "Installing… 1.2 GB" while `game.install.*` says one runs |
+| `GET`/`POST /v1/library/artwork` | `SourcePage`'s Not installed covers, through `ui/ArtworkStore::TitleCover` |
 | `POST /v1/games/{id}/relocate`, `/v1/library/relocate` | *Move to Mira's folders…* (tile and batch menus), *Move games into Mira's folders…* (sidebar) |
 | `POST /v1/library/scan` | on startup, and *View → Refresh library* |
 | `GET /v1/library`, `POST /v1/library/install\|update` | `SourcePage`'s Not installed tiles, and Update on its library tiles |
@@ -289,8 +307,9 @@ Everything `api.md` marks implemented has a path through the UI:
 Events handled: `game.added` (and its `open_config`), `game.updated`,
 `game.removed`, `game.state`, `game.launched`,
 `game.metadata_ready`/`.metadata_failed`, `game.install.*`,
-`runners.download.started`/`.finished`/`.failed`, and on a source page the
-store/launcher setup, `library.install.*` and `humble.download.*` events.
+`runners.download.started`/`.finished`/`.failed`, the store/launcher setup,
+`library.install.*` and `humble.download.*` events (downloads panel and
+source pages), and `library.artwork_*` on a source page.
 
 **Dispatch on the event type, always.** Only `game.added` and `game.updated`
 carry a game record, and the library views check for exactly those two
