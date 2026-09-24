@@ -416,8 +416,12 @@ public:
   std::function<void()> on_backdrop_clicked;
 
 protected:
+  // A press on the card's own empty space propagates up to here too, so
+  // only one that lands on no child at all counts as the backdrop.
   void mousePressEvent(QMouseEvent* event) override {
-    if (event->button() == Qt::LeftButton && on_backdrop_clicked) on_backdrop_clicked();
+    if (event->button() != Qt::LeftButton || !on_backdrop_clicked) return;
+    if (childAt(event->position().toPoint()) != nullptr) return;
+    on_backdrop_clicked();
   }
 };
 
@@ -704,7 +708,7 @@ void LibraryWindow::LoadPrefs() {
     if (prefs.shortcut_overrides) mira_gui::keybindings::LoadOverrides(*prefs.shortcut_overrides);
     if (prefs.sort_descending) {
       sort_descending_ = *prefs.sort_descending;
-      sort_direction_->setArrowType(sort_descending_ ? Qt::DownArrow : Qt::UpArrow);
+      UpdateFilterSortSummary();
     }
     if (prefs.sort_by) {
       // Unlike the old combo box, no signal does this for us -- set the key
@@ -1143,13 +1147,8 @@ QWidget* LibraryWindow::BuildFilterSortPopover() {
 
   sort_direction_ = new QToolButton(popover);
   sort_direction_->setAutoRaise(true);
-  sort_direction_->setIcon(mira_gui::icons::For(mira_gui::icons::Glyph::SortArrows));
-  sort_direction_->setToolTip(sort_descending_ ? "Descending — click for ascending"
-                                               : "Ascending — click for descending");
   connect(sort_direction_, &QToolButton::clicked, this, [this] {
     sort_descending_ = !sort_descending_;
-    sort_direction_->setToolTip(sort_descending_ ? "Descending — click for ascending"
-                                                 : "Ascending — click for descending");
     UpdateFilterSortSummary();
     ApplyFilter();
   });
@@ -1197,6 +1196,10 @@ void LibraryWindow::UpdateFilterSortSummary() {
   sort_summary_label_->setText(
       QString("%1 %2").arg(sort_label, sort_descending_ ? QString::fromUtf8("\xe2\x86\x93")
                                                         : QString::fromUtf8("\xe2\x86\x91")));
+  // The popover's own button shows the current direction too.
+  sort_direction_->setArrowType(sort_descending_ ? Qt::DownArrow : Qt::UpArrow);
+  sort_direction_->setToolTip(sort_descending_ ? "Descending — click for ascending"
+                                               : "Ascending — click for descending");
 }
 
 QWidget* LibraryWindow::BuildSidebar() {

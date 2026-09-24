@@ -490,15 +490,16 @@ linux` game, its per-game YAML config
 resolves to — see `lutris.data_dir` for an explicit override) and upserts
 them:
 ```json
-{ "added": 3, "updated": 1, "skipped": 2 }
+{ "added": 3, "updated": 1, "other_runner": 2, "incomplete": 0 }
 ```
 `runner: linux` is Lutris's own native-Linux runner — a `.sh` script or an
 AppImage, pointed at directly with no prefix involved at all; imported as
-`platform: "native"`, `data_dir` empty. `skipped` counts Lutris rows this
-import can't use: anything not run through `wine` or `linux` (a
+`platform: "native"`, `data_dir` empty. `other_runner` counts rows run
+through anything else, which are left alone rather than failed (a
 `steam`-runner row is already covered by `POST /v1/steam/scan`, a
 `flatpak`-runner row's app already has its own real `.desktop` entry,
-covered by `## Desktop entries` below), a wine-runner row whose YAML has no
+covered by `## Desktop entries` below). `incomplete` counts wine/linux rows
+whose config can't be imported as-is: a wine-runner row whose YAML has no
 `prefix` recorded — Lutris
 itself falls back to a filesystem heuristic in that case (walking up from
 the exe looking for something that looks like a prefix), which isn't

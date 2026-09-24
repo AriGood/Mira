@@ -115,7 +115,8 @@ TEST_CASE("LutrisImporter derives install_path from the exe's own directory, dat
   const auto summary = importer.Import();
   REQUIRE(summary.has_value());
   CHECK(summary->added == 1);
-  CHECK(summary->skipped == 0);
+  CHECK(summary->other_runner == 0);
+  CHECK(summary->incomplete == 0);
 
   const auto game = fx.games.Find("batman-arkham-asylum");
   REQUIRE(game.has_value());
@@ -164,7 +165,7 @@ TEST_CASE("LutrisImporter skips a row with no prefix recorded in its yaml") {
   const auto summary = importer.Import();
   REQUIRE(summary.has_value());
   CHECK(summary->added == 0);
-  CHECK(summary->skipped == 1);
+  CHECK(summary->incomplete == 1);
 }
 
 TEST_CASE("LutrisImporter skips non-wine runners and updates known games in place") {
@@ -191,7 +192,7 @@ TEST_CASE("LutrisImporter skips non-wine runners and updates known games in plac
   const auto first = importer.Import();
   REQUIRE(first.has_value());
   CHECK(first->added == 1);
-  CHECK(first->skipped == 1);
+  CHECK(first->other_runner == 1);
 
   const auto second = importer.Import();
   REQUIRE(second.has_value());
@@ -222,7 +223,7 @@ TEST_CASE("LutrisImporter refuses an install_path that's really the whole shared
   const auto summary = importer.Import();
   REQUIRE(summary.has_value());
   CHECK(summary->added == 0);
-  CHECK(summary->skipped == 1);
+  CHECK(summary->incomplete == 1);
   CHECK(fx.games.All().empty());
 }
 
@@ -306,7 +307,8 @@ TEST_CASE("LutrisImporter imports a native (\"linux\" runner) game with no prefi
   const auto summary = importer.Import();
   REQUIRE(summary.has_value());
   CHECK(summary->added == 1);
-  CHECK(summary->skipped == 0);
+  CHECK(summary->other_runner == 0);
+  CHECK(summary->incomplete == 0);
 
   const auto game = fx.games.Find("my-appimage-game");
   REQUIRE(game.has_value());
@@ -330,5 +332,5 @@ TEST_CASE("LutrisImporter skips a \"linux\" row whose exe is relative -- nothing
   const auto summary = importer.Import();
   REQUIRE(summary.has_value());
   CHECK(summary->added == 0);
-  CHECK(summary->skipped == 1);
+  CHECK(summary->incomplete == 1);
 }

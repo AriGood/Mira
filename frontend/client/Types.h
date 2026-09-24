@@ -446,14 +446,12 @@ struct SteamScanResult {
   int updated = 0;
 };
 
-// POST /v1/lutris/import. `skipped` counts Lutris rows this import cannot
-// use — a non-wine runner, or a wine game whose yaml records no prefix.
+// POST /v1/lutris/import.
 struct LutrisImportResult {
   bool ok = false;
   std::string error;
   int added = 0;
   int updated = 0;
-  int skipped = 0;
 };
 
 // POST /v1/games/{id}/run — an arbitrary executable inside this game's own
