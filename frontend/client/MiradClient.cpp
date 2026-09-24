@@ -2,6 +2,7 @@
 
 #include <json.hpp>
 
+#include <optional>
 #include <string_view>
 #include <utility>
 
@@ -724,6 +725,146 @@ DesktopEntrySyncResult SyncDesktopEntriesSync() {
   return {reply.ok, reply.error};
 }
 
+// Per-store endpoint names. Humble has no import or sign-out of its own.
+struct StoreEndpoints {
+  std::string status;
+  std::string tool_key;  // the tool's object in the status reply
+  std::string setup;
+  std::string credential_field;
+};
+
+std::optional<StoreEndpoints> EndpointsFor(const std::string& source) {
+  if (source == "epic") return StoreEndpoints{"/v1/epic/status", "legendary", "/v1/epic/legendary/install", "code"};
+  if (source == "gog") return StoreEndpoints{"/v1/gog/status", "gogdl", "/v1/gog/setup", "code"};
+  if (source == "itch") return StoreEndpoints{"/v1/itch/status", "butler", "/v1/itch/setup", "api_key"};
+  if (source == "humble") {
+    return StoreEndpoints{"/v1/humble/status", "humble_cli", "/v1/humble/setup", "session_key"};
+  }
+  return std::nullopt;
+}
+
+std::string UnknownStore(const std::string& source) { return "Unknown store \"" + source + "\"."; }
+
+StoreStatusResult GetStoreStatusSync(const std::string& source) {
+  StoreStatusResult result;
+  const std::optional<StoreEndpoints> endpoints = EndpointsFor(source);
+  if (!endpoints) {
+    result.error = UnknownStore(source);
+    return result;
+  }
+  // Humble's status asks humble-cli itself, over the network.
+  const transport::Reply reply = transport::Get(endpoints->status, {.read_timeout = std::chrono::seconds(30)});
+  if (!reply.ok) {
+    result.error = reply.error;
+    return result;
+  }
+  if (!reply.body.is_object()) {
+    result.error = transport::UnexpectedResponse("GET " + endpoints->status);
+    return result;
+  }
+  result.ok = true;
+  const json tool = reply.body.value(endpoints->tool_key, json::object());
+  if (tool.is_object()) {
+    result.tool_installed = tool.value("installed", false);
+    result.tool_version = tool.value("version", std::string());
+  }
+  result.authenticated = reply.body.value("authenticated", false);
+  result.account = reply.body.value("account", std::string());
+  result.login_url = reply.body.value("login_url", std::string());
+  return result;
+}
+
+StoreActionResult SetupStoreToolSync(const std::string& source) {
+  const std::optional<StoreEndpoints> endpoints = EndpointsFor(source);
+  if (!endpoints) return {false, UnknownStore(source)};
+  // Asks GitHub for the newest release before answering.
+  const transport::Reply reply = transport::Post(endpoints->setup, {.read_timeout = std::chrono::seconds(30)});
+  return {reply.ok, reply.error};
+}
+
+StoreActionResult SignInStoreSync(const std::string& source, const std::string& credential) {
+  const std::optional<StoreEndpoints> endpoints = EndpointsFor(source);
+  if (!endpoints) return {false, UnknownStore(source)};
+  const transport::Reply reply = transport::PostJson("/v1/" + source + "/auth",
+                                                     {{endpoints->credential_field, credential}},
+                                                     {.read_timeout = std::chrono::seconds(60)});
+  return {reply.ok, reply.error};
+}
+
+StoreActionResult SignOutStoreSync(const std::string& source) {
+  const transport::Reply reply = transport::Post("/v1/" + source + "/logout");
+  return {reply.ok, reply.error};
+}
+
+StoreImportResult ImportStoreSync(const std::string& source) {
+  StoreImportResult result;
+  // Provisions a prefix per new game, so a first import can take a while.
+  const transport::Reply reply =
+      transport::Post("/v1/" + source + "/import", {.read_timeout = std::chrono::seconds(300)});
+  if (!reply.ok) {
+    result.error = reply.error;
+    return result;
+  }
+  result.ok = true;
+  result.added = reply.body.value("added", 0);
+  result.updated = reply.body.value("updated", 0);
+  return result;
+}
+
+StoreLibraryResult GetStoreLibrarySync(const std::string& source) {
+  StoreLibraryResult result;
+  const transport::Reply reply =
+      transport::Get("/v1/library?source=" + source, {.read_timeout = std::chrono::seconds(60)});
+  if (!reply.ok) {
+    result.error = reply.error;
+    return result;
+  }
+  if (!reply.body.is_array()) {
+    result.error = transport::UnexpectedResponse("GET /v1/library");
+    return result;
+  }
+  result.ok = true;
+  for (const json& entry : reply.body) {
+    if (!entry.is_object()) continue;
+    result.titles.push_back({.ref = entry.value("ref", std::string()),
+                             .title = entry.value("title", std::string()),
+                             .installed = entry.value("installed", false)});
+  }
+  return result;
+}
+
+StoreActionResult InstallStoreTitleSync(const std::string& source, const std::string& ref, bool update) {
+  const transport::Reply reply = transport::PostJson(update ? "/v1/library/update" : "/v1/library/install",
+                                                     {{"source", source}, {"ref", ref}});
+  return {reply.ok, reply.error};
+}
+
+HumbleLibraryResult GetHumbleLibrarySync() {
+  HumbleLibraryResult result;
+  const transport::Reply reply = transport::Get("/v1/humble/library", {.read_timeout = std::chrono::seconds(60)});
+  if (!reply.ok) {
+    result.error = reply.error;
+    return result;
+  }
+  if (!reply.body.is_array()) {
+    result.error = transport::UnexpectedResponse("GET /v1/humble/library");
+    return result;
+  }
+  result.ok = true;
+  for (const json& entry : reply.body) {
+    if (!entry.is_object()) continue;
+    result.bundles.push_back({.key = entry.value("key", std::string()),
+                              .name = entry.value("name", std::string()),
+                              .claimed = entry.value("claimed", false)});
+  }
+  return result;
+}
+
+StoreActionResult DownloadHumbleBundleSync(const std::string& bundle_key) {
+  const transport::Reply reply = transport::PostJson("/v1/humble/download", {{"bundle_key", bundle_key}});
+  return {reply.ok, reply.error};
+}
+
 }  // namespace
 
 std::string MiradClient::ResolveSocketPath() { return transport::SocketPath(); }
@@ -1002,6 +1143,99 @@ bool MiradClient::ParseNotification(const std::string& data, NotificationEvent* 
   out->message = payload.value("message", std::string());
   if (out->message.empty()) return false;
   out->level = payload.value("level", std::string("info"));
+  return true;
+}
+
+void MiradClient::GetStoreStatusAsync(QObject* context, const std::string& source,
+                                      std::function<void(StoreStatusResult)> callback) {
+  async::Run(context, [source] { return GetStoreStatusSync(source); }, std::move(callback));
+}
+
+void MiradClient::SetupStoreToolAsync(QObject* context, const std::string& source,
+                                      std::function<void(StoreActionResult)> callback) {
+  async::Run(context, [source] { return SetupStoreToolSync(source); }, std::move(callback));
+}
+
+void MiradClient::SignInStoreAsync(QObject* context, const std::string& source,
+                                   const std::string& credential,
+                                   std::function<void(StoreActionResult)> callback) {
+  async::Run(context, [source, credential] { return SignInStoreSync(source, credential); },
+             std::move(callback));
+}
+
+void MiradClient::SignOutStoreAsync(QObject* context, const std::string& source,
+                                    std::function<void(StoreActionResult)> callback) {
+  async::Run(context, [source] { return SignOutStoreSync(source); }, std::move(callback));
+}
+
+void MiradClient::ImportStoreAsync(QObject* context, const std::string& source,
+                                   std::function<void(StoreImportResult)> callback) {
+  async::Run(context, [source] { return ImportStoreSync(source); }, std::move(callback));
+}
+
+void MiradClient::GetStoreLibraryAsync(QObject* context, const std::string& source,
+                                       std::function<void(StoreLibraryResult)> callback) {
+  async::Run(context, [source] { return GetStoreLibrarySync(source); }, std::move(callback));
+}
+
+void MiradClient::InstallStoreTitleAsync(QObject* context, const std::string& source,
+                                         const std::string& ref, bool update,
+                                         std::function<void(StoreActionResult)> callback) {
+  async::Run(context, [source, ref, update] { return InstallStoreTitleSync(source, ref, update); },
+             std::move(callback));
+}
+
+void MiradClient::GetHumbleLibraryAsync(QObject* context,
+                                        std::function<void(HumbleLibraryResult)> callback) {
+  async::Run(context, [] { return GetHumbleLibrarySync(); }, std::move(callback));
+}
+
+void MiradClient::DownloadHumbleBundleAsync(QObject* context, const std::string& bundle_key,
+                                            std::function<void(StoreActionResult)> callback) {
+  async::Run(context, [bundle_key] { return DownloadHumbleBundleSync(bundle_key); },
+             std::move(callback));
+}
+
+bool MiradClient::ParseStoreEvent(const std::string& event_type, const std::string& data,
+                                  StoreEvent* out) {
+  // Each store's setup event has its own prefix; installs and downloads
+  // share one each.
+  static const std::pair<std::string_view, std::string_view> kSetupPrefixes[] = {
+      {"epic.legendary.install.", "epic"},
+      {"gog.setup.", "gog"},
+      {"itch.setup.", "itch"},
+      {"humble.setup.", "humble"},
+  };
+  std::string_view state;
+  for (const auto& [prefix, source] : kSetupPrefixes) {
+    if (event_type.starts_with(prefix)) {
+      out->source = source;
+      out->kind = "setup";
+      state = std::string_view(event_type).substr(prefix.size());
+    }
+  }
+  constexpr std::string_view kInstall = "library.install.";
+  constexpr std::string_view kDownload = "humble.download.";
+  if (event_type.starts_with(kInstall)) {
+    out->kind = "install";
+    state = std::string_view(event_type).substr(kInstall.size());
+  } else if (event_type.starts_with(kDownload)) {
+    out->source = "humble";
+    out->kind = "download";
+    state = std::string_view(event_type).substr(kDownload.size());
+  }
+  if (state.empty()) return false;
+
+  const json entry = json::parse(data, nullptr, false);
+  if (entry.is_discarded() || !entry.is_object()) return false;
+  out->state = std::string(state);
+  if (out->kind == "install") {
+    out->source = entry.value("source", std::string());
+    out->ref = entry.value("ref", std::string());
+  } else if (out->kind == "download") {
+    out->ref = entry.value("bundle_key", std::string());
+  }
+  out->error = entry.value("error", std::string());
   return true;
 }
 
