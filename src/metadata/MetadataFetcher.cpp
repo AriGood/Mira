@@ -193,20 +193,22 @@ void FetchGriddbSlot(const config::Config& config, const std::string& auth_heade
 // a hard error beforehand) and one that already has Steam's own art
 // (FetchSteamOwned, where a missing key or no name match just means no
 // alternates to offer).
+// SteamGridDB's top match for `name`, or 0.
+std::int64_t FindGriddbId(const std::string& auth_header, const std::string& name) {
+  const json search = CurlJson({"curl", "-sSL", "-H", auth_header,
+                                std::format("https://www.steamgriddb.com/api/v2/search/autocomplete/{}",
+                                           UrlEncode(name))});
+  if (search.is_discarded() || !Value(search, "success", false) || Value(search, "data", json::array()).empty()) {
+    return 0;
+  }
+  return Value(search["data"][0], "id", std::int64_t{0});
+}
+
 void FetchGriddbCandidates(const config::Config& config, const std::string& api_key, const std::string& name,
                            const std::string& game_id, std::int64_t chosen_id, json& info) {
   const std::string auth_header = std::format("Authorization: Bearer {}", api_key);
-  std::int64_t griddb_id = chosen_id;  // metadata.steamgriddb_id, when the top match was wrong
-  if (griddb_id == 0) {
-    const json search = CurlJson({"curl", "-sSL", "-H", auth_header,
-                                  std::format("https://www.steamgriddb.com/api/v2/search/autocomplete/{}",
-                                             UrlEncode(name))});
-    if (search.is_discarded() || !Value(search, "success", false) ||
-        Value(search, "data", json::array()).empty()) {
-      return;
-    }
-    griddb_id = Value(search["data"][0], "id", std::int64_t{0});
-  }
+  // metadata.steamgriddb_id, when the top match was wrong
+  const std::int64_t griddb_id = chosen_id != 0 ? chosen_id : FindGriddbId(auth_header, name);
   if (griddb_id == 0) return;
   info["steamgriddb_id"] = griddb_id;
 
@@ -400,6 +402,14 @@ void FetchSteamOwned(const config::Config& config, const std::string& appid, con
   }
 }
 
+// One of Epic's keyImages by type, from Legendary's cached metadata.
+std::string FindKeyImage(const json& key_images, std::string_view type) {
+  for (const auto& image : key_images) {
+    if (Value(image, "type", std::string()) == type) return Value(image, "url", std::string());
+  }
+  return {};
+}
+
 // Legendary's own catalog cache already has title metadata and store art
 // URLs for every title it knows about — populated by `legendary list`, read
 // here directly rather than hitting Epic's API again (Legendary already did
@@ -424,12 +434,7 @@ void FetchEpicOwned(const config::Config& config, const std::string& app_name, c
     // banner-equivalent hero — same two slots Steam's own CDN fills in
     // FetchSteamOwned above.
     const json key_images = Value(meta, "keyImages", json::array());
-    auto find_image = [&](std::string_view type) -> std::string {
-      for (const auto& image : key_images) {
-        if (Value(image, "type", std::string()) == type) return Value(image, "url", std::string());
-      }
-      return {};
-    };
+    auto find_image = [&](std::string_view type) { return FindKeyImage(key_images, type); };
 
     // Steam CDN candidates use id -1 above; a real SteamGridDB id is always
     // positive, so any small negative id is safe as a fixed marker.
@@ -592,6 +597,43 @@ Result<void> Fetch(const config::Config& config, const model::Game& game) {
   fs::create_directories(metadata_file.parent_path(), ec);
   if (ec) return Err("metadata_dir_failed", ec.message());
 
+  std::ofstream out(metadata_file, std::ios::trunc);
+  if (!out) return Err("metadata_write_failed", "couldn't open " + metadata_file.string() + " for writing");
+  out << info.dump(2);
+  return {};
+}
+
+Result<void> FetchCover(const config::Config& config, const model::Game& game) {
+  json info = {{"fetched_at", model::NowSeconds()}, {"source", game.source}};
+  if (game.runner_ref.starts_with("steam:")) {
+    const std::string appid = game.runner_ref.substr(std::string_view("steam:").size());
+    FetchArtworkInto(config, std::format("https://cdn.akamai.steamstatic.com/steam/apps/{}/library_600x900.jpg", appid),
+                     game.id, "steam_cdn", "cover", info);
+  } else if (game.source == "epic") {
+    std::ifstream in(epic::LegendaryMetadataFile(game.source_ref));
+    const json parsed = in ? json::parse(in, nullptr, false) : json();
+    const json key_images = Value(Value(parsed, "metadata", json::object()), "keyImages", json::array());
+    if (const std::string url = FindKeyImage(key_images, "DieselStoreFrontTall"); !url.empty()) {
+      FetchArtworkInto(config, url, game.id, "epic", "cover", info);
+    }
+  }
+
+  if (!info.contains("artwork")) {
+    const std::string api_key = config.GetString("steamgriddb.api_key");
+    if (api_key.empty()) {
+      return Err("no_steamgriddb_key", "set steamgriddb.api_key for covers of games from this store");
+    }
+    const std::string auth_header = std::format("Authorization: Bearer {}", api_key);
+    if (const std::int64_t griddb_id = FindGriddbId(auth_header, game.name); griddb_id != 0) {
+      FetchGriddbSlot(config, auth_header, griddb_id, game.id, "grids", "cover", info);
+    }
+  }
+  if (!info.contains("artwork")) return Err("no_artwork", "no cover found for \"" + game.name + "\"");
+
+  const fs::path metadata_file = MetadataFile(config, game.id);
+  std::error_code ec;
+  fs::create_directories(metadata_file.parent_path(), ec);
+  if (ec) return Err("metadata_dir_failed", ec.message());
   std::ofstream out(metadata_file, std::ios::trunc);
   if (!out) return Err("metadata_write_failed", "couldn't open " + metadata_file.string() + " for writing");
   out << info.dump(2);

@@ -11,6 +11,7 @@
 #include "core/BackgroundQueue.h"
 #include "core/Result.h"
 #include "metadata/FetchQueue.h"
+#include "metadata/TitleArtQueue.h"
 #include "proc/ProcessSupervisor.h"
 #include "store/GameStore.h"
 
@@ -60,6 +61,7 @@ private:
   std::unique_ptr<httplib::Server> http_;
   proc::ProcessSupervisor supervisor_;
   metadata::FetchQueue metadata_fetches_;
+  metadata::TitleArtQueue title_art_;
   BackgroundQueue tricks_queue_;
   BackgroundQueue artwork_selects_;
   std::function<void()> on_roots_changed_;

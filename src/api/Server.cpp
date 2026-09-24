@@ -289,6 +289,30 @@ bool HasCachedArtwork(const config::Config& config, const std::string& id) {
   return std::ifstream(file, std::ios::binary).good();
 }
 
+// Serves one cached art slot for `id`, or 404s.
+void SendCachedArtwork(const config::Config& config, const std::string& id, const std::string& type,
+                       Response& res) {
+  const std::string key = type == "cover" ? "artwork" : type;
+  std::ifstream meta_in(metadata::MetadataFile(config, id));
+  if (!meta_in) return SendError(res, 404, "artwork_not_found", "no artwork cached for this game yet");
+  const json info = json::parse(meta_in, nullptr, false);
+  if (info.is_discarded() || !info.contains(key)) {
+    return SendError(res, 404, "artwork_not_found", "no artwork cached for this game yet");
+  }
+  const std::filesystem::path file = metadata::ArtworkDir(config, id) / info[key].value("file", std::string());
+  std::ifstream in(file, std::ios::binary);
+  if (!in) return SendError(res, 404, "artwork_not_found", "cached artwork file is missing");
+  std::ostringstream buffer;
+  buffer << in.rdbuf();
+  res.set_content(buffer.str(), info[key].value("content_type", "image/jpeg"));
+}
+
+// A store title's art is cached under "<source>-<ref>", so the ref ends up
+// in a path.
+bool IsSafeRef(const std::string& ref) {
+  return !ref.empty() && ref.find('/') == std::string::npos && ref.find('\0') == std::string::npos;
+}
+
 void SyncDesktopEntries(config::Config& config, store::GameStore& games) {
   if (auto synced = desktop::DesktopEntries(config).Sync(games.All()); !synced) {
     log::Warn("could not update application menu entries: {}", synced.error().message);
@@ -1293,6 +1317,47 @@ void Server::RegisterRoutes() {
 
     SendJson(res, {{"status", is_update ? "updating" : "installing"}, {"ref", ref}}, 202);
   };
+  // Cover art for titles not installed yet, cached under the id each gets
+  // once installed ("<source>-<ref>"), so an install starts with its cover.
+  // GET only reads the cache; POST queues fetches for what isn't cached.
+  http_->Get("/v1/library/artwork", [this](const Request& req, Response& res) {
+    const std::string source = req.has_param("source") ? req.get_param_value("source") : "";
+    const std::string ref = req.has_param("ref") ? req.get_param_value("ref") : "";
+    if (library::FindSource(source) == nullptr || !IsSafeRef(ref)) {
+      return SendError(res, 400, "invalid_request", "expected ?source=<store>&ref=<ref>");
+    }
+    SendCachedArtwork(config_, source + "-" + ref, "cover", res);
+  });
+
+  http_->Post("/v1/library/artwork", [this](const Request& req, Response& res) {
+    const json body = json::parse(req.body, nullptr, false);
+    const auto text = [](const json& object, const char* key) {
+      const auto found = object.find(key);
+      return found != object.end() && found->is_string() ? found->get<std::string>() : std::string();
+    };
+    const std::string source = body.is_object() ? text(body, "source") : "";
+    if (library::FindSource(source) == nullptr || !body.contains("titles") || !body["titles"].is_array()) {
+      return SendError(res, 400, "invalid_body",
+                       R"(expected {"source": "...", "titles": [{"ref": "...", "title": "..."}]})");
+    }
+    if (!config_.GetBool("metadata.enabled")) return SendJson(res, {{"queued", 0}});
+
+    std::vector<model::Game> titles;
+    for (const json& entry : body["titles"]) {
+      if (!entry.is_object()) continue;
+      model::Game title;
+      title.source = source;
+      title.source_ref = text(entry, "ref");
+      title.name = text(entry, "title");
+      title.id = source + "-" + title.source_ref;
+      if (!IsSafeRef(title.source_ref) || title.name.empty() || HasCachedArtwork(config_, title.id)) continue;
+      // How Fetch tells a Steam game apart.
+      if (source == "steam") title.runner_ref = "steam:" + title.source_ref;
+      titles.push_back(std::move(title));
+    }
+    SendJson(res, {{"queued", title_art_.Enqueue(config_, events_, std::move(titles))}}, 202);
+  });
+
   http_->Post("/v1/library/install", [library_install_or_update](const Request& req, Response& res) {
     library_install_or_update(req, res, false);
   });
@@ -1872,22 +1937,7 @@ void Server::RegisterRoutes() {
     // ?type= picks a non-default art slot; "cover" (stored as "artwork" for
     // wire compatibility) is the default. See MetadataFetcher for the full
     // set of slots each source writes.
-    const std::string type = req.has_param("type") ? req.get_param_value("type") : "cover";
-    const std::string key = type == "cover" ? "artwork" : type;
-    const std::filesystem::path metadata_file = metadata::MetadataFile(config_, req.matches[1]);
-    std::ifstream meta_in(metadata_file);
-    if (!meta_in) return SendError(res, 404, "artwork_not_found", "no artwork cached for this game yet");
-    const json info = json::parse(meta_in, nullptr, false);
-    if (info.is_discarded() || !info.contains(key)) {
-      return SendError(res, 404, "artwork_not_found", "no artwork cached for this game yet");
-    }
-    const std::filesystem::path file =
-        metadata::ArtworkDir(config_, req.matches[1]) / info[key].value("file", std::string());
-    std::ifstream in(file, std::ios::binary);
-    if (!in) return SendError(res, 404, "artwork_not_found", "cached artwork file is missing");
-    std::ostringstream buffer;
-    buffer << in.rdbuf();
-    res.set_content(buffer.str(), info[key].value("content_type", "image/jpeg"));
+    SendCachedArtwork(config_, req.matches[1], req.has_param("type") ? req.get_param_value("type") : "cover", res);
   });
 
   // Lets a caller pick a different cached SteamGridDB candidate for a slot

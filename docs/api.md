@@ -609,6 +609,22 @@ Same body and the same detached/event shape. `epic`/`gog`/`itch` all
 support it; `steam` 400s with `unsupported`, since Steam updates its own
 games and there's nothing for Mira to do.
 
+### `GET /v1/library/artwork?source=&ref=` — implemented
+A not-installed title's cached cover (binary, like `GET
+/v1/games/{id}/artwork`), or 404 `artwork_not_found` until one is fetched.
+Cached under the id the title gets once installed, `<source>-<ref>`, so an
+installed game starts with its cover. 400 `invalid_request` for an unknown
+source, or a ref that's empty or holds a `/`.
+
+### `POST /v1/library/artwork` — implemented
+`{"source": "epic", "titles": [{"ref": "...", "title": "..."}]}`. Queues a
+cover fetch for each title not cached or already queued, answering 202
+`{"queued": n}` (0 when `metadata.enabled` is false). Fetches run one at a
+time and only get the cover: Steam's CDN for Steam, Legendary's cached
+store art for Epic, else SteamGridDB's top match (needs
+`steamgriddb.api_key`). Each ends in `library.artwork_ready` or
+`library.artwork_failed`.
+
 ---
 
 ## Epic
@@ -1142,6 +1158,9 @@ Published today:
   `POST /v1/library/install` above. `update: true` is the only thing
   distinguishing an update from an install, rather than a parallel event
   namespace.
+- `library.artwork_ready` / `.artwork_failed` — `{"source": ..., "ref": ...}`,
+  plus `"code"` on failure (`no_steamgriddb_key`, `no_artwork`, ...); see
+  `POST /v1/library/artwork` above.
 - `epic.legendary.install.started` / `.finished` / `.failed` — fetching
   the Legendary binary itself, see `POST /v1/epic/legendary/install`.
 
