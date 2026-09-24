@@ -756,6 +756,15 @@ Schema::Schema() {
   // --- Store launchers ------------------------------------------------------
   s.Section("Store Launchers");
 
+  for (const auto& [id, name] : {std::pair{"battlenet", "Battle.net"}, std::pair{"ubisoft", "Ubisoft Connect"},
+                                 std::pair{"ea", "EA app"}}) {
+    s.Add({.key = std::format("{}.enabled", id),
+           .label = std::format("Enable {}", name),
+           .type = Type::Bool,
+           .default_value = true,
+           .doc = std::format("Show {} in the sidebar and import its games. Removing it turns this off.", name)});
+  }
+
   s.Add({.key = "launchers.auto_import",
          .label = "Import Launcher Games on Scan",
          .type = Type::Bool,

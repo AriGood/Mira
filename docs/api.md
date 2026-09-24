@@ -769,6 +769,31 @@ See the class-comment note above: re-identifies everything already under
 
 ---
 
+## Sources
+
+### `GET /v1/sources/{id}/removal` — implemented
+What removing a source would do, without doing it:
+```json
+{ "source": "ubisoft", "games": [ { "id": "ubisoft-5595", "name": "Trackmania",
+    "deletes": "/home/me/Games/prefixes/ubisoft-connect/drive_c/.../Trackmania" } ],
+  "launcher_dir": ".../drive_c/Program Files (x86)/Ubisoft/Ubisoft Game Launcher",
+  "kept": [ "/home/me/Games/prefixes/ubisoft-connect", ".../Ubisoft Game Launcher/savegames" ],
+  "signs_out": false }
+```
+`deletes` is empty for a game only dropped from Mira (Steam, Lutris and
+Humble own their files).
+
+### `POST /v1/sources/{id}/remove` — implemented
+Uninstalls the source's games (`legendary uninstall`, `nile uninstall`,
+butler's `Uninstall.Perform`, or deleting the folder when it's inside a
+Mira folder), deletes a launcher's program folder but keeps save folders
+inside it, signs out of a store, removes the games from Mira and sets
+`<id>.enabled` to false. Prefixes are never deleted. A step that fails is
+reported and the rest still run:
+```json
+{ "removed": 3, "problems": [] }
+```
+
 ## itch.io
 
 itch.io support wraps [butlerd](https://itch.io/docs/butler/launcher-integration.html),
