@@ -554,13 +554,16 @@ Every entitlement the configured sources can report, or one source's with
 ```json
 [ { "source": "epic", "ref": "e8bbb84be35640cda646233152ff3428",
     "title": "Brotato", "installed": true,
-    "game_id": "epic-e8bbb84be35640cda646233152ff3428", "play_seconds": 0 } ]
+    "game_id": "epic-e8bbb84be35640cda646233152ff3428", "play_seconds": 0,
+    "owned": true } ]
 ```
 `ref` is the source's own stable id (Legendary's `app_name`, Steam's
 appid, GOG's/itch's numeric game id) — the handle `POST /v1/library/install`
 takes. `installed` and `game_id` say whether Mira already tracks it,
 resolved by looking up `"<source>-<ref>"` in the game store. `play_seconds`
 is what the source itself reports (Steam does; the others don't, so it's 0).
+`owned` is false only for a paid itch game listed from a collection that the
+account hasn't bought; it can't be installed.
 
 A source that isn't configured or authenticated contributes nothing rather
 than failing the whole listing — one broken storefront shouldn't hide the
@@ -572,7 +575,9 @@ ILibrarySource.h`) and is looked up through a small registry
 Epic/Steam entries come from Legendary's cache / `IPlayerService/
 GetOwnedGames`, same as before; GOG's come from GOG's own `embed.gog.com`
 API directly (gogdl has no catalog subcommand of its own — see `GET
-/v1/gog/status`); itch's come from butlerd's `Fetch.ProfileOwnedKeys`.
+/v1/gog/status`); itch's come from butlerd's `Fetch.ProfileOwnedKeys`,
+owned bundles, and the games in the account's own collections plus any added
+by link (`GET /v1/itch/collections`).
 Steam additionally needs `steam.web_api_key` + `steam.steamid64`, without
 which it contributes nothing (its on-disk files only ever describe
 *installed* games). Humble Bundle is **not** part of this registry at all
@@ -810,6 +815,27 @@ butler's word for one installed copy) as tracked games, tagged `itch`.
 the import).
 
 ---
+
+### `GET /v1/itch/collections` — implemented
+The collections whose games `GET /v1/library?source=itch` lists: the
+account's own (butlerd's `Fetch.ProfileCollections`, including the default
+one named after the username), then the ones added by link
+(`itch.collections`).
+```json
+[ { "id": 8213205, "title": "Ex03's Collection", "games_count": 2, "own": true,
+    "url": "https://itch.io/c/8213205" } ]
+```
+
+### `POST /v1/itch/collections` — implemented
+Body `{"link": "https://itch.io/c/8213205/ex03s-collection"}`. Also takes the
+link without the slug or scheme, or a bare id. The collection is read
+through butlerd (`Fetch.Collection`) first, so a bad link or another
+account's private collection is refused. Adds the id to `itch.collections`
+and returns the collection, as above, with 201.
+
+### `DELETE /v1/itch/collections/{id}` — implemented
+Removes a collection added by link. The account's own collections can't be
+removed this way.
 
 ## Humble Bundle
 
@@ -1173,6 +1199,9 @@ Published today:
   `POST /v1/library/install` above. `update: true` is the only thing
   distinguishing an update from an install, rather than a parallel event
   namespace.
+- `library.install.progress` — `{"source": "itch", "ref": ..., "progress":
+  0.42, "eta": 30, "bps": 1048576}`, about once a second while butlerd
+  downloads. Only itch reports progress so far.
 - `library.artwork_ready` / `.artwork_failed` — `{"source": ..., "ref": ...}`,
   plus `"code"` on failure (`no_steamgriddb_key`, `no_artwork`, ...); see
   `POST /v1/library/artwork` above.

@@ -214,7 +214,7 @@ isn't picked up.
 
 Installing is source-generic: `mira library install gog <id>`.
 
-## `mira itch setup|status|login|logout|import`
+## `mira itch setup|status|login|logout|import|collections`
 itch.io support, via [butlerd](https://itch.io/docs/butler/launcher-integration.html)
 — itch's own launcher-integration daemon, the one source here with a tool
 built specifically for third-party launchers. `mirad` keeps one `butler
@@ -231,6 +231,10 @@ restart.
 - `logout` — removes Mira's own stored key.
 - `import` — adds already-installed itch titles (butlerd's own `Fetch.
   Caves`) as ordinary games, tagged `itch`.
+- `collections [list | add <link> | remove <id>]` — the collections whose
+  games show in `mira library itch`: your own, plus any added by link
+  (`https://itch.io/c/<id>/...`). Free games from them can be installed; paid
+  ones only once you own them.
 
 Installing is source-generic: `mira library install itch <id>`.
 

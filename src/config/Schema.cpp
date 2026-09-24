@@ -449,6 +449,14 @@ Schema::Schema() {
                 "\"Hollow Knight\") or \"id\" (the GOG product id).",
          .constraint = OneOf({"title", "id"})});
 
+  s.Add({.key = "itch.collections",
+         .label = "Itch Collections",
+         .type = Type::StringArray,
+         .default_value = json::array(),
+         .doc = "itch.io collections added by link (ids or https://itch.io/c/<id>/... links), on top of "
+                "your own. Their games show on the itch page; a paid one you don't own can't be "
+                "installed."});
+
   s.Add({.key = "itch.install_root",
          .label = "Itch Install Dir",
          .type = Type::String,

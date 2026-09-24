@@ -2,14 +2,19 @@
 
 #include <arpa/inet.h>
 #include <netdb.h>
+#include <poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <cerrno>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <condition_variable>
+#include <map>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -22,11 +27,22 @@ namespace {
 namespace fs = std::filesystem;
 using nlohmann::json;
 
+struct Pending {
+  std::optional<Result<json>> reply;
+  NotificationHandler on_notification;
+};
+
+// Every call shares one connection: calls are sent concurrently and a reader
+// thread hands each reply back by id. butlerd runs with --keep-alive so it
+// would take more connections, and --destiny-pid so it exits with mirad.
 struct Connection {
-  std::mutex mutex;
+  std::mutex mutex;  // everything below except writes
+  std::condition_variable replied;
   bool connected = false;
   int socket_fd = -1;
   int next_id = 1;
+  std::map<int, Pending*> pending;
+  std::mutex write_mutex;  // one message on the socket at a time
 };
 
 Connection& GlobalConnection() {
@@ -67,13 +83,19 @@ Result<int> SpawnCapturingStdout(const std::vector<std::string>& argv) {
   return pipe_fds[0];
 }
 
-// Reads from `fd` until a full line is available or `deadline` passes.
-// Simple blocking-with-timeout read, one byte at a time -- butlerd's
-// startup output is a handful of short lines, not a hot path.
+// Reads from `fd` until a full line is available or `deadline` passes,
+// one byte at a time. poll() enforces the deadline; a bare read() would
+// block forever on a reply that never comes.
 Result<std::string> ReadLine(int fd, std::chrono::steady_clock::time_point deadline) {
   std::string line;
   char c = 0;
-  while (std::chrono::steady_clock::now() < deadline) {
+  while (true) {
+    const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
+    if (left.count() <= 0) break;
+    pollfd ready{.fd = fd, .events = POLLIN, .revents = 0};
+    const int polled = poll(&ready, 1, static_cast<int>(std::min<std::int64_t>(left.count(), 60'000)));
+    if (polled < 0 && errno != EINTR) return Err("read_failed", std::strerror(errno));
+    if (polled <= 0) continue;
     const ssize_t n = read(fd, &c, 1);
     if (n < 0) {
       if (errno == EINTR) continue;
@@ -123,16 +145,113 @@ Result<void> SendLine(int fd, const json& message) {
   return {};
 }
 
+// The index of the upload to install: a Linux build first, then Windows,
+// then whatever butlerd listed first.
+int PickUpload(const json& uploads) {
+  if (!uploads.is_array() || uploads.empty()) return 0;
+  for (const char* platform : {"linux", "windows"}) {
+    for (size_t i = 0; i < uploads.size(); ++i) {
+      const json platforms = uploads[i].value("platforms", json::object());
+      if (platforms.is_object() && platforms.contains(platform)) return static_cast<int>(i);
+    }
+  }
+  return 0;
+}
+
+// butlerd asks the client things mid-call (which upload, accept a licence)
+// and waits for the answer, so every request gets one.
+void AnswerServerRequest(int fd, const json& request, std::mutex* write_mutex = nullptr) {
+  const std::string method = request.value("method", std::string());
+  const json params = request.value("params", json::object());
+  json reply = {{"jsonrpc", "2.0"}, {"id", request["id"]}};
+  if (method == "PickUpload") {
+    reply["result"] = {{"index", PickUpload(params.value("uploads", json::array()))}};
+  } else if (method == "AcceptLicense") {
+    reply["result"] = {{"accept", true}};
+  } else if (method == "ExternalUploadsAreBad") {
+    reply["result"] = {{"whatever", true}};
+  } else {
+    log::Warn("butlerd asked something Mira doesn't answer: {}", method);
+    reply["error"] = {{"code", -32601}, {"message", "not handled by Mira: " + method}};
+  }
+  if (write_mutex == nullptr) {
+    (void)SendLine(fd, reply);
+    return;
+  }
+  const std::lock_guard<std::mutex> lock(*write_mutex);
+  (void)SendLine(fd, reply);
+}
+
+// Runs for the life of one butlerd connection: replies go to their pending
+// call, notifications to every call that wants them, and butlerd's own
+// requests get answered. When the connection drops, every waiting call fails.
+void ReadLoop(Connection& connection, int fd) {
+  const auto forever = std::chrono::steady_clock::now() + std::chrono::hours(24 * 365);
+  while (true) {
+    const Result<std::string> line = ReadLine(fd, forever);
+    if (!line) break;
+    const json parsed = json::parse(*line, nullptr, false);
+    if (parsed.is_discarded() || !parsed.is_object()) continue;
+    if (parsed.contains("method")) {
+      if (parsed.contains("id")) {
+        AnswerServerRequest(fd, parsed, &connection.write_mutex);
+        continue;
+      }
+      std::vector<NotificationHandler> handlers;
+      {
+        const std::lock_guard<std::mutex> lock(connection.mutex);
+        for (const auto& [id, call] : connection.pending) {
+          if (call->on_notification) handlers.push_back(call->on_notification);
+        }
+      }
+      const std::string method = parsed.value("method", std::string());
+      const json params = parsed.value("params", json::object());
+      for (const NotificationHandler& handler : handlers) handler(method, params);
+      continue;
+    }
+    if (!parsed.contains("id") || !parsed["id"].is_number_integer()) continue;
+    const std::lock_guard<std::mutex> lock(connection.mutex);
+    const auto found = connection.pending.find(parsed["id"].get<int>());
+    if (found == connection.pending.end()) continue;  // its caller gave up
+    if (parsed.contains("error")) {
+      found->second->reply = Err("butlerd_error", parsed["error"].value("message", std::string("butlerd call failed")));
+    } else {
+      found->second->reply = parsed.value("result", json::object());
+    }
+    connection.replied.notify_all();
+  }
+
+  const std::lock_guard<std::mutex> lock(connection.mutex);
+  if (connection.socket_fd == fd) {
+    connection.connected = false;
+    connection.socket_fd = -1;
+  }
+  close(fd);
+  for (const auto& [id, call] : connection.pending) {
+    if (!call->reply) call->reply = Err("butlerd_disconnected", "lost the connection to butlerd");
+  }
+  connection.replied.notify_all();
+}
+
 // Reads lines off the connection until one carries the response to
-// `request_id` (a "result"/"error" field alongside a matching "id") --
-// any notification (a "method" with no "id", e.g. install progress) seen
-// along the way is skipped, not surfaced here.
-Result<json> ReadResponse(int fd, int request_id, std::chrono::steady_clock::time_point deadline) {
+// `request_id` (a "result"/"error" field alongside a matching "id").
+// Server requests are answered; notifications (e.g. install progress) go
+// to `on_notification`, if set.
+Result<json> ReadResponse(int fd, int request_id, std::chrono::steady_clock::time_point deadline,
+                          const NotificationHandler& on_notification = nullptr) {
   while (true) {
     const Result<std::string> line = ReadLine(fd, deadline);
     if (!line) return std::unexpected(line.error());
     const json parsed = json::parse(*line, nullptr, false);
     if (parsed.is_discarded() || !parsed.is_object()) continue;
+    if (parsed.contains("method")) {
+      if (parsed.contains("id")) {
+        AnswerServerRequest(fd, parsed);
+      } else if (on_notification) {
+        on_notification(parsed.value("method", std::string()), parsed.value("params", json::object()));
+      }
+      continue;
+    }
     if (parsed.contains("id") && parsed["id"].is_number_integer() &&
         parsed["id"].get<int>() == request_id) {
       if (parsed.contains("error")) {
@@ -160,7 +279,8 @@ Result<void> EnsureConnectedLocked(const config::Config& config, Connection& con
   fs::create_directories(db_path.parent_path(), ec);
 
   const Result<int> stdout_fd =
-    SpawnCapturingStdout({status.path, "daemon", "--json", "--dbpath", db_path.string()});
+    SpawnCapturingStdout({status.path, "daemon", "--json", "--dbpath", db_path.string(), "--keep-alive",
+                          "--destiny-pid", std::to_string(getpid())});
   if (!stdout_fd) return std::unexpected(stdout_fd.error());
 
   // butlerd mixes its own JSON log lines in with the one
@@ -216,34 +336,54 @@ Result<void> EnsureConnectedLocked(const config::Config& config, Connection& con
 
   connection.socket_fd = socket_fd;
   connection.connected = true;
+  std::thread(ReadLoop, std::ref(connection), socket_fd).detach();
   log::Info("connected to butlerd at {}", address);
   return {};
 }
 
 }  // namespace
 
-Result<json> Call(const config::Config& config, const std::string& method, const json& params) {
+namespace {
+
+Result<json> Send(const config::Config& config, const std::string& method, const json& params,
+                  std::chrono::steady_clock::duration timeout, const NotificationHandler& on_notification) {
   Connection& connection = GlobalConnection();
-  std::lock_guard<std::mutex> lock(connection.mutex);
-
-  if (auto ready = EnsureConnectedLocked(config, connection); !ready) return std::unexpected(ready.error());
-
-  const int id = connection.next_id++;
-  if (auto sent = SendLine(connection.socket_fd,
-                          {{"jsonrpc", "2.0"}, {"id", id}, {"method", method}, {"params", params}});
-      !sent) {
-    connection.connected = false;
+  Pending call{.reply = std::nullopt, .on_notification = on_notification};
+  int id = 0;
+  int fd = -1;
+  {
+    const std::lock_guard<std::mutex> lock(connection.mutex);
+    if (auto ready = EnsureConnectedLocked(config, connection); !ready) return std::unexpected(ready.error());
+    id = connection.next_id++;
+    fd = connection.socket_fd;
+    connection.pending[id] = &call;
+  }
+  Result<void> sent;
+  {
+    const std::lock_guard<std::mutex> lock(connection.write_mutex);
+    sent = SendLine(fd, {{"jsonrpc", "2.0"}, {"id", id}, {"method", method}, {"params", params}});
+  }
+  std::unique_lock<std::mutex> lock(connection.mutex);
+  if (!sent) {
+    connection.pending.erase(id);
     return std::unexpected(sent.error());
   }
+  const bool answered = connection.replied.wait_for(lock, timeout, [&call] { return call.reply.has_value(); });
+  connection.pending.erase(id);
+  if (!answered) return Err("timeout", "butlerd didn't answer " + method + " in time");
+  return *call.reply;
+}
 
-  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(120);
-  Result<json> response = ReadResponse(connection.socket_fd, id, deadline);
-  if (!response && response.error().code != "butlerd_error") {
-    // Transport-level failure (read/timeout/eof) -- the connection itself
-    // is no longer trustworthy, next call starts fresh.
-    connection.connected = false;
-  }
-  return response;
+}  // namespace
+
+Result<json> Call(const config::Config& config, const std::string& method, const json& params) {
+  return Send(config, method, params, std::chrono::seconds(120), nullptr);
+}
+
+Result<json> CallLong(const config::Config& config, const std::string& method, const json& params,
+                      const NotificationHandler& on_notification) {
+  // A download can take hours; the limit only guards against a hang.
+  return Send(config, method, params, std::chrono::hours(24), on_notification);
 }
 
 }  // namespace mira::itch

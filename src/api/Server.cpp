@@ -275,6 +275,14 @@ WrapperStatus ReadWrapperStatus(int fd, int timeout_s) {
   return result;
 }
 
+json CollectionJson(const itch::ItchCollection& collection) {
+  return {{"id", collection.id},
+          {"title", collection.title},
+          {"games_count", collection.games_count},
+          {"own", collection.own},
+          {"url", std::format("https://itch.io/c/{}", collection.id)}};
+}
+
 // Same check GET /v1/games/{id}/artwork's default "cover" slot uses to
 // decide between serving a file and 404ing — reused here so "missing
 // artwork" means the same thing to both endpoints.
@@ -1154,6 +1162,28 @@ void Server::RegisterRoutes() {
     SendJson(res, {{"added", summary->added}, {"updated", summary->updated}});
   });
 
+  http_->Get("/v1/itch/collections", [this](const Request&, Response& res) {
+    auto collections = itch::ListCollections(config_);
+    if (!collections) return SendError(res, 400, collections.error().code, collections.error().message);
+    json out = json::array();
+    for (const itch::ItchCollection& collection : *collections) out.push_back(CollectionJson(collection));
+    SendJson(res, std::move(out));
+  });
+
+  http_->Post("/v1/itch/collections", [this](const Request& req, Response& res) {
+    const json body = json::parse(req.body, nullptr, false);
+    if (!body.is_object() || !body.contains("link") || !body["link"].is_string()) {
+      return SendError(res, 400, "invalid_body", R"(expected {"link": "https://itch.io/c/<id>/..."})");
+    }
+    auto added = itch::AddCollection(config_, body["link"].get<std::string>());
+    if (!added) return SendError(res, 400, added.error().code, added.error().message);
+    SendJson(res, CollectionJson(*added), 201);
+  });
+
+  http_->Delete(R"(/v1/itch/collections/(\d+))", [this](const Request& req, Response& res) {
+    SendResult(res, itch::RemoveCollection(config_, std::stoll(req.matches[1].str())));
+  });
+
   // --- humble -------------------------------------------------------------
   //
   // Wraps humble-cli (unofficial). Deliberately outside the
@@ -1273,7 +1303,8 @@ void Server::RegisterRoutes() {
                      {"title", entry.title},
                      {"installed", entry.installed},
                      {"game_id", entry.game_id},
-                     {"play_seconds", entry.play_seconds}});
+                     {"play_seconds", entry.play_seconds},
+                     {"owned", entry.owned}});
     }
     SendJson(res, std::move(out));
   });

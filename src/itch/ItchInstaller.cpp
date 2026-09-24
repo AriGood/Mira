@@ -1,5 +1,7 @@
 #include "itch/ItchInstaller.h"
 
+#include <chrono>
+
 #include <filesystem>
 
 #include <json.hpp>
@@ -46,7 +48,21 @@ Result<void> ItchInstaller::Run(const std::string& game_id) {
     return Err("itch_queue_failed", "Install.Queue didn't return an id/stagingFolder");
   }
 
-  if (auto performed = Call(config_, "Install.Perform", {{"id", install_id}, {"stagingFolder", staging_folder}});
+  // Progress arrives as notifications; passed on about once a second.
+  auto last_sent = std::chrono::steady_clock::time_point{};
+  const auto on_notification = [&](const std::string& method, const json& params) {
+    if (method != "Progress") return;
+    const auto now = std::chrono::steady_clock::now();
+    if (now - last_sent < std::chrono::seconds(1)) return;
+    last_sent = now;
+    events_.Publish("library.install.progress", {{"source", "itch"},
+                                                 {"ref", game_id},
+                                                 {"progress", params.value("progress", 0.0)},
+                                                 {"eta", params.value("eta", 0.0)},
+                                                 {"bps", params.value("bps", 0.0)}});
+  };
+  if (auto performed = CallLong(config_, "Install.Perform", {{"id", install_id}, {"stagingFolder", staging_folder}},
+                                on_notification);
       !performed) {
     return std::unexpected(performed.error());
   }

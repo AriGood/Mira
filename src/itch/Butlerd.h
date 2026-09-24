@@ -1,5 +1,6 @@
 #pragma once
 
+#include <functional>
 #include <string>
 
 #include <json.hpp>
@@ -20,6 +21,9 @@
 // database open) on every call.
 namespace mira::itch {
 
+// A butlerd notification: its method (e.g. "Progress") and params.
+using NotificationHandler = std::function<void(const std::string& method, const nlohmann::json& params)>;
+
 // One request/response round trip. `method`/`params` are butlerd's own
 // (Meta.Authenticate, Profile.LoginWithAPIKey, Fetch.ProfileOwnedKeys,
 // Fetch.Caves, Install.Queue/Perform, ...). Connects and authenticates
@@ -28,5 +32,11 @@ namespace mira::itch {
 // this call's response is skipped, not surfaced here.
 Result<nlohmann::json> Call(const config::Config& config, const std::string& method,
                            const nlohmann::json& params);
+
+// Like Call, with no practical deadline, for a long call (Install.Perform).
+// Calls share butlerd's one connection concurrently, so this blocks nothing
+// else. Notifications while it runs go to `on_notification`.
+Result<nlohmann::json> CallLong(const config::Config& config, const std::string& method,
+                               const nlohmann::json& params, const NotificationHandler& on_notification = nullptr);
 
 }  // namespace mira::itch

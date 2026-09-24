@@ -4,6 +4,8 @@
 #include <filesystem>
 #include <string>
 #include <string_view>
+#include <optional>
+#include <vector>
 
 #include "config/Config.h"
 #include "core/Result.h"
@@ -62,5 +64,25 @@ Result<std::int64_t> CurrentProfileId(const config::Config& config);
 // a title for the first time (confirmed live: "installLocationId must be
 // set"). Idempotent -- safe to call before every install.
 Result<void> EnsureInstallLocation(const config::Config& config);
+
+// A collection link's id: "https://itch.io/c/<id>/<slug>", the same
+// without the slug or scheme, or a bare id.
+std::optional<std::int64_t> ParseCollectionLink(std::string_view link);
+
+struct ItchCollection {
+  std::int64_t id = 0;
+  std::string title;
+  std::int64_t games_count = 0;
+  bool own = false;  // the account's own, not added by link
+};
+
+// The account's own collections, then the ones added by link
+// (itch.collections). An added one that can't be read is left out.
+Result<std::vector<ItchCollection>> ListCollections(const config::Config& config);
+
+// Checks the collection can be read, then adds it to itch.collections.
+Result<ItchCollection> AddCollection(config::Config& config, std::string_view link);
+
+Result<void> RemoveCollection(config::Config& config, std::int64_t id);
 
 }  // namespace mira::itch
