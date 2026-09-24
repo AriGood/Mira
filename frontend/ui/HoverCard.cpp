@@ -1,10 +1,14 @@
 #include "HoverCard.h"
 
+#include <QGuiApplication>
 #include <QLabel>
 #include <QPainter>
 #include <QPainterPath>
+#include <QScreen>
 #include <QSizePolicy>
 #include <QVBoxLayout>
+
+#include <algorithm>
 
 #include "../client/MiradClient.h"
 #include "GamePresentation.h"
@@ -22,17 +26,82 @@ std::string Join(const std::vector<std::string>& values) {
   return joined;
 }
 
+QLabel* AddLine(QVBoxLayout* layout, QWidget* parent, const char* role) {
+  auto* label = new QLabel(parent);
+  label->setProperty("role", role);
+  label->setWordWrap(true);
+  label->hide();
+  layout->addWidget(label);
+  return label;
+}
+
+void SetLine(QLabel* label, const QString& text) {
+  label->setText(text);
+  label->setVisible(!text.isEmpty());
+}
+
 }  // namespace
 
+namespace card {
+
+void Paint(QWidget* widget) {
+  const theme::Tokens& tokens = theme::Current();
+  QPainter painter(widget);
+  painter.setRenderHint(QPainter::Antialiasing);
+  QPainterPath path;
+  path.addRoundedRect(QRectF(widget->rect()).adjusted(0.5, 0.5, -0.5, -0.5), tokens.radius_panel,
+                      tokens.radius_panel);
+  painter.fillPath(path, tokens.surface);
+  painter.setPen(QPen(tokens.border, 1));
+  painter.drawPath(path);
+}
+
+QPoint Place(const QRect& anchor, QSize size, bool beside) {
+  QScreen* screen = QGuiApplication::screenAt(anchor.center());
+  if (screen == nullptr) screen = QGuiApplication::primaryScreen();
+  const QRect area = screen != nullptr ? screen->availableGeometry() : QRect(anchor.topLeft(), size);
+
+  QPoint pos;
+  if (beside) {
+    pos = QPoint(anchor.right() + 1 + kGap, anchor.top());
+    if (pos.x() + size.width() > area.right()) pos.setX(anchor.left() - kGap - size.width());
+  } else {
+    pos = QPoint(anchor.center().x() - size.width() / 2, anchor.bottom() + 1 + kGap);
+    if (pos.y() + size.height() > area.bottom()) pos.setY(anchor.top() - kGap - size.height());
+  }
+  pos.setX(std::clamp(pos.x(), area.left(), std::max(area.left(), area.right() + 1 - size.width())));
+  pos.setY(std::clamp(pos.y(), area.top(), std::max(area.top(), area.bottom() + 1 - size.height())));
+  return pos;
+}
+
+}  // namespace card
+
+HoverDwell::HoverDwell(std::function<void(QListWidgetItem*)> on_hover) : on_hover_(std::move(on_hover)) {
+  timer_.setSingleShot(true);
+  QObject::connect(&timer_, &QTimer::timeout, [this] { on_hover_(last_); });
+}
+
+void HoverDwell::Track(QListWidgetItem* hovered) {
+  if (hovered == last_) return;
+  last_ = hovered;
+  timer_.stop();
+  on_hover_(nullptr);  // hide at once on change or leave
+  if (hovered != nullptr) timer_.start(card::kDwellMs);
+}
+
+void HoverDwell::Forget() {
+  timer_.stop();
+  last_ = nullptr;
+}
+
 HoverCard::HoverCard(QWidget* parent) : QWidget(parent) {
-  // ToolTip: never takes focus or activation, never shows in a taskbar --
-  // exactly the non-modal, glance-and-gone behavior a hover preview wants.
+  // ToolTip: never takes focus or activation, never shows in a taskbar.
   setWindowFlags(Qt::ToolTip | Qt::FramelessWindowHint);
   setAttribute(Qt::WA_TranslucentBackground);
   setAttribute(Qt::WA_ShowWithoutActivating);
 
   auto* layout = new QVBoxLayout(this);
-  layout->setContentsMargins(14, 12, 14, 12);
+  layout->setContentsMargins(card::kPaddingX, card::kPaddingY, card::kPaddingX, card::kPaddingY);
   layout->setSpacing(4);
   setFixedWidth(240);
 
@@ -54,46 +123,53 @@ HoverCard::HoverCard(QWidget* parent) : QWidget(parent) {
 
   layout->addSpacing(4);
 
-  platform_line_ = new QLabel(this);
-  platform_line_->setProperty("role", "muted");
-  platform_line_->setWordWrap(true);
-  layout->addWidget(platform_line_);
-
-  played_line_ = new QLabel(this);
-  played_line_->setProperty("role", "muted");
-  layout->addWidget(played_line_);
-
-  developer_line_ = new QLabel(this);
-  developer_line_->setProperty("role", "muted");
-  developer_line_->setWordWrap(true);
-  developer_line_->hide();
-  layout->addWidget(developer_line_);
+  platform_line_ = AddLine(layout, this, "muted");
+  played_line_ = AddLine(layout, this, "muted");
+  developer_line_ = AddLine(layout, this, "muted");
+  error_line_ = AddLine(layout, this, "error");
+  hint_line_ = AddLine(layout, this, "muted");
 }
 
-void HoverCard::ShowGame(const GameSummary& game, bool running) {
+void HoverCard::Reset() {
+  protondb_->hide();
+  for (QLabel* line : {platform_line_, played_line_, developer_line_, error_line_, hint_line_}) {
+    SetLine(line, QString());
+  }
+}
+
+void HoverCard::ShowGame(const GameSummary& game, bool running, const QString& hint) {
   game_id_ = game.id;
+  Reset();
 
   name_->setText(QString::fromStdString(game.name));
   status_->setText(QString("<span style='color:%1; font-weight:600;'>%2</span>")
-                        .arg(StatusColor(running ? "running" : game.status).name(),
+                       .arg(StatusColor(running ? "running" : game.status).name(),
                             running ? "Playing" : StatusLabel(game.status)));
 
   const bool native = game.platform == "native";
   QString platform_label = QString::fromStdString(game.platform);
   if (!platform_label.isEmpty()) platform_label[0] = platform_label[0].toUpper();
-  platform_line_->setText(native ? "Native — no Proton involved"
-                                 : QString("Platform: %1").arg(platform_label));
-  played_line_->setText(QString("%1 · %2").arg(FormatLastPlayed(game.last_played_at),
-                                               FormatPlaytime(game.play_seconds)));
-
-  protondb_->hide();
-  developer_line_->hide();
-  adjustSize();
+  SetLine(platform_line_, native ? "Native — no Proton involved" : QString("Platform: %1").arg(platform_label));
+  SetLine(played_line_,
+          QString("%1 · %2").arg(FormatLastPlayed(game.last_played_at), FormatPlaytime(game.play_seconds)));
+  SetLine(error_line_, QString::fromStdString(game.last_error));
+  SetLine(hint_line_, hint);
+  Reposition();
 
   MiradClient::GetMetadataAsync(this, game.id, [this, id = game.id](GameMetadataResult result) {
     if (game_id_ != id || !result.ok || result.missing) return;
     ShowMetadata(result.metadata);
   });
+}
+
+void HoverCard::ShowTitle(const QString& title, const QString& status, const QString& detail) {
+  game_id_.clear();
+  Reset();
+  name_->setText(title);
+  status_->setText(QString("<span style='color:%1; font-weight:600;'>%2</span>")
+                       .arg(theme::Current().text_muted.name(), status.toHtmlEscaped()));
+  SetLine(platform_line_, detail);
+  Reposition();
 }
 
 void HoverCard::ShowMetadata(const GameMetadata& metadata) {
@@ -113,22 +189,23 @@ void HoverCard::ShowMetadata(const GameMetadata& metadata) {
 
   const std::string developer_genre = Join(metadata.developers) +
       (!metadata.developers.empty() && !metadata.genres.empty() ? " · " : "") + Join(metadata.genres);
-  developer_line_->setText(QString::fromStdString(developer_genre));
-  developer_line_->setVisible(!developer_genre.empty());
+  SetLine(developer_line_, QString::fromStdString(developer_genre));
+  Reposition();
+}
 
+void HoverCard::PopUpBeside(const QRect& anchor) {
+  anchor_ = anchor;
+  Reposition();
+  show();
+}
+
+void HoverCard::Reposition() {
   adjustSize();
+  // Placed again once metadata grows it: flipped to a tile's left, its old
+  // spot would now overlap the tile.
+  if (anchor_.isValid()) move(card::Place(anchor_, size(), /*beside=*/true));
 }
 
-void HoverCard::paintEvent(QPaintEvent*) {
-  const theme::Tokens& tokens = theme::Current();
-  QPainter painter(this);
-  painter.setRenderHint(QPainter::Antialiasing);
-
-  QPainterPath card;
-  card.addRoundedRect(rect().adjusted(0, 0, -1, -1), tokens.radius_panel, tokens.radius_panel);
-  painter.fillPath(card, tokens.surface);
-  painter.setPen(QPen(tokens.border, 1));
-  painter.drawPath(card);
-}
+void HoverCard::paintEvent(QPaintEvent*) { card::Paint(this); }
 
 }  // namespace mira_gui

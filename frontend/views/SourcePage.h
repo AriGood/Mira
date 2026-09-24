@@ -22,6 +22,7 @@ namespace mira_gui {
 
 class ArtworkStore;
 class DownloadTracker;
+class HoverCard;
 class TileGrid;
 
 struct SourceInfo {
@@ -88,6 +89,8 @@ private:
   void StartInstall(const QString& ref, bool update);
   void ApplyFilter();
   void ShowLibraryMenu(const QPoint& pos);
+  // nullptr hides it.
+  void ShowHoverCard(TileGrid* grid, QListWidgetItem* item);
   void HandleEvent(const std::string& type, const std::string& data);
 
   SourceInfo source_;
@@ -136,6 +139,11 @@ private:
   // Refs asked to install/update/download and not yet started by mirad, and
   // the ones done this session. What's running comes from downloads_.
   QHash<QString, QString> owned_state_;  // ref -> "Installing…", "Downloaded", ...
+
+  // As last passed to SetGames, for the hover card.
+  std::vector<GameSummary> games_;
+  std::set<std::string> running_;
+  HoverCard* hover_card_ = nullptr;
 
   EventStream event_stream_;
 };

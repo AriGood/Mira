@@ -12,6 +12,7 @@
 #include "ui/Notify.h"
 #include "ui/SystemNotifier.h"
 #include "ui/Theme.h"
+#include "ui/ToolTip.h"
 #include "ui/Tray.h"
 #include "views/LibraryWindow.h"
 #include "views/MainWindow.h"
@@ -59,6 +60,7 @@ int main(int argc, char** argv) {
   // follows the desktop's light/dark preference; LibraryWindow re-applies
   // whatever frontend.toml remembers once the daemon answers (LoadPrefs).
   mira_gui::theme::Apply("auto");
+  mira_gui::tooltip::Install();
 
   // LibraryWindow (the cover grid) is primary; MainWindow (the table) is
   // kept as a fallback for auditing a fresh scan. `--classic` starts

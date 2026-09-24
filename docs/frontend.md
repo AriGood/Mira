@@ -8,7 +8,7 @@ that decision is load-bearing and is not restated here.
 ## Two views, both kept
 
 `mira-gui` opens on **the grid** (`views/LibraryWindow`): cover tiles and a
-left sidebar (filters, sort, search, Library/Classic-view navigation, a
+left sidebar (filters, sort, search, Library navigation, a
 Sources list, Settings, and a status line), with a custom top bar in place of a native
 titlebar — Add/Import Games, tile size, and window controls (minimize/maximize/
 close), inspired by Lutris. It is modelled on Playnite's shelf for the tile
@@ -23,9 +23,9 @@ compositor rather than repositioning the window by hand, which is what makes
 them work under Wayland as well as X11.
 
 **The table** (`views/MainWindow`) shows every field of every game at once.
-It is reachable as `mira-gui --classic`, or from the grid sidebar's *Classic
-table view* row, which opens it as a second top-level window rather than
-swapping the grid out.
+It is reachable as `mira-gui --classic`. The top bar's grid/table toggle shows
+the same table in the grid's place, next to the sidebar, filtered and sorted
+by the same sidebar controls; clicking *Table* again goes back to the grid.
 
 ### Sources
 
@@ -89,6 +89,12 @@ preview built from the `GameSummary` already in memory (name, status,
 platform/runner) plus one `GET /v1/games/{id}/metadata` call for the
 ProtonDB tier and developer/genres — the old right sidebar's job, without a
 permanent panel taking up space. It never shows over a multi-selection.
+Store pages' tiles and the sidebar's recently played rows show the same card
+(a not-installed title gets its name, state and store).
+
+Every other tooltip goes through `ui/ToolTip`, an app-wide event filter that
+draws it as the same card, under the hovered widget (beside a menu item)
+rather than at the cursor. Menu actions' own tooltips show too.
 `ui/AboutPanel` (logo, version, authors, repository, license) moved to
 *Help → About Mira* — a frameless window has no native Help menu to hang a
 dialog off, so it's a plain `QDialog` built in `LibraryWindow::OpenAbout`.

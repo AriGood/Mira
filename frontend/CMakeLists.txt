@@ -81,6 +81,8 @@ qt_add_executable(mira-gui
   ui/Theme.h
   ui/TileGrid.cpp
   ui/TileGrid.h
+  ui/ToolTip.cpp
+  ui/ToolTip.h
   ui/Tray.cpp
   ui/Tray.h
   ui/SettingsNav.cpp

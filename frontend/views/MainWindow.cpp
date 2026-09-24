@@ -299,7 +299,7 @@ void MainWindow::PopulateRow(int row, const mira_gui::GameSummary& game) {
   launch_button->setEnabled(running || can_launch);
   if (!running && !can_launch) {
     launch_button->setToolTip(
-        QString("Not launchable while %1").arg(QString::fromStdString(game.status)));
+        QString("Can't launch: %1").arg(mira_gui::StatusLabel(game.status).toLower()));
   }
   connect(launch_button, &QPushButton::clicked, this, [this, id, running] {
     if (running) {
