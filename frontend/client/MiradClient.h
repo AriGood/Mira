@@ -241,6 +241,26 @@ public:
   // GET /v1/games returns. False unless `data` is a JSON object carrying a
   // non-empty string id — callers dispatch on the event type first, and this
   // is the second line of defence behind that.
+  // --- Installers and relocation ---------------------------------------------
+
+  // The game's own installer, or `path` (absolute, or relative to its
+  // install folder) when choosing a different one.
+  static void GetInstallerInfoAsync(QObject* context, const std::string& id, const std::string& path,
+                                    std::function<void(InstallerInfoResult)> callback);
+  // Detached; an InstallEvent follows. Empty `installer` uses the game's own.
+  static void InstallGameAsync(QObject* context, const std::string& id, bool interactive,
+                               const std::string& installer,
+                               std::function<void(GameActionResult)> callback);
+  static void GetInstallProgressAsync(QObject* context, const std::string& id,
+                                      std::function<void(InstallProgressResult)> callback);
+  // Moves the game's files and prefix into Mira's own layout.
+  static void RelocateGameAsync(QObject* context, const std::string& id,
+                                std::function<void(GameActionResult)> callback);
+  static void RelocateLibraryAsync(QObject* context,
+                                   std::function<void(RelocateLibraryResult)> callback);
+  static bool ParseInstallEvent(const std::string& event_type, const std::string& data,
+                                InstallEvent* out);
+
   // --- Stores (Epic, GOG, itch.io, Humble Bundle) ---------------------------
 
   static void GetStoreStatusAsync(QObject* context, const std::string& source,

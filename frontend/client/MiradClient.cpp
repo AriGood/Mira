@@ -2,6 +2,7 @@
 
 #include <json.hpp>
 
+#include <cctype>
 #include <optional>
 #include <string_view>
 #include <utility>
@@ -866,6 +867,79 @@ StoreActionResult DownloadHumbleBundleSync(const std::string& bundle_key) {
   return {reply.ok, reply.error};
 }
 
+// Percent-encodes everything outside RFC 3986's unreserved set.
+std::string QueryEncode(const std::string& text) {
+  static constexpr char kHex[] = "0123456789ABCDEF";
+  std::string out;
+  for (const unsigned char c : text) {
+    if (std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
+      out += static_cast<char>(c);
+    } else {
+      out += '%';
+      out += kHex[c >> 4];
+      out += kHex[c & 15];
+    }
+  }
+  return out;
+}
+
+InstallerInfoResult GetInstallerInfoSync(const std::string& id, const std::string& path) {
+  InstallerInfoResult result;
+  std::string url = "/v1/games/" + id + "/installer";
+  if (!path.empty()) url += "?path=" + QueryEncode(path);
+  const transport::Reply reply = transport::Get(url);
+  if (!reply.ok) {
+    result.error = reply.error;
+    return result;
+  }
+  result.ok = true;
+  result.path = reply.body.value("path", std::string());
+  result.size_bytes = reply.body.value("size_bytes", std::int64_t{0});
+  result.format = reply.body.value("format", std::string("unknown"));
+  result.silent = reply.body.value("silent", false);
+  return result;
+}
+
+GameActionResult InstallGameSync(const std::string& id, bool interactive, const std::string& installer) {
+  json body = {{"interactive", interactive}};
+  if (!installer.empty()) body["installer"] = installer;
+  const transport::Reply reply = transport::PostJson("/v1/games/" + id + "/install", body);
+  return {reply.ok, reply.error};
+}
+
+InstallProgressResult GetInstallProgressSync(const std::string& id) {
+  InstallProgressResult result;
+  const transport::Reply reply = transport::Get("/v1/games/" + id + "/install/progress");
+  if (!reply.ok) {
+    result.error = reply.error;
+    return result;
+  }
+  result.ok = true;
+  result.state = reply.body.value("state", std::string("idle"));
+  result.bytes_written = reply.body.value("bytes_written", std::int64_t{0});
+  return result;
+}
+
+GameActionResult RelocateGameSync(const std::string& id) {
+  // Can copy a whole game across filesystems.
+  const transport::Reply reply =
+      transport::PostJson("/v1/games/" + id + "/relocate", json::object(), {.read_timeout = std::chrono::hours(2)});
+  return {reply.ok, reply.error};
+}
+
+RelocateLibraryResult RelocateLibrarySync() {
+  RelocateLibraryResult result;
+  const transport::Reply reply = transport::Post("/v1/library/relocate", {.read_timeout = std::chrono::hours(12)});
+  if (!reply.ok) {
+    result.error = reply.error;
+    return result;
+  }
+  result.ok = true;
+  result.moved = reply.body.value("moved", 0);
+  result.failed = reply.body.value("failed", 0);
+  return result;
+}
+
 LoginUrlResult BeginAmazonLoginSync() {
   LoginUrlResult result;
   const transport::Reply reply = transport::Post("/v1/amazon/login", {.read_timeout = std::chrono::seconds(30)});
@@ -1257,6 +1331,45 @@ void MiradClient::DownloadHumbleBundleAsync(QObject* context, const std::string&
                                             std::function<void(StoreActionResult)> callback) {
   async::Run(context, [bundle_key] { return DownloadHumbleBundleSync(bundle_key); },
              std::move(callback));
+}
+
+void MiradClient::GetInstallerInfoAsync(QObject* context, const std::string& id, const std::string& path,
+                                        std::function<void(InstallerInfoResult)> callback) {
+  async::Run(context, [id, path] { return GetInstallerInfoSync(id, path); }, std::move(callback));
+}
+
+void MiradClient::InstallGameAsync(QObject* context, const std::string& id, bool interactive,
+                                   const std::string& installer,
+                                   std::function<void(GameActionResult)> callback) {
+  async::Run(context, [id, interactive, installer] { return InstallGameSync(id, interactive, installer); },
+             std::move(callback));
+}
+
+void MiradClient::GetInstallProgressAsync(QObject* context, const std::string& id,
+                                          std::function<void(InstallProgressResult)> callback) {
+  async::Run(context, [id] { return GetInstallProgressSync(id); }, std::move(callback));
+}
+
+void MiradClient::RelocateGameAsync(QObject* context, const std::string& id,
+                                    std::function<void(GameActionResult)> callback) {
+  async::Run(context, [id] { return RelocateGameSync(id); }, std::move(callback));
+}
+
+void MiradClient::RelocateLibraryAsync(QObject* context,
+                                       std::function<void(RelocateLibraryResult)> callback) {
+  async::Run(context, [] { return RelocateLibrarySync(); }, std::move(callback));
+}
+
+bool MiradClient::ParseInstallEvent(const std::string& event_type, const std::string& data,
+                                    InstallEvent* out) {
+  constexpr std::string_view kPrefix = "game.install.";
+  if (!event_type.starts_with(kPrefix)) return false;
+  const json entry = json::parse(data, nullptr, false);
+  if (entry.is_discarded() || !entry.is_object()) return false;
+  out->state = event_type.substr(kPrefix.size());
+  out->id = entry.value("id", std::string());
+  out->error = entry.value("error", std::string());
+  return !out->id.empty();
 }
 
 void MiradClient::BeginAmazonLoginAsync(QObject* context,

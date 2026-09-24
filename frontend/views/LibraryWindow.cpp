@@ -12,6 +12,7 @@
 #include <QListWidget>
 #include <QPainter>
 #include <QListWidgetItem>
+#include <QLocale>
 #include <QMenu>
 #include <QMouseEvent>
 #include <QWheelEvent>
@@ -532,6 +533,10 @@ void LibraryWindow::PopulateLibraryActions() {
           "next library change to pick up a desktop_entries.* setting edit.");
   row(Glyph::Trash, "Remove all desktop entries…", &LibraryWindow::RemoveAllDesktopEntries)
       ->setToolTip("Turns off desktop entries and deletes every one Mira generated.");
+  row(Glyph::Home, "Move games into Mira's folders…", &LibraryWindow::RelocateLibrary)
+      ->setToolTip(
+          "Moves every game's files into your games folder and its prefix into the prefixes "
+          "folder. Changing those folders in Settings moves nothing until this runs.");
 }
 
 void LibraryWindow::BuildShortcuts() {
@@ -1649,6 +1654,7 @@ void LibraryWindow::ApplyFilter() {
     item->setData(mira_gui::GameTileDelegate::NameRole, QString::fromStdString(game.name));
     item->setData(mira_gui::GameTileDelegate::StatusRole, QString::fromStdString(game.status));
     item->setData(mira_gui::GameTileDelegate::RunningRole, running_ids_.contains(game.id));
+    item->setData(mira_gui::GameTileDelegate::StatusTextRole, InstallText(game.id));
     item->setData(Qt::DecorationRole, CoverFor(game));
     // Only for an error: the plain name case is already covered by the
     // HoverCard, and Qt's own tooltip popping up alongside it just doubled
@@ -1799,6 +1805,9 @@ void LibraryWindow::ShowContextMenu(const QPoint& pos) {
   // Both halves of the needs_install escape hatch: run the installer inside
   // this game's prefix, then say it worked. "Run in prefix" is offered for
   // every game; only needs_install can be "marked installed".
+  QAction* install = menu.addAction(installing_.contains(id) ? "Installing…" : "Install…");
+  install->setEnabled((status == "needs_install" || status == "broken") && !installing_.contains(id));
+  install->setToolTip("Run this game's installer, or pick a different one");
   QAction* run_in_prefix = menu.addAction("Run in prefix…");
   QAction* finish_install = menu.addAction("Mark as installed");
   finish_install->setEnabled(status == "needs_install");
@@ -1809,6 +1818,8 @@ void LibraryWindow::ShowContextMenu(const QPoint& pos) {
   QAction* refresh_metadata = menu.addAction("Refresh metadata && cover art");
   QAction* view_log = menu.addAction("View log…");
   QAction* winetricks = menu.addAction("Run winetricks…");
+  QAction* relocate = menu.addAction("Move to Mira's folders…");
+  relocate->setToolTip("Move this game's files and prefix into your games folder");
   const bool native = current_game != nullptr && current_game->platform == "native";
   winetricks->setEnabled(!native);
   winetricks->setToolTip(native ? "Native game — no Wine/Proton prefix." : QString());
@@ -1856,6 +1867,11 @@ void LibraryWindow::ShowContextMenu(const QPoint& pos) {
         this, current_game != nullptr ? current_game->install_path : std::string());
   } else if (chosen == more_details) {
     OpenGameDetailPage(id);
+  } else if (chosen == install) {
+    mira_gui::actions::Install(
+        this, id, current_game != nullptr ? current_game->install_path : std::string(), name);
+  } else if (chosen == relocate) {
+    mira_gui::actions::Relocate(this, {{id, name}}, [this] { RefreshGames(); });
   } else if (chosen == run_in_prefix) {
     mira_gui::actions::RunInPrefix(
         this, id, current_game != nullptr ? current_game->install_path : std::string(), name);
@@ -1887,6 +1903,7 @@ void LibraryWindow::ShowBatchContextMenu(const QList<QListWidgetItem*>& items, c
   auto* desktop_menu = menu.addMenu("Desktop entry");
   QAction* add_desktop_entry = desktop_menu->addAction("Add to application menu");
   QAction* remove_desktop_entry = desktop_menu->addAction("Remove from application menu");
+  QAction* relocate = menu.addAction(QString("Move to Mira's folders… (%1)").arg(count));
   menu.addSeparator();
   QAction* remove = menu.addAction(QString("Remove from library… (%1)").arg(count));
 
@@ -1910,6 +1927,8 @@ void LibraryWindow::ShowBatchContextMenu(const QList<QListWidgetItem*>& items, c
     mira_gui::actions::BatchSetDesktopEntry(this, ids, /*enabled=*/true);
   } else if (chosen == remove_desktop_entry) {
     mira_gui::actions::BatchSetDesktopEntry(this, ids, /*enabled=*/false);
+  } else if (chosen == relocate) {
+    mira_gui::actions::Relocate(this, named, [this] { RefreshGames(); });
   } else if (chosen == remove) {
     mira_gui::actions::BatchDelete(this, named, [this] { RefreshGames(); });
   }
@@ -2369,6 +2388,61 @@ bool LibraryWindow::GridShown() const {
   return content_stack_->currentWidget() == splitter_ && main_stack_->currentWidget() == grid_page_;
 }
 
+QString LibraryWindow::InstallText(const std::string& id) const {
+  const auto found = installing_.find(id);
+  if (found == installing_.end()) return QString();
+  if (found->second <= 0) return "Installing…";
+  return "Installing… " + QLocale().formattedDataSize(found->second);
+}
+
+void LibraryWindow::PollInstalls() {
+  for (const auto& [id, bytes] : installing_) {
+    mira_gui::MiradClient::GetInstallProgressAsync(
+        this, id, [this, id](mira_gui::InstallProgressResult progress) {
+          const auto found = installing_.find(id);
+          if (!progress.ok || found == installing_.end()) return;
+          found->second = progress.bytes_written;
+          // One tile's text, not a rebuild.
+          for (int row = 0; row < grid_->count(); ++row) {
+            QListWidgetItem* item = grid_->item(row);
+            if (item->data(mira_gui::GameTileDelegate::IdRole).toString().toStdString() == id) {
+              item->setData(mira_gui::GameTileDelegate::StatusTextRole, InstallText(id));
+            }
+          }
+        });
+  }
+}
+
+void LibraryWindow::RelocateLibrary() {
+  if (!mira_gui::notify::Confirm(
+          this, "Move games into Mira's folders",
+          "Move every game's files into your games folder, and each prefix into the prefixes "
+          "folder, named after the game? Games installed by a store (Steam, Epic, GOG, itch.io) "
+          "keep their install folder; only the prefix moves. Games on another drive are copied "
+          "then deleted, which can take a while.",
+          "Move games")) {
+    return;
+  }
+  mira_gui::notify::Notice(this, "Moving games into Mira's folders…");
+  mira_gui::MiradClient::RelocateLibraryAsync(this, [this](mira_gui::RelocateLibraryResult result) {
+    if (!result.ok) {
+      mira_gui::notify::Failed(this, "Could not move the games.", QString::fromStdString(result.error));
+      return;
+    }
+    if (result.failed > 0) {
+      mira_gui::notify::FailedWithHint(
+          this, QString("Could not move %1 game%2.").arg(result.failed).arg(result.failed == 1 ? "" : "s"),
+          QString("%1 moved.").arg(result.moved), "mirad's log says why for each one.");
+    } else {
+      mira_gui::notify::Notice(this, result.moved == 0 ? QString("Every game was already in place.")
+                                                       : QString("Moved %1 game%2.")
+                                                             .arg(result.moved)
+                                                             .arg(result.moved == 1 ? "" : "s"));
+    }
+    RefreshGames();
+  });
+}
+
 void LibraryWindow::RefreshSourceNavs() {
   mira_gui::MiradClient::GetConfigAsync(this, [this](mira_gui::ConfigResult result) {
     if (!result.ok) return;  // every source stays listed
@@ -2511,6 +2585,31 @@ void LibraryWindow::HandleGameEvent(const std::string& type, const std::string& 
         mira_gui::notify::Notice(this, message);
       }
     }
+    return;
+  }
+
+  if (mira_gui::InstallEvent install; mira_gui::MiradClient::ParseInstallEvent(type, data, &install)) {
+    const mira_gui::GameSummary* game = FindGame(install.id);
+    const QString name = game != nullptr ? QString::fromStdString(game->name) : QString("A game");
+    if (install.state == "started") {
+      installing_[install.id] = 0;
+      if (install_poll_ == nullptr) {
+        install_poll_ = new QTimer(this);
+        install_poll_->setInterval(2000);
+        connect(install_poll_, &QTimer::timeout, this, &LibraryWindow::PollInstalls);
+      }
+      install_poll_->start();
+    } else {
+      installing_.erase(install.id);
+      if (installing_.empty() && install_poll_ != nullptr) install_poll_->stop();
+      if (install.state == "failed") {
+        mira_gui::notify::Failed(this, "Could not install " + name + ".",
+                                 QString::fromStdString(install.error));
+      } else if (install.state == "finished") {
+        mira_gui::notify::Notice(this, name + " is installed.");
+      }
+    }
+    ApplyFilter();
     return;
   }
 

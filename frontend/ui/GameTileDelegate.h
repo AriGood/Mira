@@ -24,6 +24,8 @@ public:
     // ("Install", "Installing…"). Hit-test clicks with ActionRect.
     ActionRole,
     ActionEnabledRole,
+    // Optional: replaces the status line's text ("Installing… 1.2 GB").
+    StatusTextRole,
   };
 
   // Where the ActionRole pill sits inside a tile's cell.

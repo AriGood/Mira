@@ -7,6 +7,8 @@
 #include <QSize>
 #include <QString>
 
+#include <cstdint>
+#include <map>
 #include <set>
 #include <string>
 #include <vector>
@@ -30,6 +32,7 @@ class QAction;
 class QToolButton;
 class QListWidgetItem;
 class QTableWidget;
+class QTimer;
 
 // QListWidget with setViewportMargins made public — Qt keeps it protected on
 // QAbstractScrollArea. Defined in LibraryWindow.cpp; this file only ever
@@ -186,6 +189,11 @@ private:
   void SetSourceControlsEnabled(bool enabled);
   // The grid is what's on screen: not Settings, the classic table, or a source page.
   bool GridShown() const;
+  void RelocateLibrary();
+  // While installing_ isn't empty: asks mirad how far each install has got.
+  void PollInstalls();
+  // "Installing… 1.2 GB" for a game mid-install, else empty.
+  QString InstallText(const std::string& id) const;
   // `announce` is false for the bulk path, where one toast covers the batch
   // and per-game messages would be one notification per game.
   void RefreshMetadata(const std::string& id, bool announce = true);
@@ -282,6 +290,9 @@ private:
 
   std::vector<mira_gui::GameSummary> games_;
   std::set<std::string> running_ids_;
+  // Games whose installer mirad is running, with the bytes written so far.
+  std::map<std::string, std::int64_t> installing_;
+  QTimer* install_poll_ = nullptr;
   // Whether RefreshGames() has ever completed successfully.
   bool loaded_ = false;
   // Games the user explicitly asked to refresh — a metadata failure for one
