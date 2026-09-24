@@ -217,6 +217,15 @@ Schema::Schema() {
                 "appearing to succeed.",
          .is_secret = true});
 
+  s.Add({.key = "metadata.steamgriddb_id",
+         .label = "SteamGridDB Game",
+         .type = Type::Int,
+         .default_value = 0,
+         .scope = Scope::PerGame,
+         .doc = "Which SteamGridDB game this game's art comes from. 0 uses the top search result for "
+                "its name; set it when that picks the wrong game (see `mira metadata <id> --matches`).",
+         .constraint = Range(0, 1e12)});
+
   s.Add({.key = "metadata.protondb_for_non_steam",
          .label = "ProtonDB for Non-Steam Games",
          .type = Type::Bool,

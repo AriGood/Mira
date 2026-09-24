@@ -13,6 +13,7 @@
 #include <cstdlib>
 
 #include "core/Command.h"
+#include "config/Resolver.h"
 #include "core/Log.h"
 #include "core/Paths.h"
 #include "core/Strings.h"
@@ -193,17 +194,21 @@ void FetchGriddbSlot(const config::Config& config, const std::string& auth_heade
 // (FetchSteamOwned, where a missing key or no name match just means no
 // alternates to offer).
 void FetchGriddbCandidates(const config::Config& config, const std::string& api_key, const std::string& name,
-                           const std::string& game_id, json& info) {
+                           const std::string& game_id, std::int64_t chosen_id, json& info) {
   const std::string auth_header = std::format("Authorization: Bearer {}", api_key);
-  const json search = CurlJson({"curl", "-sSL", "-H", auth_header,
-                                std::format("https://www.steamgriddb.com/api/v2/search/autocomplete/{}",
-                                           UrlEncode(name))});
-  if (search.is_discarded() || !Value(search, "success", false) ||
-      Value(search, "data", json::array()).empty()) {
-    return;
+  std::int64_t griddb_id = chosen_id;  // metadata.steamgriddb_id, when the top match was wrong
+  if (griddb_id == 0) {
+    const json search = CurlJson({"curl", "-sSL", "-H", auth_header,
+                                  std::format("https://www.steamgriddb.com/api/v2/search/autocomplete/{}",
+                                             UrlEncode(name))});
+    if (search.is_discarded() || !Value(search, "success", false) ||
+        Value(search, "data", json::array()).empty()) {
+      return;
+    }
+    griddb_id = Value(search["data"][0], "id", std::int64_t{0});
   }
-  const std::int64_t griddb_id = Value(search["data"][0], "id", std::int64_t{0});
   if (griddb_id == 0) return;
+  info["steamgriddb_id"] = griddb_id;
 
   // Every candidate for every slot goes into info["art_candidates"][slot]
   // (see FetchGriddbSlot) so a caller can offer a choice instead of only
@@ -254,7 +259,7 @@ std::string FindSteamAppId(const std::string& name) {
 }
 
 void FetchSteamOwned(const config::Config& config, const std::string& appid, const std::string& name,
-                     const std::string& game_id, json& info) {
+                     const std::string& game_id, std::int64_t griddb_id, json& info) {
   const json store = CurlJson(
       {"curl", "-sSL", std::format("https://store.steampowered.com/api/appdetails?appids={}&l=english", appid)});
   if (!store.is_discarded() && store.contains(appid) && Value(store[appid], "success", false)) {
@@ -391,7 +396,7 @@ void FetchSteamOwned(const config::Config& config, const std::string& appid, con
   // already seeded above, so Steam's own image stays first. Never fails the
   // fetch -- a Steam-owned game already has its cover either way.
   if (const std::string api_key = config.GetString("steamgriddb.api_key"); !api_key.empty()) {
-    FetchGriddbCandidates(config, api_key, name, game_id, info);
+    FetchGriddbCandidates(config, api_key, name, game_id, griddb_id, info);
   }
 }
 
@@ -402,7 +407,7 @@ void FetchSteamOwned(const config::Config& config, const std::string& appid, con
 // any `legendary list` refresh) falls back to SteamGridDB by name, same as
 // any other non-Steam game.
 void FetchEpicOwned(const config::Config& config, const std::string& app_name, const std::string& name,
-                    const std::string& game_id, json& info) {
+                    const std::string& game_id, std::int64_t griddb_id, json& info) {
   std::ifstream in(epic::LegendaryMetadataFile(app_name));
   const json parsed = in ? json::parse(in, nullptr, false) : json();
 
@@ -447,7 +452,7 @@ void FetchEpicOwned(const config::Config& config, const std::string& app_name, c
   // alternates, same trailing call FetchSteamOwned makes. Never fails the
   // fetch either way — Epic-owned art is there regardless of a key.
   if (const std::string api_key = config.GetString("steamgriddb.api_key"); !api_key.empty()) {
-    FetchGriddbCandidates(config, api_key, name, game_id, info);
+    FetchGriddbCandidates(config, api_key, name, game_id, griddb_id, info);
   }
 }
 
@@ -491,7 +496,7 @@ bool FetchLutrisOwned(const config::Config& config, const std::string& slug, con
 }
 
 Result<void> FetchNonSteam(const config::Config& config, const std::string& name,
-                           const std::string& game_id, json& info) {
+                           const std::string& game_id, std::int64_t griddb_id, json& info) {
   // Independent of the SteamGridDB key below -- ProtonDB's own by-AppID
   // lookup needs no key, only a best-matched AppID, so this runs first and
   // can still leave something cached even when there's no key for cover art.
@@ -518,11 +523,29 @@ Result<void> FetchNonSteam(const config::Config& config, const std::string& name
                "steamgriddb.api_key (it is free, from steamgriddb.com)");
   }
 
-  FetchGriddbCandidates(config, api_key, name, game_id, info);
+  FetchGriddbCandidates(config, api_key, name, game_id, griddb_id, info);
   return {};
 }
 
 }  // namespace
+
+Result<json> SearchSteamGridDb(const config::Config& config, const std::string& name) {
+  const std::string api_key = config.GetString("steamgriddb.api_key");
+  if (api_key.empty()) return Err("no_steamgriddb_key", "set steamgriddb.api_key to search SteamGridDB");
+  const json search = CurlJson({"curl", "-sSL", "-H", std::format("Authorization: Bearer {}", api_key),
+                                std::format("https://www.steamgriddb.com/api/v2/search/autocomplete/{}",
+                                           UrlEncode(name))});
+  if (search.is_discarded() || !Value(search, "success", false)) {
+    return Err("steamgriddb_error", "SteamGridDB search failed");
+  }
+  json matches = json::array();
+  for (const json& item : Value(search, "data", json::array())) {
+    json match = {{"id", Value(item, "id", std::int64_t{0})}, {"name", Value(item, "name", std::string())}};
+    if (item.contains("release_date") && item["release_date"].is_number()) match["release_date"] = item["release_date"];
+    matches.push_back(std::move(match));
+  }
+  return matches;
+}
 
 std::filesystem::path MetadataFile(const config::Config& config, const std::string& game_id) {
   return config.File().parent_path() / "metadata" / (game_id + ".json");
@@ -534,6 +557,7 @@ std::filesystem::path ArtworkDir(const config::Config& config, const std::string
 
 Result<void> Fetch(const config::Config& config, const model::Game& game) {
   json info = {{"fetched_at", model::NowSeconds()}};
+  const std::int64_t griddb_id = config::Resolver(config, game.overrides).GetInt("metadata.steamgriddb_id");
 
   // Checked before the steam: prefix below: an Epic game's runner_ref is
   // "proton:..."/"wine:..." (it's launched through Mira's own Wine/Proton
@@ -541,23 +565,24 @@ Result<void> Fetch(const config::Config& config, const model::Game& game) {
   // a Lutris or scanned Windows game by runner_ref alone.
   if (game.source == "epic") {
     info["source"] = "epic";
-    FetchEpicOwned(config, game.source_ref, game.name, game.id, info);
+    FetchEpicOwned(config, game.source_ref, game.name, game.id, griddb_id, info);
   } else if (game.source == "lutris") {
     // Lutris's cached art first; the generic fetch still adds ProtonDB and
     // SteamGridDB alternates, and covers games with no Lutris art.
     info["source"] = "lutris";
     const bool found = config.GetBool("lutris.import_art") && FetchLutrisOwned(config, game.source_ref, game.id, info);
-    if (Result<void> fetched = FetchNonSteam(config, game.name, game.id, info); !fetched && !found) {
+    if (Result<void> fetched = FetchNonSteam(config, game.name, game.id, griddb_id, info); !fetched && !found) {
       return std::unexpected(fetched.error());
     }
   } else if (game.runner_ref.starts_with("steam:")) {
     info["source"] = "steam";
-    FetchSteamOwned(config, game.runner_ref.substr(std::string_view("steam:").size()), game.name, game.id, info);
+    FetchSteamOwned(config, game.runner_ref.substr(std::string_view("steam:").size()), game.name, game.id,
+                    griddb_id, info);
   } else {
     info["source"] = "steamgriddb";
     // Returned before anything is written: a failure here means nothing was
     // fetched, and a cache file would make the next attempt look answered.
-    if (Result<void> fetched = FetchNonSteam(config, game.name, game.id, info); !fetched) {
+    if (Result<void> fetched = FetchNonSteam(config, game.name, game.id, griddb_id, info); !fetched) {
       return std::unexpected(fetched.error());
     }
   }

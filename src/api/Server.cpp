@@ -1894,6 +1894,58 @@ void Server::RegisterRoutes() {
     SendJson(res, {{"status", "fetching"}}, 202);
   });
 
+  // SteamGridDB's matches for this game's name (or ?q=), so a wrong top
+  // match can be swapped for another with POST .../metadata/match.
+  http_->Get(R"(/v1/games/([^/]+)/metadata/matches)", [this](const Request& req, Response& res) {
+    auto game = games_.Find(req.matches[1]);
+    if (!game) return SendError(res, 404, "game_not_found", "no such game");
+    const std::string query = req.has_param("q") ? req.get_param_value("q") : game->name;
+    auto matches = metadata::SearchSteamGridDb(config_, query);
+    if (!matches) return SendError(res, 502, matches.error().code, matches.error().message);
+    const std::int64_t chosen = config::Resolver(config_, game->overrides).GetInt("metadata.steamgriddb_id");
+    SendJson(res, {{"query", query}, {"chosen", chosen}, {"matches", *matches}});
+  });
+
+  // "This art is for the wrong game": move to SteamGridDB's next match for
+  // the game's name and refetch. 409 no_more_matches past the last one.
+  http_->Post(R"(/v1/games/([^/]+)/metadata/wrong-match)", [this](const Request& req, Response& res) {
+    auto game = games_.Find(req.matches[1]);
+    if (!game) return SendError(res, 404, "game_not_found", "no such game");
+    auto matches = metadata::SearchSteamGridDb(config_, game->name);
+    if (!matches) return SendError(res, 502, matches.error().code, matches.error().message);
+    const std::int64_t current = config::Resolver(config_, game->overrides).GetInt("metadata.steamgriddb_id");
+    std::size_t next = 1;  // no choice yet: the top match was in use
+    for (std::size_t i = 0; i < matches->size(); ++i) {
+      if ((*matches)[i].value("id", std::int64_t{0}) == current) next = i + 1;
+    }
+    if (next >= matches->size()) {
+      return SendError(res, 409, "no_more_matches",
+                       "no other SteamGridDB match for this name -- pick one with ?q= on .../metadata/matches");
+    }
+    const json& match = (*matches)[next];
+    const json patch = {{"metadata.steamgriddb_id", match.value("id", std::int64_t{0})}};
+    auto updated = games_.Update(game->id, [&](model::Game& g) { ApplyOverridesPatch(g, patch); });
+    if (!updated) return SendError(res, 500, updated.error().code, updated.error().message);
+    metadata_fetches_.Enqueue(config_, events_, *updated, /*force=*/true, /*announce=*/true);
+    SendJson(res, {{"status", "fetching"}, {"match", match}}, 202);
+  });
+
+  // Body {steamgriddb_id}: take art from that SteamGridDB game from now on
+  // (0 goes back to the top match), and refetch.
+  http_->Post(R"(/v1/games/([^/]+)/metadata/match)", [this](const Request& req, Response& res) {
+    const json body = json::parse(req.body, nullptr, false);
+    if (body.is_discarded() || !body.contains("steamgriddb_id") || !body["steamgriddb_id"].is_number_integer() ||
+        body["steamgriddb_id"].get<std::int64_t>() < 0) {
+      return SendError(res, 400, "invalid_body", R"(expected {"steamgriddb_id": <id, or 0 for the top match>})");
+    }
+    const std::int64_t id = body["steamgriddb_id"];
+    const json patch = {{"metadata.steamgriddb_id", id == 0 ? json(nullptr) : json(id)}};
+    auto game = games_.Update(req.matches[1], [&](model::Game& g) { ApplyOverridesPatch(g, patch); });
+    if (!game) return SendError(res, 404, game.error().code, game.error().message);
+    metadata_fetches_.Enqueue(config_, events_, *game, /*force=*/true, /*announce=*/true);
+    SendJson(res, {{"status", "fetching"}, {"steamgriddb_id", id}}, 202);
+  });
+
   // Bulk version of the above: enqueues a fetch for every game with no
   // cached cover art yet, in one request — a caller wanting to backfill the
   // whole library used to have to loop over it and fire one POST

@@ -18,6 +18,10 @@ namespace mira::metadata {
 // metadata/FetchQueue.h for the background-safe wrapper.
 Result<void> Fetch(const config::Config& config, const model::Game& game);
 
+// SteamGridDB's matches for `name`, best first: [{id, name, release_date?}].
+// Fetch uses the first unless the game sets metadata.steamgriddb_id.
+Result<nlohmann::json> SearchSteamGridDb(const config::Config& config, const std::string& name);
+
 // Re-downloads one SteamGridDB candidate (by the id it was listed with in
 // info["art_candidates"][slot], from a prior Fetch()) and makes it the
 // active image for `slot`, leaving every other cached slot untouched.

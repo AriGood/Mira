@@ -84,6 +84,25 @@ Result<std::vector<library::CatalogEntry>> ItchSource::Catalog(const config::Con
     }
   }
 
+  // Free games saved to a collection have no download key. Paid games in a
+  // collection aren't owned, so only free ones count. Best effort.
+  if (const Result<std::vector<json>> collections =
+        FetchAllPages(config, "Fetch.ProfileCollections", {{"profileId", *profile_id}, {"fresh", true}})) {
+    for (const json& collection : *collections) {
+      const std::int64_t collection_id = collection.value("id", std::int64_t{0});
+      if (collection_id == 0) continue;
+      const Result<std::vector<json>> collection_games =
+        FetchAllPages(config, "Fetch.CollectionGames",
+                      {{"profileId", *profile_id}, {"collectionId", collection_id}, {"fresh", true}});
+      if (!collection_games) continue;
+      for (const json& collection_game : *collection_games) {
+        const json& game = collection_game.value("game", json::object());
+        if (game.value("minPrice", std::int64_t{1}) != 0) continue;
+        add_entry(collection_game.value("gameId", game.value("id", std::int64_t{0})), game.value("title", std::string()));
+      }
+    }
+  }
+
   return entries;
 }
 
