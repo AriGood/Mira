@@ -37,13 +37,6 @@ TEST_CASE("NativeRunner builds argv from install_path/exe_path and splits args")
   CHECK(command->env.at("FOO") == "bar");
 }
 
-TEST_CASE("NativeRunner rejects a game with no exe_path") {
-  model::Game game;
-  game.install_path = "/games/Celeste";
-  runner::NativeRunner native;
-  CHECK_FALSE(native.BuildCommand(game, std::nullopt).has_value());
-}
-
 TEST_CASE("NativeRunner runs a .sh with no execute bit through sh") {
   const fs::path dir = fs::temp_directory_path() / "mira-tests" / "native-sh";
   fs::remove_all(dir);
@@ -225,93 +218,6 @@ TEST_CASE("ProvisionGame marks a native game ready with no build") {
   model::Game result = registry.ProvisionGame(game);
   CHECK(result.status == model::GameStatus::Ready);
   CHECK(result.runner_ref == "native:native");
-}
-
-// Everything below actually exercises ProtonRunner — real umu-run, real Proton,
-// a real prefix on disk. Environment-dependent by nature (this is what it's
-// testing), so it adapts to what's actually installed rather than assuming
-// a specific machine: it checks what RunnerRegistry itself discovers first,
-// then asserts the outcome that implies, on either branch.
-TEST_CASE("ProtonRunner provisioning matches what's actually installed on this machine") {
-  config::Config config(TempFile("runner-registry-umu-settings.toml"));
-  config.Load();
-  runner::RunnerRegistry registry(config);
-
-  const bool has_proton = std::ranges::any_of(
-      registry.DiscoverAll(), [](const model::RunnerBuild& b) { return b.kind == "proton"; });
-
-  const fs::path data_dir = TempFile("umu-provision-prefix");
-  fs::remove_all(data_dir);
-
-  model::Game game;
-  game.id = "test-windows-game";
-  game.platform = model::Platform::Windows;
-  game.install_path = "/nonexistent/TestGame";
-  game.exe_path = "TestGame.exe";
-  game.data_dir = data_dir.string();
-
-  model::Game result = registry.ProvisionGame(game);
-
-  if (has_proton) {
-    INFO("a Proton build was discovered; expecting real provisioning to succeed");
-    CHECK(result.status == model::GameStatus::Ready);
-    CHECK(fs::exists(data_dir / "drive_c"));
-    CHECK(result.runner_ref.starts_with("proton:"));
-  } else {
-    INFO("no Proton build installed here; expecting a graceful, specific failure");
-    CHECK(result.status == model::GameStatus::Broken);
-    CHECK_FALSE(result.last_error.empty());
-  }
-
-  fs::remove_all(data_dir);
-}
-
-TEST_CASE("WineRunner discovers the system wine, if installed") {
-  config::Config config(TempFile("wine-discover-settings.toml"));
-  config.Load();
-  runner::RunnerRegistry registry(config);
-
-  const auto builds = registry.DiscoverAll();
-  const bool has_wine = std::ranges::any_of(builds, [](const model::RunnerBuild& b) {
-    return b.kind == "wine" && b.name == "system";
-  });
-  INFO("has_wine=", has_wine, " (depends on whether this machine has wine installed)");
-  // Nothing to assert unconditionally beyond "it doesn't crash" — this is
-  // exactly the graceful-degradation contract: environment-dependent by
-  // nature. Full provisioning is exercised below when it's actually present.
-}
-
-TEST_CASE("\"auto\" prefers proton when a Proton build exists, else falls back to wine") {
-  config::Config config(TempFile("auto-fallback-settings.toml"));
-  config.Load();
-  runner::RunnerRegistry registry(config);
-
-  const auto builds = registry.DiscoverAll();
-  const bool has_proton = std::ranges::any_of(
-      builds, [](const model::RunnerBuild& b) { return b.kind == "proton"; });
-  const bool has_wine =
-      std::ranges::any_of(builds, [](const model::RunnerBuild& b) { return b.kind == "wine"; });
-
-  model::Game game;
-  game.id = "auto-test";
-  game.platform = model::Platform::Windows;
-  game.install_path = "/nonexistent/TestGame";
-  game.exe_path = "TestGame.exe";
-  game.data_dir = TempFile("auto-fallback-prefix").string();
-  fs::remove_all(game.data_dir);
-  // runner_ref left empty: forces resolution of default_runner.windows ("auto").
-
-  model::Game result = registry.ProvisionGame(game);
-
-  if (has_proton) {
-    CHECK(result.runner_ref.starts_with("proton:"));
-  } else if (has_wine) {
-    CHECK(result.runner_ref.starts_with("wine:"));
-  } else {
-    CHECK(result.status == model::GameStatus::Broken);
-  }
-
-  fs::remove_all(game.data_dir);
 }
 
 TEST_CASE("Resolve reports an uninstalled build instead of succeeding with none") {

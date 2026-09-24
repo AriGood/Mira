@@ -3,12 +3,14 @@
 #include <filesystem>
 #include <fstream>
 
+#include "api/EventBus.h"
 #include "config/Config.h"
 #include "config/Schema.h"
 #include "library/AutoSetup.h"
 #include "library/Detector.h"
 #include "library/Scanner.h"
 #include "store/GameStore.h"
+#include "support/TestEnv.h"
 
 using namespace mira;
 namespace fs = std::filesystem;
@@ -137,20 +139,15 @@ TEST_CASE("AutoSetup skips the automatic root tag when scan.tag_by_root is off")
 }
 
 TEST_CASE("Scanner adds new games, skips known ones, and marks missing folders") {
+  // A native game: this is about scanning, and a Windows one would pay for
+  // provisioning a real prefix.
   const fs::path lib = TempDir("scan-library");
-  fs::create_directories(lib / "Celeste");
-  Touch(lib / "Celeste" / "Celeste.exe");
+  Touch(lib / "Celeste" / "Celeste", /*executable=*/true);
 
-  const fs::path state = TempDir("scan-state");
-  config::Config config(state / "settings.toml");
-  config.Load();
-  REQUIRE(config.Set("library_roots", nlohmann::json::array({lib.string()})).has_value());
-  REQUIRE(config.Set("prefix_root", (lib / "prefix").string()).has_value());
-
-  store::GameStore games(state / "games.toml");
-  games.Load();
-  api::EventBus events;
-  library::Scanner scanner(config, games, events);
+  test::TestEnv env("scan-state");
+  REQUIRE(env.config.Set("library_roots", nlohmann::json::array({lib.string()})).has_value());
+  REQUIRE(env.config.Set("prefix_root", (lib / "prefix").string()).has_value());
+  library::Scanner scanner(env.config, env.games, env.events);
 
   // A prefix directory sitting inside the library root must never be
   // rediscovered as a game — this is the regression the design specifically
@@ -160,23 +157,22 @@ TEST_CASE("Scanner adds new games, skips known ones, and marks missing folders")
 
   library::ScanSummary first = scanner.ScanAll();
   CHECK(first.added == 1);
-  CHECK(games.All().size() == 1);
-  CHECK(games.Find("celeste").has_value());
+  CHECK(env.games.All().size() == 1);
+  CHECK(env.games.Find("celeste").has_value());
 
   library::ScanSummary second = scanner.ScanAll();
   CHECK(second.added == 0);  // already known; must not be re-detected
-  CHECK(games.All().size() == 1);
+  CHECK(env.games.All().size() == 1);
 
   fs::remove_all(lib / "Celeste");
   library::ScanSummary third = scanner.ScanAll();
   CHECK(third.missing == 1);
-  CHECK(games.Find("celeste")->status == model::GameStatus::Missing);
+  CHECK(env.games.Find("celeste")->status == model::GameStatus::Missing);
 
-  fs::create_directories(lib / "Celeste");
-  Touch(lib / "Celeste" / "Celeste.exe");
+  Touch(lib / "Celeste" / "Celeste", /*executable=*/true);
   library::ScanSummary fourth = scanner.ScanAll();
   CHECK(fourth.restored == 1);
-  CHECK(games.Find("celeste")->status == model::GameStatus::Ready);
+  CHECK(env.games.Find("celeste")->status == model::GameStatus::Ready);
 }
 
 TEST_CASE("Detector never descends into a nested wine prefix during its own walk") {
@@ -226,34 +222,25 @@ TEST_CASE("Scanner does not auto-provision when auto_setup is off") {
 
 TEST_CASE("Scanner retries provisioning on a later scan instead of leaving a known game stuck setting_up") {
   const fs::path lib = TempDir("scan-retry-library");
-  fs::create_directories(lib / "Celeste");
   Touch(lib / "Celeste" / "Celeste.exe");
 
-  const fs::path state = TempDir("scan-retry-state");
-  config::Config config(state / "settings.toml");
-  config.Load();
-  REQUIRE(config.Set("library_roots", nlohmann::json::array({lib.string()})).has_value());
-  REQUIRE(config.Set("prefix_root", (lib / "prefix").string()).has_value());
-  REQUIRE(config.Set("auto_setup", false).has_value());
-
-  store::GameStore games(state / "games.toml");
-  games.Load();
-  api::EventBus events;
-  library::Scanner scanner(config, games, events);
+  test::TestEnv env("scan-retry-state");
+  REQUIRE(env.config.Set("library_roots", nlohmann::json::array({lib.string()})).has_value());
+  REQUIRE(env.config.Set("auto_setup", false).has_value());
+  library::Scanner scanner(env.config, env.games, env.events);
 
   // First scan: auto_setup off, so the game is detected but left setting_up
   // (regression fixture for the "gets stuck in setting up" bug report).
   scanner.ScanAll();
-  auto celeste = games.Find("celeste");
+  auto celeste = env.games.Find("celeste");
   REQUIRE(celeste.has_value());
   CHECK(celeste->status == model::GameStatus::SettingUp);
 
-  // auto_setup turns on later (or a prior provisioning attempt failed
-  // transiently, or the daemon restarted mid-provision) — a later scan of
-  // the same, already-known folder must retry rather than skip it forever.
-  REQUIRE(config.Set("auto_setup", true).has_value());
+  // auto_setup turns on later — a later scan of the same, already-known
+  // folder must retry rather than skip it forever.
+  REQUIRE(env.config.Set("auto_setup", true).has_value());
   scanner.ScanAll();
-  celeste = games.Find("celeste");
+  celeste = env.games.Find("celeste");
   REQUIRE(celeste.has_value());
   CHECK(celeste->status != model::GameStatus::SettingUp);
 }

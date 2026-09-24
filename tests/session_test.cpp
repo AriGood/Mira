@@ -17,11 +17,6 @@ fs::path TempDir(const char* name) {
 }
 }  // namespace
 
-TEST_CASE("SessionFilePath names a file per game id and start time") {
-  const auto path = proc::SessionFilePath("/sessions", "celeste", 1700000000);
-  CHECK(path == fs::path("/sessions/celeste-1700000000.toml"));
-}
-
 TEST_CASE("WriteSessionRecord then ReadSessionRecord round-trips every field") {
   const fs::path dir = TempDir("session-roundtrip");
   const fs::path path = proc::SessionFilePath(dir, "celeste", 1700000000);

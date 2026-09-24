@@ -86,8 +86,9 @@ add_library(mira_flags_test INTERFACE)
 target_compile_options(mira_flags_test INTERFACE -Wall -Wextra)
 
 enable_testing()
-file(GLOB MIRA_TEST_SOURCES CONFIGURE_DEPENDS tests/*.cpp)
+file(GLOB MIRA_TEST_SOURCES CONFIGURE_DEPENDS tests/*.cpp tests/support/*.cpp)
 add_executable(mira_tests ${MIRA_TEST_SOURCES})
+target_include_directories(mira_tests PRIVATE tests)
 target_link_libraries(mira_tests PRIVATE mira_core mira_flags_test)
 add_test(NAME unit COMMAND mira_tests)
 
