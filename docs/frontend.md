@@ -27,6 +27,16 @@ It is reachable as `mira-gui --classic`, or from the grid sidebar's *Classic
 table view* row, which opens it as a second top-level window rather than
 swapping the grid out.
 
+### First launch
+
+The first time the GUI runs against a mirad (its `frontend.toml` table is
+still empty), `dialogs/WelcomeDialog` asks which folder Mira takes over,
+`~/Games` by default. Confirming sends `POST /v1/library/games-folder`, which
+also moves the prefix and store install folders inside it, then offers the
+Steam and Lutris imports and a way into each store's page. Closing it at any
+step still sets `welcome_done`, so it never comes back; Settings can change
+any of it later.
+
 ### Sources
 
 The sidebar's *Sources* rows (Steam, Epic Games, GOG, itch.io, Humble
@@ -216,6 +226,7 @@ This matters more than it looks:
   | `tile_spacing`, `grid_margin` | grid layout, in pixels; `-1` means "leave it to the theme" |
   | `tile_radius`, `panel_radius`, `control_radius` | corner rounding, same `-1` rule |
   | `drag_select` | whether dragging across the grid selects tiles (default on) |
+  | `welcome_done` | set once the first-launch dialog has closed |
 
   `scan_on_startup`, `theme`, `drag_select` and
   the five shape keys get rows in the settings screen, on an Interface tab

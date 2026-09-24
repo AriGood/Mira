@@ -291,6 +291,7 @@ FrontendPrefsResult GetFrontendPrefsSync() {
   // or wrong kind after a hand-edit.
   const json table = reply.body.value("frontend", json::object());
   if (!table.is_object()) return result;
+  result.stored = !table.empty();
 
   const auto read_int = [&table](const char* key, std::optional<int>& out) {
     if (table.contains(key) && table[key].is_number_integer()) out = table[key].get<int>();
@@ -312,6 +313,7 @@ FrontendPrefsResult GetFrontendPrefsSync() {
   read_string("theme", result.prefs.theme);
   read_bool("game_settings_in_sidebar", result.prefs.game_settings_in_sidebar);
   read_bool("drag_select", result.prefs.drag_select);
+  read_bool("welcome_done", result.prefs.welcome_done);
   read_int("tile_spacing", result.prefs.tile_spacing);
   read_int("grid_margin", result.prefs.grid_margin);
   read_int("tile_radius", result.prefs.tile_radius);
@@ -342,6 +344,7 @@ PatchConfigResult SaveFrontendPrefsSync(const FrontendPrefs& prefs) {
     table["game_settings_in_sidebar"] = *prefs.game_settings_in_sidebar;
   }
   if (prefs.drag_select) table["drag_select"] = *prefs.drag_select;
+  if (prefs.welcome_done) table["welcome_done"] = *prefs.welcome_done;
   if (prefs.tile_spacing) table["tile_spacing"] = *prefs.tile_spacing;
   if (prefs.grid_margin) table["grid_margin"] = *prefs.grid_margin;
   if (prefs.tile_radius) table["tile_radius"] = *prefs.tile_radius;
@@ -865,6 +868,11 @@ StoreActionResult DownloadHumbleBundleSync(const std::string& bundle_key) {
   return {reply.ok, reply.error};
 }
 
+GamesFolderResult SetGamesFolderSync(const std::string& path) {
+  const transport::Reply reply = transport::PostJson("/v1/library/games-folder", {{"path", path}});
+  return {reply.ok, reply.error};
+}
+
 }  // namespace
 
 std::string MiradClient::ResolveSocketPath() { return transport::SocketPath(); }
@@ -1194,6 +1202,11 @@ void MiradClient::DownloadHumbleBundleAsync(QObject* context, const std::string&
                                             std::function<void(StoreActionResult)> callback) {
   async::Run(context, [bundle_key] { return DownloadHumbleBundleSync(bundle_key); },
              std::move(callback));
+}
+
+void MiradClient::SetGamesFolderAsync(QObject* context, const std::string& path,
+                                      std::function<void(GamesFolderResult)> callback) {
+  async::Run(context, [path] { return SetGamesFolderSync(path); }, std::move(callback));
 }
 
 bool MiradClient::ParseStoreEvent(const std::string& event_type, const std::string& data,

@@ -181,6 +181,8 @@ private:
   // A store or launcher's page, rebuilt fresh on each open.
   void OpenSource(const mira_gui::SourceInfo& source);
   void CloseSource();
+  // First launch only: the games folder, then importing what's already there.
+  void ShowWelcome();
   // Hides the sources turned off in Settings (`<id>.enabled`).
   void RefreshSourceNavs();
   void SetSourceControlsEnabled(bool enabled);

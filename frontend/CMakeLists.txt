@@ -111,6 +111,8 @@ qt_add_executable(mira-gui
   dialogs/RunInPrefixDialog.h
   dialogs/RunnerDialog.cpp
   dialogs/RunnerDialog.h
+  dialogs/WelcomeDialog.cpp
+  dialogs/WelcomeDialog.h
   dialogs/OverridesEditor.cpp
   dialogs/OverridesEditor.h
   dialogs/SettingsDialog.cpp
