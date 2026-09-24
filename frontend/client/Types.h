@@ -511,6 +511,8 @@ struct FrontendPrefs {
   // QKeySequence::toString(PortableText) string. An id absent here just
   // means "whatever that action's own default is" -- see keybindings::All().
   std::optional<std::map<std::string, std::string>> shortcut_overrides;
+  // Source ids unticked under "In sidebar" in Manage sources.
+  std::optional<std::vector<std::string>> hidden_sources;
 };
 
 struct FrontendPrefsResult {

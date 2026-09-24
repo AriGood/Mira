@@ -325,6 +325,13 @@ FrontendPrefsResult GetFrontendPrefsSync() {
     }
     result.prefs.shortcut_overrides = std::move(overrides);
   }
+  if (table.contains("hidden_sources") && table["hidden_sources"].is_array()) {
+    std::vector<std::string> hidden;
+    for (const json& id : table["hidden_sources"]) {
+      if (id.is_string()) hidden.push_back(id.get<std::string>());
+    }
+    result.prefs.hidden_sources = std::move(hidden);
+  }
   return result;
 }
 
@@ -353,6 +360,7 @@ PatchConfigResult SaveFrontendPrefsSync(const FrontendPrefs& prefs) {
     for (const auto& [id, keys] : *prefs.shortcut_overrides) shortcuts[id] = keys;
     table["shortcuts"] = shortcuts;
   }
+  if (prefs.hidden_sources) table["hidden_sources"] = *prefs.hidden_sources;
 
   // Short, because SaveFrontendPrefsBlocking runs this on the UI thread
   // while a window is closing.
