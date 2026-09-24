@@ -178,6 +178,11 @@ QWidget#left_sidebar QPushButton:checked {
   color: @on_accent;
 }
 
+/* A source with nothing set up yet (LibraryWindow::UpdateSourceNavs). */
+QWidget#left_sidebar QPushButton[unset="true"]:!checked {
+  color: @text_muted;
+}
+
 /* setItemWidget rows (LibraryWindow.cpp's MakeFilterRow) draw their own
  * selected-state text color by hand -- this only covers the row's
  * background and shape. */
