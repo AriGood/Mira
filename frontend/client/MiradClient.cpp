@@ -882,6 +882,31 @@ std::string QueryEncode(const std::string& text) {
   return out;
 }
 
+ArtworkResult GetTitleArtworkSync(const std::string& source, const std::string& ref) {
+  ArtworkResult result;
+  const transport::Blob blob =
+      transport::GetBinary("/v1/library/artwork?source=" + QueryEncode(source) + "&ref=" + QueryEncode(ref));
+  if (blob.status == 404) {
+    result.missing = true;
+    return result;
+  }
+  if (!blob.ok) {
+    result.error = blob.error;
+    return result;
+  }
+  result.ok = true;
+  result.bytes = blob.bytes;
+  result.content_type = blob.content_type;
+  return result;
+}
+
+StoreActionResult QueueTitleArtworkSync(const std::string& source, const std::vector<StoreTitle>& titles) {
+  json list = json::array();
+  for (const StoreTitle& title : titles) list.push_back({{"ref", title.ref}, {"title", title.title}});
+  const transport::Reply reply = transport::PostJson("/v1/library/artwork", {{"source", source}, {"titles", list}});
+  return {reply.ok, reply.error};
+}
+
 InstallerInfoResult GetInstallerInfoSync(const std::string& id, const std::string& path) {
   InstallerInfoResult result;
   std::string url = "/v1/games/" + id + "/installer";
@@ -1321,6 +1346,32 @@ void MiradClient::InstallStoreTitleAsync(QObject* context, const std::string& so
              std::move(callback));
 }
 
+void MiradClient::GetTitleArtworkAsync(QObject* context, const std::string& source, const std::string& ref,
+                                       std::function<void(ArtworkResult)> callback) {
+  async::Run(context, [source, ref] { return GetTitleArtworkSync(source, ref); }, std::move(callback));
+}
+
+void MiradClient::QueueTitleArtworkAsync(QObject* context, const std::string& source,
+                                         std::vector<StoreTitle> titles,
+                                         std::function<void(StoreActionResult)> callback) {
+  async::Run(context, [source, titles = std::move(titles)] { return QueueTitleArtworkSync(source, titles); },
+             std::move(callback));
+}
+
+bool MiradClient::ParseTitleArtworkEvent(const std::string& event_type, const std::string& data,
+                                         StoreEvent* out) {
+  constexpr std::string_view kPrefix = "library.artwork_";
+  if (!event_type.starts_with(kPrefix)) return false;
+  const json entry = json::parse(data, nullptr, false);
+  if (entry.is_discarded() || !entry.is_object()) return false;
+  out->kind = "artwork";
+  out->state = event_type.substr(kPrefix.size());  // "ready" | "failed"
+  out->source = entry.value("source", std::string());
+  out->ref = entry.value("ref", std::string());
+  out->error = entry.value("code", std::string());
+  return !out->ref.empty();
+}
+
 void MiradClient::GetHumbleLibraryAsync(QObject* context,
                                         std::function<void(HumbleLibraryResult)> callback) {
   async::Run(context, [] { return GetHumbleLibrarySync(); }, std::move(callback));
@@ -1441,6 +1492,7 @@ bool MiradClient::ParseStoreEvent(const std::string& event_type, const std::stri
   if (out->kind == "install") {
     out->source = entry.value("source", std::string());
     out->ref = entry.value("ref", std::string());
+    out->update = entry.value("update", false);
   } else if (out->kind == "download") {
     out->ref = entry.value("bundle_key", std::string());
   } else if (event_type.starts_with(kLauncher)) {

@@ -40,6 +40,8 @@ class QTimer;
 class LibraryGrid;
 
 namespace mira_gui {
+class DownloadTracker;
+class DownloadsPanel;
 class GameEditForm;
 class GameTileDelegate;
 class HoverCard;
@@ -193,8 +195,10 @@ private:
   // The grid is what's on screen: not Settings, the classic table, or a source page.
   bool GridShown() const;
   void RelocateLibrary();
-  // While installing_ isn't empty: asks mirad how far each install has got.
-  void PollInstalls();
+  // A download or install moved along: tile text and the top bar's count.
+  void DownloadChanged(const QString& key);
+  // Back to the grid with this game selected; its settings if filtered out.
+  void ShowGame(const std::string& id);
   // "Installing… 1.2 GB" for a game mid-install, else empty.
   QString InstallText(const std::string& id) const;  // `announce` is false for the bulk path, where one toast covers the batch
   // and per-game messages would be one notification per game.
@@ -239,6 +243,7 @@ private:
   // rebuilt fresh alongside settings_panel_ on each open.
   QPushButton* settings_button_ = nullptr;
   // Moved here from the sidebar's old hamburger menu — see BuildTopBar.
+  QToolButton* downloads_button_ = nullptr;
   QToolButton* refresh_button_ = nullptr;
   QToolButton* shortcuts_button_ = nullptr;
   QToolButton* about_button_ = nullptr;
@@ -295,9 +300,8 @@ private:
 
   std::vector<mira_gui::GameSummary> games_;
   std::set<std::string> running_ids_;
-  // Games whose installer mirad is running, with the bytes written so far.
-  std::map<std::string, std::int64_t> installing_;
-  QTimer* install_poll_ = nullptr;
+  mira_gui::DownloadTracker* downloads_ = nullptr;
+  mira_gui::DownloadsPanel* downloads_panel_ = nullptr;
   // game.added events asking for their settings to open, gathered briefly
   // so a scan's burst of them opens nothing.
   std::vector<std::string> pending_added_;

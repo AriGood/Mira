@@ -54,7 +54,18 @@ QPixmap FitToTile(const QPixmap& source, QSize tile, qreal device_pixel_ratio) {
 ArtworkStore::ArtworkStore(QObject* parent) : QObject(parent) {}
 
 QPixmap ArtworkStore::Cover(const GameSummary& game, QSize tile, qreal device_pixel_ratio) {
-  const QString id = QString::fromStdString(game.id);
+  return CoverFor(QString::fromStdString(game.id), QString::fromStdString(game.name), tile,
+                  device_pixel_ratio);
+}
+
+QPixmap ArtworkStore::TitleCover(const QString& source, const QString& ref, const QString& title, QSize tile,
+                                 qreal device_pixel_ratio) {
+  const QString id = source + "-" + ref;
+  titles_.insert(id, {source.toStdString(), ref.toStdString()});
+  return CoverFor(id, title, tile, device_pixel_ratio);
+}
+
+QPixmap ArtworkStore::CoverFor(const QString& id, const QString& name, QSize tile, qreal device_pixel_ratio) {
   const QString key = ScaleKey(id, tile);
 
   if (const auto cached = scaled_.constFind(key); cached != scaled_.constEnd()) return *cached;
@@ -66,7 +77,7 @@ QPixmap ArtworkStore::Cover(const GameSummary& game, QSize tile, qreal device_pi
     cover = FitToTile(*art, tile, device_pixel_ratio);
   } else {
     // Keyed on the id, not the name, so it survives a rename.
-    cover = PlaceholderCover(QString::fromStdString(game.name), id,
+    cover = PlaceholderCover(name, id,
                              QSize(tile.width() - 10, tile.height() - 10), device_pixel_ratio);
   }
   scaled_.insert(key, cover);
@@ -116,7 +127,7 @@ void ArtworkStore::Pump() {
   while (in_flight_ < kMaxInFlight && !pending_.isEmpty()) {
     const QString id = pending_.dequeue();
     ++in_flight_;
-    MiradClient::GetArtworkAsync(this, id.toStdString(), [this, id](ArtworkResult result) {
+    auto on_result = [this, id](ArtworkResult result) {
       --in_flight_;
       queued_.remove(id);
       // Answered covers all three outcomes on purpose — re-asking on every
@@ -136,7 +147,12 @@ void ArtworkStore::Pump() {
         }
       }
       Pump();
-    });
+    };
+    if (const auto title = titles_.constFind(id); title != titles_.constEnd()) {
+      MiradClient::GetTitleArtworkAsync(this, title->first, title->second, std::move(on_result));
+    } else {
+      MiradClient::GetArtworkAsync(this, id.toStdString(), std::move(on_result));
+    }
   }
 }
 

@@ -725,6 +725,7 @@ struct StoreEvent {
   std::string state;   // "started" | "finished" | "failed"
   std::string ref;     // install: the title's ref; download: the bundle key
   std::string error;   // only on "failed"
+  bool update = false;  // install: an update rather than a first install
 };
 
 }  // namespace mira_gui

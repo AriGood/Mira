@@ -103,6 +103,33 @@ QWidget#filter_sort_popover {
   border-radius: @radius_panel;
 }
 
+QWidget#downloads_popover {
+  background: @surface;
+  border: 1px solid @border;
+  border-radius: @radius_panel;
+}
+
+QWidget#downloads_popover QScrollArea,
+QWidget#downloads_popover QScrollArea > QWidget > QWidget {
+  background: transparent;
+}
+
+QFrame#download_row {
+  background: @surface_alt;
+  border-radius: @radius_control;
+}
+
+QWidget#downloads_popover QProgressBar {
+  background: @border;
+  border: none;
+  border-radius: 2px;
+}
+
+QWidget#downloads_popover QProgressBar::chunk {
+  background: @accent;
+  border-radius: 2px;
+}
+
 QWidget#filter_sort_popover QToolButton {
   background: transparent;
   border: none;

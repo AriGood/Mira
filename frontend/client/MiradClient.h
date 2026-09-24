@@ -283,6 +283,15 @@ public:
   static void InstallStoreTitleAsync(QObject* context, const std::string& source,
                                      const std::string& ref, bool update,
                                      std::function<void(StoreActionResult)> callback);
+  // GET /v1/library/artwork: a not-installed title's cached cover. 404
+  // (missing) until POST has fetched it.
+  static void GetTitleArtworkAsync(QObject* context, const std::string& source, const std::string& ref,
+                                   std::function<void(ArtworkResult)> callback);
+  // POST /v1/library/artwork: fetch covers for these titles, one at a time.
+  // Each one ends in a library.artwork_ready/_failed event.
+  static void QueueTitleArtworkAsync(QObject* context, const std::string& source,
+                                     std::vector<StoreTitle> titles,
+                                     std::function<void(StoreActionResult)> callback);
   static void GetHumbleLibraryAsync(QObject* context,
                                     std::function<void(HumbleLibraryResult)> callback);
   static void DownloadHumbleBundleAsync(QObject* context, const std::string& bundle_key,
@@ -304,6 +313,10 @@ public:
 
   static bool ParseStoreEvent(const std::string& event_type, const std::string& data,
                               StoreEvent* out);
+  // library.artwork_ready/_failed: kind "artwork", state "ready"/"failed",
+  // error the failure's code.
+  static bool ParseTitleArtworkEvent(const std::string& event_type, const std::string& data,
+                                     StoreEvent* out);
 
   static bool ParseGameSummary(const std::string& data, GameSummary* out);
 

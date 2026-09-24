@@ -56,6 +56,8 @@
 
 #include "../ui/AboutPanel.h"
 #include "../ui/CoverArt.h"
+#include "../ui/DownloadTracker.h"
+#include "../ui/DownloadsPanel.h"
 #include "../ui/GameActions.h"
 #include "../ui/GameEditForm.h"
 #include "../ui/GamePresentation.h"
@@ -438,6 +440,23 @@ LibraryWindow::LibraryWindow(QWidget* parent) : QMainWindow(parent) {
   artwork_ = new mira_gui::ArtworkStore(this);
   connect(artwork_, &mira_gui::ArtworkStore::CoverChanged, this, &LibraryWindow::UpdateTileCover);
 
+  // Before the top bar, which shows its count.
+  downloads_ = new mira_gui::DownloadTracker(this);
+  downloads_->game_name = [this](const std::string& id) {
+    const mira_gui::GameSummary* game = FindGame(id);
+    return game != nullptr ? QString::fromStdString(game->name) : QString();
+  };
+  downloads_->source_name = [](const QString& id) {
+    for (const mira_gui::SourceInfo& source : mira_gui::AllSources()) {
+      if (source.id == id) return source.name;
+    }
+    return id;
+  };
+  connect(downloads_, &mira_gui::DownloadTracker::Changed, this, &LibraryWindow::DownloadChanged);
+  downloads_panel_ = new mira_gui::DownloadsPanel(downloads_, artwork_, this);
+  connect(downloads_panel_, &mira_gui::DownloadsPanel::ShowGameRequested, this,
+          [this](const QString& id) { ShowGame(id.toStdString()); });
+
   // The stylesheet re-polishes every widget by itself; what it cannot reach
   // is what we paint — the tiles, and the placeholder covers drawn in the
   // theme's own colors.
@@ -777,6 +796,7 @@ void LibraryWindow::ApplyTopBarIcons() {
   using mira_gui::icons::Glyph;
   settings_button_->setIcon(mira_gui::icons::For(Glyph::Settings));
   refresh_button_->setIcon(mira_gui::icons::For(Glyph::Refresh));
+  downloads_button_->setIcon(mira_gui::icons::For(Glyph::Download));
   shortcuts_button_->setIcon(mira_gui::icons::For(Glyph::Keyboard));
   about_button_->setIcon(mira_gui::icons::For(Glyph::Info));
   top_bar_divider_->setStyleSheet(
@@ -1021,6 +1041,15 @@ QWidget* LibraryWindow::BuildTopBar() {
   zoom_->setToolTip("Tile size");
   connect(zoom_, &QSlider::valueChanged, this, &LibraryWindow::SetTileWidth);
   layout->addWidget(zoom_);
+
+  downloads_button_ = new QToolButton(top_bar_);
+  downloads_button_->setAutoRaise(true);
+  downloads_button_->setToolTip("Downloads");
+  // Its count's text is taller than the icon; the bar shouldn't grow for it.
+  downloads_button_->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Ignored);
+  connect(downloads_button_, &QToolButton::clicked, this,
+          [this] { downloads_panel_->ShowBelow(downloads_button_); });
+  layout->addWidget(downloads_button_);
 
   // Moved from the sidebar's old hamburger menu -- generic actions that fit
   // the top bar (window chrome) better than a library-focused sidebar.
@@ -1813,8 +1842,9 @@ void LibraryWindow::ShowContextMenu(const QPoint& pos) {
   // Both halves of the needs_install escape hatch: run the installer inside
   // this game's prefix, then say it worked. "Run in prefix" is offered for
   // every game; only needs_install can be "marked installed".
-  QAction* install = menu.addAction(installing_.contains(id) ? "Installing…" : "Install…");
-  install->setEnabled((status == "needs_install" || status == "broken") && !installing_.contains(id));
+  const bool installing = !InstallText(id).isEmpty();
+  QAction* install = menu.addAction(installing ? "Installing…" : "Install…");
+  install->setEnabled((status == "needs_install" || status == "broken") && !installing);
   install->setToolTip("Run this game's installer, or pick a different one");
   QAction* run_in_prefix = menu.addAction("Run in prefix…");
   QAction* finish_install = menu.addAction("Mark as installed");
@@ -2353,7 +2383,7 @@ void LibraryWindow::OpenSource(const mira_gui::SourceInfo& source) {
     main_stack_->removeWidget(source_page_);
     source_page_->deleteLater();
   }
-  source_page_ = new mira_gui::SourcePage(source, artwork_, this);
+  source_page_ = new mira_gui::SourcePage(source, artwork_, downloads_, this);
   source_page_->SetGames(games_, running_ids_);
   source_page_->setProperty("source_id", source.id);
   connect(source_page_, &mira_gui::SourcePage::BackRequested, this, &LibraryWindow::CloseSource);
@@ -2399,28 +2429,49 @@ bool LibraryWindow::GridShown() const {
 }
 
 QString LibraryWindow::InstallText(const std::string& id) const {
-  const auto found = installing_.find(id);
-  if (found == installing_.end()) return QString();
-  if (found->second <= 0) return "Installing…";
-  return "Installing… " + QLocale().formattedDataSize(found->second);
+  using State = mira_gui::DownloadTracker::State;
+  const mira_gui::DownloadTracker::Entry* entry =
+      downloads_->Find(mira_gui::DownloadTracker::KeyFor(mira_gui::DownloadTracker::Kind::Game, QString(),
+                                                         QString::fromStdString(id)));
+  if (entry == nullptr || entry->state != State::Running) return QString();
+  if (entry->bytes <= 0) return "Installing…";
+  return "Installing… " + QLocale().formattedDataSize(entry->bytes);
 }
 
-void LibraryWindow::PollInstalls() {
-  for (const auto& [id, bytes] : installing_) {
-    mira_gui::MiradClient::GetInstallProgressAsync(
-        this, id, [this, id](mira_gui::InstallProgressResult progress) {
-          const auto found = installing_.find(id);
-          if (!progress.ok || found == installing_.end()) return;
-          found->second = progress.bytes_written;
-          // One tile's text, not a rebuild.
-          for (int row = 0; row < grid_->count(); ++row) {
-            QListWidgetItem* item = grid_->item(row);
-            if (item->data(mira_gui::GameTileDelegate::IdRole).toString().toStdString() == id) {
-              item->setData(mira_gui::GameTileDelegate::StatusTextRole, InstallText(id));
-            }
-          }
-        });
+void LibraryWindow::DownloadChanged(const QString& key) {
+  const int running = downloads_->RunningCount();
+  downloads_button_->setText(running > 0 ? QString::number(running) : QString());
+  downloads_button_->setToolButtonStyle(running > 0 ? Qt::ToolButtonTextBesideIcon : Qt::ToolButtonIconOnly);
+  downloads_button_->setToolTip(running == 0 ? QString("Downloads")
+                                             : QString("Downloads: %1 running").arg(running));
+
+  // One tile's text, not a rebuild.
+  if (!key.startsWith("game:")) return;
+  const QString id = key.mid(5);
+  for (int row = 0; row < grid_->count(); ++row) {
+    QListWidgetItem* item = grid_->item(row);
+    if (item->data(mira_gui::GameTileDelegate::IdRole).toString() == id) {
+      item->setData(mira_gui::GameTileDelegate::StatusTextRole, InstallText(id.toStdString()));
+    }
   }
+}
+
+void LibraryWindow::ShowGame(const std::string& id) {
+  if (SettingsOpen()) RequestCloseSettings();
+  if (GameEditOpen()) RequestCloseGameEdit();
+  if (content_stack_->currentWidget() == classic_page_) CloseClassicView();
+  if (source_page_ != nullptr) CloseSource();
+  for (int row = 0; row < grid_->count(); ++row) {
+    QListWidgetItem* item = grid_->item(row);
+    if (item->isHidden() || item->data(mira_gui::GameTileDelegate::IdRole).toString().toStdString() != id) {
+      continue;
+    }
+    grid_->clearSelection();
+    grid_->setCurrentItem(item);
+    grid_->scrollToItem(item, QAbstractItemView::PositionAtCenter);
+    return;
+  }
+  OpenGameDialog(id);
 }
 
 void LibraryWindow::RelocateLibrary() {
@@ -2645,26 +2696,16 @@ void LibraryWindow::HandleGameEvent(const std::string& type, const std::string& 
     return;
   }
 
+  // Doesn't consume it: the toasts below still want installs.
+  downloads_->HandleEvent(type, data);
+
   if (mira_gui::InstallEvent install; mira_gui::MiradClient::ParseInstallEvent(type, data, &install)) {
     const mira_gui::GameSummary* game = FindGame(install.id);
     const QString name = game != nullptr ? QString::fromStdString(game->name) : QString("A game");
-    if (install.state == "started") {
-      installing_[install.id] = 0;
-      if (install_poll_ == nullptr) {
-        install_poll_ = new QTimer(this);
-        install_poll_->setInterval(2000);
-        connect(install_poll_, &QTimer::timeout, this, &LibraryWindow::PollInstalls);
-      }
-      install_poll_->start();
-    } else {
-      installing_.erase(install.id);
-      if (installing_.empty() && install_poll_ != nullptr) install_poll_->stop();
-      if (install.state == "failed") {
-        mira_gui::notify::Failed(this, "Could not install " + name + ".",
-                                 QString::fromStdString(install.error));
-      } else if (install.state == "finished") {
-        mira_gui::notify::Notice(this, name + " is installed.");
-      }
+    if (install.state == "failed") {
+      mira_gui::notify::Failed(this, "Could not install " + name + ".", QString::fromStdString(install.error));
+    } else if (install.state == "finished") {
+      mira_gui::notify::Notice(this, name + " is installed.");
     }
     ApplyFilter();
     return;
