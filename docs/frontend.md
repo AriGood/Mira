@@ -29,16 +29,26 @@ swapping the grid out.
 
 ### Sources
 
-The sidebar's *Sources* rows (Steam, Epic Games, GOG, itch.io, Humble
-Bundle, Lutris) each open `views/SourcePage` in the grid's place, with the
-sidebar still up. A store page walks through what that store needs, in order:
-download its helper tool (Legendary, gogdl, butler, humble-cli), sign in by
-pasting what the store's login page shows, import what's already installed,
-then list what the account owns with Install/Update (Humble: Download). Steam
-and Lutris pages only import, plus Steam's owned list when a Web API key is
-set. A source turned off in Settings (`<id>.enabled`) is left out of the
-list. Paste parsing and login URLs come from mirad, so the page holds only
-wording.
+The sidebar's *Sources* rows each open `views/SourcePage` in the grid's
+place, with the sidebar still up. There are three kinds:
+
+- **Stores** (Epic Games, GOG, itch.io, Amazon Games, Humble Bundle): download
+  the helper tool mirad drives (Legendary, gogdl, butler, nile, humble-cli),
+  sign in by pasting what the store's login page shows, import what's
+  installed. What the account owns but hasn't installed is a second tile grid
+  with an Install pill on each tile (Humble: Download).
+- **Launchers** (Battle.net, Ubisoft Connect, EA app): install the launcher
+  into its own prefix, open it, import the games installed through it.
+- **Local** (Steam, Lutris): import what the other program installed. Steam
+  also lists owned games once a Web API key is set.
+
+Every page opens on a banner in the source's color with its status, then the
+games from that source (`GameSummary::source`) as cover tiles
+(`ui/TileGrid`, which grows to fit instead of scrolling). A setup card appears
+only while a step is left. A tile not yet installed has no artwork to show:
+mirad reports only a title for it, so it gets the generated placeholder. A
+source turned off in Settings (`<id>.enabled`) is left out of the list. Paste
+parsing and login URLs come from mirad, so the page holds only wording.
 
 Neither is a fallback for the other. The grid is the better browser; the
 table is the better audit tool for a library that was just scanned, where

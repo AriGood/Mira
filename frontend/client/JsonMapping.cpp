@@ -38,6 +38,7 @@ GameSummary ToGameSummary(const json& entry) {
   }
   game.play_seconds = entry.value("play_seconds", std::int64_t{0});
   game.tags = ReadTags(entry);
+  game.source = entry.value("source", std::string("scan"));
   return game;
 }
 
