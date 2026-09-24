@@ -1346,14 +1346,18 @@ QWidget* LibraryWindow::BuildSidebar() {
 
   nav_layout->addSpacing(14);
   heading("SOURCES");
+  // Its own layout so UpdateSourceNavs can reorder the rows.
+  source_nav_layout_ = new QVBoxLayout();
+  source_nav_layout_->setSpacing(2);
   for (const mira_gui::SourceInfo& source : mira_gui::AllSources()) {
     auto* nav = new QPushButton(source.name, nav_content);
     nav->setFlat(true);
     nav->setCheckable(true);
     connect(nav, &QPushButton::clicked, this, [this, source] { OpenSource(source); });
-    nav_layout->addWidget(nav);
+    source_nav_layout_->addWidget(nav);
     source_navs_.append(nav);
   }
+  nav_layout->addLayout(source_nav_layout_);
   nav_layout->addStretch(1);
   nav_scroll->setWidget(nav_content);
   layout->addWidget(nav_scroll, /*stretch=*/1);
@@ -1697,6 +1701,7 @@ void LibraryWindow::ApplyFilter() {
 
   RefreshClassicTable();
   if (source_page_ != nullptr) source_page_->SetGames(games_, running_ids_);
+  UpdateSourceNavs();
 }
 
 const mira_gui::GameSummary* LibraryWindow::FindGame(const std::string& id) const {
@@ -2162,9 +2167,10 @@ void LibraryWindow::UpdateLibraryNavActive() {
   const std::vector<mira_gui::SourceInfo>& sources = mira_gui::AllSources();
   for (int i = 0; i < source_navs_.size() && i < static_cast<int>(sources.size()); ++i) {
     const bool active = sources[i].id == open_source;
+    const bool unset = source_navs_[i]->property("unset").toBool();
     source_navs_[i]->setChecked(active);
-    source_navs_[i]->setIcon(
-        mira_gui::icons::For(Glyph::Store, active ? tokens.on_accent : tokens.text));
+    source_navs_[i]->setIcon(mira_gui::icons::For(
+        Glyph::Store, active ? tokens.on_accent : unset ? tokens.text_muted : tokens.text));
   }
 }
 
@@ -2379,6 +2385,7 @@ void LibraryWindow::CloseSource() {
   }
   SetSourceControlsEnabled(true);
   UpdateLibraryNavActive();
+  RefreshSourceNavs();  // a sign-in or launcher install there changes the order
 }
 
 // Only what acts on the grid; the rest of the sidebar stays usable.
@@ -2481,6 +2488,53 @@ void LibraryWindow::RefreshSourceNavs() {
       source_navs_[i]->setVisible(found == result.values.end() || found->second != "false");
     }
   });
+  // A store counts as set up once signed in, a launcher once installed.
+  for (const mira_gui::SourceInfo& source : mira_gui::AllSources()) {
+    if (source.kind != mira_gui::SourceInfo::Kind::Store) continue;
+    const QString id = source.id;
+    mira_gui::MiradClient::GetStoreStatusAsync(
+        this, id.toStdString(), [this, id](mira_gui::StoreStatusResult status) {
+          source_ready_[id] = status.ok && status.authenticated;
+          UpdateSourceNavs();
+        });
+  }
+  mira_gui::MiradClient::GetLaunchersAsync(this, [this](mira_gui::LaunchersResult result) {
+    for (const mira_gui::LauncherInfo& launcher : result.launchers) {
+      source_ready_[QString::fromStdString(launcher.id)] = launcher.installed;
+    }
+    UpdateSourceNavs();
+  });
+}
+
+void LibraryWindow::UpdateSourceNavs() {
+  if (source_nav_layout_ == nullptr) return;
+  std::set<std::string> with_games;
+  for (const mira_gui::GameSummary& game : games_) with_games.insert(game.source);
+
+  // Set up first, then the rest greyed out; AllSources() order within each.
+  const std::vector<mira_gui::SourceInfo>& sources = mira_gui::AllSources();
+  std::vector<QPushButton*> ready;
+  std::vector<QPushButton*> unset;
+  for (int i = 0; i < source_navs_.size() && i < static_cast<int>(sources.size()); ++i) {
+    const QString& id = sources[i].id;
+    const bool is_ready = with_games.contains(id.toStdString()) || source_ready_.value(id, false);
+    QPushButton* nav = source_navs_[i];
+    if (nav->property("unset").toBool() == is_ready) {
+      nav->setProperty("unset", !is_ready);
+      nav->style()->unpolish(nav);
+      nav->style()->polish(nav);
+    }
+    nav->setToolTip(is_ready ? QString() : "Not set up yet");
+    (is_ready ? ready : unset).push_back(nav);
+  }
+  int row = 0;
+  for (const std::vector<QPushButton*>* group : {&ready, &unset}) {
+    for (QPushButton* nav : *group) {
+      source_nav_layout_->removeWidget(nav);
+      source_nav_layout_->insertWidget(row++, nav);
+    }
+  }
+  UpdateLibraryNavActive();  // icon colors follow the unset state
 }
 
 void LibraryWindow::OpenClassicView() {

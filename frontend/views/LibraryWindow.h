@@ -186,8 +186,11 @@ private:
   void CloseSource();
   // First launch only: the games folder, then importing what's already there.
   void ShowWelcome();
-  // Hides the sources turned off in Settings (`<id>.enabled`).
+  // Hides the sources turned off in Settings (`<id>.enabled`), and asks
+  // which stores are signed in and which launchers installed.
   void RefreshSourceNavs();
+  // Greys out and moves down the sources with nothing set up yet.
+  void UpdateSourceNavs();
   void SetSourceControlsEnabled(bool enabled);
   // The grid is what's on screen: not Settings, the classic table, or a source page.
   bool GridShown() const;
@@ -255,6 +258,9 @@ private:
   QVBoxLayout* library_actions_layout_ = nullptr;
   // One sidebar row per mira_gui::AllSources() entry, same order.
   QList<QPushButton*> source_navs_;
+  QVBoxLayout* source_nav_layout_ = nullptr;
+  // Store signed in / launcher installed, by source id, as last asked.
+  QHash<QString, bool> source_ready_;
   mira_gui::SourcePage* source_page_ = nullptr;
 
   QSplitter* splitter_ = nullptr;
