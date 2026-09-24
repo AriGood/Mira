@@ -129,6 +129,9 @@ private:
   // for that tile. Called by LibraryGrid::on_hover_item after its dwell.
   void ShowHoverCard(QListWidgetItem* item);
   void ShowContextMenu(const QPoint& pos);
+  void ShowGameMenu(const std::string& id, const QPoint& global_pos);
+  void ShowSidebarMenu(const QPoint& global_pos);
+  void ShowSourceMenu(const mira_gui::SourceInfo& source, const QPoint& global_pos);
   // More than one tile selected — a reduced set of actions applied to all
   // of them at once, chosen at the pos the right-click landed on.
   void ShowBatchContextMenu(const QList<QListWidgetItem*>& items, const QPoint& pos);
@@ -170,6 +173,7 @@ private:
   void ShowLibrary();
   void OpenManageSources();
   void RefreshRecentlyPlayed();
+  void SetSourceHidden(const QString& id, bool hidden);
   void OpenRunners();
   void OpenAbout();
   void OpenGameDetailPage(const std::string& id);
@@ -253,8 +257,6 @@ private:
   // Library is checked/highlighted whenever content_stack_ shows splitter_
   // (see UpdateLibraryNavActive).
   QPushButton* library_nav_ = nullptr;
-  QPushButton* sources_nav_ = nullptr;
-  QLabel* sources_nav_count_ = nullptr;  // "N of M" set up
   QPushButton* runners_nav_ = nullptr;
   QToolButton* manage_sources_button_ = nullptr;
   QToolButton* fetch_art_button_ = nullptr;
@@ -270,6 +272,9 @@ private:
   QSet<QString> disabled_sources_;  // <id>.enabled = false
   QLabel* recent_heading_ = nullptr;
   QVBoxLayout* recent_layout_ = nullptr;
+  static constexpr int kDefaultRecentCount = 3;
+  int recent_count_ = kDefaultRecentCount;  // besides running games
+  bool show_source_counts_ = true;
   QVBoxLayout* source_nav_layout_ = nullptr;
   // Store signed in / launcher installed, by source id, as last asked.
   QHash<QString, bool> source_ready_;

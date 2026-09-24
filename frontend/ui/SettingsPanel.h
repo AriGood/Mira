@@ -37,6 +37,9 @@ class SettingsPanel : public QWidget {
 public:
   explicit SettingsPanel(QWidget* parent = nullptr);
 
+  // FocusKey target for the frontend-only Sidebar page.
+  static constexpr const char* kSidebarKey = "frontend.sidebar";
+
   // Patches every changed field. Emits SaveFinished either way; the caller
   // decides what "done" means (close a dialog, switch back to the grid).
   void Save();
@@ -98,6 +101,9 @@ private:
   void LoadFrontendPrefs();
   void BuildInterfaceGroup();
   void BuildShortcutsGroup();
+  void BuildSidebarGroup();
+  QSet<QString> CurrentHiddenSources() const;
+  bool SidebarDirty() const;
   QWidget* MakeShapeControl(ShapeField& field, const QString& label, int maximum,
                             const QString& tip);
   // Shows each shape spinbox's special "unset" value as the actual number
@@ -128,6 +134,12 @@ private:
   bool game_settings_in_sidebar_original_ = true;
   QCheckBox* drag_select_ = nullptr;
   bool drag_select_original_ = true;
+  QSpinBox* recent_count_ = nullptr;
+  int recent_count_original_ = 3;
+  QCheckBox* source_counts_ = nullptr;
+  bool source_counts_original_ = true;
+  std::vector<std::pair<QString, QCheckBox*>> source_checks_;  // source id, "show in sidebar"
+  QSet<QString> hidden_sources_original_;
   ShapeField tile_spacing_;
   ShapeField grid_margin_;
   ShapeField tile_radius_;

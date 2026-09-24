@@ -318,6 +318,8 @@ FrontendPrefsResult GetFrontendPrefsSync() {
   read_int("tile_radius", result.prefs.tile_radius);
   read_int("panel_radius", result.prefs.panel_radius);
   read_int("control_radius", result.prefs.control_radius);
+  read_int("sidebar_recent_count", result.prefs.sidebar_recent_count);
+  read_bool("sidebar_source_counts", result.prefs.sidebar_source_counts);
   if (table.contains("shortcuts") && table["shortcuts"].is_object()) {
     std::map<std::string, std::string> overrides;
     for (const auto& [id, keys] : table["shortcuts"].items()) {
@@ -361,6 +363,8 @@ PatchConfigResult SaveFrontendPrefsSync(const FrontendPrefs& prefs) {
     table["shortcuts"] = shortcuts;
   }
   if (prefs.hidden_sources) table["hidden_sources"] = *prefs.hidden_sources;
+  if (prefs.sidebar_recent_count) table["sidebar_recent_count"] = *prefs.sidebar_recent_count;
+  if (prefs.sidebar_source_counts) table["sidebar_source_counts"] = *prefs.sidebar_source_counts;
 
   // Short, because SaveFrontendPrefsBlocking runs this on the UI thread
   // while a window is closing.

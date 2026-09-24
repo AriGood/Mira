@@ -513,6 +513,10 @@ struct FrontendPrefs {
   std::optional<std::map<std::string, std::string>> shortcut_overrides;
   // Source ids unticked under "In sidebar" in Manage sources.
   std::optional<std::vector<std::string>> hidden_sources;
+  // How many recently played games the sidebar lists besides running ones
+  // (0 hides them), and whether source rows show a game count.
+  std::optional<int> sidebar_recent_count;
+  std::optional<bool> sidebar_source_counts;
 };
 
 struct FrontendPrefsResult {
