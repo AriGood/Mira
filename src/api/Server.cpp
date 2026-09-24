@@ -727,7 +727,7 @@ void Server::RegisterRoutes() {
     if (!summary) return SendError(res, 404, summary.error().code, summary.error().message);
     SyncDesktopEntries(config_, games_);
     for (const model::Game& game : summary->added_games) metadata_fetches_.Enqueue(config_, events_, game);
-    SendJson(res, {{"added", summary->added}, {"updated", summary->updated}, {"skipped", summary->skipped}});
+    SendJson(res, {{"added", summary->added}, {"updated", summary->updated}, {"other_runner", summary->other_runner}, {"incomplete", summary->incomplete}});
   });
 
   // --- epic -------------------------------------------------------------

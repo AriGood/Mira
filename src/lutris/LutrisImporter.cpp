@@ -222,14 +222,14 @@ Result<LutrisImportSummary> LutrisImporter::Import() {
     // note it, don't guess at it.
     const bool is_native = row.runner == "linux";
     if (row.runner != "wine" && !is_native) {
-      ++summary.skipped;
+      ++summary.other_runner;
       continue;
     }
 
     const fs::path yaml_path = *data_dir / "games" / (row.configpath + ".yml");
     const auto cfg = ReadGameConfig(yaml_path, /*requires_prefix=*/!is_native);
     if (!cfg) {
-      ++summary.skipped;
+      ++summary.incomplete;
       continue;
     }
 
@@ -244,7 +244,7 @@ Result<LutrisImportSummary> LutrisImporter::Import() {
     const fs::path prefix = fs::path(cfg->prefix);
     const fs::path exe_raw = fs::path(cfg->exe);
     if (is_native && !exe_raw.is_absolute()) {
-      ++summary.skipped;
+      ++summary.incomplete;
       continue;
     }
     const fs::path exe_abs = exe_raw.is_absolute() ? exe_raw : prefix / exe_raw;
@@ -267,7 +267,7 @@ Result<LutrisImportSummary> LutrisImporter::Import() {
     if (!is_native && install_path == (prefix / "drive_c").string()) {
       log::Warn("skipping lutris game {}: install path {} is drive_c's own root, not something game-specific",
                row.name, install_path);
-      ++summary.skipped;
+      ++summary.incomplete;
       continue;
     }
 

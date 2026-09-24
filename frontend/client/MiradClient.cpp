@@ -550,7 +550,6 @@ LutrisImportResult ImportLutrisSync() {
   result.ok = true;
   result.added = reply.body.value("added", 0);
   result.updated = reply.body.value("updated", 0);
-  result.skipped = reply.body.value("skipped", 0);
   return result;
 }
 

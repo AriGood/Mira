@@ -462,8 +462,16 @@ int CmdLutrisImport() {
     return 1;
   }
   json summary = json::parse(res->body);
-  std::printf("added: %lld  updated: %lld  skipped: %lld\n", summary.value("added", 0LL),
-             summary.value("updated", 0LL), summary.value("skipped", 0LL));
+  std::printf("added: %lld  updated: %lld\n", summary.value("added", 0LL), summary.value("updated", 0LL));
+  if (const long long other = summary.value("other_runner", 0LL); other > 0) {
+    std::printf("%lld left to another runner (Steam, Flatpak, ...) — they stay in Lutris, and a Steam "
+                "game is picked up by `mira steam scan`\n",
+                other);
+  }
+  if (const long long incomplete = summary.value("incomplete", 0LL); incomplete > 0) {
+    std::printf("%lld not imported: their Lutris config has no prefix or no absolute exe path\n",
+                incomplete);
+  }
   return 0;
 }
 

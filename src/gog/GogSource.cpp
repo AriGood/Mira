@@ -1,5 +1,6 @@
 #include "gog/GogSource.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <format>
 #include <unordered_map>
@@ -51,10 +52,14 @@ Result<std::vector<library::CatalogEntry>> GogSource::Catalog(const config::Conf
   // Best-effort title lookup -- ids alone are still a usable catalog (see
   // CatalogEntry::title's fallback-to-ref convention every source here
   // uses), so a failure here doesn't fail the whole listing.
+  // GOG answers at most 50 ids per request; more fails the whole batch.
+  constexpr size_t kIdsPerRequest = 50;
   std::unordered_map<std::string, std::string> titles;
-  if (!ids.empty()) {
+  for (size_t start = 0; start < ids.size(); start += kIdsPerRequest) {
     std::string joined;
-    for (const std::string& id : ids) joined += (joined.empty() ? "" : ",") + id;
+    for (size_t i = start; i < std::min(ids.size(), start + kIdsPerRequest); ++i) {
+      joined += (joined.empty() ? "" : ",") + ids[i];
+    }
     if (const Result<json> products =
           GetJson(std::format("https://api.gog.com/products?ids={}", joined), *token);
         products && products->is_array()) {
