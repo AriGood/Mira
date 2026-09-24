@@ -14,6 +14,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMouseEvent>
+#include <QPointer>
 #include <QShowEvent>
 #include <QPropertyAnimation>
 #include <QPushButton>
@@ -24,8 +25,11 @@
 namespace mira_gui::notify {
 namespace {
 
-// Process-wide, from frontend.toml. Zero means "until dismissed".
-int g_timeout_seconds = 0;
+using system_notifier::Urgency;
+
+// Fallback card only: how long a transient one stays. A persistent one
+// stays until clicked.
+constexpr int kTransientCardSeconds = 6;
 
 constexpr int kMargin = 16;
 // Fixed, so a one-line toast and a three-line one are the same shape and
@@ -128,7 +132,7 @@ public:
     window->installEventFilter(this);
   }
 
-  void Add(Level level, const QString& text) {
+  void Add(Level level, const QString& text, bool persistent) {
     auto* card = new ToastCard(level, text, this);
     layout()->addWidget(card);
 
@@ -148,11 +152,11 @@ public:
     // the time the stack is measured.
     card->show();
 
-    if (const int seconds = CurrentTimeoutSeconds(); seconds > 0) {
-      QTimer::singleShot(seconds * 1000, card, [card] { card->Dismiss(); });
+    if (!persistent) {
+      QTimer::singleShot(kTransientCardSeconds * 1000, card, [card] { card->Dismiss(); });
     }
-    // Otherwise it stays until clicked or pushed out. The card's own
-    // destruction shrinks the stack, so the host must follow it back down.
+    // The card's own destruction shrinks the stack, so the host must follow
+    // it back down.
     connect(card, &QObject::destroyed, this, [this] { QTimer::singleShot(0, this, [this] {
                                                        Reposition();
                                                      }); });
@@ -193,36 +197,68 @@ ToastHost* HostFor(QWidget* parent) {
   return new ToastHost(window);
 }
 
-}  // namespace
+QString JoinDetail(const QString& detail, const QString& hint) {
+  if (detail.isEmpty()) return hint;
+  if (hint.isEmpty()) return detail;
+  return detail + "\n\n" + hint;
+}
 
-void Failed(QWidget* parent, const QString& what, const QString& detail) {
+// Fallback only: a modal popup, as every failure used to be.
+void FailedPopup(QWidget* parent, const QString& what, const QString& detail, const QString& action,
+                 std::function<void()> activate) {
   PopupDialog dialog(parent, Level::Error, "Mira");
   dialog.SetMessage(what);
   if (!detail.isEmpty()) dialog.SetDetail(detail);
+  if (!action.isEmpty() && activate) dialog.SetAction(action, std::move(activate));
   dialog.AddButton("OK", /*accept_role=*/true, /*default_button=*/true);
   dialog.exec();
 }
 
+void ShowCard(QWidget* parent, Level level, const QString& text, bool persistent) {
+  if (ToastHost* host = HostFor(parent)) host->Add(level, text, persistent);
+}
+
+}  // namespace
+
+void Failed(QWidget* parent, const QString& what, const QString& detail) {
+  FailedWithAction(parent, what, detail, QString(), QString(), {});
+}
+
 void FailedWithHint(QWidget* parent, const QString& what, const QString& detail,
                     const QString& hint) {
-  PopupDialog dialog(parent, Level::Error, "Mira");
-  dialog.SetMessage(what);
-  dialog.SetDetail(detail.isEmpty() ? hint : detail + "\n\n" + hint);
-  dialog.AddButton("OK", /*accept_role=*/true, /*default_button=*/true);
-  dialog.exec();
+  FailedWithAction(parent, what, detail, hint, QString(), {});
 }
 
 void FailedWithAction(QWidget* parent, const QString& what, const QString& detail,
                       const QString& hint, const QString& action,
                       std::function<void()> activate) {
-  PopupDialog dialog(parent, Level::Error, "Mira");
-  dialog.SetMessage(what);
-  if (!detail.isEmpty() || !hint.isEmpty()) {
-    dialog.SetDetail(detail.isEmpty() ? hint : detail + "\n\n" + hint);
+  const QString body = JoinDetail(detail, hint);
+  std::function<void()> on_action;
+  if (activate) {
+    // The click lands with Mira possibly hidden in the tray or behind other
+    // windows — bring it forward before routing anywhere inside it.
+    QPointer<QWidget> window = parent != nullptr ? parent->window() : nullptr;
+    on_action = [window, activate] {
+      if (window) {
+        window->show();
+        window->raise();
+        window->activateWindow();
+      }
+      activate();
+    };
   }
-  dialog.SetAction(action, std::move(activate));
-  dialog.AddButton("OK", /*accept_role=*/true, /*default_button=*/true);
-  dialog.exec();
+  if (system_notifier::Send(Urgency::Persistent, what, body, action, on_action)) return;
+  FailedPopup(parent, what, body, action, std::move(activate));
+}
+
+void Warn(QWidget* parent, const QString& text) {
+  if (system_notifier::Send(Urgency::Persistent, "Mira", text)) return;
+  ShowCard(parent, Level::Warning, text, /*persistent=*/true);
+}
+
+void Notice(QWidget* parent, const QString& text) {
+  if (system_notifier::Send(Urgency::Transient, "Mira", text)) return;
+  ShowCard(parent, Level::Info, text, /*persistent=*/false);
 }
 
 void Info(QWidget* parent, const QString& title, const QString& message) {
@@ -273,21 +309,6 @@ QColor AccentFor(Level level) {
     case Level::Info: break;
   }
   return tokens.info;
-}
-
-void SetTimeoutSeconds(int seconds) {
-  g_timeout_seconds = std::clamp(seconds, 0, kMaxTimeoutSeconds);
-}
-
-int CurrentTimeoutSeconds() { return g_timeout_seconds; }
-
-void Toast(QWidget* parent, Level level, const QString& text) {
-  if (system_notifier::Send(level, text)) return;
-
-  // Only reached when there is no notification service on the session bus
-  // at all — a bare window manager, most often. Not a preference: the
-  // alternative is the message never appearing anywhere.
-  if (ToastHost* host = HostFor(parent)) host->Add(level, text);
 }
 
 }  // namespace mira_gui::notify

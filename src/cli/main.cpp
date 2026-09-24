@@ -1382,7 +1382,7 @@ int CmdConfig(int argc, char** argv) {
     }
     for (const json& entry : json::parse(res->body)) {
       std::printf("%-32s %-8s %-9s %s\n", entry.value("key", "").c_str(),
-                 entry.value("type", "").c_str(), entry.value("tier", "").c_str(),
+                 entry.value("type", "").c_str(), entry.value("scope", "").c_str(),
                  entry.value("doc", "").c_str());
     }
     return 0;

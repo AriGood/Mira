@@ -132,6 +132,10 @@ protected:
         }
         base_selection_.clear();
         for (QListWidgetItem* selected : selectedItems()) base_selection_.insert(selected);
+        // A hover dwell timer started before the drag threshold was crossed
+        // otherwise fires mid-drag and pops the hover card up anchored to
+        // wherever the drag started, well after the cursor has moved on.
+        TrackHover(nullptr);
         rubber_band_ = new QRubberBand(QRubberBand::Rectangle, viewport());
         rubber_band_->setGeometry(QRect(drag_origin_, QSize()));
         rubber_band_->show();
@@ -624,9 +628,6 @@ void LibraryWindow::LoadPrefs() {
       splitter_->setSizes({sidebar, qMax(400, width() - sidebar)});
     }
     if (prefs.scan_on_startup) scan_on_startup_ = *prefs.scan_on_startup;
-    if (prefs.notification_timeout_s) {
-      mira_gui::notify::SetTimeoutSeconds(*prefs.notification_timeout_s);
-    }
     if (prefs.shortcut_overrides) mira_gui::keybindings::LoadOverrides(*prefs.shortcut_overrides);
     if (prefs.sort_descending) {
       sort_descending_ = *prefs.sort_descending;
@@ -676,9 +677,6 @@ void LibraryWindow::SavePrefs() {
   prefs.sort_by = sort_key_;
   prefs.sort_descending = sort_descending_;
   prefs.scan_on_startup = scan_on_startup_;
-  // Read back from notify rather than from a member, so a change made in
-  // the settings dialog survives closing the window that did not make it.
-  prefs.notification_timeout_s = mira_gui::notify::CurrentTimeoutSeconds();
   const QList<int> sizes = splitter_->sizes();
   if (sizes.size() == 2) prefs.sidebar_width = sizes[0];
   // Blocking, not fire-and-forget: the async form's detached thread might
@@ -837,12 +835,11 @@ void LibraryWindow::ScanLibrary() {
                                QString::fromStdString(result.error));
       return;
     }
-    mira_gui::notify::Toast(
-        this, result.added > 0 ? mira_gui::notify::Level::Success : mira_gui::notify::Level::Info,
-        QString("Scan: %1 added, %2 missing, %3 restored.")
-            .arg(result.added)
-            .arg(result.missing)
-            .arg(result.restored));
+    // New games show up in the grid on their own; only "nothing happened"
+    // has no visible result of its own.
+    if (result.added == 0 && result.missing == 0 && result.restored == 0) {
+      mira_gui::notify::Notice(this, "Scan finished — no changes.");
+    }
     RefreshGames();
   });
 }
@@ -854,11 +851,7 @@ void LibraryWindow::ImportSteamLibrary() {
                                QString::fromStdString(result.error));
       return;
     }
-    // A toast, not a popup: the import already happened, there is nothing to
-    // decide, and the result is visible in the grid behind it either way.
-    mira_gui::notify::Toast(
-        this, result.added > 0 ? mira_gui::notify::Level::Success : mira_gui::notify::Level::Info,
-        QString("Steam import: %1 added, %2 updated.").arg(result.added).arg(result.updated));
+    if (result.added == 0) mira_gui::notify::Notice(this, "No new Steam games found.");
     RefreshGames();
   });
 }
@@ -872,17 +865,7 @@ void LibraryWindow::ImportLutrisLibrary() {
           "If Lutris is installed somewhere unusual, point lutris.data_dir at it in settings.");
       return;
     }
-    QString message =
-        QString("Lutris import: %1 added, %2 updated.").arg(result.added).arg(result.updated);
-    // Worth saying: a skip is almost always a Steam-runner row or a game
-    // whose prefix Lutris never wrote down, not a failure.
-    if (result.skipped > 0) {
-      message += QString(" %1 skipped (not a Wine game, or no prefix recorded).")
-                     .arg(result.skipped);
-    }
-    mira_gui::notify::Toast(
-        this, result.added > 0 ? mira_gui::notify::Level::Success : mira_gui::notify::Level::Info,
-        message);
+    if (result.added == 0) mira_gui::notify::Notice(this, "No new Lutris games found.");
     RefreshGames();
   });
 }
@@ -904,7 +887,7 @@ void LibraryWindow::SyncDesktopEntries() {
                                QString::fromStdString(result.error));
       return;
     }
-    mira_gui::notify::Toast(this, mira_gui::notify::Level::Success, "Desktop entries regenerated.");
+    mira_gui::notify::Notice(this, "Desktop entries regenerated.");
   });
 }
 
@@ -935,8 +918,7 @@ void LibraryWindow::RemoveAllDesktopEntries() {
                                          QString::fromStdString(sync_result.error));
                 return;
               }
-              mira_gui::notify::Toast(this, mira_gui::notify::Level::Success,
-                                     "Desktop entries removed.");
+              mira_gui::notify::Notice(this, "Desktop entries removed.");
             });
       });
 }
@@ -961,30 +943,6 @@ QWidget* LibraryWindow::BuildTopBar() {
   zoom_->setToolTip("Tile size");
   connect(zoom_, &QSlider::valueChanged, this, &LibraryWindow::SetTileWidth);
   layout->addWidget(zoom_);
-
-  // The gear itself now lives in the sidebar (BuildSidebar) — this is just
-  // the Back/Reset/Save trio that replaces the top bar's usual right side
-  // while Settings is open (see SetSettingsChromeVisible).
-  settings_actions_widget_ = new QWidget(top_bar_);
-  auto* settings_actions_layout = new QHBoxLayout(settings_actions_widget_);
-  settings_actions_layout->setContentsMargins(0, 0, 0, 0);
-  settings_actions_layout->setSpacing(6);
-  settings_back_button_ = new QPushButton("← Back", settings_actions_widget_);
-  connect(settings_back_button_, &QPushButton::clicked, this, &LibraryWindow::RequestCloseSettings);
-  settings_reset_button_ = new QPushButton("Reset", settings_actions_widget_);
-  settings_reset_button_->setToolTip("Discard unsaved changes on this screen — back to what was last saved.");
-  connect(settings_reset_button_, &QPushButton::clicked, this, [this] {
-    if (settings_panel_ != nullptr) settings_panel_->DiscardChanges();
-  });
-  settings_save_button_ = new QPushButton("Save", settings_actions_widget_);
-  connect(settings_save_button_, &QPushButton::clicked, this, [this] {
-    if (settings_panel_ != nullptr) settings_panel_->Save();
-  });
-  settings_actions_layout->addWidget(settings_back_button_);
-  settings_actions_layout->addWidget(settings_reset_button_);
-  settings_actions_layout->addWidget(settings_save_button_);
-  settings_actions_widget_->hide();
-  layout->addWidget(settings_actions_widget_);
 
   // Moved from the sidebar's old hamburger menu -- generic actions that fit
   // the top bar (window chrome) better than a library-focused sidebar.
@@ -1201,7 +1159,7 @@ QWidget* LibraryWindow::BuildSidebar() {
 
   add_games_ = new QToolButton(sidebar);
   add_games_->setObjectName("add_games");
-  add_games_->setText("Add Games");
+  add_games_->setText("Add/Import Games");
   add_games_->setToolButtonStyle(Qt::ToolButtonTextOnly);
   add_games_->setPopupMode(QToolButton::InstantPopup);
   // QToolButton's own sizeHint is Preferred but stays content-sized in
@@ -1398,17 +1356,11 @@ void LibraryWindow::UpdateTileCover(const QString& id) {
 }
 
 void LibraryWindow::ShowSteamGridDbNotice(bool asked_for) {
-  // Once per session, however many games report it.
-  if (steamgriddb_notice_shown_) return;
+  // Only when the user actually asked for art — a background fetch after a
+  // scan hitting this would otherwise nag on every launch. Once per session,
+  // however many games report it.
+  if (!asked_for || steamgriddb_notice_shown_) return;
   steamgriddb_notice_shown_ = true;
-
-  if (!asked_for) {
-    // Nobody asked for this; a modal over a background scan is an ambush.
-    mira_gui::notify::Toast(
-        this, mira_gui::notify::Level::Warning,
-        "No SteamGridDB API key set — non-Steam games can't get cover art. See Settings.");
-    return;
-  }
 
   mira_gui::notify::FailedWithAction(
       this, "No SteamGridDB API key set.",
@@ -1427,15 +1379,12 @@ void LibraryWindow::FetchMissingArtwork() {
           return;
         }
         if (result.count == 0) {
-          mira_gui::notify::Toast(this, mira_gui::notify::Level::Success,
-                                  "Every game already has cover art.");
+          mira_gui::notify::Notice(this, "Every game already has cover art.");
           return;
         }
-        // One toast for the batch, not one notification per game.
-        mira_gui::notify::Toast(
-            this, mira_gui::notify::Level::Info,
-            QString("Fetching cover art for %1 game(s)… they appear as they arrive.")
-                .arg(result.count));
+        // No notice: covers appear as they arrive. Asked-for, though, so a
+        // missing SteamGridDB key is worth saying (ShowSteamGridDbNotice).
+        artwork_fetch_requested_ = true;
       });
 }
 
@@ -1600,10 +1549,13 @@ void LibraryWindow::ApplyFilter() {
     item->setData(mira_gui::GameTileDelegate::StatusRole, QString::fromStdString(game.status));
     item->setData(mira_gui::GameTileDelegate::RunningRole, running_ids_.contains(game.id));
     item->setData(Qt::DecorationRole, CoverFor(game));
-    item->setToolTip(game.last_error.empty()
-                         ? QString::fromStdString(game.name)
-                         : QString("%1\n%2").arg(QString::fromStdString(game.name),
-                                                 QString::fromStdString(game.last_error)));
+    // Only for an error: the plain name case is already covered by the
+    // HoverCard, and Qt's own tooltip popping up alongside it just doubled
+    // up on the same text in a worse-looking box.
+    if (!game.last_error.empty()) {
+      item->setToolTip(QString("%1\n%2").arg(QString::fromStdString(game.name),
+                                             QString::fromStdString(game.last_error)));
+    }
     if (game.id == previously_selected) to_select = item;
   }
   grid_->blockSignals(false);
@@ -1848,9 +1800,8 @@ void LibraryWindow::ShowBatchContextMenu(const QList<QListWidgetItem*>& items, c
   }
 
   if (chosen == refresh_metadata) {
+    // No notice: covers visibly update as each fetch lands.
     for (const std::string& game_id : ids) RefreshMetadata(game_id, /*announce=*/false);
-    mira_gui::notify::Toast(this, mira_gui::notify::Level::Info,
-                            QString("Refreshing metadata for %1 game(s)…").arg(count));
   } else if (chosen == hide) {
     BatchHide(ids);
   } else if (chosen == add_desktop_entry) {
@@ -2042,7 +1993,6 @@ bool LibraryWindow::SettingsOpen() const {
 }
 
 void LibraryWindow::SetSettingsChromeVisible(bool settings_open) {
-  settings_actions_widget_->setVisible(settings_open);
   SetGridControlsEnabled(!settings_open);
   UpdateLibraryNavActive();
 }
@@ -2126,6 +2076,27 @@ QWidget* LibraryWindow::BuildSettingsPage() {
           });
   layout->addWidget(settings_panel_, /*stretch=*/1);
 
+  // Pinned under the settings nav's category list.
+  auto* actions = new QWidget();
+  auto* actions_layout = new QHBoxLayout(actions);
+  actions_layout->setContentsMargins(0, 0, 0, 0);
+  actions_layout->setSpacing(6);
+  auto* back = new QPushButton("← Back", actions);
+  connect(back, &QPushButton::clicked, this, &LibraryWindow::RequestCloseSettings);
+  auto* reset = new QPushButton("Reset", actions);
+  reset->setToolTip("Discard unsaved changes on this screen — back to what was last saved.");
+  connect(reset, &QPushButton::clicked, this, [this] {
+    if (settings_panel_ != nullptr) settings_panel_->DiscardChanges();
+  });
+  auto* save = new QPushButton("Save", actions);
+  connect(save, &QPushButton::clicked, this, [this] {
+    if (settings_panel_ != nullptr) settings_panel_->Save();
+  });
+  actions_layout->addWidget(back);
+  actions_layout->addWidget(reset);
+  actions_layout->addWidget(save);
+  settings_panel_->SetFooterActions(actions);
+
   return page;
 }
 
@@ -2189,8 +2160,14 @@ QWidget* LibraryWindow::BuildGameEditCard(const std::string& id) {
   auto* scroll = new QScrollArea(card);
   scroll->setWidgetResizable(true);
   scroll->setFrameShape(QFrame::NoFrame);
-  game_edit_form_ = new mira_gui::GameEditForm(id, scroll);
+  // GameEditForm has no margins of its own; pad it here, 16px to match
+  // GameDetailDialog.
+  auto* form_container = new QWidget();
+  auto* form_container_layout = new QVBoxLayout(form_container);
+  form_container_layout->setContentsMargins(16, 16, 16, 16);
+  game_edit_form_ = new mira_gui::GameEditForm(id, form_container);
   game_edit_form_->SetArtworkStore(artwork_);
+  form_container_layout->addWidget(game_edit_form_);
   connect(game_edit_form_, &mira_gui::GameEditForm::ArtworkPickRequested, this,
           [this, id](const QString& slot) { OpenArtworkPicker(id, slot.toStdString()); });
   connect(game_edit_form_, &mira_gui::GameEditForm::LoadFailed, this, [this](QString error) {
@@ -2208,7 +2185,7 @@ QWidget* LibraryWindow::BuildGameEditCard(const std::string& id) {
             // case a toast is for.
             CloseGameEdit();
           });
-  scroll->setWidget(game_edit_form_);
+  scroll->setWidget(form_container);
   layout->addWidget(scroll, /*stretch=*/1);
 
   auto* footer = new QWidget(card);
@@ -2348,8 +2325,13 @@ void LibraryWindow::HandleGameEvent(const std::string& type, const std::string& 
   if (type == "notification") {
     mira_gui::NotificationEvent event;
     if (mira_gui::MiradClient::ParseNotification(data, &event)) {
-      mira_gui::notify::Toast(this, mira_gui::notify::LevelFromString(QString::fromStdString(event.level)),
-                              QString::fromStdString(event.message));
+      const QString message = QString::fromStdString(event.message);
+      const auto level = mira_gui::notify::LevelFromString(QString::fromStdString(event.level));
+      if (level == mira_gui::notify::Level::Warning || level == mira_gui::notify::Level::Error) {
+        mira_gui::notify::Warn(this, message);
+      } else {
+        mira_gui::notify::Notice(this, message);
+      }
     }
     return;
   }
@@ -2391,7 +2373,8 @@ void LibraryWindow::HandleGameEvent(const std::string& type, const std::string& 
     // transient — no SteamGridDB key means every non-Steam game keeps its
     // placeholder forever.
     if (event.code == "no_steamgriddb_key") {
-      ShowSteamGridDbNotice(awaiting_metadata_.erase(event.id) > 0);
+      const bool asked_for = awaiting_metadata_.erase(event.id) > 0 || artwork_fetch_requested_;
+      ShowSteamGridDbNotice(asked_for);
       return;
     }
 

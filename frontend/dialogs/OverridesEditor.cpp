@@ -14,11 +14,9 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
-#include <map>
 #include <utility>
 
 #include "../client/MiradClient.h"
-#include "SettingsCategories.h"
 
 namespace mira_gui {
 
@@ -46,24 +44,25 @@ void OverridesEditor::Reload() {
 }
 
 void OverridesEditor::BuildRows(const ConfigSchemaResult& schema) {
-  std::map<QString, std::vector<size_t>> buckets;
-  std::vector<ConfigSchemaEntry> entries = schema.entries;
-  for (size_t i = 0; i < entries.size(); ++i) {
-    buckets[QString::fromStdString(entries[i].category)].push_back(i);
+  // Only what the schema marks per-game, in the same order and categories as
+  // the main Settings screen.
+  std::vector<ConfigSchemaEntry> entries;
+  for (const ConfigSchemaEntry& entry : schema.entries) {
+    if (entry.per_game) entries.push_back(entry);
   }
+  std::vector<std::string> categories;
+  for (const ConfigSchemaEntry& entry : entries) categories.push_back(entry.category);
 
-  QStringList ordered_categories;
-  for (const QString& category : mira_gui::settings::CategoryOrder()) {
-    if (buckets.contains(category)) ordered_categories.push_back(category);
-  }
-  for (const auto& [category, indices] : buckets) {
-    if (!ordered_categories.contains(category)) ordered_categories.push_back(category);
-  }
+  for (const auto& [category, rows] : GroupByCategory(categories)) {
+    QFormLayout* form = nav_->AddCategory(category);
+    int group = entries[rows.front()].group;
 
-  for (const QString& category : ordered_categories) {
-    QFormLayout* form = nav_->AddCategory(category.isEmpty() ? "General" : category);
+    for (const size_t i : rows) {
+      if (entries[i].group != group) {
+        nav_->AddDivider(form);
+        group = entries[i].group;
+      }
 
-    for (const size_t i : buckets[category]) {
       const ConfigSchemaEntry& entry = entries[i];
       Field field;
       field.entry = entry;
@@ -97,7 +96,9 @@ void OverridesEditor::BuildRows(const ConfigSchemaResult& schema) {
       field.reset_button->setToolTip("No per-game override set for this key");
       row_layout->addWidget(field.reset_button);
 
-      auto* label = new QLabel(QString::fromStdString(entry.key), this);
+      const QString label_text =
+          QString::fromStdString(entry.label.empty() ? entry.key : entry.label);
+      auto* label = new QLabel(label_text, this);
       label->setToolTip(QString::fromStdString(entry.doc));
       row_widget->setToolTip(QString::fromStdString(entry.doc));
 
@@ -107,8 +108,8 @@ void OverridesEditor::BuildRows(const ConfigSchemaResult& schema) {
       connect(field.reset_button, &QPushButton::clicked, this, [this, index] { ResetField(index); });
       form->addRow(label, row_widget);
       nav_->RegisterRow(form, row_widget,
-                        QString("%1 %2 %3").arg(QString::fromStdString(entry.key), category,
-                                                 QString::fromStdString(entry.doc)));
+                        QString("%1 %2 %3 %4").arg(QString::fromStdString(entry.key), label_text,
+                                                    category, QString::fromStdString(entry.doc)));
     }
   }
 }

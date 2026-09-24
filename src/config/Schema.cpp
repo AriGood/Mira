@@ -1,9 +1,7 @@
 #include "config/Schema.h"
 
 #include <algorithm>
-#include <cctype>
 #include <format>
-#include <map>
 #include <string_view>
 
 #include "config/KnownExePatterns.h"
@@ -68,572 +66,910 @@ Validator NonEmptyString() {
   };
 }
 
-// UI grouping for a settings screen. A handful of keys are named explicitly
-// because their dotted prefix alone would land them somewhere confusing (a
-// runner reference split from "Runners", the artwork/store-info feature
-// split across a "Metadata" and a "Steamgriddb" group); everything else
-// falls back to a guess from its own dotted prefix, or "General" with none.
-// This used to live in the frontend (SettingsCategories.cpp) with no way for
-// the schema itself to say which group a key belonged in — moved here so
-// GET /v1/config/schema can just say it.
-std::string CategoryFor(std::string_view key) {
-  static const std::map<std::string_view, std::string_view> kOverrides = {
-      {"library_roots", "Library"},        {"prefix_root", "Library"},
-      {"prefix_provider", "Library"},      {"prefix_template", "Library"},
-      {"auto_setup", "Library"},           {"open_config_on_add", "Library"},
-      {"command_wrappers", "Library"},     {"default_runner.windows", "Runners"},
-      {"default_runner.native", "Runners"}, {"runner_search_paths", "Runners"},
-      {"wine_search_paths", "Runners"},    {"socket_path", "Advanced"},
-      {"log.level", "Advanced"},           {"events.sse_keepalive_s", "Advanced"},
-      {"library.remove_missing", "Library"},
-      {"metadata.enabled", "Metadata"},
-      {"steamgriddb.api_key", "Metadata"},
-      {"prefix_naming", "Library"},
-  };
-  if (const auto it = kOverrides.find(key); it != kOverrides.end()) return std::string(it->second);
+// Stamps each entry with the section and group it was declared under, so
+// neither is repeated on every entry.
+class Sections {
+public:
+  explicit Sections(std::vector<Entry>& entries) : entries_(entries) {}
 
-  const size_t dot = key.find('.');
-  if (dot == std::string_view::npos) return "General";
-  const std::string_view prefix = key.substr(0, dot);
-  if (prefix == "detect") return "Detection";
-  if (prefix == "scan") return "Scanning";
-  if (prefix == "default_runner") return "Runners";
-  if (prefix == "log" || prefix == "events") return "Advanced";
-  if (prefix == "launch") return "Launching";
-  if (prefix == "desktop_entries") return "Desktop Entries";
-  if (prefix == "library") return "Library";
+  void Section(std::string name) {
+    category_ = std::move(name);
+    group_ = 0;
+  }
+  void Divider() { ++group_; }
+  void Add(Entry entry) {
+    entry.category = category_;
+    entry.group = group_;
+    entries_.push_back(std::move(entry));
+  }
 
-  std::string label(prefix);
-  std::ranges::replace(label, '_', ' ');
-  if (!label.empty()) label.front() = static_cast<char>(std::toupper(static_cast<unsigned char>(label.front())));
-  return label;
-}
+private:
+  std::vector<Entry>& entries_;
+  std::string category_;
+  int group_ = 0;
+};
 
 }  // namespace
 
 Schema::Schema() {
-  entries_ = {
-      {"socket_path", Type::String, "$XDG_RUNTIME_DIR/mira/mirad.sock", Tier::Expert,
-       "Unix socket the daemon listens on. The frontend and CLI must agree with this.",
-       NonEmptyString()},
-
-      {"log.level", Type::String, "info", Tier::Advanced,
-       "Logging verbosity: debug, info, warn or error.",
-       OneOf({"debug", "info", "warn", "error"})},
-
-      {"library_roots", Type::StringArray, json::array({"~/Games"}), Tier::Basic,
-       "Folders watched for new games. Dropping a game folder into one of these is all "
-       "that is required to add it."},
-
-      {"prefix_root", Type::String, "~/Games/prefixes", Tier::Basic,
-       "Where per-game data directories (Wine/Proton prefixes) are created. Always "
-       "excluded from scanning, wherever it points."},
-
-      {"prefix_naming", Type::String, "name", Tier::Advanced,
-       "How a new prefix directory under prefix_root is named: \"name\" derives it from the "
-       "game's title (e.g. \"celeste\", \"celeste-2\" on a collision); \"id\" uses the game's "
-       "own id verbatim (e.g. \"gog-1207660413\"). Only affects newly-provisioned games -- "
-       "already-provisioned ones keep their existing directory until explicitly relocated "
-       "(POST /v1/games/{id}/relocate).",
-       OneOf({"name", "id"})},
-
-      {"auto_setup", Type::Bool, true, Tier::Basic,
-       "Configure and provision newly detected games automatically. With this off, games "
-       "are detected but wait for the frontend to configure them."},
-
-      {"open_config_on_add", Type::Bool, true, Tier::Basic,
-       "Ask the frontend to open its configuration menu when a game is added, so the "
-       "auto-detected settings can be reviewed."},
-
-      {"relocate.install_root", Type::String, "", Tier::Advanced,
-       "Library root that `mira relocate` moves game files into. Empty uses the first "
-       "library_roots entry. Must be one of library_roots."},
-
-      {"relocate.allow_copy", Type::Bool, true, Tier::Advanced,
-       "When a relocate crosses filesystems, copy then delete the original. Off refuses "
-       "cross-filesystem moves instead."},
-
-      {"launch.pin_runner", Type::Bool, true, Tier::Advanced,
-       "When a Windows game with no runner set is launched, save the Proton/Wine build it "
-       "resolved to so later launches use the same one."},
-
-      {"scan.auto_run_installers", Type::Bool, true, Tier::Advanced,
-       "Silently run a detected installer (Inno Setup, NSIS) as soon as it's found, the same "
-       "way a detected archive auto-extracts. Unrecognized formats and failed runs stay "
-       "needs_install for `mira install`."},
-
-      {"install.timeout_s", Type::Int, 0, Tier::Advanced,
-       "Kill a silent installer after this many seconds. 0 = no limit.", Range(0, 86400)},
-
-      {"install.runner", Type::String, "", Tier::Advanced,
-       "Runner used to run installers, e.g. \"proton:GE-Proton11-7\" or \"wine:latest\". "
-       "Empty uses the game's own default (default_runner.windows). The game keeps it afterward, "
-       "since its prefix was made with it."},
-
-      {"install.detect_dirs", Type::StringArray,
-       json::array({"Program Files", "Program Files (x86)", "GOG Games", "Games"}), Tier::Advanced,
-       "Folders under the prefix's drive_c checked for a newly installed game when the installer "
-       "didn't install into the game folder."},
-
-      {"install.retry_failed", Type::Bool, false, Tier::Advanced,
-       "Retry a failed automatic install on every scan instead of waiting for `mira install`."},
-
-      {"install.show_progress", Type::Bool, false, Tier::Advanced,
-       "Show Inno Setup's progress window during a silent install (/SILENT instead of "
-       "/VERYSILENT). Still asks no questions. NSIS has no visible silent mode."},
-
-      {"install.inno_args", Type::String, "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-",
-       Tier::Advanced, "Arguments for a silent Inno Setup install (GOG offline installers). /DIR is added."},
-
-      {"install.nsis_args", Type::String, "/S", Tier::Advanced,
-       "Arguments for a silent NSIS install. /D is added."},
-
-      {"scan.tag_by_root", Type::Bool, true, Tier::Basic,
-       "Automatically tag each newly-detected game with the name of the library root folder "
-       "it was found in (e.g. a game under ~/Games Mira gets tagged \"Games Mira\") -- useful "
-       "for filtering multiple game folders (GET /v1/games?tag=...) with several "
-       "library_roots configured. Only applied at detection time, not retroactively."},
-
-      {"library.remove_missing", Type::Bool, false, Tier::Basic,
-       "When a previously-detected game's folder disappears, forget it entirely instead of "
-       "just marking it missing. Off by default: missing keeps the game's configuration, "
-       "overrides, and playtime around in case a drive or network share is just temporarily "
-       "offline. Never touches the game's files themselves either way — same as "
-       "DELETE /v1/games/{id}."},
-
-      {"default_runner.windows", Type::String, "auto", Tier::Basic,
-       "Runner for Windows games as \"kind:name\" (e.g. \"proton:GE-Proton11-7\", "
-       "\"wine:system\"; \"latest\" as the name picks the newest installed build), or "
-       "\"auto\" to pick the best installed runner — Proton if any build is present, "
-       "otherwise Wine."},
-
-      {"default_runner.native", Type::String, "native:native", Tier::Expert,
-       "Runner for native Linux games.", RunnerRef()},
-
-      {"runner_search_paths", Type::StringArray,
-       json::array({"~/.steam/steam/compatibilitytools.d",
-                    "~/.local/share/Steam/compatibilitytools.d",
-                    "~/.local/share/mira/runners"}),
-       Tier::Advanced, "Directories scanned for installed Proton builds."},
-
-      {"wine_search_paths", Type::StringArray,
-       json::array({"~/.local/share/lutris/runners/wine"}),
-       Tier::Advanced,
-       "Directories scanned for extra Wine builds (each a directory containing bin/wine), "
-       "alongside the system wine on PATH."},
-
-      {"prefix_provider", Type::String, "plain", Tier::Advanced,
-       "How a new prefix directory is created. \"plain\" lets the runner initialise it; "
-       "\"template\" clones prefix_template, which is far faster on btrfs/xfs.",
-       OneOf({"plain", "template"})},
-
-      {"prefix_template", Type::String, "", Tier::Advanced,
-       "An already-initialised prefix to clone when prefix_provider is \"template\". "
-       "Cloned with reflinks where the filesystem supports them."},
-
-      {"command_wrappers", Type::StringArray, json::array(), Tier::Basic,
-       "Wrappers applied to the launch command in order, e.g. [\"gamemoderun\", \"gamescope -W "
-       "1920 -H 1080\"]. The first entry ends up outermost. Each entry is split on spaces (like "
-       "a game's own args -- no shell quoting support), and receives the game's command line as "
-       "its arguments. A wrapper whose own binary isn't on PATH fails the launch with a clear "
-       "error instead of a mysterious \"exited with code 127\"."},
-
-      {"launch.stop_timeout_s", Type::Int, 10, Tier::Advanced,
-       "How long to give a game to quit after \"stop\" before it's killed outright. The "
-       "whole process group is signalled, since a real launch is umu -> proton -> wine -> "
-       "the game.",
-       Range(0, 600)},
-
-      {"launch.log_max_mb", Type::Int, 64, Tier::Advanced,
-       "Cap on a game's own log file (see GET /v1/games/{id}/log), applied when a new session "
-       "rotates the previous one out -- an oversized previous log is dropped instead of kept, "
-       "so this bounds disk use to roughly 2x this value per game.",
-       Range(1, 1024)},
-
-      {"launch.gamemode", Type::Bool, false, Tier::Basic,
-       "Register this game with Feral Interactive's GameMode daemon automatically -- no "
-       "command_wrappers entry needed. A no-op if the daemon isn't installed or isn't running; "
-       "see GET /v1/gamemode/status."},
-
-      {"launch.env", Type::StringArray, json::array(), Tier::Basic,
-       "KEY=VALUE environment variables set for every launch, e.g. [\"MANGOHUD=1\", "
-       "\"DXVK_ASYNC=1\"]. A game's own env (per-game overrides) always wins over these. Not "
-       "applied to a Steam game launched via steam.launch_mode \"steam\" -- Mira only hands "
-       "off a steam:// URL there, it never builds the game's own command line."},
-
-      {"launch.pre_script", Type::String, "", Tier::Advanced,
-       "Shell command run (via sh -c) before POST /v1/games/{id}/launch actually starts the "
-       "game -- e.g. mounting a network drive a game needs, setting a CPU governor. Runs "
-       "synchronously; a non-zero exit aborts the launch with the script's own output as the "
-       "error. Empty disables it. Overridable per game (PATCH .../config)."},
-
-      {"launch.pre_timeout_s", Type::Int, 30, Tier::Advanced,
-       "How long launch.pre_script is given to finish before the launch is aborted outright, "
-       "to keep a hung script from wedging a launch forever.",
-       Range(1, 600)},
-
-      {"launch.post_script", Type::String, "", Tier::Advanced,
-       "Shell command run once the game process exits (any reason: clean exit, crash, or "
-       "stop), the mirror of launch.pre_script -- e.g. reverting a CPU governor change. Runs "
-       "in the background; its own exit code is only logged, never affects the recorded "
-       "playtime/crash state. Not run for a Steam game launched via steam.launch_mode "
-       "\"steam\" unless steam.track_process is also on -- Mira otherwise never owns that "
-       "process at all (see docs/api.md's Steam section)."},
-
-      {"launch.post_timeout_s", Type::Int, 30, Tier::Advanced,
-       "How long launch.post_script is given to finish before it's killed outright, the "
-       "mirror of launch.pre_timeout_s.",
-       Range(1, 600)},
-
-      {"desktop_entries.enabled", Type::Bool, true, Tier::Basic,
-       "Add each ready game to your application menu as a .desktop entry, so it can be "
-       "launched from the desktop like any other app. Turn this off to keep Mira's games "
-       "out of your menu entirely."},
-
-      {"desktop_entries.directory", Type::String, "~/.local/share/applications", Tier::Expert,
-       "Where .desktop entries are written. Only files Mira created (mira-<id>.desktop) are "
-       "ever touched."},
-
-      {"desktop_entries.categories", Type::String, "Game;", Tier::Advanced,
-       "Freedesktop Categories= value for generated entries, deciding where they appear in "
-       "the menu."},
-
-      {"desktop_entries.exec_mode", Type::String, "cli", Tier::Advanced,
-       "What a menu entry runs. \"cli\" (`mira launch <id>`) requires mirad to already be "
-       "running and fails clearly if it isn't; \"frontend\" starts the frontend, which "
-       "brings the daemon up itself. Either way the launch goes through Mira, which is "
-       "what makes playtime get recorded — a menu entry that ran the game directly would "
-       "launch fine and log nothing.",
-       OneOf({"cli", "frontend"})},
-
-      {"scan.debounce_ms", Type::Int, 3000, Tier::Advanced,
-       "How long a new folder must stop changing before it is scanned. Raise it if games "
-       "arrive over a slow network share.",
-       Range(0, 600000)},
-
-      {"scan.max_depth", Type::Int, 4, Tier::Advanced,
-       "How deep to search inside a game folder for executables.", Range(1, 16)},
-
-      {"scan.auto_extract_archives", Type::Bool, false, Tier::Basic,
-       "Extract a .zip/.rar/.tar(.gz/.xz/.bz2)/.7z dropped directly into a library root, "
-       "into a same-named folder, then delete the archive — so an archived game drop "
-       "behaves like an already-extracted one. Off by default: silently deleting an "
-       "archive is a real action to opt into, not assume. Extracting a .rar or .7z needs "
-       "unrar/p7zip installed; a missing tool is reported, not silently skipped."},
-
-      {"scan.periodic_interval_s", Type::Int, 0, Tier::Advanced,
-       "Seconds between full rescans. 0 disables them, which is the default: inotify is "
-       "authoritative and a timer would cost idle wakeups for nothing.",
-       Range(0, 86400)},
-
-      {"scan.ignore_globs", Type::StringArray,
-       json::array({".*", "*/Redist*", "*/DirectX*", "*/_CommonRedist*", "*/DotNet*"}),
-       Tier::Advanced, "Paths matching these globs are never treated as games."},
-
-      {"detect.rules", Type::StringArray,
-       json::array({"deny_patterns", "name_similarity", "depth", "shallowest"}),
-       Tier::Expert,
-       "Scoring rules applied to candidate executables, in order. Removing a rule "
-       "disables it."},
-
-      {"detect.name_match_bonus", Type::Double, 3.0, Tier::Expert,
-       "Score added when an executable's name resembles its folder's name.",
-       Range(0.0, 100.0)},
-
-      {"detect.depth_penalty", Type::Double, 0.5, Tier::Expert,
-       "Score subtracted per directory level, favouring executables near the top.",
-       Range(0.0, 100.0)},
-
-      {"detect.low_confidence_threshold", Type::Double, 0.5, Tier::Advanced,
-       "Below this confidence a game is flagged for review. It is still configured and "
-       "still launchable; the frontend just highlights it.",
-       Range(0.0, 1.0)},
-
-      {"detect.deny_name_patterns", Type::StringArray, json(known_exe_patterns::kDeny),
-       Tier::Advanced,
-       "Executables matching these globs are heavily penalised: they are installers and "
-       "helpers rather than games. Defaults are curated in "
-       "src/config/KnownExePatterns.h — edit that file to add one, no need to touch this "
-       "schema or recompile just to override it for yourself here."},
-
-      {"detect.installer_name_patterns", Type::StringArray, json(known_exe_patterns::kInstaller),
-       Tier::Advanced,
-       "A candidate matching one of these globs, and meeting detect.installer_min_size_mb "
-       "(itself, or sharing a folder with a file that does — installers are often a small "
-       "stub exe next to a much larger separate payload), is flagged as an installer "
-       "rather than the game itself: stored with status needs_install instead of being "
-       "auto-provisioned as launchable."},
-
-      {"detect.installer_min_size_mb", Type::Int, 50, Tier::Advanced,
-       "Minimum size — of the candidate itself, or of any file alongside it — for a "
-       "name-matched candidate to actually count as an installer, so a small stub or "
-       "helper named like one doesn't get misflagged.", Range(0, 1'000'000)},
-
-      {"steam.enabled", Type::Bool, true, Tier::Basic,
-       "Detect installed Steam games and let Mira launch them alongside its own library."},
-
-      {"steam.root", Type::String, "", Tier::Advanced,
-       "Override for Steam's install directory. Empty auto-detects "
-       "~/.steam/steam, then ~/.local/share/Steam."},
-
-      {"steam.launch_mode", Type::String, "steam", Tier::Basic,
-       "How launching a Steam game works. \"steam\" fires "
-       "steam://rungameid/<appid> and lets the Steam client launch it — full "
-       "achievements/overlay support; Mira didn't spawn the process, so it "
-       "falls back to steam.track_process (below) rather than normal exit-"
-       "code/signal tracking. \"direct\" has Mira exec the game itself, "
-       "through the same Proton build and prefix Steam already set up, with "
-       "normal Mira process tracking (stop/crash/playtime) — override per "
-       "game via games.toml overrides if one game needs the other mode.",
-       OneOf({"steam", "direct"})},
-
-      {"steam.track_process", Type::Bool, true, Tier::Advanced,
-       "For steam.launch_mode \"steam\": poll /proc for the actual game "
-       "process (matched by the SteamAppId/SteamGameId environment variable "
-       "Steam itself sets — the same one the Steamworks API reads) so Mira "
-       "still shows the game as running and records playtime, even though "
-       "it didn't spawn the process. No crash/exit-code detection either "
-       "way — that's Steam's own client's job. Off disables the /proc scan "
-       "entirely; launching still works, Mira just won't show it running."},
-
-      {"steam.web_api_key", Type::String, "", Tier::Basic,
-       "Free API key from steamcommunity.com/dev/apikey. Steam's on-disk files only "
-       "describe games that are actually installed, so listing everything the account "
-       "owns (GET /v1/library) and importing Steam's own playtime totals both need this "
-       "plus steam.steamid64. Left empty, Steam simply contributes nothing to the "
-       "library listing and playtime stays whatever Mira itself measured."},
-
-      {"steam.steamid64", Type::String, "", Tier::Basic,
-       "The account's 64-bit Steam ID (steamcommunity.com profile URL, or a lookup "
-       "site). Needed alongside steam.web_api_key — Steam's Web API identifies the "
-       "account by this, not by the key."},
-
-      {"steam.import_playtime", Type::Bool, true, Tier::Advanced,
-       "On a Steam scan, adopt Steam's own playtime_forever total for a game when it's "
-       "higher than what Mira recorded itself. Steam counts time played on any machine "
-       "and long before Mira existed, so it's usually the larger and more complete "
-       "number; the max of the two is kept so a Mira-tracked session is never lost to a "
-       "stale Steam total. Needs steam.web_api_key + steam.steamid64."},
-
-      {"lutris.enabled", Type::Bool, true, Tier::Basic,
-       "Let \"mira lutris import\" / POST /v1/lutris/import read Lutris's own "
-       "game database (pga.db) and per-game configs and add them alongside "
-       "Mira's own library."},
-
-      {"lutris.import_art", Type::Bool, true, Tier::Basic,
-       "Use the cover, banner and icon Lutris already downloaded for a Lutris-imported game."},
-
-      {"launchers.runner", Type::String, "", Tier::Advanced,
-       "Runner for a store launcher's prefix (Battle.net, Ubisoft Connect, EA app), e.g. "
-       "\"proton:GE-Proton11-7\". Empty uses default_runner.windows. Games it installs use the same one."},
-
-      {"launchers.auto_import", Type::Bool, true, Tier::Basic,
-       "Import games installed through a store launcher on every scan."},
-
-      {"launchers.detect_timeout_s", Type::Int, 300, Tier::Advanced,
-       "How long to wait for a launcher to start a game (updates, login) before giving up tracking it.",
-       Range(10, 3600)},
-
-      {"launchers.umu_lookup", Type::Bool, true, Tier::Advanced,
-       "Look up each newly imported launcher game at umu.openwinecomponents.org so its protonfixes apply. "
-       "Sends only the store name and the game's store id."},
-
-      {"launchers.ubisoft.disable_overlay", Type::Bool, true, Tier::Advanced,
-       "Turn off the Ubisoft Connect overlay when installing it; it often breaks games under Wine."},
-
-      {"launchers.battlenet.disable_hw_accel", Type::Bool, true, Tier::Advanced,
-       "Turn off Battle.net's hardware acceleration when installing it; its UI renders blank under Wine otherwise."},
-
-      {"lutris.data_dir", Type::String, "", Tier::Advanced,
-       "Override for where Lutris keeps pga.db and its per-game configs. "
-       "Empty auto-detects $XDG_DATA_HOME/lutris, then ~/.local/share/lutris."},
-
-      {"epic.enabled", Type::Bool, true, Tier::Basic,
-       "Use Legendary (a native Epic Games Store CLI client) to authenticate, "
-       "import already-installed Epic titles, and install/update new ones. The "
-       "installed game itself still runs through Mira's own Wine/Proton runner, "
-       "never through Legendary or Epic's own client. See \"mira epic setup\" "
-       "if Legendary isn't already installed."},
-
-      {"epic.legendary_bin", Type::String, "", Tier::Advanced,
-       "Path to the legendary binary. Empty tries Mira's own managed download "
-       "(see \"mira epic setup\"), then $PATH."},
-
-      {"gog.enabled", Type::Bool, true, Tier::Basic,
-       "Use gogdl (Heroic's GOG downloader) to authenticate, import "
-       "already-installed GOG titles, and install/update new ones. The "
-       "installed game itself still runs through Mira's own Wine/Proton "
-       "runner (or natively, for the titles GOG ships a Linux build of), "
-       "never through gogdl or GOG Galaxy. See \"mira gog setup\" if gogdl "
-       "isn't already installed."},
-
-      {"gog.gogdl_bin", Type::String, "", Tier::Advanced,
-       "Path to the gogdl binary. Empty tries Mira's own managed download "
-       "(see \"mira gog setup\"), then $PATH."},
-
-      {"gog.folder_naming", Type::String, "title", Tier::Advanced,
-       "How a GOG install folder under gog.install_root is named: \"title\" (e.g. "
-       "\"Hollow Knight\") or \"id\" (the GOG product id).", OneOf({"title", "id"})},
-
-      {"gog.install_root", Type::String, "~/.local/share/mira/gog", Tier::Advanced,
-       "Where GOG titles are installed to, one folder per game (see gog.folder_naming) — "
-       "unlike Legendary/butler, gogdl doesn't choose or remember an "
-       "install location on its own, so Mira has to. Deliberately outside "
-       "library_roots' usual defaults (e.g. ~/Games) — a real game install "
-       "here would otherwise also get auto-detected as a second, bogus "
-       "scan-sourced game."},
-
-      {"itch.enabled", Type::Bool, true, Tier::Basic,
-       "Use butler (itch.io's own launcher-integration daemon) to "
-       "authenticate, import already-installed itch.io titles, and "
-       "install/update new ones. The installed game itself still runs "
-       "through Mira's own Wine/Proton runner (or natively, for the many "
-       "itch.io titles that ship a Linux build), never through butler or "
-       "the itch app. See \"mira itch setup\" if butler isn't already "
-       "installed."},
-
-      {"itch.butler_bin", Type::String, "", Tier::Advanced,
-       "Path to the butler binary. Empty tries Mira's own managed download "
-       "(see \"mira itch setup\"), then $PATH."},
-
-      {"itch.install_root", Type::String, "~/.local/share/mira/itch", Tier::Advanced,
-       "Where itch.io titles are installed to — registered with butlerd as "
-       "an install location on first use. Deliberately outside "
-       "library_roots' usual defaults, same reasoning as gog.install_root."},
-
-      {"amazon.enabled", Type::Bool, true, Tier::Basic,
-       "Use nile (Heroic's Amazon Games client) to log in, list and install Amazon Games / Prime "
-       "Gaming titles. Installed games run through Mira's own Wine/Proton runner. See \"mira amazon "
-       "setup\" if nile isn't already installed."},
-
-      {"amazon.nile_bin", Type::String, "", Tier::Advanced,
-       "Path to the nile binary. Empty tries Mira's own managed download "
-       "(see \"mira amazon setup\"), then $PATH."},
-
-      {"amazon.install_root", Type::String, "~/.local/share/mira/amazon", Tier::Advanced,
-       "Where Amazon titles are installed to, one folder per game. Outside library_roots for the "
-       "same reason as gog.install_root."},
-
-      {"humble.enabled", Type::Bool, true, Tier::Basic,
-       "Use humble-cli (an unofficial Humble Bundle CLI) to list purchased "
-       "bundles and download items from them. Humble Bundle has no "
-       "\"installed game\" concept of its own — a downloaded item is a "
-       "plain file (installer, archive, or DRM-free build), added as a "
-       "game manually afterward like any other manually-acquired title."},
-
-      {"humble.humble_cli_bin", Type::String, "", Tier::Advanced,
-       "Path to the humble-cli binary. Empty tries Mira's own managed "
-       "download (see \"mira humble setup\"), then $PATH."},
-
-      {"humble.download_root", Type::String, "~/Downloads/HumbleBundle", Tier::Advanced,
-       "Where downloaded bundle items land, one subdirectory per bundle key."},
-
-      {"desktop_import.enabled", Type::Bool, true, Tier::Basic,
-       "Let \"mira desktop-entries list\"/\"import\" and the matching REST "
-       "endpoints read already-installed application-menu (.desktop) entries "
-       "and add them as games — this is how a Flatpak app gets added, since "
-       "every Flatpak-exported entry already carries the app id needed to "
-       "relaunch it. Manual: nothing is added until you pick which ones."},
-
-      {"desktop_import.extra_dirs", Type::StringArray, json::array(), Tier::Advanced,
-       "Extra directories to search for .desktop files, beyond the standard "
-       "$XDG_DATA_HOME/applications, $XDG_DATA_DIRS entries, and the two "
-       "well-known Flatpak export directories."},
-
-      {"runner_sources.proton_ge.repo", Type::String, std::string(runner_sources::kProtonGERepo),
-       Tier::Advanced, "GitHub \"owner/repo\" Proton-GE builds are downloaded from."},
-
-      {"runner_sources.proton_ge.asset_pattern", Type::String,
-       std::string(runner_sources::kProtonGEAssetPattern), Tier::Expert,
-       "Glob a release's assets are filtered to before offering one to download — "
-       "excludes non-x86_64 builds and checksum files."},
-
-      {"runner_sources.wine_ge.repo", Type::String, std::string(runner_sources::kWineGERepo),
-       Tier::Advanced, "GitHub \"owner/repo\" Wine-GE builds are downloaded from."},
-
-      {"runner_sources.wine_ge.asset_pattern", Type::String,
-       std::string(runner_sources::kWineGEAssetPattern), Tier::Expert,
-       "Glob a release's assets are filtered to before offering one to download."},
-
-      {"runner_sources.legendary.repo", Type::String, std::string(runner_sources::kLegendaryRepo),
-       Tier::Advanced, "GitHub \"owner/repo\" Legendary (the Epic Games Store CLI client) is downloaded from."},
-
-      {"runner_sources.legendary.asset_pattern", Type::String,
-       std::string(runner_sources::kLegendaryAssetPattern), Tier::Expert,
-       "Glob a release's assets are filtered to before offering one to download — "
-       "Legendary ships one standalone Linux binary per release, not an archive."},
-
-      {"runner_sources.gog.repo", Type::String, std::string(runner_sources::kGogdlRepo),
-       Tier::Advanced, "GitHub \"owner/repo\" gogdl (the GOG downloader) is downloaded from."},
-
-      {"runner_sources.gog.asset_pattern", Type::String, std::string(runner_sources::kGogdlAssetPattern),
-       Tier::Expert,
-       "Glob a release's assets are filtered to before offering one to download — "
-       "gogdl ships one standalone Linux binary per release, not an archive."},
-
-      {"runner_sources.amazon.repo", Type::String, std::string(runner_sources::kNileRepo),
-       Tier::Advanced, "GitHub \"owner/repo\" nile (the Amazon Games client) is downloaded from."},
-
-      {"runner_sources.amazon.asset_pattern", Type::String, std::string(runner_sources::kNileAssetPattern),
-       Tier::Expert, "Glob a release's assets are filtered to before offering one to download."},
-
-      {"runner_sources.itch.repo", Type::String, std::string(runner_sources::kButlerRepo),
-       Tier::Advanced, "GitHub \"owner/repo\" butler (itch.io's launcher-integration daemon) is downloaded from."},
-
-      {"runner_sources.itch.asset_pattern", Type::String, std::string(runner_sources::kButlerAssetPattern),
-       Tier::Expert,
-       "Glob a release's assets are filtered to before offering one to download — "
-       "butler ships zipped, with shared libraries the binary needs alongside it."},
-
-      {"runner_sources.humble.repo", Type::String, std::string(runner_sources::kHumbleCliRepo),
-       Tier::Advanced, "GitHub \"owner/repo\" humble-cli (an unofficial Humble Bundle CLI) is downloaded from."},
-
-      {"runner_sources.humble.asset_pattern", Type::String, std::string(runner_sources::kHumbleCliAssetPattern),
-       Tier::Expert, "Glob a release's assets are filtered to before offering one to download."},
-
-      {"metadata.enabled", Type::Bool, true, Tier::Basic,
-       "Fetch cover art and store metadata (description, genre, ProtonDB compatibility "
-       "tier) automatically when a game is detected. Steam-owned games use Steam's own "
-       "public APIs and ProtonDB, no key needed; everything else needs "
-       "steamgriddb.api_key set to fetch cover art, and has no metadata source at all."},
-
-      // Basic, not Expert: without this every non-Steam game in the library
-      // is stuck with a generated placeholder, and a setting you have to
-      // turn on "advanced" to discover is one nobody discovers.
-      {"steamgriddb.api_key", Type::String, "", Tier::Basic,
-       "Free API key from steamgriddb.com. Non-Steam games need it to get cover art at all — "
-       "there is no other free source for one. Steam-owned games never need it. Left empty, "
-       "fetching metadata for a non-Steam game fails with no_steamgriddb_key rather than "
-       "appearing to succeed."},
-
-      {"metadata.protondb_for_non_steam", Type::Bool, false, Tier::Basic,
-       "For a non-Steam game (Lutris, scanned, or manually added), look up a matching Steam "
-       "AppID by name and fetch its ProtonDB compatibility tier — best-effort, and never "
-       "changes how the game actually launches (that stays whatever runner_ref says). Off by "
-       "default: matching by name can pick the wrong game, and this sends the game's name to "
-       "Steam's public search API on every fetch. On has no effect on cover art, which is "
-       "steamgriddb.api_key's own concern either way."},
-
-      {"events.sse_keepalive_s", Type::Int, 0, Tier::Expert,
-       "Seconds between keepalive comments on the event stream. 0 disables them; a Unix "
-       "socket does not need them and a timer would cost idle wakeups.",
-       Range(0, 3600)},
-  };
-
-  for (Entry& entry : entries_) {
-    entry.category = CategoryFor(entry.key);
-  }
-  // The schema type alone can't say "this string is a credential" or "this
-  // string is a runner reference the UI could offer a picker for" — named
-  // here instead of guessed at.
-  if (const auto it = std::ranges::find(entries_, "steamgriddb.api_key", &Entry::key);
-      it != entries_.end()) {
-    it->is_secret = true;
-  }
-  if (const auto it = std::ranges::find(entries_, "default_runner.windows", &Entry::key);
-      it != entries_.end()) {
-    it->is_runner_ref = true;
-  }
+  // Settings screens show these exactly in the order written here.
+  //   s.Section("Name")  starts a category.   s.Divider()  draws a line.
+  //   .key    the name on disk and in the API. Never rename it.
+  //   .label  the name a settings screen shows.
+  //   .scope  PerGame only if the daemon reads it through config::Resolver.
+  Sections s(entries_);
+
+  // --- Library ---------------------------------------------------------------
+  s.Section("Library");
+
+  s.Add({.key = "library_roots",
+         .label = "Library Roots",
+         .type = Type::StringArray,
+         .default_value = json::array({"~/Games"}),
+         .doc = "Folders watched for new games. Dropping a game folder into one of these is all "
+                "that is required to add it."});
+
+  s.Add({.key = "prefix_root",
+         .label = "Prefix Root",
+         .type = Type::String,
+         .default_value = "~/Games/prefixes",
+         .doc = "Where per-game data directories (Wine/Proton prefixes) are created. Always "
+                "excluded from scanning, wherever it points."});
+
+  s.Add({.key = "prefix_naming",
+         .label = "Prefix Naming",
+         .type = Type::String,
+         .default_value = "name",
+         .doc = "How a new prefix directory under prefix_root is named: \"name\" derives it from the "
+                "game's title (e.g. \"celeste\", \"celeste-2\" on a collision); \"id\" uses the game's "
+                "own id verbatim (e.g. \"gog-1207660413\"). Only affects newly-provisioned games -- "
+                "already-provisioned ones keep their existing directory until explicitly relocated "
+                "(POST /v1/games/{id}/relocate).",
+         .constraint = OneOf({"name", "id"})});
+
+  s.Add({.key = "prefix_provider",
+         .label = "Prefix Creation",
+         .type = Type::String,
+         .default_value = "plain",
+         .doc = "How a new prefix directory is created. \"plain\" lets the runner initialise it; "
+                "\"template\" clones prefix_template, which is far faster on btrfs/xfs.",
+         .constraint = OneOf({"plain", "template"})});
+
+  s.Add({.key = "prefix_template",
+         .label = "Prefix Template",
+         .type = Type::String,
+         .default_value = "",
+         .doc = "An already-initialised prefix to clone when prefix_provider is \"template\". "
+                "Cloned with reflinks where the filesystem supports them."});
+
+  s.Divider();
+
+  s.Add({.key = "auto_setup",
+         .label = "Auto Setup",
+         .type = Type::Bool,
+         .default_value = true,
+         .doc = "Configure and provision newly detected games automatically. With this off, games "
+                "are detected but wait for the frontend to configure them."});
+
+  s.Add({.key = "open_config_on_add",
+         .label = "Open Config on Add",
+         .type = Type::Bool,
+         .default_value = true,
+         .doc = "Ask the frontend to open its configuration menu when a game is added, so the "
+                "auto-detected settings can be reviewed."});
+
+  s.Add({.key = "command_wrappers",
+         .label = "Command Wrappers",
+         .type = Type::StringArray,
+         .default_value = json::array(),
+         .scope = Scope::PerGame,
+         .doc = "Wrappers applied to the launch command in order, e.g. [\"gamemoderun\", \"gamescope -W "
+                "1920 -H 1080\"]. The first entry ends up outermost. Each entry is split on spaces (like "
+                "a game's own args -- no shell quoting support), and receives the game's command line as "
+                "its arguments. A wrapper whose own binary isn't on PATH fails the launch with a clear "
+                "error instead of a mysterious \"exited with code 127\"."});
+
+  s.Add({.key = "library.remove_missing",
+         .label = "Remove Missing",
+         .type = Type::Bool,
+         .default_value = false,
+         .doc = "When a previously-detected game's folder disappears, forget it entirely instead of "
+                "just marking it missing. Off by default: missing keeps the game's configuration, "
+                "overrides, and playtime around in case a drive or network share is just temporarily "
+                "offline. Never touches the game's files themselves either way — same as "
+                "DELETE /v1/games/{id}."});
+
+  s.Divider();
+
+  s.Add({.key = "relocate.install_root",
+         .label = "Relocate Destination",
+         .type = Type::String,
+         .default_value = "",
+         .doc = "Library root that `mira relocate` moves game files into. Empty uses the first "
+                "library_roots entry. Must be one of library_roots."});
+
+  s.Add({.key = "relocate.allow_copy",
+         .label = "Allow Cross-Filesystem Copy",
+         .type = Type::Bool,
+         .default_value = true,
+         .doc = "When a relocate crosses filesystems, copy then delete the original. Off refuses "
+                "cross-filesystem moves instead."});
+
+  // --- Metadata --------------------------------------------------------------
+  s.Section("Metadata");
+
+  s.Add({.key = "metadata.enabled",
+         .label = "Enable Metadata",
+         .type = Type::Bool,
+         .default_value = true,
+         .doc = "Fetch cover art and store metadata (description, genre, ProtonDB compatibility "
+                "tier) automatically when a game is detected. Steam-owned games use Steam's own "
+                "public APIs and ProtonDB, no key needed; everything else needs "
+                "steamgriddb.api_key set to fetch cover art, and has no metadata source at all."});
+
+  s.Add({.key = "steamgriddb.api_key",
+         .label = "SteamGridDB API Key",
+         .type = Type::String,
+         .default_value = "",
+         .doc = "Free API key from steamgriddb.com. Non-Steam games need it to get cover art at all — "
+                "there is no other free source for one. Steam-owned games never need it. Left empty, "
+                "fetching metadata for a non-Steam game fails with no_steamgriddb_key rather than "
+                "appearing to succeed.",
+         .is_secret = true});
+
+  s.Add({.key = "metadata.protondb_for_non_steam",
+         .label = "ProtonDB for Non-Steam Games",
+         .type = Type::Bool,
+         .default_value = false,
+         .doc = "For a non-Steam game (Lutris, scanned, or manually added), look up a matching Steam "
+                "AppID by name and fetch its ProtonDB compatibility tier — best-effort, and never "
+                "changes how the game actually launches (that stays whatever runner_ref says). Off by "
+                "default: matching by name can pick the wrong game, and this sends the game's name to "
+                "Steam's public search API on every fetch. On has no effect on cover art, which is "
+                "steamgriddb.api_key's own concern either way."});
+
+  s.Add({.key = "lutris.import_art",
+         .label = "Use Lutris Artwork",
+         .type = Type::Bool,
+         .default_value = true,
+         .doc = "Use the cover, banner and icon Lutris already downloaded for a Lutris-imported game."});
+
+  s.Divider();
+
+  s.Add({.key = "steam.import_playtime",
+         .label = "Import Steam Playtime",
+         .type = Type::Bool,
+         .default_value = true,
+         .doc = "On a Steam scan, adopt Steam's own playtime_forever total for a game when it's "
+                "higher than what Mira recorded itself. Steam counts time played on any machine "
+                "and long before Mira existed, so it's usually the larger and more complete "
+                "number; the max of the two is kept so a Mira-tracked session is never lost to a "
+                "stale Steam total. Needs steam.web_api_key + steam.steamid64."});
+
+  s.Add({.key = "steam.web_api_key",
+         .label = "Steam Web API Key",
+         .type = Type::String,
+         .default_value = "",
+         .doc = "Free API key from steamcommunity.com/dev/apikey. Steam's on-disk files only "
+                "describe games that are actually installed, so listing everything the account "
+                "owns (GET /v1/library) and importing Steam's own playtime totals both need this "
+                "plus steam.steamid64. Left empty, Steam simply contributes nothing to the "
+                "library listing and playtime stays whatever Mira itself measured."});
+
+  s.Add({.key = "steam.steamid64",
+         .label = "Steam ID (64-bit)",
+         .type = Type::String,
+         .default_value = "",
+         .doc = "The account's 64-bit Steam ID (steamcommunity.com profile URL, or a lookup "
+                "site). Needed alongside steam.web_api_key — Steam's Web API identifies the "
+                "account by this, not by the key."});
+
+  // --- Sources ---------------------------------------------------------------
+  s.Section("Sources");
+
+  s.Add({.key = "steam.enabled",
+         .label = "Enable Steam",
+         .type = Type::Bool,
+         .default_value = true,
+         .doc = "Detect installed Steam games and let Mira launch them alongside its own library."});
+
+  s.Add({.key = "epic.enabled",
+         .label = "Enable Epic Games",
+         .type = Type::Bool,
+         .default_value = true,
+         .doc = "Use Legendary (a native Epic Games Store CLI client) to authenticate, "
+                "import already-installed Epic titles, and install/update new ones. The "
+                "installed game itself still runs through Mira's own Wine/Proton runner, "
+                "never through Legendary or Epic's own client. See \"mira epic setup\" "
+                "if Legendary isn't already installed."});
+
+  s.Add({.key = "gog.enabled",
+         .label = "Enable GOG",
+         .type = Type::Bool,
+         .default_value = true,
+         .doc = "Use gogdl (Heroic's GOG downloader) to authenticate, import "
+                "already-installed GOG titles, and install/update new ones. The "
+                "installed game itself still runs through Mira's own Wine/Proton "
+                "runner (or natively, for the titles GOG ships a Linux build of), "
+                "never through gogdl or GOG Galaxy. See \"mira gog setup\" if gogdl "
+                "isn't already installed."});
+
+  s.Add({.key = "itch.enabled",
+         .label = "Enable Itch.io",
+         .type = Type::Bool,
+         .default_value = true,
+         .doc = "Use butler (itch.io's own launcher-integration daemon) to "
+                "authenticate, import already-installed itch.io titles, and "
+                "install/update new ones. The installed game itself still runs "
+                "through Mira's own Wine/Proton runner (or natively, for the many "
+                "itch.io titles that ship a Linux build), never through butler or "
+                "the itch app. See \"mira itch setup\" if butler isn't already "
+                "installed."});
+
+  s.Add({.key = "humble.enabled",
+         .label = "Enable Humble Bundle",
+         .type = Type::Bool,
+         .default_value = true,
+         .doc = "Use humble-cli (an unofficial Humble Bundle CLI) to list purchased "
+                "bundles and download items from them. Humble Bundle has no "
+                "\"installed game\" concept of its own — a downloaded item is a "
+                "plain file (installer, archive, or DRM-free build), added as a "
+                "game manually afterward like any other manually-acquired title."});
+
+  s.Add({.key = "amazon.enabled",
+         .label = "Enable Amazon Games",
+         .type = Type::Bool,
+         .default_value = true,
+         .doc = "Use nile (Heroic's Amazon Games client) to log in, list and install Amazon Games / Prime "
+                "Gaming titles. Installed games run through Mira's own Wine/Proton runner. See \"mira "
+                "amazon setup\" if nile isn't already installed."});
+
+  s.Add({.key = "lutris.enabled",
+         .label = "Enable Lutris",
+         .type = Type::Bool,
+         .default_value = true,
+         .doc = "Let \"mira lutris import\" / POST /v1/lutris/import read Lutris's own "
+                "game database (pga.db) and per-game configs and add them alongside "
+                "Mira's own library."});
+
+  s.Divider();
+
+  s.Add({.key = "steam.root",
+         .label = "Steam Root",
+         .type = Type::String,
+         .default_value = "",
+         .doc = "Override for Steam's install directory. Empty auto-detects "
+                "~/.steam/steam, then ~/.local/share/Steam."});
+
+  s.Add({.key = "steam.launch_mode",
+         .label = "Steam Launch Mode",
+         .type = Type::String,
+         .default_value = "steam",
+         .scope = Scope::PerGame,
+         .doc = "How launching a Steam game works. \"steam\" fires "
+                "steam://rungameid/<appid> and lets the Steam client launch it — full "
+                "achievements/overlay support; Mira didn't spawn the process, so it "
+                "falls back to steam.track_process (below) rather than normal exit-"
+                "code/signal tracking. \"direct\" has Mira exec the game itself, "
+                "through the same Proton build and prefix Steam already set up, with "
+                "normal Mira process tracking (stop/crash/playtime) — override per "
+                "game via games.toml overrides if one game needs the other mode.",
+         .constraint = OneOf({"steam", "direct"})});
+
+  s.Add({.key = "steam.track_process",
+         .label = "Track Steam Process",
+         .type = Type::Bool,
+         .default_value = true,
+         .scope = Scope::PerGame,
+         .doc = "For steam.launch_mode \"steam\": poll /proc for the actual game "
+                "process (matched by the SteamAppId/SteamGameId environment variable "
+                "Steam itself sets — the same one the Steamworks API reads) so Mira "
+                "still shows the game as running and records playtime, even though "
+                "it didn't spawn the process. No crash/exit-code detection either "
+                "way — that's Steam's own client's job. Off disables the /proc scan "
+                "entirely; launching still works, Mira just won't show it running."});
+
+  s.Divider();
+
+  s.Add({.key = "epic.legendary_bin",
+         .label = "Epic Legendary Binary",
+         .type = Type::String,
+         .default_value = "",
+         .doc = "Path to the legendary binary. Empty tries Mira's own managed download "
+                "(see \"mira epic setup\"), then $PATH."});
+
+  s.Add({.key = "gog.gogdl_bin",
+         .label = "GOG GOGDL Binary",
+         .type = Type::String,
+         .default_value = "",
+         .doc = "Path to the gogdl binary. Empty tries Mira's own managed download "
+                "(see \"mira gog setup\"), then $PATH."});
+
+  s.Add({.key = "itch.butler_bin",
+         .label = "Itch Butler Binary",
+         .type = Type::String,
+         .default_value = "",
+         .doc = "Path to the butler binary. Empty tries Mira's own managed download "
+                "(see \"mira itch setup\"), then $PATH."});
+
+  s.Add({.key = "humble.humble_cli_bin",
+         .label = "Humble CLI Binary",
+         .type = Type::String,
+         .default_value = "",
+         .doc = "Path to the humble-cli binary. Empty tries Mira's own managed "
+                "download (see \"mira humble setup\"), then $PATH."});
+
+  s.Add({.key = "amazon.nile_bin",
+         .label = "Amazon Nile Binary",
+         .type = Type::String,
+         .default_value = "",
+         .doc = "Path to the nile binary. Empty tries Mira's own managed download "
+                "(see \"mira amazon setup\"), then $PATH."});
+
+  s.Add({.key = "lutris.data_dir",
+         .label = "Lutris Data Directory",
+         .type = Type::String,
+         .default_value = "",
+         .doc = "Override for where Lutris keeps pga.db and its per-game configs. "
+                "Empty auto-detects $XDG_DATA_HOME/lutris, then ~/.local/share/lutris."});
+
+  s.Divider();
+
+  s.Add({.key = "gog.install_root",
+         .label = "Gog Install Dir",
+         .type = Type::String,
+         .default_value = "~/.local/share/mira/gog",
+         .doc = "Where GOG titles are installed to, one folder per game (see gog.folder_naming) — "
+                "unlike Legendary/butler, gogdl doesn't choose or remember an "
+                "install location on its own, so Mira has to. Deliberately outside "
+                "library_roots' usual defaults (e.g. ~/Games) — a real game install "
+                "here would otherwise also get auto-detected as a second, bogus "
+                "scan-sourced game."});
+
+  s.Add({.key = "gog.folder_naming",
+         .label = "GOG Folder Naming",
+         .type = Type::String,
+         .default_value = "title",
+         .doc = "How a GOG install folder under gog.install_root is named: \"title\" (e.g. "
+                "\"Hollow Knight\") or \"id\" (the GOG product id).",
+         .constraint = OneOf({"title", "id"})});
+
+  s.Add({.key = "itch.install_root",
+         .label = "Itch Install Dir",
+         .type = Type::String,
+         .default_value = "~/.local/share/mira/itch",
+         .doc = "Where itch.io titles are installed to — registered with butlerd as "
+                "an install location on first use. Deliberately outside "
+                "library_roots' usual defaults, same reasoning as gog.install_root."});
+
+  s.Add({.key = "amazon.install_root",
+         .label = "Amazon Install Dir",
+         .type = Type::String,
+         .default_value = "~/.local/share/mira/amazon",
+         .doc = "Where Amazon titles are installed to, one folder per game. Outside library_roots for the "
+                "same reason as gog.install_root."});
+
+  s.Add({.key = "humble.download_root",
+         .label = "Humble Install Dir",
+         .type = Type::String,
+         .default_value = "~/Downloads/HumbleBundle",
+         .doc = "Where downloaded bundle items land, one subdirectory per bundle key."});
+
+  // --- Runners ---------------------------------------------------------------
+  s.Section("Runners");
+
+  s.Add({.key = "default_runner.windows",
+         .label = "Default Wine/Proton Runner",
+         .type = Type::String,
+         .default_value = "auto",
+         .doc = "Runner for Windows games as \"kind:name\" (e.g. \"proton:GE-Proton11-7\", "
+                "\"wine:system\"; \"latest\" as the name picks the newest installed build), or "
+                "\"auto\" to pick the best installed runner — Proton if any build is present, "
+                "otherwise Wine.",
+         .is_runner_ref = true});
+
+  s.Add({.key = "default_runner.native",
+         .label = "Default Native Runner",
+         .type = Type::String,
+         .default_value = "native:native",
+         .doc = "Runner for native Linux games.",
+         .constraint = RunnerRef()});
+
+  s.Add({.key = "launch.pin_runner",
+         .label = "Pin Resolved Runner",
+         .type = Type::Bool,
+         .default_value = true,
+         .doc = "When a Windows game with no runner set is launched, save the Proton/Wine build it "
+                "resolved to so later launches use the same one."});
+
+  s.Divider();
+
+  s.Add({.key = "runner_search_paths",
+         .label = "Runner Search Paths",
+         .type = Type::StringArray,
+         .default_value = json::array({"~/.steam/steam/compatibilitytools.d",
+                          "~/.local/share/Steam/compatibilitytools.d",
+                          "~/.local/share/mira/runners"}),
+         .doc = "Directories scanned for installed Proton builds."});
+
+  s.Add({.key = "wine_search_paths",
+         .label = "Wine Search Paths",
+         .type = Type::StringArray,
+         .default_value = json::array({"~/.local/share/lutris/runners/wine"}),
+         .doc = "Directories scanned for extra Wine builds (each a directory containing bin/wine), "
+                "alongside the system wine on PATH."});
+
+  s.Divider();
+
+  s.Add({.key = "runner_sources.proton_ge.repo",
+         .label = "Proton GE Repository",
+         .type = Type::String,
+         .default_value = std::string(runner_sources::kProtonGERepo),
+         .doc = "GitHub \"owner/repo\" Proton-GE builds are downloaded from."});
+
+  s.Add({.key = "runner_sources.proton_ge.asset_pattern",
+         .label = "Proton GE Asset Pattern",
+         .type = Type::String,
+         .default_value = std::string(runner_sources::kProtonGEAssetPattern),
+         .doc = "Glob a release's assets are filtered to before offering one to download — "
+                "excludes non-x86_64 builds and checksum files."});
+
+  s.Add({.key = "runner_sources.wine_ge.repo",
+         .label = "Wine GE Repository",
+         .type = Type::String,
+         .default_value = std::string(runner_sources::kWineGERepo),
+         .doc = "GitHub \"owner/repo\" Wine-GE builds are downloaded from."});
+
+  s.Add({.key = "runner_sources.wine_ge.asset_pattern",
+         .label = "Wine GE Asset Pattern",
+         .type = Type::String,
+         .default_value = std::string(runner_sources::kWineGEAssetPattern),
+         .doc = "Glob a release's assets are filtered to before offering one to download."});
+
+  s.Add({.key = "runner_sources.legendary.repo",
+         .label = "Legendary Repository",
+         .type = Type::String,
+         .default_value = std::string(runner_sources::kLegendaryRepo),
+         .doc = "GitHub \"owner/repo\" Legendary (the Epic Games Store CLI client) is downloaded from."});
+
+  s.Add({.key = "runner_sources.legendary.asset_pattern",
+         .label = "Legendary Asset Pattern",
+         .type = Type::String,
+         .default_value = std::string(runner_sources::kLegendaryAssetPattern),
+         .doc = "Glob a release's assets are filtered to before offering one to download — "
+                "Legendary ships one standalone Linux binary per release, not an archive."});
+
+  s.Add({.key = "runner_sources.gog.repo",
+         .label = "GOG Repository",
+         .type = Type::String,
+         .default_value = std::string(runner_sources::kGogdlRepo),
+         .doc = "GitHub \"owner/repo\" gogdl (the GOG downloader) is downloaded from."});
+
+  s.Add({.key = "runner_sources.gog.asset_pattern",
+         .label = "GOG Asset Pattern",
+         .type = Type::String,
+         .default_value = std::string(runner_sources::kGogdlAssetPattern),
+         .doc = "Glob a release's assets are filtered to before offering one to download — "
+                "gogdl ships one standalone Linux binary per release, not an archive."});
+
+  s.Add({.key = "runner_sources.itch.repo",
+         .label = "Itch Repository",
+         .type = Type::String,
+         .default_value = std::string(runner_sources::kButlerRepo),
+         .doc = "GitHub \"owner/repo\" butler (itch.io's launcher-integration daemon) is downloaded from."});
+
+  s.Add({.key = "runner_sources.itch.asset_pattern",
+         .label = "Itch Asset Pattern",
+         .type = Type::String,
+         .default_value = std::string(runner_sources::kButlerAssetPattern),
+         .doc = "Glob a release's assets are filtered to before offering one to download — "
+                "butler ships zipped, with shared libraries the binary needs alongside it."});
+
+  s.Add({.key = "runner_sources.humble.repo",
+         .label = "Humble Repository",
+         .type = Type::String,
+         .default_value = std::string(runner_sources::kHumbleCliRepo),
+         .doc = "GitHub \"owner/repo\" humble-cli (an unofficial Humble Bundle CLI) is downloaded from."});
+
+  s.Add({.key = "runner_sources.humble.asset_pattern",
+         .label = "Humble Asset Pattern",
+         .type = Type::String,
+         .default_value = std::string(runner_sources::kHumbleCliAssetPattern),
+         .doc = "Glob a release's assets are filtered to before offering one to download."});
+
+  s.Add({.key = "runner_sources.amazon.repo",
+         .label = "Amazon Repository",
+         .type = Type::String,
+         .default_value = std::string(runner_sources::kNileRepo),
+         .doc = "GitHub \"owner/repo\" nile (the Amazon Games client) is downloaded from."});
+
+  s.Add({.key = "runner_sources.amazon.asset_pattern",
+         .label = "Amazon Asset Pattern",
+         .type = Type::String,
+         .default_value = std::string(runner_sources::kNileAssetPattern),
+         .doc = "Glob a release's assets are filtered to before offering one to download."});
+
+  // --- Launching -------------------------------------------------------------
+  s.Section("Launching");
+
+  s.Add({.key = "launch.stop_timeout_s",
+         .label = "Stop Timeout (seconds)",
+         .type = Type::Int,
+         .default_value = 10,
+         .doc = "How long to give a game to quit after \"stop\" before it's killed outright. The "
+                "whole process group is signalled, since a real launch is umu -> proton -> wine -> "
+                "the game.",
+         .constraint = Range(0, 600)});
+
+  s.Add({.key = "launch.log_max_mb",
+         .label = "Log Max Size (MB)",
+         .type = Type::Int,
+         .default_value = 64,
+         .scope = Scope::PerGame,
+         .doc = "Cap on a game's own log file (see GET /v1/games/{id}/log), applied when a new session "
+                "rotates the previous one out -- an oversized previous log is dropped instead of kept, "
+                "so this bounds disk use to roughly 2x this value per game.",
+         .constraint = Range(1, 1024)});
+
+  s.Add({.key = "launch.env",
+         .label = "Default Environment Variables",
+         .type = Type::StringArray,
+         .default_value = json::array(),
+         .scope = Scope::PerGame,
+         .doc = "KEY=VALUE environment variables set for every launch, e.g. [\"MANGOHUD=1\", "
+                "\"DXVK_ASYNC=1\"]. A game's own env (per-game overrides) always wins over these. Not "
+                "applied to a Steam game launched via steam.launch_mode \"steam\" -- Mira only hands "
+                "off a steam:// URL there, it never builds the game's own command line."});
+
+  s.Add({.key = "launch.pre_script",
+         .label = "Default Pre-Launch Script",
+         .type = Type::String,
+         .default_value = "",
+         .scope = Scope::PerGame,
+         .doc = "Shell command run (via sh -c) before POST /v1/games/{id}/launch actually starts the "
+                "game -- e.g. mounting a network drive a game needs, setting a CPU governor. Runs "
+                "synchronously; a non-zero exit aborts the launch with the script's own output as the "
+                "error. Empty disables it. Overridable per game (PATCH .../config)."});
+
+  s.Add({.key = "launch.pre_timeout_s",
+         .label = "Pre-Launch Timeout (seconds)",
+         .type = Type::Int,
+         .default_value = 30,
+         .scope = Scope::PerGame,
+         .doc = "How long launch.pre_script is given to finish before the launch is aborted outright, "
+                "to keep a hung script from wedging a launch forever.",
+         .constraint = Range(1, 600)});
+
+  s.Add({.key = "launch.post_script",
+         .label = "Default Post-Launch Script",
+         .type = Type::String,
+         .default_value = "",
+         .scope = Scope::PerGame,
+         .doc = "Shell command run once the game process exits (any reason: clean exit, crash, or "
+                "stop), the mirror of launch.pre_script -- e.g. reverting a CPU governor change. Runs "
+                "in the background; its own exit code is only logged, never affects the recorded "
+                "playtime/crash state. Not run for a Steam game launched via steam.launch_mode "
+                "\"steam\" unless steam.track_process is also on -- Mira otherwise never owns that "
+                "process at all (see docs/api.md's Steam section)."});
+
+  s.Add({.key = "launch.post_timeout_s",
+         .label = "Post-Launch Timeout (seconds)",
+         .type = Type::Int,
+         .default_value = 30,
+         .scope = Scope::PerGame,
+         .doc = "How long launch.post_script is given to finish before it's killed outright, the "
+                "mirror of launch.pre_timeout_s.",
+         .constraint = Range(1, 600)});
+
+  s.Add({.key = "launch.gamemode",
+         .label = "Feral Gamemode",
+         .type = Type::Bool,
+         .default_value = false,
+         .scope = Scope::PerGame,
+         .doc = "Register this game with Feral Interactive's GameMode daemon automatically -- no "
+                "command_wrappers entry needed. A no-op if the daemon isn't installed or isn't running; "
+                "see GET /v1/gamemode/status."});
+
+  // --- Installers ------------------------------------------------------------
+  s.Section("Installers");
+
+  s.Add({.key = "scan.auto_run_installers",
+         .label = "Run Installers Automatically",
+         .type = Type::Bool,
+         .default_value = true,
+         .doc = "Silently run a detected installer (Inno Setup, NSIS) as soon as it's found, the same "
+                "way a detected archive auto-extracts. Unrecognized formats and failed runs stay "
+                "needs_install for `mira install`."});
+
+  s.Add({.key = "install.retry_failed",
+         .label = "Retry Failed Installs",
+         .type = Type::Bool,
+         .default_value = false,
+         .doc = "Retry a failed automatic install on every scan instead of waiting for `mira install`."});
+
+  s.Add({.key = "install.runner",
+         .label = "Installer Runner",
+         .type = Type::String,
+         .default_value = "",
+         .doc = "Runner used to run installers, e.g. \"proton:GE-Proton11-7\" or \"wine:latest\". "
+                "Empty uses the game's own default (default_runner.windows). The game keeps it afterward, "
+                "since its prefix was made with it."});
+
+  s.Add({.key = "install.timeout_s",
+         .label = "Installer Timeout (seconds)",
+         .type = Type::Int,
+         .default_value = 0,
+         .doc = "Kill a silent installer after this many seconds. 0 = no limit.",
+         .constraint = Range(0, 86400)});
+
+  s.Add({.key = "install.show_progress",
+         .label = "Show Installer Progress",
+         .type = Type::Bool,
+         .default_value = false,
+         .doc = "Show Inno Setup's progress window during a silent install (/SILENT instead of "
+                "/VERYSILENT). Still asks no questions. NSIS has no visible silent mode."});
+
+  s.Divider();
+
+  s.Add({.key = "install.detect_dirs",
+         .label = "Install Detection Folders",
+         .type = Type::StringArray,
+         .default_value = json::array({"Program Files", "Program Files (x86)", "GOG Games", "Games"}),
+         .doc = "Folders under the prefix's drive_c checked for a newly installed game when the installer "
+                "didn't install into the game folder."});
+
+  s.Add({.key = "install.inno_args",
+         .label = "Inno Setup Arguments",
+         .type = Type::String,
+         .default_value = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-",
+         .doc = "Arguments for a silent Inno Setup install (GOG offline installers). /DIR is added."});
+
+  s.Add({.key = "install.nsis_args",
+         .label = "NSIS Arguments",
+         .type = Type::String,
+         .default_value = "/S",
+         .doc = "Arguments for a silent NSIS install. /D is added."});
+
+  // --- Store launchers ------------------------------------------------------
+  s.Section("Store Launchers");
+
+  s.Add({.key = "launchers.auto_import",
+         .label = "Import Launcher Games on Scan",
+         .type = Type::Bool,
+         .default_value = true,
+         .doc = "Import games installed through a store launcher (Battle.net, Ubisoft Connect, EA app) "
+                "on every scan."});
+
+  s.Add({.key = "launchers.runner",
+         .label = "Launcher Runner",
+         .type = Type::String,
+         .default_value = "",
+         .doc = "Runner for a store launcher's prefix, e.g. \"proton:GE-Proton11-7\". Empty uses "
+                "default_runner.windows. Games it installs use the same one."});
+
+  s.Add({.key = "launchers.detect_timeout_s",
+         .label = "Launcher Game Start Timeout (seconds)",
+         .type = Type::Int,
+         .default_value = 300,
+         .doc = "How long to wait for a launcher to start a game (updates, login) before giving up tracking it.",
+         .constraint = Range(10, 3600)});
+
+  s.Add({.key = "launchers.umu_lookup",
+         .label = "Look Up umu IDs",
+         .type = Type::Bool,
+         .default_value = true,
+         .doc = "Look up each newly imported launcher game at umu.openwinecomponents.org so its protonfixes "
+                "apply. Sends only the store name and the game's store id."});
+
+  s.Divider();
+
+  s.Add({.key = "launchers.ubisoft.disable_overlay",
+         .label = "Disable Ubisoft Overlay",
+         .type = Type::Bool,
+         .default_value = true,
+         .doc = "Turn off the Ubisoft Connect overlay when installing it; it often breaks games under Wine."});
+
+  s.Add({.key = "launchers.battlenet.disable_hw_accel",
+         .label = "Disable Battle.net Hardware Acceleration",
+         .type = Type::Bool,
+         .default_value = true,
+         .doc = "Turn off Battle.net's hardware acceleration when installing it; its UI renders blank under "
+                "Wine otherwise."});
+
+  // --- Detection -------------------------------------------------------------
+  s.Section("Detection");
+
+  s.Add({.key = "detect.rules",
+         .label = "Detection Scoring Rules",
+         .type = Type::StringArray,
+         .default_value = json::array({"deny_patterns", "name_similarity", "depth", "shallowest"}),
+         .doc = "Scoring rules applied to candidate executables, in order. Removing a rule "
+                "disables it."});
+
+  s.Add({.key = "detect.name_match_bonus",
+         .label = "Name Match Bonus",
+         .type = Type::Double,
+         .default_value = 3.0,
+         .doc = "Score added when an executable's name resembles its folder's name.",
+         .constraint = Range(0.0, 100.0)});
+
+  s.Add({.key = "detect.depth_penalty",
+         .label = "Depth Penalty",
+         .type = Type::Double,
+         .default_value = 0.5,
+         .doc = "Score subtracted per directory level, favouring executables near the top.",
+         .constraint = Range(0.0, 100.0)});
+
+  s.Add({.key = "detect.low_confidence_threshold",
+         .label = "Low Confidence Threshold",
+         .type = Type::Double,
+         .default_value = 0.5,
+         .doc = "Below this confidence a game is flagged for review. It is still configured and "
+                "still launchable; the frontend just highlights it.",
+         .constraint = Range(0.0, 1.0)});
+
+  s.Add({.key = "detect.deny_name_patterns",
+         .label = "Deny Name Patterns",
+         .type = Type::StringArray,
+         .default_value = json(known_exe_patterns::kDeny),
+         .doc = "Executables matching these globs are heavily penalised: they are installers and "
+                "helpers rather than games. Defaults are curated in "
+                "src/config/KnownExePatterns.h — edit that file to add one, no need to touch this "
+                "schema or recompile just to override it for yourself here."});
+
+  s.Add({.key = "detect.installer_name_patterns",
+         .label = "Installer Name Patterns",
+         .type = Type::StringArray,
+         .default_value = json(known_exe_patterns::kInstaller),
+         .doc = "A candidate matching one of these globs, and meeting detect.installer_min_size_mb "
+                "(itself, or sharing a folder with a file that does — installers are often a small "
+                "stub exe next to a much larger separate payload), is flagged as an installer "
+                "rather than the game itself: stored with status needs_install instead of being "
+                "auto-provisioned as launchable."});
+
+  s.Add({.key = "detect.installer_min_size_mb",
+         .label = "Installer Min Size (MB)",
+         .type = Type::Int,
+         .default_value = 50,
+         .doc = "Minimum size — of the candidate itself, or of any file alongside it — for a "
+                "name-matched candidate to actually count as an installer, so a small stub or "
+                "helper named like one doesn't get misflagged.",
+         .constraint = Range(0, 1'000'000)});
+
+  // --- Scanning --------------------------------------------------------------
+  s.Section("Scanning");
+
+  s.Add({.key = "scan.tag_by_root",
+         .label = "Tag by Path Root",
+         .type = Type::Bool,
+         .default_value = true,
+         .doc = "Automatically tag each newly-detected game with the name of the library root folder "
+                "it was found in (e.g. a game under ~/Games Mira gets tagged \"Games Mira\") -- useful "
+                "for filtering multiple game folders (GET /v1/games?tag=...) with several "
+                "library_roots configured. Only applied at detection time, not retroactively."});
+
+  s.Add({.key = "scan.debounce_ms",
+         .label = "Debounce Time (ms)",
+         .type = Type::Int,
+         .default_value = 3000,
+         .doc = "How long a new folder must stop changing before it is scanned. Raise it if games "
+                "arrive over a slow network share.",
+         .constraint = Range(0, 600000)});
+
+  s.Add({.key = "scan.max_depth",
+         .label = "Max Scan Depth",
+         .type = Type::Int,
+         .default_value = 4,
+         .doc = "How deep to search inside a game folder for executables.",
+         .constraint = Range(1, 16)});
+
+  s.Add({.key = "scan.auto_extract_archives",
+         .label = "Auto-Extract Archives",
+         .type = Type::Bool,
+         .default_value = false,
+         .doc = "Extract a .zip/.rar/.tar(.gz/.xz/.bz2)/.7z dropped directly into a library root, "
+                "into a same-named folder, then delete the archive — so an archived game drop "
+                "behaves like an already-extracted one. Off by default: silently deleting an "
+                "archive is a real action to opt into, not assume. Extracting a .rar or .7z needs "
+                "unrar/p7zip installed; a missing tool is reported, not silently skipped."});
+
+  s.Add({.key = "scan.periodic_interval_s",
+         .label = "Periodic Scan Interval (s)",
+         .type = Type::Int,
+         .default_value = 0,
+         .doc = "Seconds between full rescans. 0 disables them, which is the default: inotify is "
+                "authoritative and a timer would cost idle wakeups for nothing.",
+         .constraint = Range(0, 86400)});
+
+  s.Add({.key = "scan.ignore_globs",
+         .label = "Globs to Ignore",
+         .type = Type::StringArray,
+         .default_value = json::array({".*", "*/Redist*", "*/DirectX*", "*/_CommonRedist*", "*/DotNet*"}),
+         .doc = "Paths matching these globs are never treated as games."});
+
+  // --- Desktop Entries -------------------------------------------------------
+  s.Section("Desktop Entries");
+
+  s.Add({.key = "desktop_entries.enabled",
+         .label = "Enable Desktop Entries",
+         .type = Type::Bool,
+         .default_value = true,
+         .scope = Scope::PerGame,
+         .doc = "Add each ready game to your application menu as a .desktop entry, so it can be "
+                "launched from the desktop like any other app. Turn this off to keep Mira's games "
+                "out of your menu entirely."});
+
+  s.Add({.key = "desktop_entries.directory",
+         .label = "Desktop Entries Directory",
+         .type = Type::String,
+         .default_value = "~/.local/share/applications",
+         .doc = "Where .desktop entries are written. Only files Mira created (mira-<id>.desktop) are "
+                "ever touched."});
+
+  s.Add({.key = "desktop_entries.categories",
+         .label = "Desktop Entries Categories",
+         .type = Type::String,
+         .default_value = "Game;",
+         .scope = Scope::PerGame,
+         .doc = "Freedesktop Categories= value for generated entries, deciding where they appear in "
+                "the menu."});
+
+  s.Add({.key = "desktop_entries.exec_mode",
+         .label = "Desktop Entries Execution Mode",
+         .type = Type::String,
+         .default_value = "cli",
+         .scope = Scope::PerGame,
+         .doc = "What a menu entry runs. \"cli\" (`mira launch <id>`) requires mirad to already be "
+                "running and fails clearly if it isn't; \"frontend\" starts the frontend, which "
+                "brings the daemon up itself. Either way the launch goes through Mira, which is "
+                "what makes playtime get recorded — a menu entry that ran the game directly would "
+                "launch fine and log nothing.",
+         .constraint = OneOf({"cli", "frontend"})});
+
+  s.Divider();
+
+  s.Add({.key = "desktop_import.enabled",
+         .label = "Enable Desktop Import",
+         .type = Type::Bool,
+         .default_value = true,
+         .doc = "Let \"mira desktop-entries list\"/\"import\" and the matching REST "
+                "endpoints read already-installed application-menu (.desktop) entries "
+                "and add them as games — this is how a Flatpak app gets added, since "
+                "every Flatpak-exported entry already carries the app id needed to "
+                "relaunch it. Manual: nothing is added until you pick which ones."});
+
+  s.Add({.key = "desktop_import.extra_dirs",
+         .label = "Extra Desktop Import Directories",
+         .type = Type::StringArray,
+         .default_value = json::array(),
+         .doc = "Extra directories to search for .desktop files, beyond the standard "
+                "$XDG_DATA_HOME/applications, $XDG_DATA_DIRS entries, and the two "
+                "well-known Flatpak export directories."});
+
+  // --- Advanced --------------------------------------------------------------
+  s.Section("Advanced");
+
+  s.Add({.key = "socket_path",
+         .label = "Socket Path",
+         .type = Type::String,
+         .default_value = "$XDG_RUNTIME_DIR/mira/mirad.sock",
+         .doc = "Unix socket the daemon listens on. The frontend and CLI must agree with this.",
+         .constraint = NonEmptyString()});
+
+  s.Add({.key = "log.level",
+         .label = "Log Level",
+         .type = Type::String,
+         .default_value = "info",
+         .doc = "Logging verbosity: debug, info, warn or error.",
+         .constraint = OneOf({"debug", "info", "warn", "error"})});
+
+  s.Add({.key = "events.sse_keepalive_s",
+         .label = "SSE Keepalive (seconds)",
+         .type = Type::Int,
+         .default_value = 0,
+         .doc = "Seconds between keepalive comments on the event stream. 0 disables them; a Unix "
+                "socket does not need them and a timer would cost idle wakeups.",
+         .constraint = Range(0, 3600)});
 }
 
 const Schema& Schema::Instance() {
@@ -693,13 +1029,12 @@ std::vector<std::string> Schema::ValidateDocument(const json& document) const {
   return problems;
 }
 
-std::string_view ToString(Tier tier) {
-  switch (tier) {
-    case Tier::Basic:    return "basic";
-    case Tier::Advanced: return "advanced";
-    case Tier::Expert:   return "expert";
+std::string_view ToString(Scope scope) {
+  switch (scope) {
+    case Scope::Global:  return "global";
+    case Scope::PerGame: return "per_game";
   }
-  return "basic";
+  return "global";
 }
 
 std::string_view ToString(Type type) {
@@ -712,13 +1047,6 @@ std::string_view ToString(Type type) {
     case Type::Object:      return "an object";
   }
   return "a value";
-}
-
-std::optional<Tier> TierFromString(std::string_view text) {
-  if (text == "basic") return Tier::Basic;
-  if (text == "advanced") return Tier::Advanced;
-  if (text == "expert") return Tier::Expert;
-  return std::nullopt;
 }
 
 }  // namespace mira::config

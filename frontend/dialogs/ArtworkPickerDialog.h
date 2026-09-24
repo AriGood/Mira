@@ -32,6 +32,9 @@ private:
   void Select(int index);
   void RefreshPreview();
   void SetBusy(bool busy);
+  // Errors land here, in the dialog the user is already looking at, rather
+  // than as a desktop notification.
+  void SetStatus(const QString& text, bool error = false);
   void FetchFromSteamGridDb();
   void HandleEvent(const std::string& type, const std::string& data);
 

@@ -150,10 +150,11 @@ private:
   // `focus_key` jumps straight to that schema field once loaded.
   void OpenSettings(const QString& focus_key = QString());
   void CloseSettings();
-  // Confirms first if settings_panel_ is dirty — the top bar's Back button.
+  // Confirms first if settings_panel_ is dirty — the settings page's own
+  // Back button.
   void RequestCloseSettings();
   bool SettingsOpen() const;
-  // Gear <-> Back/Save, and greys out the library controls either way.
+  // Greys out the library controls behind Settings while it's open.
   void SetSettingsChromeVisible(bool settings_open);
   // Shared by SetSettingsChromeVisible and the per-game edit page: neither
   // filtering nor sorting means anything while the grid isn't on screen.
@@ -213,14 +214,10 @@ private:
   QSlider* zoom_ = nullptr;
   QToolButton* sort_direction_ = nullptr;
   QToolButton* add_games_ = nullptr;
-  // Sidebar row now, styled like library_nav_/classic_view_nav_ — see
-  // SetSettingsChromeVisible for how it and the top bar's Back/Save pair
-  // (still shown/hidden together) coordinate.
+  // Sidebar row, styled like library_nav_/classic_view_nav_. Settings' own
+  // Back/Reset/Save row lives on the settings page itself (BuildSettingsPage),
+  // rebuilt fresh alongside settings_panel_ on each open.
   QPushButton* settings_button_ = nullptr;
-  QWidget* settings_actions_widget_ = nullptr;
-  QPushButton* settings_back_button_ = nullptr;
-  QPushButton* settings_reset_button_ = nullptr;
-  QPushButton* settings_save_button_ = nullptr;
   // Moved here from the sidebar's old hamburger menu — see BuildTopBar.
   QToolButton* refresh_button_ = nullptr;
   QToolButton* shortcuts_button_ = nullptr;
@@ -275,6 +272,9 @@ private:
   // of these is worth a toast; the dozens from an automatic scan are not.
   std::set<std::string> awaiting_metadata_;
   bool steamgriddb_notice_shown_ = false;
+  // Set by "Fetch missing cover art": its fetches were asked for, so a
+  // missing SteamGridDB key is worth reporting.
+  bool artwork_fetch_requested_ = false;
   std::string selected_id_;
   // The tile width Ctrl+0 returns to, and the one a frontend.toml with
   // no tile_width starts at.

@@ -23,8 +23,6 @@ void Launch(QWidget* parent, const std::string& id, std::function<void(bool trac
       notify::Failed(parent, "Could not launch the game.", QString::fromStdString(result.error));
       return;
     }
-    // Untracked (handed to Steam) is worth a toast, but mirad already sends
-    // one as a `notification` event alongside game.launched.
     if (on_launched) on_launched(result.tracked);
   });
 }
@@ -126,9 +124,9 @@ void ToggleDesktopEntry(QWidget* parent, const std::string& id, bool currently_e
                          QString::fromStdString(result.error));
           return;
         }
-        notify::Toast(parent, notify::Level::Success,
-                      currently_enabled ? "Removed from the application menu."
-                                        : "Added to the application menu.");
+        // The only feedback there is — nothing in Mira's own window changes.
+        notify::Notice(parent, currently_enabled ? "Removed from the application menu."
+                                                 : "Added to the application menu.");
       });
 }
 
@@ -150,11 +148,10 @@ void BatchDelete(QWidget* parent, const std::vector<std::pair<std::string, QStri
           choice.delete_metadata, [parent, name, remaining, failed, on_done](DeleteResult result) {
             if (!result.ok) *failed << name;
             if (--*remaining > 0) return;
+            // Success needs no notice: the games leave the grid.
             if (!failed->isEmpty()) {
               notify::Failed(parent, QString("Could not remove %1 game(s).").arg(failed->size()),
                              failed->join(", "));
-            } else {
-              notify::Toast(parent, notify::Level::Success, "Games removed.");
             }
             if (on_done) on_done();
           });
@@ -178,9 +175,8 @@ void BatchSetDesktopEntry(QWidget* parent, const std::vector<std::string>& ids, 
             notify::Failed(parent, QString("Could not update %1 game(s).").arg(*failures),
                            "See each game's own Advanced settings to retry.");
           } else {
-            notify::Toast(parent, notify::Level::Success,
-                          enabled ? "Added to the application menu."
-                                  : "Removed from the application menu.");
+            notify::Notice(parent, enabled ? "Added to the application menu."
+                                           : "Removed from the application menu.");
           }
         });
   }

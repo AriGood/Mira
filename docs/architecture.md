@@ -528,9 +528,10 @@ has no concept of installed "builds").
 
 `SettingsDialog` is generated entirely from `GET /v1/config/schema` — almost
 no setting name is hardcoded anywhere in the frontend. One row per schema
-entry (a checkbox for `Type::Bool`, a line edit otherwise), grouped by
-`tier`: `basic` shown by default, `advanced`/`expert` behind a single
-disclosure toggle, matching `api.md`'s guidance to never omit them outright.
+entry (a checkbox for `Type::Bool`, a line edit otherwise), laid out exactly
+as the schema declares it: its section, its order, its label, and a divider
+between groups. Nothing is hidden. The per-game editor shows only the entries
+with `scope: "per_game"`, in the same layout.
 Saving diffs each field's current text against the value it loaded with and
 sends only the changed keys in one `PATCH /v1/config` — a dialog left open
 and then saved unedited is a no-op, not a resend of every setting. A

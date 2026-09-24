@@ -10,7 +10,7 @@ that decision is load-bearing and is not restated here.
 `mira-gui` opens on **the grid** (`views/LibraryWindow`): cover tiles and a
 left sidebar (filters, sort, search, Library/Classic-view navigation,
 Settings, and a status line), with a custom top bar in place of a native
-titlebar — Add Games, tile size, and window controls (minimize/maximize/
+titlebar — Add/Import Games, tile size, and window controls (minimize/maximize/
 close), inspired by Lutris. It is modelled on Playnite's shelf for the tile
 browsing itself, which is the interaction most people arriving at a Linux
 game launcher already know.
@@ -178,7 +178,9 @@ This matters more than it looks:
 - **`settings.toml`** holds backend settings. Every key is declared in
   `src/config/Schema.cpp`, and `ui/SettingsPanel` is generated entirely from
   `GET /v1/config/schema` — almost no setting name is hardcoded in the
-  frontend. Adding a backend setting requires no frontend change.
+  frontend. Adding a backend setting requires no frontend change, and where
+  it shows (section, order, label, divider, per-game or not) is decided in
+  the schema too.
 - **`frontend.toml`** holds the frontend's own state and preferences:
   window size, tile size, which filter and sort were selected,
   the left sidebar's splitter width, and whether to scan the library on
@@ -194,13 +196,11 @@ This matters more than it looks:
   | `library_filter` | which filter was selected |
   | `sort_by`, `sort_descending` | grid order — see `ui/LibrarySort` |
   | `scan_on_startup` | whether opening the frontend runs `POST /v1/library/scan` |
-  | `notifications` | `auto` / `system` / `in_app` — see "Telling the user things" |
-  | `notification_timeout_s` | how long one stays up; `0` (the default) means until dismissed |
   | `theme` | a theme name, or `auto` to follow the desktop — see "Theming" |
   | `tile_spacing`, `grid_margin` | grid layout, in pixels; `-1` means "leave it to the theme" |
   | `tile_radius`, `panel_radius`, `control_radius` | corner rounding, same `-1` rule |
 
-  `scan_on_startup`, `notifications`, `notification_timeout_s`, `theme` and
+  `scan_on_startup`, `theme` and
   the five shape keys get rows in the settings screen, on an Interface tab
   ahead of the schema-driven ones.
   The rest are implicit UI state: they are saved by using the window, not by
@@ -287,74 +287,49 @@ Two notes on shapes that are easy to get wrong:
 
 ## Telling the user things
 
-Three shapes, and `ui/Notify` owns the first two so that two screens cannot
-disagree about what a failure looks like:
+`ui/Notify` owns every message, so two screens cannot disagree about what a
+failure looks like. Anything that isn't a question is a desktop
+notification, in one of two kinds:
 
-| shape | when | where |
+| kind | when | how |
 |---|---|---|
-| **popup** | what you just asked for did not happen, or Mira needs an answer first | `notify::Failed`, `FailedWithHint`, `Info`, `Confirm` |
-| **toast** | something finished on the daemon's schedule, not yours | `notify::Toast` |
-| **inline status** | a dialog reporting on an operation it owns and can say "still going" about | the dialog's own label — see `RunnerDialog` |
+| **persistent** | something went wrong — `notify::Failed`, `FailedWithHint`, `FailedWithAction`, `Warn` | critical urgency, `expire_timeout` 0: stays until dismissed |
+| **transient** | a small confirmation of something with no visible result of its own — `notify::Notice` | normal urgency, `expire_timeout` -1: the desktop's own default |
 
-The split follows the API. Anything that returns **202** (`/runners/download`,
-`/games/{id}/metadata/refresh`, `/games/{id}/tricks`) finishes minutes later
-and reports through an SSE event, by which time the user has moved on — a
-modal for that is an ambush. Anything answering the request in front of you
-gets a popup.
+Only two things are still popups: a question the caller can't proceed
+without (`Confirm`, `ConfirmUnsaved`), and content that *is* the answer to a
+button (`Info` — e.g. a runner kind's config keys). A dialog that already has
+a status line of its own (`RunnerDialog`, `ArtworkPickerDialog`, the log
+viewer's text pane) reports its errors there instead of notifying over
+itself.
 
-A toast goes to one of two places, and `notifications` in `frontend.toml`
-decides which:
+**Success whose result is already on screen gets nothing.** A scan or import
+that adds games, a batch delete, a cover arriving, a metadata refresh — the
+grid changing is the feedback. A notice only goes out when nothing in Mira's
+window would change otherwise ("No new Steam games found.", "Added to the
+application menu."). Notifications that just narrate work starting
+("Fetching metadata…") don't exist at all.
 
-| value | behaviour |
-|---|---|
-| `auto` (default) | the desktop's notification service when Mira's window is not the active one, an in-window card when it is |
-| `system` | always the desktop's service |
-| `in_app` | always the in-window card |
+The route is `org.freedesktop.Notifications` over the session bus
+(`ui/SystemNotifier`) — the cross-desktop standard KDE, GNOME, XFCE,
+Cinnamon, dunst, mako and swaync all implement, so nothing here is specific
+to one desktop. A `desktop-entry` hint of `mira` lets the shell show Mira's
+own name and icon and list it in per-application notification settings
+(where the user controls how long things stay up — Mira has no setting of
+its own for that). `FailedWithAction` adds a button (and a click on the
+notification itself) routed back through the `ActionInvoked` signal, raising
+Mira's window first.
 
-`auto` is the one that matters. A background job finishing while you are
-looking at something else is exactly what the desktop's notification area
-is for — it survives Mira being minimised, lands in whatever notification
-history the desktop environment keeps, and obeys Do Not Disturb. A system
-popup for something that just happened in the window under your cursor is
-noise the desktop then keeps a record of.
+With no notification service on the bus at all (a bare window manager), a
+failure falls back to a modal popup and a `Warn`/`Notice` to a card stacked
+bottom-right of the window — only so the message isn't lost. Cards dismiss
+on click; a transient one also after six seconds.
 
-The system route is `org.freedesktop.Notifications` over the session bus
-(`ui/SystemNotifier`), with a `desktop-entry` hint of `mira` so the shell
-shows Mira's own name and icon and lists it in per-application notification
-settings. `QGuiApplication::setDesktopFileName("mira")` backs that up for
-the compositor. Urgency maps to the level: an error is `critical`, which
-most shells do not dismiss on a timeout.
-
-Any failure falls back to the in-window card, so choosing `system` on a
-desktop with no notification service loses nothing.
-
-**How long they stay is `notification_timeout_s`, and the default is 0 —
-until dismissed.** Auto-dismissing is the wrong default for what these
-report: a runner finished, metadata arrived, a fetch needs an API key. All
-of it happened while the user was doing something else, and all of it is
-worth still being there when they look back. A message that deletes itself
-is one you can miss entirely, and the frontend keeps no history to check
-afterwards.
-
-Zero maps onto both routes without translation: the freedesktop spec's
-`expire_timeout` of 0 already means "never expire, the user dismisses it",
-and an in-window card with no timeout simply gets no dismiss timer. A
-positive value applies to both, clamped to ten minutes since the file is
-hand-editable.
-
-In-window cards stack bottom-right, dismiss on click, and are capped at six.
-The cap is higher than a timed toast would need precisely because the
-default is untimed — pushing a card out of an untimed stack means discarding
-something nobody has read. They attach to the top-level window rather than
-to the widget that raised them, so a card survives the dialog that started
-the work.
-
-Every popup goes through one helper that sets `Qt::PlainText`. mirad's error
-messages quote paths and command fragments, and rich text would silently eat
-anything that looked like a tag.
-
-Failure popups show mirad's own message verbatim under a sentence naming
-what failed. The daemon explains its refusals better than a rewrite would.
+Every popup and card sets `Qt::PlainText`. mirad's error messages quote
+paths and command fragments, and rich text would silently eat anything that
+looked like a tag. Failures show mirad's own message verbatim under a
+sentence naming what failed — the daemon explains its refusals better than a
+rewrite would.
 
 ## Cover art
 

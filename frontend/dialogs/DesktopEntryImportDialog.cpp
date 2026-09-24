@@ -97,11 +97,7 @@ void DesktopEntryImportDialog::Import() {
       notify::Failed(this, "Could not import.", QString::fromStdString(result.error));
       return;
     }
-    notify::Toast(this, notify::Level::Success,
-                  QString("Desktop entries: %1 added, %2 updated.")
-                      .arg(result.added)
-                      .arg(result.updated));
-    accept();
+    accept();  // the imported games appearing in the grid is the feedback
   });
 }
 

@@ -8,7 +8,7 @@
 #include <QVBoxLayout>
 
 #include "../client/MiradClient.h"
-#include "../ui/Notify.h"
+#include "../ui/Theme.h"
 
 namespace mira_gui {
 namespace {
@@ -72,7 +72,7 @@ ArtworkPickerDialog::ArtworkPickerDialog(std::string game_id, std::string slot, 
   layout->addLayout(right, /*stretch=*/1);
 
   SetBusy(true);
-  status_->setText("Loading…");
+  SetStatus("Loading…");
   RefreshPreview();
   event_stream_.Start(this,
                       [this](std::string type, std::string data) { HandleEvent(type, data); });
@@ -97,11 +97,11 @@ void ArtworkPickerDialog::Load() {
     SetBusy(false);
     fetch_button_->setVisible(candidates_.empty());
     if (candidates_.empty()) {
-      status_->setText(QString("No alternate %1 cached for this game yet.")
+      SetStatus(QString("No alternate %1 cached for this game yet.")
                             .arg(slot_ == "hero" ? "hero art" : "covers"));
       return;
     }
-    status_->clear();
+    SetStatus(QString());
 
     list_->blockSignals(true);
     for (int i = 0; i < static_cast<int>(candidates_.size()); ++i) {
@@ -120,7 +120,7 @@ void ArtworkPickerDialog::Select(int index) {
   }
   SetBusy(true);
   pending_ = index;
-  status_->setText(QString("Applying candidate %1 of %2…")
+  SetStatus(QString("Applying candidate %1 of %2…")
                         .arg(index + 1)
                         .arg(candidates_.size()));
   const ArtCandidate& candidate = candidates_[index];
@@ -129,8 +129,7 @@ void ArtworkPickerDialog::Select(int index) {
                                     if (result.ok) return;  // wait for the event instead
                                     SetBusy(false);
                                     pending_ = -1;
-                                    notify::Failed(this, "Could not switch artwork.",
-                                                   QString::fromStdString(result.error));
+                                    SetStatus("Could not switch artwork: " + QString::fromStdString(result.error), /*error=*/true);
                                   });
 }
 
@@ -145,6 +144,11 @@ void ArtworkPickerDialog::RefreshPreview() {
   });
 }
 
+void ArtworkPickerDialog::SetStatus(const QString& text, bool error) {
+  status_->setText(text);
+  theme::SetStyleProperty(status_, "role", error ? "error" : "muted");
+}
+
 void ArtworkPickerDialog::SetBusy(bool busy) {
   busy_ = busy;
   list_->setEnabled(!busy && !candidates_.empty());
@@ -154,14 +158,13 @@ void ArtworkPickerDialog::SetBusy(bool busy) {
 void ArtworkPickerDialog::FetchFromSteamGridDb() {
   fetching_ = true;
   SetBusy(true);
-  status_->setText("Fetching from SteamGridDB…");
+  SetStatus("Fetching from SteamGridDB…");
   MiradClient::RefreshMetadataAsync(this, id_, /*announce=*/false,
                                     [this](MetadataRefreshResult result) {
                                       if (result.ok) return;  // wait for the event instead
                                       fetching_ = false;
                                       SetBusy(false);
-                                      notify::Failed(this, "Could not fetch from SteamGridDB.",
-                                                     QString::fromStdString(result.error));
+                                      SetStatus("Could not fetch from SteamGridDB: " + QString::fromStdString(result.error), /*error=*/true);
                                     });
 }
 
@@ -173,7 +176,7 @@ void ArtworkPickerDialog::HandleEvent(const std::string& type, const std::string
     fetching_ = false;
     if (type == "game.metadata_failed") {
       SetBusy(false);
-      notify::Failed(this, "Could not fetch from SteamGridDB.", QString::fromStdString(event.error));
+      SetStatus("Could not fetch from SteamGridDB: " + QString::fromStdString(event.error), /*error=*/true);
       return;
     }
     Load();  // repopulates candidates_ and clears busy_ itself
@@ -190,12 +193,12 @@ void ArtworkPickerDialog::HandleEvent(const std::string& type, const std::string
   SetBusy(false);
 
   if (type == "game.artwork_select_failed") {
-    notify::Failed(this, "Could not switch artwork.", QString::fromStdString(event.error));
+    SetStatus("Could not switch artwork: " + QString::fromStdString(event.error), /*error=*/true);
     return;
   }
 
   current_ = index;
-  status_->clear();
+  SetStatus(QString());
 
   // Relabel so "(current)" follows the pick, without re-triggering Select()
   // via currentRowChanged.

@@ -1,5 +1,7 @@
 #include "SettingsNav.h"
 
+#include <algorithm>
+
 #include <QFormLayout>
 #include <QFrame>
 #include <QHBoxLayout>
@@ -157,6 +159,32 @@ void SettingsNavWidget::SetHeaderWidget(QWidget* widget) {
   }
   header_widget_ = widget;
   left_layout_->insertWidget(0, widget);
+}
+
+void SettingsNavWidget::AddFooterWidget(QWidget* widget) {
+  // Recomputed each call rather than cached: SetHeaderWidget can still
+  // insert above nav_list_ later, which would otherwise leave a cached
+  // index pointing at the wrong row.
+  left_layout_->insertWidget(left_layout_->indexOf(nav_list_) + 1, widget);
+}
+
+void SettingsNavWidget::AddDivider(QFormLayout* form) {
+  auto* divider = new QFrame(this);
+  divider->setFrameShape(QFrame::HLine);
+  divider->setFrameShadow(QFrame::Sunken);
+  form->addRow(divider);
+}
+
+std::vector<CategoryRows> GroupByCategory(const std::vector<std::string>& categories) {
+  std::vector<CategoryRows> out;
+  for (size_t i = 0; i < categories.size(); ++i) {
+    const QString name =
+        categories[i].empty() ? QString("General") : QString::fromStdString(categories[i]);
+    auto it = std::ranges::find(out, name, &CategoryRows::name);
+    if (it == out.end()) it = out.insert(out.end(), CategoryRows{name, {}});
+    it->rows.push_back(i);
+  }
+  return out;
 }
 
 }  // namespace mira_gui

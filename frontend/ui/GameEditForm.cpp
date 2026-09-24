@@ -7,8 +7,6 @@
 #include "Theme.h"
 
 #include <QComboBox>
-#include <QDialog>
-#include <QDialogButtonBox>
 #include <QFileDialog>
 #include <QFormLayout>
 #include <QHBoxLayout>
@@ -16,7 +14,10 @@
 #include <QLineEdit>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QScrollArea>
+#include <QScrollBar>
 #include <QSizePolicy>
+#include <QStackedWidget>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -176,27 +177,27 @@ GameEditForm::GameEditForm(std::string id, QWidget* parent) : QWidget(parent), i
   advanced_button->setToolTip("Per-game overrides of the global settings.");
   connect(advanced_button, &QPushButton::clicked, this, &GameEditForm::OpenAdvanced);
   fields_layout->addWidget(advanced_button);
-  layout->addWidget(fields_column, /*stretch=*/1);
 
-  // Built now, shown later: overrides_->Load() (in Load(), below) needs
-  // somewhere to live before the dialog's ever opened. Its own window, not
-  // inline — one row per overridable key would cramp the sidebar.
-  advanced_dialog_ = new QDialog(this);
-  advanced_dialog_->setWindowTitle("Advanced settings");
-  // Scaled off the real top-level window rather than a fixed size, so it's
-  // never cramped on a small screen or tiny on a large one.
-  advanced_dialog_->setMinimumSize(720, 480);
-  advanced_dialog_->resize(qMax(720, window()->width() * 3 / 5),
-                           qMax(480, window()->height() * 3 / 4));
-  auto* dialog_layout = new QVBoxLayout(advanced_dialog_);
+  // Covers just the fields column when open — the art column stays on
+  // screen either side of it, unlike the separate dialog this used to be.
+  fields_stack_ = new QStackedWidget(this);
+  fields_stack_->addWidget(fields_column);
 
-  overrides_ = new mira_gui::OverridesEditor(id_, advanced_dialog_);
-  dialog_layout->addWidget(overrides_, /*stretch=*/1);
+  auto* advanced_page = new QWidget(this);
+  auto* advanced_layout = new QVBoxLayout(advanced_page);
+  advanced_layout->setContentsMargins(0, 0, 0, 0);
+  advanced_layout->setSpacing(10);
+  auto* advanced_back = new QPushButton("← Back", advanced_page);
+  connect(advanced_back, &QPushButton::clicked, this, [this] {
+    fields_stack_->setCurrentIndex(0);
+    ResetScroll();
+  });
+  advanced_layout->addWidget(advanced_back, /*stretch=*/0, Qt::AlignLeft);
+  overrides_ = new mira_gui::OverridesEditor(id_, advanced_page);
+  advanced_layout->addWidget(overrides_, /*stretch=*/1);
+  fields_stack_->addWidget(advanced_page);
 
-  auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close, advanced_dialog_);
-  connect(buttons, &QDialogButtonBox::rejected, advanced_dialog_, &QDialog::hide);
-  connect(buttons, &QDialogButtonBox::accepted, advanced_dialog_, &QDialog::hide);
-  dialog_layout->addWidget(buttons);
+  layout->addWidget(fields_stack_, /*stretch=*/1);
 
   setEnabled(false);
   Load();
@@ -208,9 +209,20 @@ void GameEditForm::RefreshCover() { hero_art_->RefreshCover(); }
 void GameEditForm::RefreshBanner(const std::string& id) { hero_art_->RefreshBanner(id); }
 
 void GameEditForm::OpenAdvanced() {
-  advanced_dialog_->show();
-  advanced_dialog_->raise();
-  advanced_dialog_->activateWindow();
+  fields_stack_->setCurrentIndex(1);
+  ResetScroll();
+}
+
+void GameEditForm::ResetScroll() {
+  // Both host contexts (LibraryWindow's overlay card, GameDetailDialog)
+  // wrap this form in a QScrollArea it has no direct handle to — walking up
+  // to find it beats each host remembering to reset scroll on page-switch.
+  for (QWidget* ancestor = parentWidget(); ancestor != nullptr; ancestor = ancestor->parentWidget()) {
+    if (auto* scroll_area = qobject_cast<QScrollArea*>(ancestor)) {
+      scroll_area->verticalScrollBar()->setValue(0);
+      return;
+    }
+  }
 }
 
 void GameEditForm::Load() {
