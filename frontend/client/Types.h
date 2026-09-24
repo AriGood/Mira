@@ -37,6 +37,9 @@ struct GameSummary {
   // the frontend treats specially: excluded from the library by default,
   // shown only by the Hidden filter (Ctrl+H).
   std::vector<std::string> tags;
+  // Which importer owns it: "scan", "steam", "epic", "lutris", "battlenet",
+  // ... ("launcher" for a store launcher's own install).
+  std::string source;
 };
 
 struct GamesResult {
@@ -663,10 +666,34 @@ struct HumbleLibraryResult {
   std::vector<HumbleBundle> bundles;
 };
 
-// A store helper's setup, a library install/update, or a Humble download
-// moving along, from the event stream.
+// GET /v1/launchers: Battle.net, Ubisoft Connect, the EA app.
+struct LauncherInfo {
+  std::string id;  // also the `source` of the games imported through it
+  std::string name;
+  std::string game_id;  // the launcher's own game record
+  bool installed = false;
+  std::string install_state;  // "idle" | "running" | "finished" | "failed"
+  bool interactive_install = false;
+  std::string error;
+};
+
+struct LaunchersResult {
+  bool ok = false;
+  std::string error;
+  std::vector<LauncherInfo> launchers;
+};
+
+// POST /v1/amazon/login: the login page to open, made fresh each time.
+struct LoginUrlResult {
+  bool ok = false;
+  std::string error;
+  std::string url;
+};
+
+// A store helper's setup, a library install/update, a Humble download or a
+// launcher install moving along, from the event stream.
 struct StoreEvent {
-  std::string source;  // "epic" | "gog" | "itch" | "humble" | "steam"
+  std::string source;  // "epic" | "gog" | "itch" | "humble" | "amazon" | "steam" | a launcher id
   std::string kind;    // "setup" | "install" | "download"
   std::string state;   // "started" | "finished" | "failed"
   std::string ref;     // install: the title's ref; download: the bundle key

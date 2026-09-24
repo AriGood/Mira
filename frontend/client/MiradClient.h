@@ -273,6 +273,20 @@ public:
   static void DownloadHumbleBundleAsync(QObject* context, const std::string& bundle_key,
                                         std::function<void(StoreActionResult)> callback);
 
+  // Amazon's login URL is made per attempt (PKCE), not a fixed page.
+  static void BeginAmazonLoginAsync(QObject* context, std::function<void(LoginUrlResult)> callback);
+
+  // --- Store launchers (Battle.net, Ubisoft Connect, EA app) ----------------
+
+  static void GetLaunchersAsync(QObject* context, std::function<void(LaunchersResult)> callback);
+  // Detached; a StoreEvent with kind "setup" and the launcher's id follows.
+  static void InstallLauncherAsync(QObject* context, const std::string& id,
+                                   std::function<void(StoreActionResult)> callback);
+  static void ImportLauncherAsync(QObject* context, const std::string& id,
+                                  std::function<void(StoreImportResult)> callback);
+  static void OpenLauncherAsync(QObject* context, const std::string& id,
+                                std::function<void(StoreActionResult)> callback);
+
   static bool ParseStoreEvent(const std::string& event_type, const std::string& data,
                               StoreEvent* out);
 

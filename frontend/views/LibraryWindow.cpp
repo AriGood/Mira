@@ -1444,6 +1444,7 @@ QPixmap LibraryWindow::CoverFor(const mira_gui::GameSummary& game) {
 }
 
 void LibraryWindow::UpdateTileCover(const QString& id) {
+  if (source_page_ != nullptr) source_page_->UpdateCover(id);
   // One item, not a rebuild: artwork arrives one game at a time, and
   // ApplyFilter would drop the selection and scroll position on each.
   for (int row = 0; row < grid_->count(); ++row) {
@@ -1689,6 +1690,7 @@ void LibraryWindow::ApplyFilter() {
                        .arg(QString::fromStdString(mira_gui::MiradClient::ResolveSocketPath())));
 
   RefreshClassicTable();
+  if (source_page_ != nullptr) source_page_->SetGames(games_, running_ids_);
 }
 
 const mira_gui::GameSummary* LibraryWindow::FindGame(const std::string& id) const {
@@ -2328,12 +2330,21 @@ void LibraryWindow::OpenSource(const mira_gui::SourceInfo& source) {
     main_stack_->removeWidget(source_page_);
     source_page_->deleteLater();
   }
-  source_page_ = new mira_gui::SourcePage(source, this);
+  source_page_ = new mira_gui::SourcePage(source, artwork_, this);
+  source_page_->SetGames(games_, running_ids_);
   source_page_->setProperty("source_id", source.id);
   connect(source_page_, &mira_gui::SourcePage::BackRequested, this, &LibraryWindow::CloseSource);
   connect(source_page_, &mira_gui::SourcePage::LibraryChanged, this, &LibraryWindow::RefreshGames);
   connect(source_page_, &mira_gui::SourcePage::OpenSettingsRequested, this,
           [this](const QString& key) { OpenSettings(key); });
+  connect(source_page_, &mira_gui::SourcePage::OpenGameRequested, this,
+          [this](const QString& id) { OpenGameDialog(id.toStdString()); });
+  // Same rule as the grid's double-click: only a ready game has anything to launch.
+  connect(source_page_, &mira_gui::SourcePage::PlayRequested, this, [this](const QString& id) {
+    const mira_gui::GameSummary* game = FindGame(id.toStdString());
+    if (game == nullptr) return;
+    if (running_ids_.contains(game->id) || game->status == "ready") ToggleRunning(game->id);
+  });
   main_stack_->addWidget(source_page_);
   main_stack_->setCurrentWidget(source_page_);
   SetSourceControlsEnabled(false);

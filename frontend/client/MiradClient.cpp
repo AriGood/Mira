@@ -743,6 +743,7 @@ std::optional<StoreEndpoints> EndpointsFor(const std::string& source) {
   if (source == "humble") {
     return StoreEndpoints{"/v1/humble/status", "humble_cli", "/v1/humble/setup", "session_key"};
   }
+  if (source == "amazon") return StoreEndpoints{"/v1/amazon/status", "nile", "/v1/amazon/setup", "redirect"};
   return std::nullopt;
 }
 
@@ -870,6 +871,68 @@ StoreActionResult DownloadHumbleBundleSync(const std::string& bundle_key) {
 
 GamesFolderResult SetGamesFolderSync(const std::string& path) {
   const transport::Reply reply = transport::PostJson("/v1/library/games-folder", {{"path", path}});
+  return {reply.ok, reply.error};
+}
+
+LoginUrlResult BeginAmazonLoginSync() {
+  LoginUrlResult result;
+  const transport::Reply reply = transport::Post("/v1/amazon/login", {.read_timeout = std::chrono::seconds(30)});
+  if (!reply.ok) {
+    result.error = reply.error;
+    return result;
+  }
+  result.url = reply.body.value("url", std::string());
+  result.ok = !result.url.empty();
+  if (!result.ok) result.error = transport::UnexpectedResponse("POST /v1/amazon/login");
+  return result;
+}
+
+LaunchersResult GetLaunchersSync() {
+  LaunchersResult result;
+  const transport::Reply reply = transport::Get("/v1/launchers");
+  if (!reply.ok) {
+    result.error = reply.error;
+    return result;
+  }
+  if (!reply.body.is_array()) {
+    result.error = transport::UnexpectedResponse("GET /v1/launchers");
+    return result;
+  }
+  result.ok = true;
+  for (const json& entry : reply.body) {
+    if (!entry.is_object()) continue;
+    result.launchers.push_back({.id = entry.value("id", std::string()),
+                                .name = entry.value("name", std::string()),
+                                .game_id = entry.value("game_id", std::string()),
+                                .installed = entry.value("installed", false),
+                                .install_state = entry.value("install_state", std::string()),
+                                .interactive_install = entry.value("interactive_install", false),
+                                .error = entry.value("error", std::string())});
+  }
+  return result;
+}
+
+StoreActionResult InstallLauncherSync(const std::string& id) {
+  const transport::Reply reply = transport::Post("/v1/launchers/" + id + "/install");
+  return {reply.ok, reply.error};
+}
+
+StoreImportResult ImportLauncherSync(const std::string& id) {
+  StoreImportResult result;
+  const transport::Reply reply =
+      transport::Post("/v1/launchers/" + id + "/import", {.read_timeout = std::chrono::seconds(120)});
+  if (!reply.ok) {
+    result.error = reply.error;
+    return result;
+  }
+  result.ok = true;
+  result.added = reply.body.value("added", 0);
+  result.updated = reply.body.value("updated", 0);
+  return result;
+}
+
+StoreActionResult OpenLauncherSync(const std::string& id) {
+  const transport::Reply reply = transport::PostJson("/v1/launchers/" + id + "/open", json::object());
   return {reply.ok, reply.error};
 }
 
@@ -1209,6 +1272,30 @@ void MiradClient::SetGamesFolderAsync(QObject* context, const std::string& path,
   async::Run(context, [path] { return SetGamesFolderSync(path); }, std::move(callback));
 }
 
+void MiradClient::BeginAmazonLoginAsync(QObject* context,
+                                        std::function<void(LoginUrlResult)> callback) {
+  async::Run(context, [] { return BeginAmazonLoginSync(); }, std::move(callback));
+}
+
+void MiradClient::GetLaunchersAsync(QObject* context, std::function<void(LaunchersResult)> callback) {
+  async::Run(context, [] { return GetLaunchersSync(); }, std::move(callback));
+}
+
+void MiradClient::InstallLauncherAsync(QObject* context, const std::string& id,
+                                       std::function<void(StoreActionResult)> callback) {
+  async::Run(context, [id] { return InstallLauncherSync(id); }, std::move(callback));
+}
+
+void MiradClient::ImportLauncherAsync(QObject* context, const std::string& id,
+                                      std::function<void(StoreImportResult)> callback) {
+  async::Run(context, [id] { return ImportLauncherSync(id); }, std::move(callback));
+}
+
+void MiradClient::OpenLauncherAsync(QObject* context, const std::string& id,
+                                    std::function<void(StoreActionResult)> callback) {
+  async::Run(context, [id] { return OpenLauncherSync(id); }, std::move(callback));
+}
+
 bool MiradClient::ParseStoreEvent(const std::string& event_type, const std::string& data,
                                   StoreEvent* out) {
   // Each store's setup event has its own prefix; installs and downloads
@@ -1218,6 +1305,7 @@ bool MiradClient::ParseStoreEvent(const std::string& event_type, const std::stri
       {"gog.setup.", "gog"},
       {"itch.setup.", "itch"},
       {"humble.setup.", "humble"},
+      {"amazon.setup.", "amazon"},
   };
   std::string_view state;
   for (const auto& [prefix, source] : kSetupPrefixes) {
@@ -1229,7 +1317,11 @@ bool MiradClient::ParseStoreEvent(const std::string& event_type, const std::stri
   }
   constexpr std::string_view kInstall = "library.install.";
   constexpr std::string_view kDownload = "humble.download.";
-  if (event_type.starts_with(kInstall)) {
+  constexpr std::string_view kLauncher = "launcher.install.";
+  if (event_type.starts_with(kLauncher)) {
+    out->kind = "setup";  // source is the launcher id, read below
+    state = std::string_view(event_type).substr(kLauncher.size());
+  } else if (event_type.starts_with(kInstall)) {
     out->kind = "install";
     state = std::string_view(event_type).substr(kInstall.size());
   } else if (event_type.starts_with(kDownload)) {
@@ -1247,6 +1339,8 @@ bool MiradClient::ParseStoreEvent(const std::string& event_type, const std::stri
     out->ref = entry.value("ref", std::string());
   } else if (out->kind == "download") {
     out->ref = entry.value("bundle_key", std::string());
+  } else if (event_type.starts_with(kLauncher)) {
+    out->source = entry.value("id", std::string());
   }
   out->error = entry.value("error", std::string());
   return true;
