@@ -241,6 +241,36 @@ public:
   // GET /v1/games returns. False unless `data` is a JSON object carrying a
   // non-empty string id — callers dispatch on the event type first, and this
   // is the second line of defence behind that.
+  // --- Stores (Epic, GOG, itch.io, Humble Bundle) ---------------------------
+
+  static void GetStoreStatusAsync(QObject* context, const std::string& source,
+                                  std::function<void(StoreStatusResult)> callback);
+  // Downloads the store's helper tool, detached; a StoreEvent says when done.
+  static void SetupStoreToolAsync(QObject* context, const std::string& source,
+                                  std::function<void(StoreActionResult)> callback);
+  // `credential` is whatever the user pasted: a code, a whole login page or
+  // redirect URL, an API key, or a session cookie, per store.
+  static void SignInStoreAsync(QObject* context, const std::string& source,
+                               const std::string& credential,
+                               std::function<void(StoreActionResult)> callback);
+  static void SignOutStoreAsync(QObject* context, const std::string& source,
+                                std::function<void(StoreActionResult)> callback);
+  static void ImportStoreAsync(QObject* context, const std::string& source,
+                               std::function<void(StoreImportResult)> callback);
+  // GET /v1/library?source= — owned titles, installed or not.
+  static void GetStoreLibraryAsync(QObject* context, const std::string& source,
+                                   std::function<void(StoreLibraryResult)> callback);
+  static void InstallStoreTitleAsync(QObject* context, const std::string& source,
+                                     const std::string& ref, bool update,
+                                     std::function<void(StoreActionResult)> callback);
+  static void GetHumbleLibraryAsync(QObject* context,
+                                    std::function<void(HumbleLibraryResult)> callback);
+  static void DownloadHumbleBundleAsync(QObject* context, const std::string& bundle_key,
+                                        std::function<void(StoreActionResult)> callback);
+
+  static bool ParseStoreEvent(const std::string& event_type, const std::string& data,
+                              StoreEvent* out);
+
   static bool ParseGameSummary(const std::string& data, GameSummary* out);
 
   // Parses a `game.state` payload (`{"id", "state": "running" | "exited" |

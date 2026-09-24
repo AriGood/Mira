@@ -84,9 +84,11 @@ qt_add_executable(mira-gui
   ui/GameEditForm.cpp
   ui/GameEditForm.h
 
-  # views/ — the two top-level library windows.
+  # views/ — the two top-level library windows, and LibraryWindow's full-page views.
   views/LibraryWindow.cpp
   views/LibraryWindow.h
+  views/SourcePage.cpp
+  views/SourcePage.h
   views/MainWindow.cpp
   views/MainWindow.h
 

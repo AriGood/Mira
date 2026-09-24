@@ -68,6 +68,7 @@
 #include "../ui/Shortcuts.h"
 #include "../ui/Theme.h"
 #include "../ui/Tray.h"
+#include "SourcePage.h"
 
 // setViewportMargins is protected on QAbstractScrollArea; this just republishes
 // it so ApplyLayoutTokens() can pad the tiles without also inseting the
@@ -444,7 +445,11 @@ LibraryWindow::LibraryWindow(QWidget* parent) : QMainWindow(parent) {
 
   splitter_ = new QSplitter(Qt::Horizontal, this);
   splitter_->addWidget(BuildSidebar());
-  splitter_->addWidget(BuildGrid());
+  // A source page takes the grid's place here, leaving the sidebar up.
+  main_stack_ = new QStackedWidget(this);
+  grid_page_ = BuildGrid();
+  main_stack_->addWidget(grid_page_);
+  splitter_->addWidget(main_stack_);
   splitter_->setStretchFactor(0, 0);
   splitter_->setStretchFactor(1, 1);
   splitter_->setSizes({232, 850});
@@ -492,6 +497,7 @@ LibraryWindow::LibraryWindow(QWidget* parent) : QMainWindow(parent) {
   UpdateLibraryNavActive();
 
   LoadPrefs();
+  RefreshSourceNavs();
   RefreshHealth(/*force_scan=*/false);
 
   event_stream_.Start(this,
@@ -1207,6 +1213,10 @@ QWidget* LibraryWindow::BuildSidebar() {
       RequestCloseSettings();
     } else if (GameEditOpen()) {
       RequestCloseGameEdit();
+    } else if (content_stack_->currentWidget() == classic_page_) {
+      CloseClassicView();
+    } else if (source_page_ != nullptr) {
+      CloseSource();
     }
   });
   layout->addWidget(library_nav_);
@@ -1297,19 +1307,46 @@ QWidget* LibraryWindow::BuildSidebar() {
   };
   layout->addWidget(pill);
 
+  // The LIBRARY and SOURCES rows scroll, so they never set the window's
+  // minimum height.
   layout->addSpacing(14);
-  auto* library_heading = new QLabel("LIBRARY", sidebar);
-  library_heading->setProperty("role", "muted");
-  library_heading->setStyleSheet("font-weight: 600; letter-spacing: 0.04em;");
-  layout->addWidget(library_heading);
+  auto* nav_scroll = new QScrollArea(sidebar);
+  nav_scroll->setWidgetResizable(true);
+  nav_scroll->setFrameShape(QFrame::NoFrame);
+  nav_scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+  nav_scroll->viewport()->setAutoFillBackground(false);
+  auto* nav_content = new QWidget();
+  nav_content->setAutoFillBackground(false);
+  auto* nav_layout = new QVBoxLayout(nav_content);
+  nav_layout->setContentsMargins(0, 0, 0, 0);
+  nav_layout->setSpacing(2);
 
+  const auto heading = [nav_content, nav_layout](const QString& text) {
+    auto* label = new QLabel(text, nav_content);
+    label->setProperty("role", "muted");
+    label->setStyleSheet("font-weight: 600; letter-spacing: 0.04em;");
+    nav_layout->addWidget(label);
+  };
+  heading("LIBRARY");
   // Filled in by PopulateLibraryActions(), after BuildShortcuts() populates
   // common_.
   library_actions_layout_ = new QVBoxLayout();
   library_actions_layout_->setSpacing(2);
-  layout->addLayout(library_actions_layout_);
+  nav_layout->addLayout(library_actions_layout_);
 
-  layout->addStretch(1);
+  nav_layout->addSpacing(14);
+  heading("SOURCES");
+  for (const mira_gui::SourceInfo& source : mira_gui::AllSources()) {
+    auto* nav = new QPushButton(source.name, nav_content);
+    nav->setFlat(true);
+    nav->setCheckable(true);
+    connect(nav, &QPushButton::clicked, this, [this, source] { OpenSource(source); });
+    nav_layout->addWidget(nav);
+    source_navs_.append(nav);
+  }
+  nav_layout->addStretch(1);
+  nav_scroll->setWidget(nav_content);
+  layout->addWidget(nav_scroll, /*stretch=*/1);
 
   settings_button_ = new QPushButton("Settings", sidebar);
   settings_button_->setObjectName("sidebar_settings");
@@ -1686,7 +1723,7 @@ void LibraryWindow::RemoveGame(const std::string& id) {
 void LibraryWindow::SelectionChanged() {
   // Not the grid on screen (Settings or classic table instead) — a stray
   // signal (e.g. ApplyFilter rebuilding the grid) should stay a no-op.
-  if (content_stack_->currentWidget() != splitter_) return;
+  if (!GridShown()) return;
 
   const QList<QListWidgetItem*> selected = grid_->selectedItems();
   selected_id_ = selected.size() == 1
@@ -1701,7 +1738,7 @@ void LibraryWindow::ShowHoverCard(QListWidgetItem* item) {
   }
   // Nothing to preview once the grid isn't on screen, and a preview for one
   // game reads as wrong noise over an active multi-selection.
-  if (content_stack_->currentWidget() != splitter_ || grid_->selectedItems().size() > 1) return;
+  if (!GridShown() || grid_->selectedItems().size() > 1) return;
 
   const std::string id = item->data(mira_gui::GameTileDelegate::IdRole).toString().toStdString();
   const mira_gui::GameSummary* game = FindGame(id);
@@ -2057,6 +2094,7 @@ bool LibraryWindow::SettingsOpen() const {
 
 void LibraryWindow::SetSettingsChromeVisible(bool settings_open) {
   SetGridControlsEnabled(!settings_open);
+  for (QPushButton* nav : source_navs_) nav->setEnabled(!settings_open);
   UpdateLibraryNavActive();
 }
 
@@ -2072,13 +2110,15 @@ void LibraryWindow::SetGridControlsEnabled(bool enabled) {
         static_cast<QWidget*>(classic_view_nav_)}) {
     control->setEnabled(enabled);
   }
+  // Back from Settings onto a source page: the grid is still covered.
+  if (enabled && source_page_ != nullptr) SetSourceControlsEnabled(false);
 }
 
 void LibraryWindow::UpdateLibraryNavActive() {
   using mira_gui::icons::Glyph;
   const mira_gui::theme::Tokens& tokens = mira_gui::theme::Current();
 
-  const bool library_active = content_stack_->currentWidget() == splitter_ && !GameEditOpen();
+  const bool library_active = GridShown() && !GameEditOpen();
   if (library_nav_ != nullptr) {
     library_nav_->setChecked(library_active);
     library_nav_->setIcon(
@@ -2089,6 +2129,16 @@ void LibraryWindow::UpdateLibraryNavActive() {
     classic_view_nav_->setChecked(classic_active);
     classic_view_nav_->setIcon(
         mira_gui::icons::For(Glyph::Table, classic_active ? tokens.on_accent : tokens.text));
+  }
+  const QString open_source = content_stack_->currentWidget() == splitter_ && source_page_ != nullptr
+                                  ? source_page_->property("source_id").toString()
+                                  : QString();
+  const std::vector<mira_gui::SourceInfo>& sources = mira_gui::AllSources();
+  for (int i = 0; i < source_navs_.size() && i < static_cast<int>(sources.size()); ++i) {
+    const bool active = sources[i].id == open_source;
+    source_navs_[i]->setChecked(active);
+    source_navs_[i]->setIcon(
+        mira_gui::icons::For(Glyph::Store, active ? tokens.on_accent : tokens.text));
   }
 }
 
@@ -2136,6 +2186,7 @@ QWidget* LibraryWindow::BuildSettingsPage() {
             CloseSettings();
             // Picks up a changed game_settings_in_sidebar without a restart.
             LoadPrefs();
+            RefreshSourceNavs();
           });
   layout->addWidget(settings_panel_, /*stretch=*/1);
 
@@ -2266,7 +2317,60 @@ QWidget* LibraryWindow::BuildGameEditCard(const std::string& id) {
   return card;
 }
 
+void LibraryWindow::OpenSource(const mira_gui::SourceInfo& source) {
+  if (content_stack_->currentWidget() == classic_page_) CloseClassicView();
+  if (source_page_ != nullptr) {
+    main_stack_->removeWidget(source_page_);
+    source_page_->deleteLater();
+  }
+  source_page_ = new mira_gui::SourcePage(source, this);
+  source_page_->setProperty("source_id", source.id);
+  connect(source_page_, &mira_gui::SourcePage::BackRequested, this, &LibraryWindow::CloseSource);
+  connect(source_page_, &mira_gui::SourcePage::LibraryChanged, this, &LibraryWindow::RefreshGames);
+  connect(source_page_, &mira_gui::SourcePage::OpenSettingsRequested, this,
+          [this](const QString& key) { OpenSettings(key); });
+  main_stack_->addWidget(source_page_);
+  main_stack_->setCurrentWidget(source_page_);
+  SetSourceControlsEnabled(false);
+  UpdateLibraryNavActive();
+}
+
+void LibraryWindow::CloseSource() {
+  main_stack_->setCurrentWidget(grid_page_);
+  if (source_page_ != nullptr) {
+    main_stack_->removeWidget(source_page_);
+    source_page_->deleteLater();
+    source_page_ = nullptr;
+  }
+  SetSourceControlsEnabled(true);
+  UpdateLibraryNavActive();
+}
+
+// Only what acts on the grid; the rest of the sidebar stays usable.
+void LibraryWindow::SetSourceControlsEnabled(bool enabled) {
+  if (!enabled) ShowHoverCard(nullptr);
+  for (QWidget* control : {filter_sort_button_, static_cast<QWidget*>(search_), static_cast<QWidget*>(zoom_)}) {
+    control->setEnabled(enabled);
+  }
+}
+
+bool LibraryWindow::GridShown() const {
+  return content_stack_->currentWidget() == splitter_ && main_stack_->currentWidget() == grid_page_;
+}
+
+void LibraryWindow::RefreshSourceNavs() {
+  mira_gui::MiradClient::GetConfigAsync(this, [this](mira_gui::ConfigResult result) {
+    if (!result.ok) return;  // every source stays listed
+    const std::vector<mira_gui::SourceInfo>& sources = mira_gui::AllSources();
+    for (int i = 0; i < source_navs_.size() && i < static_cast<int>(sources.size()); ++i) {
+      const auto found = result.values.find(sources[i].id.toStdString() + ".enabled");
+      source_navs_[i]->setVisible(found == result.values.end() || found->second != "false");
+    }
+  });
+}
+
 void LibraryWindow::OpenClassicView() {
+  if (source_page_ != nullptr) CloseSource();
   content_stack_->setCurrentWidget(classic_page_);
   SetGridControlsEnabled(false);
   UpdateLibraryNavActive();

@@ -8,8 +8,8 @@ that decision is load-bearing and is not restated here.
 ## Two views, both kept
 
 `mira-gui` opens on **the grid** (`views/LibraryWindow`): cover tiles and a
-left sidebar (filters, sort, search, Library/Classic-view navigation,
-Settings, and a status line), with a custom top bar in place of a native
+left sidebar (filters, sort, search, Library/Classic-view navigation, a
+Sources list, Settings, and a status line), with a custom top bar in place of a native
 titlebar — Add/Import Games, tile size, and window controls (minimize/maximize/
 close), inspired by Lutris. It is modelled on Playnite's shelf for the tile
 browsing itself, which is the interaction most people arriving at a Linux
@@ -27,6 +27,19 @@ It is reachable as `mira-gui --classic`, or from the grid sidebar's *Classic
 table view* row, which opens it as a second top-level window rather than
 swapping the grid out.
 
+### Sources
+
+The sidebar's *Sources* rows (Steam, Epic Games, GOG, itch.io, Humble
+Bundle, Lutris) each open `views/SourcePage` in the grid's place, with the
+sidebar still up. A store page walks through what that store needs, in order:
+download its helper tool (Legendary, gogdl, butler, humble-cli), sign in by
+pasting what the store's login page shows, import what's already installed,
+then list what the account owns with Install/Update (Humble: Download). Steam
+and Lutris pages only import, plus Steam's owned list when a Web API key is
+set. A source turned off in Settings (`<id>.enabled`) is left out of the
+list. Paste parsing and login URLs come from mirad, so the page holds only
+wording.
+
 Neither is a fallback for the other. The grid is the better browser; the
 table is the better audit tool for a library that was just scanned, where
 the question is "what did detection get wrong" and the answer is a column.
@@ -38,6 +51,9 @@ said.
 
 One click selects a tile (or, with Ctrl/Shift or a drag, several — the
 context menu then offers a reduced batch version of its usual actions). A
+drag that starts on a tile only begins once the cursor leaves that tile, and
+it scrolls the grid near the top or bottom edge. *Drag to select* on the
+Interface tab turns it off. A
 second (double) click launches. Right-click opens the per-game menu.
 Launching on the first click would turn a misclick into a started game, so a
 single click never launches anything.
@@ -199,8 +215,9 @@ This matters more than it looks:
   | `theme` | a theme name, or `auto` to follow the desktop — see "Theming" |
   | `tile_spacing`, `grid_margin` | grid layout, in pixels; `-1` means "leave it to the theme" |
   | `tile_radius`, `panel_radius`, `control_radius` | corner rounding, same `-1` rule |
+  | `drag_select` | whether dragging across the grid selects tiles (default on) |
 
-  `scan_on_startup`, `theme` and
+  `scan_on_startup`, `theme`, `drag_select` and
   the five shape keys get rows in the settings screen, on an Interface tab
   ahead of the schema-driven ones.
   The rest are implicit UI state: they are saved by using the window, not by

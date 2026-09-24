@@ -41,6 +41,8 @@ class GameEditForm;
 class GameTileDelegate;
 class HoverCard;
 class SettingsPanel;
+class SourcePage;
+struct SourceInfo;
 }
 
 // Primary library view: cover-art grid, a left sidebar (filters, sort,
@@ -176,6 +178,14 @@ private:
   void RefreshClassicTable();
   void OpenClassicView();
   void CloseClassicView();
+  // A store or launcher's page, rebuilt fresh on each open.
+  void OpenSource(const mira_gui::SourceInfo& source);
+  void CloseSource();
+  // Hides the sources turned off in Settings (`<id>.enabled`).
+  void RefreshSourceNavs();
+  void SetSourceControlsEnabled(bool enabled);
+  // The grid is what's on screen: not Settings, the classic table, or a source page.
+  bool GridShown() const;
   // `announce` is false for the bulk path, where one toast covers the batch
   // and per-game messages would be one notification per game.
   void RefreshMetadata(const std::string& id, bool announce = true);
@@ -233,8 +243,14 @@ private:
   QPushButton* classic_view_nav_ = nullptr;
   // Where PopulateLibraryActions() adds its icon+label rows.
   QVBoxLayout* library_actions_layout_ = nullptr;
+  // One sidebar row per mira_gui::AllSources() entry, same order.
+  QList<QPushButton*> source_navs_;
+  mira_gui::SourcePage* source_page_ = nullptr;
 
   QSplitter* splitter_ = nullptr;
+  // The splitter's right side: grid_page_, or source_page_ over it.
+  QStackedWidget* main_stack_ = nullptr;
+  QWidget* grid_page_ = nullptr;
   // Swaps the splitter out for Settings/classic table, full-screen. A
   // game's edit card is a separate overlay (game_edit_overlay_) that stays
   // over the grid instead.

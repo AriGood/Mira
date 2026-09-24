@@ -599,4 +599,67 @@ struct DesktopEntrySyncResult {
   std::string error;
 };
 
+// GET /v1/<store>/status for "epic", "gog", "itch" and "humble". `tool` is
+// the helper mirad drives for that store (Legendary, gogdl, butler,
+// humble-cli).
+struct StoreStatusResult {
+  bool ok = false;
+  std::string error;
+  bool tool_installed = false;
+  std::string tool_version;
+  bool authenticated = false;
+  std::string account;  // Epic only
+  std::string login_url;
+};
+
+// Setup, sign-in, sign-out, and the detached install/download kick-offs:
+// success only means mirad accepted it.
+struct StoreActionResult {
+  bool ok = false;
+  std::string error;
+};
+
+// POST /v1/<store>/import.
+struct StoreImportResult {
+  bool ok = false;
+  std::string error;
+  int added = 0;
+  int updated = 0;
+};
+
+// One GET /v1/library entry: something the account owns.
+struct StoreTitle {
+  std::string ref;
+  std::string title;
+  bool installed = false;
+};
+
+struct StoreLibraryResult {
+  bool ok = false;
+  std::string error;
+  std::vector<StoreTitle> titles;
+};
+
+struct HumbleBundle {
+  std::string key;
+  std::string name;
+  bool claimed = false;
+};
+
+struct HumbleLibraryResult {
+  bool ok = false;
+  std::string error;
+  std::vector<HumbleBundle> bundles;
+};
+
+// A store helper's setup, a library install/update, or a Humble download
+// moving along, from the event stream.
+struct StoreEvent {
+  std::string source;  // "epic" | "gog" | "itch" | "humble" | "steam"
+  std::string kind;    // "setup" | "install" | "download"
+  std::string state;   // "started" | "finished" | "failed"
+  std::string ref;     // install: the title's ref; download: the bundle key
+  std::string error;   // only on "failed"
+};
+
 }  // namespace mira_gui
