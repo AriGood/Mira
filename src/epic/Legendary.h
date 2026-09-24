@@ -85,8 +85,9 @@ EpicAuthStatus Status(const config::Config& config);
 // Runs `legendary auth --code <code>` — the headless login path (see
 // kLoginUrl's comment): the user visits kLoginUrl in their own browser,
 // pastes back the code it shows. Err("legendary_missing", ...) if legendary
-// isn't installed, same as everything else here.
-Result<void> Login(const config::Config& config, const std::string& code);
+// isn't installed, same as everything else here. `pasted` may also be the
+// whole JSON page kLoginUrl ends on; the code is pulled out of it.
+Result<void> Login(const config::Config& config, const std::string& pasted);
 
 Result<void> Logout(const config::Config& config);
 

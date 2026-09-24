@@ -132,6 +132,15 @@ TEST_CASE("Status reads the account through legendary's stderr log noise") {
   CHECK(status.account == "Tester");
 }
 
+TEST_CASE("Login rejects a pasted JSON page with no authorizationCode") {
+  Fixture fixture("epic-login-json");
+  fixture.UseFakeLegendary("", kLoggedOut);
+
+  const Result<void> result = epic::Login(fixture.config, R"({"redirectUrl": "https://example"})");
+  REQUIRE_FALSE(result);
+  CHECK(result.error().code == "invalid_code");
+}
+
 TEST_CASE("RunLegendaryJson reads a top-level array through the same noise") {
   // list/list-installed return an array, not an object -- the other half of
   // the same bug.

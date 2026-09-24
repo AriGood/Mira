@@ -131,6 +131,19 @@ TEST_CASE("Login fails when gogdl reports {\"error\": true} despite exiting 0") 
   CHECK_FALSE(gog::Status(fixture.config).authenticated);
 }
 
+TEST_CASE("Login pulls the code out of a pasted redirect URL") {
+  Fixture fixture("gog-login-url");
+  fixture.UseFakeGogdl();
+
+  // The fake rejects exactly "bad-code", so a failure proves the bare code
+  // (and not the whole URL) reached gogdl.
+  const Result<void> result =
+      gog::Login(fixture.config, "  https://embed.gog.com/on_login_success?origin=client&code=bad-code&x=1\n");
+  REQUIRE_FALSE(result);
+  CHECK(result.error().code == "login_failed");
+  CHECK(gog::Login(fixture.config, "https://embed.gog.com/on_login_success?origin=client&code=good-code"));
+}
+
 TEST_CASE("AccessToken refreshes an expired token by re-invoking gogdl auth") {
   Fixture fixture("gog-token-refresh");
   fixture.UseFakeGogdl();
