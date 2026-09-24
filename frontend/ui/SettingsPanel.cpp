@@ -73,6 +73,12 @@ void SettingsPanel::BuildInterfaceGroup() {
   form->addRow("Edit a game in the sidebar", game_settings_in_sidebar_);
   nav_->RegisterRow(form, game_settings_in_sidebar_, "edit a game in the sidebar");
 
+  drag_select_ = new QCheckBox(box);
+  drag_select_->setChecked(true);
+  drag_select_->setToolTip("Drag across the library to select several games at once.");
+  form->addRow("Drag to select", drag_select_);
+  nav_->RegisterRow(form, drag_select_, "drag to select rubber band multiple");
+
   auto* shapes = new QLabel("Layout", box);
   shapes->setProperty("role", "section");
   form->addRow(shapes);
@@ -227,6 +233,10 @@ void SettingsPanel::LoadFrontendPrefs() {
     if (result.prefs.game_settings_in_sidebar) {
       game_settings_in_sidebar_original_ = *result.prefs.game_settings_in_sidebar;
       game_settings_in_sidebar_->setChecked(game_settings_in_sidebar_original_);
+    }
+    if (result.prefs.drag_select) {
+      drag_select_original_ = *result.prefs.drag_select;
+      drag_select_->setChecked(drag_select_original_);
     }
     const auto shape = [](ShapeField& field, const std::optional<int>& pref) {
       field.spin->setValue(pref ? *pref : -1);
@@ -485,6 +495,7 @@ bool SettingsPanel::IsDirty() const {
   if (scan_on_startup_->isChecked() != scan_on_startup_original_) return true;
   if (theme_->currentData().toString() != theme_original_) return true;
   if (game_settings_in_sidebar_->isChecked() != game_settings_in_sidebar_original_) return true;
+  if (drag_select_->isChecked() != drag_select_original_) return true;
   for (const ShapeField* field :
        {&tile_spacing_, &grid_margin_, &tile_radius_, &panel_radius_, &control_radius_}) {
     if (field->spin->value() != field->original) return true;
@@ -503,6 +514,7 @@ void SettingsPanel::DiscardChanges() {
   const int theme_index = theme_->findData(theme_original_);
   if (theme_index >= 0) theme_->setCurrentIndex(theme_index);
   game_settings_in_sidebar_->setChecked(game_settings_in_sidebar_original_);
+  drag_select_->setChecked(drag_select_original_);
   for (ShapeField* field :
        {&tile_spacing_, &grid_margin_, &tile_radius_, &panel_radius_, &control_radius_}) {
     field->spin->setValue(field->original);
@@ -525,11 +537,13 @@ void SettingsPanel::Save() {
   }
   if (scan_on_startup_->isChecked() != scan_on_startup_original_ ||
       theme_name != theme_original_ || shapes_changed || shortcuts_changed ||
-      game_settings_in_sidebar != game_settings_in_sidebar_original_) {
+      game_settings_in_sidebar != game_settings_in_sidebar_original_ ||
+      drag_select_->isChecked() != drag_select_original_) {
     mira_gui::FrontendPrefs prefs;
     prefs.scan_on_startup = scan_on_startup_->isChecked();
     prefs.theme = theme_name.toStdString();
     prefs.game_settings_in_sidebar = game_settings_in_sidebar;
+    prefs.drag_select = drag_select_->isChecked();
     // Always written, including the -1 that means "theme default": the key
     // has to be able to go back to unset, and a merge-patch cannot drop one.
     prefs.tile_spacing = tile_spacing_.spin->value();
@@ -571,6 +585,7 @@ void SettingsPanel::Save() {
     }
     scan_on_startup_original_ = *prefs.scan_on_startup;
     game_settings_in_sidebar_original_ = game_settings_in_sidebar;
+    drag_select_original_ = *prefs.drag_select;
     if (theme_name != theme_original_) {
       theme_original_ = theme_name;
       mira_gui::theme::Apply(theme_name);

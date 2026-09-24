@@ -110,6 +110,8 @@ private:
   QString theme_original_;
   QCheckBox* game_settings_in_sidebar_ = nullptr;
   bool game_settings_in_sidebar_original_ = true;
+  QCheckBox* drag_select_ = nullptr;
+  bool drag_select_original_ = true;
   ShapeField tile_spacing_;
   ShapeField grid_margin_;
   ShapeField tile_radius_;
