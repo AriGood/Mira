@@ -196,8 +196,7 @@ private:
   // While installing_ isn't empty: asks mirad how far each install has got.
   void PollInstalls();
   // "Installing… 1.2 GB" for a game mid-install, else empty.
-  QString InstallText(const std::string& id) const;
-  // `announce` is false for the bulk path, where one toast covers the batch
+  QString InstallText(const std::string& id) const;  // `announce` is false for the bulk path, where one toast covers the batch
   // and per-game messages would be one notification per game.
   void RefreshMetadata(const std::string& id, bool announce = true);
   void OpenArtworkPicker(const std::string& id, const std::string& slot);
@@ -299,6 +298,10 @@ private:
   // Games whose installer mirad is running, with the bytes written so far.
   std::map<std::string, std::int64_t> installing_;
   QTimer* install_poll_ = nullptr;
+  // game.added events asking for their settings to open, gathered briefly
+  // so a scan's burst of them opens nothing.
+  std::vector<std::string> pending_added_;
+  QTimer* added_timer_ = nullptr;
   // Whether RefreshGames() has ever completed successfully.
   bool loaded_ = false;
   // Games the user explicitly asked to refresh — a metadata failure for one

@@ -270,7 +270,13 @@ Everything `api.md` marks implemented has a path through the UI:
 | `POST /v1/games/{id}/artwork?type=` | *Choose cover art…* / *Choose hero art…* (`ArtworkPickerDialog`) |
 | `POST /v1/games/{id}/run` | *Run in prefix…* (`RunInPrefixDialog`) |
 | `POST /v1/games/{id}/finish-install` | *Mark as installed* |
+| `GET /v1/games/{id}/installer`, `POST .../install` | *Install…* (`InstallGameDialog`), for a `needs_install` or `broken` game |
+| `GET /v1/games/{id}/install/progress` | the tile's "Installing… 1.2 GB" while `game.install.*` says one runs |
+| `POST /v1/games/{id}/relocate`, `/v1/library/relocate` | *Move to Mira's folders…* (tile and batch menus), *Move games into Mira's folders…* (sidebar) |
 | `POST /v1/library/scan` | on startup, and *View → Refresh library* |
+| `GET /v1/library`, `POST /v1/library/install\|update` | `SourcePage`'s Not installed tiles, and Update on its library tiles |
+| `/v1/{epic,gog,itch,amazon,humble}/*` | `SourcePage` for each store |
+| `/v1/launchers/*` | `SourcePage` for Battle.net, Ubisoft Connect, the EA app |
 | `GET`/`PATCH /v1/config`, `/reset` | `SettingsDialog` |
 | `GET /v1/config/schema` | generates `SettingsDialog` and `OverridesEditor` |
 | `GET /v1/runners` | runner pickers, and `RunnerDialog`'s installed list |
@@ -280,9 +286,11 @@ Everything `api.md` marks implemented has a path through the UI:
 | `POST /v1/lutris/import` | *Library → Import Lutris games* |
 | `GET /v1/events` | `EventStream` |
 
-Events handled: `game.added`, `game.updated`, `game.removed`, `game.state`,
-`game.launched`, `game.metadata_ready`/`.metadata_failed`,
-`runners.download.started`/`.finished`/`.failed`.
+Events handled: `game.added` (and its `open_config`), `game.updated`,
+`game.removed`, `game.state`, `game.launched`,
+`game.metadata_ready`/`.metadata_failed`, `game.install.*`,
+`runners.download.started`/`.finished`/`.failed`, and on a source page the
+store/launcher setup, `library.install.*` and `humble.download.*` events.
 
 **Dispatch on the event type, always.** Only `game.added` and `game.updated`
 carry a game record, and the library views check for exactly those two

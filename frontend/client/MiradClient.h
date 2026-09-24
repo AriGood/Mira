@@ -307,6 +307,9 @@ public:
 
   static bool ParseGameSummary(const std::string& data, GameSummary* out);
 
+  // A game.added payload's `open_config` (open_config_on_add).
+  static bool ParseOpenConfig(const std::string& data);
+
   // Parses a `game.state` payload (`{"id", "state": "running" | "exited" |
   // "crashed", ...}`, docs/api.md) down to just id/state — enough to know
   // which row's Launch/Stop button to flip. Unlike game.added/updated this
