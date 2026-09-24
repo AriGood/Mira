@@ -511,23 +511,12 @@ struct FrontendPrefs {
   // QKeySequence::toString(PortableText) string. An id absent here just
   // means "whatever that action's own default is" -- see keybindings::All().
   std::optional<std::map<std::string, std::string>> shortcut_overrides;
-  // Set once the first-launch dialog has been through.
-  std::optional<bool> welcome_done;
 };
 
 struct FrontendPrefsResult {
   bool ok = false;
   std::string error;
   FrontendPrefs prefs;
-  // Whether frontend.toml held anything at all: false only before the GUI
-  // has ever saved its state.
-  bool stored = false;
-};
-
-// POST /v1/library/games-folder.
-struct GamesFolderResult {
-  bool ok = false;
-  std::string error;
 };
 
 // GET /v1/games/{id}/installer[?path=].

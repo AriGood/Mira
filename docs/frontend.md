@@ -27,16 +27,6 @@ It is reachable as `mira-gui --classic`, or from the grid sidebar's *Classic
 table view* row, which opens it as a second top-level window rather than
 swapping the grid out.
 
-### First launch
-
-The first time the GUI runs against a mirad (its `frontend.toml` table is
-still empty), `dialogs/WelcomeDialog` asks which folder Mira takes over,
-`~/Games` by default. Confirming sends `POST /v1/library/games-folder`, which
-also moves the prefix and store install folders inside it, then offers the
-Steam and Lutris imports and a way into each store's page. Closing it at any
-step still sets `welcome_done`, so it never comes back; Settings can change
-any of it later.
-
 ### Sources
 
 The sidebar's *Sources* rows each open `views/SourcePage` in the grid's
@@ -236,7 +226,6 @@ This matters more than it looks:
   | `tile_spacing`, `grid_margin` | grid layout, in pixels; `-1` means "leave it to the theme" |
   | `tile_radius`, `panel_radius`, `control_radius` | corner rounding, same `-1` rule |
   | `drag_select` | whether dragging across the grid selects tiles (default on) |
-  | `welcome_done` | set once the first-launch dialog has closed |
 
   `scan_on_startup`, `theme`, `drag_select` and
   the five shape keys get rows in the settings screen, on an Interface tab
@@ -285,7 +274,6 @@ Everything `api.md` marks implemented has a path through the UI:
 | `GET /v1/games/{id}/install/progress` | the tile's "Installing… 1.2 GB" while `game.install.*` says one runs |
 | `POST /v1/games/{id}/relocate`, `/v1/library/relocate` | *Move to Mira's folders…* (tile and batch menus), *Move games into Mira's folders…* (sidebar) |
 | `POST /v1/library/scan` | on startup, and *View → Refresh library* |
-| `POST /v1/library/games-folder` | the first-launch dialog (`WelcomeDialog`) |
 | `GET /v1/library`, `POST /v1/library/install\|update` | `SourcePage`'s Not installed tiles, and Update on its library tiles |
 | `/v1/{epic,gog,itch,amazon,humble}/*` | `SourcePage` for each store |
 | `/v1/launchers/*` | `SourcePage` for Battle.net, Ubisoft Connect, the EA app |

@@ -53,7 +53,6 @@
 #include "../dialogs/GameDetailDialog.h"
 #include "../dialogs/GameDetailPageDialog.h"
 #include "../dialogs/RunnerDialog.h"
-#include "../dialogs/WelcomeDialog.h"
 
 #include "../ui/AboutPanel.h"
 #include "../ui/CoverArt.h"
@@ -744,10 +743,6 @@ void LibraryWindow::LoadPrefs() {
     if (prefs.theme) mira_gui::theme::Apply(QString::fromStdString(*prefs.theme));
     if (prefs.game_settings_in_sidebar) game_settings_in_sidebar_ = *prefs.game_settings_in_sidebar;
     grid_->SetDragSelectEnabled(prefs.drag_select.value_or(true));
-    // Nothing stored at all: the GUI has never run against this mirad.
-    if (!result.stored && !prefs.welcome_done.value_or(false)) {
-      QTimer::singleShot(0, this, &LibraryWindow::ShowWelcome);
-    }
   });
 }
 
@@ -2455,30 +2450,6 @@ void LibraryWindow::RelocateLibrary() {
                                                              .arg(result.moved == 1 ? "" : "s"));
     }
     RefreshGames();
-  });
-}
-
-void LibraryWindow::ShowWelcome() {
-  mira_gui::MiradClient::GetConfigAsync(this, [this](mira_gui::ConfigResult config) {
-    // FlattenConfig comma-joins arrays; the first entry is the games folder.
-    const QString roots = config.ok ? QString::fromStdString(config.values["library_roots"]) : QString();
-    auto* dialog = new mira_gui::WelcomeDialog(roots.section(',', 0, 0).trimmed(), this);
-    dialog->setAttribute(Qt::WA_DeleteOnClose);
-    connect(dialog, &mira_gui::WelcomeDialog::GamesFolderChanged, this,
-            [this] { RescanAndRefreshGames(/*force_scan=*/true); });
-    connect(dialog, &mira_gui::WelcomeDialog::LibraryChanged, this, &LibraryWindow::RefreshGames);
-    connect(dialog, &mira_gui::WelcomeDialog::OpenSourceRequested, this, [this](const QString& id) {
-      for (const mira_gui::SourceInfo& source : mira_gui::AllSources()) {
-        if (source.id == id) OpenSource(source);
-      }
-    });
-    // Closing at any step counts: the defaults stand, and Settings can change them.
-    connect(dialog, &QDialog::finished, this, [this] {
-      mira_gui::FrontendPrefs prefs;
-      prefs.welcome_done = true;
-      mira_gui::MiradClient::SaveFrontendPrefsAsync(this, prefs, [](mira_gui::PatchConfigResult) {});
-    });
-    dialog->open();
   });
 }
 

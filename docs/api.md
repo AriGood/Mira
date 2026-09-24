@@ -356,17 +356,6 @@ needs; see `docs/architecture.md` if that stops being true.
 Runs `/v1/games/{id}/relocate` with no body for every game. Returns
 `{"moved": N, "failed": N}`.
 
-### `POST /v1/library/games-folder` — implemented
-Body `{"path": "~/Games"}` (absolute, or starting with `~`). Makes that folder
-Mira's games folder in one step: it replaces the first `library_roots` entry
-(any others stay), and `prefix_root`, `gog.install_root`,
-`itch.install_root` and `humble.download_root` move to `prefixes`, `GOG`,
-`itch` and `Humble Bundle` inside it. Creates the folder, and the watcher
-starts watching it straight away. Nothing already on disk is moved (see
-`POST /v1/library/relocate`) and nothing is scanned; follow with `POST
-/v1/library/scan` to pick up what's already there. Answers with the five
-keys' new values. The GUI's first-launch dialog uses this.
-
 Any `PATCH /v1/config` or reset that touches `library_roots` also makes the
 watcher re-read it; a mirad restart is no longer needed.
 

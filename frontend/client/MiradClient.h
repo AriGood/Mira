@@ -241,11 +241,6 @@ public:
   // GET /v1/games returns. False unless `data` is a JSON object carrying a
   // non-empty string id — callers dispatch on the event type first, and this
   // is the second line of defence behind that.
-  // POST /v1/library/games-folder: the one folder the library, prefixes and
-  // store installs live under.
-  static void SetGamesFolderAsync(QObject* context, const std::string& path,
-                                  std::function<void(GamesFolderResult)> callback);
-
   // --- Installers and relocation ---------------------------------------------
 
   // The game's own installer, or `path` (absolute, or relative to its

@@ -8,6 +8,7 @@
 #include "config/Config.h"
 #include "library/Watcher.h"
 #include "store/GameStore.h"
+#include "support/TestEnv.h"
 
 using namespace mira;
 namespace fs = std::filesystem;
@@ -93,34 +94,28 @@ TEST_CASE("Watcher picks up a new game folder in each of two watched roots") {
 }
 
 TEST_CASE("Watcher follows library_roots after ReloadRoots") {
-  const fs::path old_root = TempDir("watch-reload-old");
-  const fs::path new_root = TempDir("watch-reload-new");
-  const fs::path state = TempDir("watch-reload-state");
+  test::TestEnv env("watch-reload");
+  const fs::path old_root = env.dir / "old";
+  const fs::path new_root = env.dir / "new";
+  fs::create_directories(old_root);
+  fs::create_directories(new_root);
+  REQUIRE(env.config.Set("library_roots", nlohmann::json::array({old_root.string()})));
+  REQUIRE(env.config.Set("scan.debounce_ms", 100));
 
-  config::Config config(state / "settings.toml");
-  config.Load();
-  REQUIRE(config.Set("library_roots", nlohmann::json::array({old_root.string()})).has_value());
-  REQUIRE(config.Set("prefix_root", (state / "prefix").string()).has_value());
-  REQUIRE(config.Set("scan.debounce_ms", 100).has_value());
-
-  store::GameStore games(state / "games.toml");
-  games.Load();
-  api::EventBus events;
-  library::Watcher watcher(config, games, events);
+  library::Watcher watcher(env.config, env.games, env.events);
   std::thread watcher_thread([&] { watcher.Run(); });
   std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
-  REQUIRE(config.Set("library_roots", nlohmann::json::array({new_root.string()})).has_value());
+  REQUIRE(env.config.Set("library_roots", nlohmann::json::array({new_root.string()})));
   watcher.ReloadRoots();
   std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
-  fs::create_directories(new_root / "Celeste");
-  Touch(new_root / "Celeste" / "Celeste", /*executable=*/true);
-  CHECK(WaitForGameAdded(events, std::chrono::seconds(5)));
+  test::Touch(new_root / "Celeste" / "Celeste", "", /*executable=*/true);
+  CHECK(WaitForGameAdded(env.events, std::chrono::seconds(5)));
 
   watcher.Stop();
   watcher_thread.join();
-  CHECK(games.Find("celeste").has_value());
+  CHECK(env.games.Find("celeste").has_value());
 }
 
 TEST_CASE("Watcher never rediscovers its own prefix directory as a game") {
