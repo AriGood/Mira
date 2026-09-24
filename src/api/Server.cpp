@@ -42,6 +42,7 @@
 #include "launchers/Launchers.h"
 #include "lutris/LutrisImporter.h"
 #include "metadata/MetadataFetcher.h"
+#include "proc/ProcessIndex.h"
 #include "proc/ProcessSupervisor.h"
 #include "proc/Session.h"
 #include "runner/Downloader.h"
@@ -331,28 +332,60 @@ Server::Server(config::Config& config, store::GameStore& games, EventBus& events
 
 Server::~Server() {
   stopping_.store(true, std::memory_order_relaxed);
-  if (launcher_watch_.joinable()) launcher_watch_.join();
+  if (external_watch_.joinable()) external_watch_.join();
 }
 
-// A game started from inside a running launcher (not through Mira) is
-// picked up here, so it still shows as playing and its playtime counts.
-void Server::WatchLauncherGames() {
+// A game started outside Mira (from the Steam client, or inside a running
+// launcher) is picked up here, so it still shows as playing and its
+// playtime counts. The index caches what it has read, so a tick is one
+// /proc listing plus reads of processes that just started.
+void Server::WatchExternalGames() {
   constexpr auto kTick = std::chrono::milliseconds(500);
   constexpr int kTicksPerScan = 6;
+  proc::ProcessIndex index;
   for (int tick = 0; !stopping_.load(std::memory_order_relaxed); ++tick) {
     std::this_thread::sleep_for(kTick);
     if (tick % kTicksPerScan != 0) continue;
-    for (const launchers::Launcher& launcher : launchers::All()) {
-      const auto host = games_.Find(launchers::GameId(launcher));
-      if (!host || host->data_dir.empty() || proc::FindPrefixProcesses(host->data_dir).empty()) continue;
-      for (const model::Game& game : games_.All()) {
-        if (game.source != launcher.id || supervisor_.IsRunning(game.id)) continue;
-        const std::string win_dir = launchers::WindowsDir(game);
-        if (proc::FindDirProcesses(game.data_dir, win_dir).empty()) continue;
-        const config::Resolver resolver(config_, game.overrides);
-        if (supervisor_.TrackLauncherLaunch(game, win_dir, 10, resolver.GetString("launch.post_script"))) {
-          events_.Publish("game.launched", {{"id", game.id}, {"via", "launcher"}, {"tracked", true}});
+
+    struct Candidate {
+      model::Game game;
+      std::string appid;    // Steam
+      std::string win_dir;  // launcher
+    };
+    std::vector<Candidate> candidates;
+    for (const model::Game& game : games_.All()) {
+      if (supervisor_.IsRunning(game.id)) continue;
+      if (game.runner_ref.starts_with("steam:")) {
+        if (config::Resolver(config_, game.overrides).GetBool("steam.track_process")) {
+          candidates.push_back({game, game.runner_ref.substr(6), ""});
         }
+      } else if (launchers::Find(game.source) && !game.data_dir.empty()) {
+        candidates.push_back({game, "", launchers::WindowsDir(game)});
+      }
+    }
+    if (candidates.empty()) continue;  // nothing to watch: don't touch /proc
+
+    index.Refresh();
+    std::set<std::string> steam_running;
+    for (const auto& [pid, info] : index.Processes()) {
+      if (!info.steam_launch.empty()) steam_running.insert(info.steam_launch);
+    }
+    for (const Candidate& candidate : candidates) {
+      const std::string post_script =
+          config::Resolver(config_, candidate.game.overrides).GetString("launch.post_script");
+      if (!candidate.appid.empty()) {
+        if (!steam_running.contains(candidate.appid)) continue;
+        if (supervisor_.TrackSteamLaunch(candidate.game, candidate.appid, post_script)) {
+          events_.Publish("game.launched", {{"id", candidate.game.id}, {"via", "steam"}, {"tracked", true}});
+        }
+        continue;
+      }
+      const bool running = std::ranges::any_of(index.Processes(), [&](const auto& item) {
+        return proc::InPrefix(item.second.prefix, candidate.game.data_dir) &&
+               item.second.argv0.starts_with(candidate.win_dir + "/");
+      });
+      if (running && supervisor_.TrackLauncherLaunch(candidate.game, candidate.win_dir, 10, post_script)) {
+        events_.Publish("game.launched", {{"id", candidate.game.id}, {"via", "launcher"}, {"tracked", true}});
       }
     }
   }
@@ -386,7 +419,7 @@ Result<void> Server::Serve(const std::filesystem::path& socket_path) {
                                ec);
 
   log::Info("listening on {}", socket_path.string());
-  launcher_watch_ = std::thread(&Server::WatchLauncherGames, this);
+  external_watch_ = std::thread(&Server::WatchExternalGames, this);
   if (!http_->listen_after_bind()) {
     return Err("socket_listen_failed", "httplib server exited unexpectedly");
   }
@@ -1892,6 +1925,58 @@ void Server::RegisterRoutes() {
     const bool announce = req.get_param_value("announce") == "1";
     metadata_fetches_.Enqueue(config_, events_, *game, /*force=*/true, announce);
     SendJson(res, {{"status", "fetching"}}, 202);
+  });
+
+  // SteamGridDB's matches for this game's name (or ?q=), so a wrong top
+  // match can be swapped for another with POST .../metadata/match.
+  http_->Get(R"(/v1/games/([^/]+)/metadata/matches)", [this](const Request& req, Response& res) {
+    auto game = games_.Find(req.matches[1]);
+    if (!game) return SendError(res, 404, "game_not_found", "no such game");
+    const std::string query = req.has_param("q") ? req.get_param_value("q") : game->name;
+    auto matches = metadata::SearchSteamGridDb(config_, query);
+    if (!matches) return SendError(res, 502, matches.error().code, matches.error().message);
+    const std::int64_t chosen = config::Resolver(config_, game->overrides).GetInt("metadata.steamgriddb_id");
+    SendJson(res, {{"query", query}, {"chosen", chosen}, {"matches", *matches}});
+  });
+
+  // "This art is for the wrong game": move to SteamGridDB's next match for
+  // the game's name and refetch. 409 no_more_matches past the last one.
+  http_->Post(R"(/v1/games/([^/]+)/metadata/wrong-match)", [this](const Request& req, Response& res) {
+    auto game = games_.Find(req.matches[1]);
+    if (!game) return SendError(res, 404, "game_not_found", "no such game");
+    auto matches = metadata::SearchSteamGridDb(config_, game->name);
+    if (!matches) return SendError(res, 502, matches.error().code, matches.error().message);
+    const std::int64_t current = config::Resolver(config_, game->overrides).GetInt("metadata.steamgriddb_id");
+    std::size_t next = 1;  // no choice yet: the top match was in use
+    for (std::size_t i = 0; i < matches->size(); ++i) {
+      if ((*matches)[i].value("id", std::int64_t{0}) == current) next = i + 1;
+    }
+    if (next >= matches->size()) {
+      return SendError(res, 409, "no_more_matches",
+                       "no other SteamGridDB match for this name -- pick one with ?q= on .../metadata/matches");
+    }
+    const json& match = (*matches)[next];
+    const json patch = {{"metadata.steamgriddb_id", match.value("id", std::int64_t{0})}};
+    auto updated = games_.Update(game->id, [&](model::Game& g) { ApplyOverridesPatch(g, patch); });
+    if (!updated) return SendError(res, 500, updated.error().code, updated.error().message);
+    metadata_fetches_.Enqueue(config_, events_, *updated, /*force=*/true, /*announce=*/true);
+    SendJson(res, {{"status", "fetching"}, {"match", match}}, 202);
+  });
+
+  // Body {steamgriddb_id}: take art from that SteamGridDB game from now on
+  // (0 goes back to the top match), and refetch.
+  http_->Post(R"(/v1/games/([^/]+)/metadata/match)", [this](const Request& req, Response& res) {
+    const json body = json::parse(req.body, nullptr, false);
+    if (body.is_discarded() || !body.contains("steamgriddb_id") || !body["steamgriddb_id"].is_number_integer() ||
+        body["steamgriddb_id"].get<std::int64_t>() < 0) {
+      return SendError(res, 400, "invalid_body", R"(expected {"steamgriddb_id": <id, or 0 for the top match>})");
+    }
+    const std::int64_t id = body["steamgriddb_id"];
+    const json patch = {{"metadata.steamgriddb_id", id == 0 ? json(nullptr) : json(id)}};
+    auto game = games_.Update(req.matches[1], [&](model::Game& g) { ApplyOverridesPatch(g, patch); });
+    if (!game) return SendError(res, 404, game.error().code, game.error().message);
+    metadata_fetches_.Enqueue(config_, events_, *game, /*force=*/true, /*announce=*/true);
+    SendJson(res, {{"status", "fetching"}, {"steamgriddb_id", id}}, 202);
   });
 
   // Bulk version of the above: enqueues a fetch for every game with no

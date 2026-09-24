@@ -1073,6 +1073,21 @@ game would be noise. `no_steamgriddb_key` is never wrapped in a
 signal, since a caller decides for itself whether to interrupt with a
 dialog or just note it.
 
+### `GET /v1/games/{id}/metadata/matches[?q=]` — implemented
+SteamGridDB's matches for the game's name (or `q`), best first:
+`{query, chosen, matches: [{id, name, release_date?}]}`. `chosen` is the
+game's `metadata.steamgriddb_id`, `0` when the top match is in use. Needs
+`steamgriddb.api_key`.
+
+### `POST /v1/games/{id}/metadata/wrong-match` — implemented
+"This art is for the wrong game": moves to the next SteamGridDB match for
+the game's name, saves it as `metadata.steamgriddb_id`, and refetches.
+`202 {status, match}`; `409 no_more_matches` after the last one.
+
+### `POST /v1/games/{id}/metadata/match` — implemented
+Body `{steamgriddb_id}`: take art from that SteamGridDB game from now on
+and refetch. `0` goes back to the top match.
+
 ### `POST /v1/games/metadata/refresh-missing` — implemented
 Bulk version of the above: enqueues a fetch for every game with no cached
 cover art yet (same check `GET /v1/games/{id}/artwork`'s default `cover`

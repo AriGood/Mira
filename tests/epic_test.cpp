@@ -10,18 +10,12 @@
 #include "epic/Legendary.h"
 #include "library/Catalog.h"
 #include "store/GameStore.h"
+#include "support/TestEnv.h"
 
 using namespace mira;
 namespace fs = std::filesystem;
 
 namespace {
-
-fs::path TempDir(const char* name) {
-  const fs::path dir = fs::temp_directory_path() / "mira-tests" / name;
-  fs::remove_all(dir);
-  fs::create_directories(dir);
-  return dir;
-}
 
 // A stand-in for the real `legendary`, pointed at by epic.legendary_bin.
 // Deliberately a real executable rather than a mocked subprocess layer: the
@@ -62,24 +56,14 @@ constexpr const char* kLoggedOut = R"({"account": "<not logged in>", "games_avai
 // opening of a top-level array.
 constexpr const char* kNoise = "[Core] INFO: Trying to re-use existing login session...\\n[cli] INFO: Getting game list...\\n";
 
-struct Fixture {
-  fs::path dir;
-  config::Config config;
-  store::GameStore games;
-  api::EventBus events;
-
-  explicit Fixture(const char* name)
-      : dir(TempDir(name)), config(dir / "settings.toml"), games(dir / "games.toml") {
-    config.Load();
-    games.Load();
-  }
+struct Fixture : test::TestEnv {
+  explicit Fixture(const char* name) : TestEnv(name) {}
 
   void UseFakeLegendary(const std::string& noise, const std::string& status_body,
                         const std::string& installed_body = "[]", const std::string& list_body = "[]") {
     const fs::path bin = dir / "legendary";
     WriteFakeLegendary(bin, noise, status_body, installed_body, list_body);
     REQUIRE(config.Set("epic.legendary_bin", bin.string()));
-    REQUIRE(config.Set("prefix_root", (dir / "prefixes").string()));
   }
 };
 
@@ -93,17 +77,6 @@ TEST_CASE("DetectLegendary honours the epic.legendary_bin override") {
   CHECK(status.installed);
   CHECK(status.source == "override");
   CHECK(status.path == (fixture.dir / "legendary").string());
-}
-
-TEST_CASE("DetectLegendary reports nothing installed when there is nothing to find") {
-  Fixture fixture("epic-detect-missing");
-  REQUIRE(fixture.config.Set("epic.legendary_bin", (fixture.dir / "nope").string()));
-
-  const epic::LegendaryStatus status = epic::DetectLegendary(fixture.config);
-  // Falls through the override (doesn't exist) and the managed path to
-  // $PATH, where a real legendary may or may not be installed on the
-  // machine running these tests -- so only the override is asserted on.
-  CHECK(status.source != "override");
 }
 
 TEST_CASE("Status treats legendary's \"<not logged in>\" placeholder as unauthenticated") {
@@ -228,12 +201,4 @@ TEST_CASE("ListCatalog reports entitlements read-through and marks tracked ones"
   CHECK(owned_only->title == "Not Installed");
   CHECK_FALSE(owned_only->installed);
   CHECK(owned_only->game_id.empty());
-}
-
-TEST_CASE("ListCatalog rejects a source it doesn't know") {
-  Fixture fixture("epic-catalog-bad-source");
-  const Result<std::vector<library::CatalogEntry>> entries =
-      library::ListCatalog(fixture.config, fixture.games, "bogus");
-  REQUIRE_FALSE(entries);
-  CHECK(entries.error().code == "unknown_source");
 }

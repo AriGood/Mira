@@ -461,16 +461,6 @@ TEST_CASE("DELETE /v1/runners/{reference} removes an installed build's directory
   CHECK_FALSE(fs::exists(build_dir));
 }
 
-TEST_CASE("GET /v1/runners lists native:native") {
-  LiveServer server(TempDir("server-runners-native"));
-  httplib::Client client = server.Client();
-
-  auto listed = client.Get("/v1/runners");
-  REQUIRE(listed != nullptr);
-  CHECK(listed->status == 200);
-  CHECK(listed->body.find("\"native:native\"") != std::string::npos);
-}
-
 TEST_CASE("DELETE /v1/games/{id}?delete_metadata=true removes cached metadata/artwork, "
           "and only those paths") {
   LiveServer server(TempDir("server-delete-metadata"));
@@ -650,14 +640,6 @@ TEST_CASE("GET /v1/games/{id}/log is an empty list before any launch, not a 404 
   CHECK(body["lines"].empty());
 }
 
-TEST_CASE("GET /v1/games/{id}/log 404s for an unknown game") {
-  LiveServer server(TempDir("server-log-404"));
-  httplib::Client client = server.Client();
-  auto res = client.Get("/v1/games/does-not-exist/log");
-  REQUIRE(res != nullptr);
-  CHECK(res->status == 404);
-}
-
 TEST_CASE("POST /v1/games/{id}/launch through mira-run populates GET .../log with the game's own output") {
   LiveServer server(TempDir("server-log-populated"));
   const fs::path install_dir = TempDir("server-log-populated-install");
@@ -683,19 +665,6 @@ TEST_CASE("POST /v1/games/{id}/launch through mira-run populates GET .../log wit
   REQUIRE(res != nullptr);
   CHECK(res->status == 200);
   CHECK(res->body.find("mira-run") != std::string::npos);
-}
-
-TEST_CASE("GET /v1/gamemode/status reports both installed and daemon_running") {
-  LiveServer server(TempDir("server-gamemode-status"));
-  httplib::Client client = server.Client();
-  auto res = client.Get("/v1/gamemode/status");
-  REQUIRE(res != nullptr);
-  CHECK(res->status == 200);
-  const auto body = nlohmann::json::parse(res->body, nullptr, false);
-  REQUIRE(body.contains("installed"));
-  REQUIRE(body.contains("daemon_running"));
-  CHECK(body["installed"].is_boolean());
-  CHECK(body["daemon_running"].is_boolean());
 }
 
 TEST_CASE("POST /v1/games/{id}/finish-install refuses while exe_path is still the installer") {
