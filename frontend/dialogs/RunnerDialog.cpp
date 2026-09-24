@@ -239,8 +239,9 @@ void RunnerDialog::ShowSchema() {
   mira_gui::MiradClient::GetRunnerSchemaAsync(
       this, kind, [this, kind](mira_gui::RunnerSchemaResult result) {
         if (!result.ok) {
-          mira_gui::notify::Failed(this, "Could not read this runner kind's config schema.",
-                                   QString::fromStdString(result.error));
+          SetStatus("Could not read this runner kind's config keys: " +
+                        QString::fromStdString(result.error),
+                    /*error=*/true);
           return;
         }
         if (result.entries.empty()) {

@@ -108,8 +108,6 @@ private:
   bool scan_on_startup_original_ = true;
   QComboBox* theme_ = nullptr;
   QString theme_original_;
-  QSpinBox* notification_timeout_ = nullptr;
-  int notification_timeout_original_ = 0;
   QCheckBox* game_settings_in_sidebar_ = nullptr;
   bool game_settings_in_sidebar_original_ = true;
   ShapeField tile_spacing_;

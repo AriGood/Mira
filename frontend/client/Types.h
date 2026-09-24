@@ -202,7 +202,7 @@ struct ArtworkSelectResult {
 
 // A `notification` event — mirad's own decision that this is worth telling
 // the user about; the UI just renders it (see MiradClient::ParseNotification
-// and mira_gui::notify::Toast).
+// and mira_gui::notify::Warn/Notice).
 struct NotificationEvent {
   std::string level;  // "info" | "success" | "warning" | "error"
   std::string message;
@@ -491,11 +491,6 @@ struct FrontendPrefs {
   // is the slowest thing about startup and the daemon's own watcher
   // (library::Watcher) already keeps the library current while it runs.
   std::optional<bool> scan_on_startup;
-  // Seconds a toast stays up before it's dismissed automatically; 0 means
-  // until dismissed, which is the default. See notify::SetTimeoutSeconds —
-  // toasts always go to the desktop's own notification service, so this is
-  // also that notification's expire timeout.
-  std::optional<int> notification_timeout_s;
   // A theme name (ui/Theme.h), or "auto" — the default — to follow the
   // desktop's own light/dark preference.
   std::optional<std::string> theme;

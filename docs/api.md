@@ -1003,7 +1003,8 @@ specially is `no_steamgriddb_key`, which is not a transient failure and is
 fixed by setting a config key rather than by retrying.
 
 `?announce=1` marks this as user-initiated: mirad also publishes a
-`notification` event (below) reporting the outcome, so a caller doesn't
+`notification` event (below) if it fails — success needs none, the cover
+changes on its own — so a caller doesn't
 have to build its own message from `game.metadata_failed`. Omit it (or
 `announce=0`) for a background/bulk refresh, where one notification per
 game would be noise. `no_steamgriddb_key` is never wrapped in a

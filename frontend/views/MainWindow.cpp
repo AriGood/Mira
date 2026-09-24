@@ -352,8 +352,13 @@ void MainWindow::HandleGameEvent(const std::string& type, const std::string& dat
   if (type == "notification") {
     mira_gui::NotificationEvent event;
     if (mira_gui::MiradClient::ParseNotification(data, &event)) {
-      mira_gui::notify::Toast(this, mira_gui::notify::LevelFromString(QString::fromStdString(event.level)),
-                              QString::fromStdString(event.message));
+      const QString message = QString::fromStdString(event.message);
+      const auto level = mira_gui::notify::LevelFromString(QString::fromStdString(event.level));
+      if (level == mira_gui::notify::Level::Warning || level == mira_gui::notify::Level::Error) {
+        mira_gui::notify::Warn(this, message);
+      } else {
+        mira_gui::notify::Notice(this, message);
+      }
     }
     return;
   }

@@ -64,21 +64,6 @@ void SettingsPanel::BuildInterfaceGroup() {
   form->addRow("Theme", theme_);
   nav_->RegisterRow(form, theme_, "theme appearance dark light");
 
-  notification_timeout_ = new QSpinBox(box);
-  notification_timeout_->setRange(0, mira_gui::notify::kMaxTimeoutSeconds);
-  notification_timeout_->setSuffix(" seconds");
-  notification_timeout_->setSpecialValueText("Until dismissed");
-  // A number, not a text field — full form width around three digits reads
-  // as broken, not spacious.
-  notification_timeout_->setFixedWidth(140);
-  notification_timeout_->setToolTip(
-      mira_gui::notify::system_notifier::Available()
-          ? "How long a background result (a runner finishing downloading, metadata arriving) "
-            "stays up as a desktop notification. \"Until dismissed\" is the default."
-          : "No desktop notification service is running, so this falls back to a card inside "
-            "the window. How long it stays up. \"Until dismissed\" is the default.");
-  form->addRow("Keep notifications for", notification_timeout_);
-  nav_->RegisterRow(form, notification_timeout_, "keep notifications for desktop notification timeout");
 
   game_settings_in_sidebar_ = new QCheckBox(box);
   game_settings_in_sidebar_->setChecked(true);
@@ -228,9 +213,6 @@ void SettingsPanel::LoadFrontendPrefs() {
   const int theme_index = theme_->findData(theme_original_);
   if (theme_index >= 0) theme_->setCurrentIndex(theme_index);
 
-  notification_timeout_original_ = mira_gui::notify::CurrentTimeoutSeconds();
-  notification_timeout_->setValue(notification_timeout_original_);
-
   mira_gui::MiradClient::GetFrontendPrefsAsync(this, [this](mira_gui::FrontendPrefsResult result) {
     if (!result.ok) return;  // the defaults are already shown
     if (result.prefs.scan_on_startup) {
@@ -241,10 +223,6 @@ void SettingsPanel::LoadFrontendPrefs() {
       theme_original_ = QString::fromStdString(*result.prefs.theme);
       const int index = theme_->findData(theme_original_);
       if (index >= 0) theme_->setCurrentIndex(index);
-    }
-    if (result.prefs.notification_timeout_s) {
-      notification_timeout_->setValue(*result.prefs.notification_timeout_s);
-      notification_timeout_original_ = notification_timeout_->value();  // after the clamp
     }
     if (result.prefs.game_settings_in_sidebar) {
       game_settings_in_sidebar_original_ = *result.prefs.game_settings_in_sidebar;
@@ -505,7 +483,6 @@ void SettingsPanel::SetFooterActions(QWidget* actions) { nav_->AddFooterWidget(a
 
 bool SettingsPanel::IsDirty() const {
   if (scan_on_startup_->isChecked() != scan_on_startup_original_) return true;
-  if (notification_timeout_->value() != notification_timeout_original_) return true;
   if (theme_->currentData().toString() != theme_original_) return true;
   if (game_settings_in_sidebar_->isChecked() != game_settings_in_sidebar_original_) return true;
   for (const ShapeField* field :
@@ -523,7 +500,6 @@ bool SettingsPanel::IsDirty() const {
 
 void SettingsPanel::DiscardChanges() {
   scan_on_startup_->setChecked(scan_on_startup_original_);
-  notification_timeout_->setValue(notification_timeout_original_);
   const int theme_index = theme_->findData(theme_original_);
   if (theme_index >= 0) theme_->setCurrentIndex(theme_index);
   game_settings_in_sidebar_->setChecked(game_settings_in_sidebar_original_);
@@ -536,7 +512,6 @@ void SettingsPanel::DiscardChanges() {
 }
 
 void SettingsPanel::Save() {
-  const int timeout = notification_timeout_->value();
   const QString theme_name = theme_->currentData().toString();
   const bool game_settings_in_sidebar = game_settings_in_sidebar_->isChecked();
   bool shapes_changed = false;
@@ -549,12 +524,10 @@ void SettingsPanel::Save() {
     if (field.edit->keySequence() != field.original) shortcuts_changed = true;
   }
   if (scan_on_startup_->isChecked() != scan_on_startup_original_ ||
-      timeout != notification_timeout_original_ ||
       theme_name != theme_original_ || shapes_changed || shortcuts_changed ||
       game_settings_in_sidebar != game_settings_in_sidebar_original_) {
     mira_gui::FrontendPrefs prefs;
     prefs.scan_on_startup = scan_on_startup_->isChecked();
-    prefs.notification_timeout_s = timeout;
     prefs.theme = theme_name.toStdString();
     prefs.game_settings_in_sidebar = game_settings_in_sidebar;
     // Always written, including the -1 that means "theme default": the key
@@ -597,13 +570,11 @@ void SettingsPanel::Save() {
       prefs.shortcut_overrides = mira_gui::keybindings::Current();
     }
     scan_on_startup_original_ = *prefs.scan_on_startup;
-    notification_timeout_original_ = timeout;
     game_settings_in_sidebar_original_ = game_settings_in_sidebar;
     if (theme_name != theme_original_) {
       theme_original_ = theme_name;
       mira_gui::theme::Apply(theme_name);
     }
-    mira_gui::notify::SetTimeoutSeconds(timeout);
     mira_gui::MiradClient::SaveFrontendPrefsAsync(this, prefs, [](mira_gui::PatchConfigResult) {});
   }
 
