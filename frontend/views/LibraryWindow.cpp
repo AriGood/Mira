@@ -24,6 +24,8 @@
 #include <QPushButton>
 #include <QRubberBand>
 #include <QScreen>
+#include <QScrollBar>
+#include <QItemSelection>
 #include <QScrollArea>
 #include <QSet>
 #include <QSlider>
@@ -71,12 +73,11 @@
 // it so ApplyLayoutTokens() can pad the tiles without also inseting the
 // scrollbar (a container's own contents margins would do both).
 //
-// Also implements its own drag-to-select rather than relying on
-// QAbstractItemView's built-in rubber band: that only starts when the press
-// lands on genuinely empty viewport space, but every tile here fills its
-// whole grid cell (setSpacing(0), the visual gap between tiles is the
-// delegate's own padding within each cell, not real space between cells) —
-// so there is no pixel left to start Qt's own rubber band from.
+// Also implements its own drag-to-select: every tile fills its whole grid
+// cell, so Qt's built-in rubber band (empty-space presses only) has nowhere
+// to start. Left-button moves never reach QListWidget, because Qt's own
+// drag-select state survives a swallowed release and then draws a second,
+// dead rubber band on the next plain hover.
 class LibraryGrid : public QListWidget {
 public:
   using QListWidget::QListWidget;
@@ -91,60 +92,39 @@ public:
   // positive to grow. Set once by LibraryWindow after construction.
   std::function<void(int steps)> on_ctrl_wheel;
 
-  // Before clear() deletes every item -- otherwise a pending dwell timer, or
-  // the next hover-changed check, could still be holding one of them.
-  void ResetHover() {
+  void SetDragSelectEnabled(bool enabled) {
+    drag_select_enabled_ = enabled;
+    if (!enabled) EndDrag();
+  }
+
+  // Before clear() deletes every item -- a pending dwell timer, the next
+  // hover-changed check, or a drag in progress could still hold one of them.
+  void ForgetItems() {
     if (hover_timer_ != nullptr) hover_timer_->stop();
     last_hover_item_ = nullptr;
+    EndDrag();
   }
 
 protected:
   void mousePressEvent(QMouseEvent* event) override {
-    if (event->button() == Qt::LeftButton) {
-      drag_origin_ = event->pos();
+    if (event->button() == Qt::LeftButton && drag_select_enabled_) {
+      drag_origin_ = event->pos() + Offset();
+      QListWidgetItem* pressed = itemAt(event->pos());
+      press_rect_ = pressed != nullptr ? visualItemRect(pressed).translated(Offset()) : QRect();
+      drag_modifiers_ = event->modifiers();
       tracking_drag_ = true;
     }
     QListWidget::mousePressEvent(event);
   }
 
   void mouseMoveEvent(QMouseEvent* event) override {
-    // Belt and suspenders: if the button somehow isn't down anymore without
-    // this having seen a matching release (e.g. it was released while a
-    // dialog briefly had an implicit grab), don't let a stale tracking_drag_
-    // resume a drag from the old origin on the next plain hover-move.
-    if (tracking_drag_ && !(event->buttons() & Qt::LeftButton)) {
-      EndDrag();
-    }
-    if (tracking_drag_) {
-      if (rubber_band_ == nullptr) {
-        constexpr int kDragThreshold = 6;
-        if ((event->pos() - drag_origin_).manhattanLength() < kDragThreshold) {
-          QListWidget::mouseMoveEvent(event);
-          return;
-        }
-        // A fresh drag replaces the selection unless it started with a
-        // modifier held, matching plain-click behavior; either way, what's
-        // selected right now (including whatever the initiating press
-        // already selected) is the additive floor a shrinking rect won't
-        // clear again below.
-        if (!(event->modifiers() & (Qt::ControlModifier | Qt::ShiftModifier))) {
-          clearSelection();
-        }
-        base_selection_.clear();
-        for (QListWidgetItem* selected : selectedItems()) base_selection_.insert(selected);
-        // A hover dwell timer started before the drag threshold was crossed
-        // otherwise fires mid-drag and pops the hover card up anchored to
-        // wherever the drag started, well after the cursor has moved on.
-        TrackHover(nullptr);
-        rubber_band_ = new QRubberBand(QRubberBand::Rectangle, viewport());
-        rubber_band_->setGeometry(QRect(drag_origin_, QSize()));
-        rubber_band_->show();
-      }
-      const QRect rect = QRect(drag_origin_, event->pos()).normalized();
-      rubber_band_->setGeometry(rect);
-      for (int row = 0; row < count(); ++row) {
-        QListWidgetItem* it = item(row);
-        it->setSelected(base_selection_.contains(it) || rect.intersects(visualItemRect(it)));
+    // The release went somewhere else (alt-tab, a desktop switch): drop the
+    // drag instead of resuming it from the old origin.
+    if (tracking_drag_ && !(event->buttons() & Qt::LeftButton)) EndDrag();
+    if (event->buttons() & Qt::LeftButton) {
+      if (tracking_drag_) {
+        drag_pos_ = event->pos();
+        UpdateDrag();
       }
       return;
     }
@@ -152,9 +132,26 @@ protected:
     QListWidget::mouseMoveEvent(event);
   }
 
+  void mouseReleaseEvent(QMouseEvent* event) override {
+    const bool was_dragging = rubber_band_ != nullptr;
+    EndDrag();
+    if (was_dragging) return;  // the drag already applied the selection; not a click
+    QListWidget::mouseReleaseEvent(event);
+  }
+
   void leaveEvent(QEvent* event) override {
     TrackHover(nullptr);
     QListWidget::leaveEvent(event);
+  }
+
+  void focusOutEvent(QFocusEvent* event) override {
+    EndDrag();
+    QListWidget::focusOutEvent(event);
+  }
+
+  void changeEvent(QEvent* event) override {
+    if (event->type() == QEvent::ActivationChange && !isActiveWindow()) EndDrag();
+    QListWidget::changeEvent(event);
   }
 
   void wheelEvent(QWheelEvent* event) override {
@@ -167,19 +164,19 @@ protected:
       return;
     }
     QListWidget::wheelEvent(event);
-  }
-
-  void mouseReleaseEvent(QMouseEvent* event) override {
-    const bool was_dragging = rubber_band_ != nullptr;
-    EndDrag();
-    if (was_dragging) return;  // the drag already applied the selection; not a click
-    QListWidget::mouseReleaseEvent(event);
+    if (rubber_band_ != nullptr) UpdateDrag();
   }
 
 private:
   // Debounced: a card popping up on every tile the cursor merely crosses
   // while scanning the grid would be worse than not having one.
   static constexpr int kHoverDwellMs = 280;
+  // Within this far of the top/bottom edge (or past it), a drag scrolls.
+  static constexpr int kAutoScrollEdge = 40;
+
+  // Viewport to content coordinates, so a drag's origin stays put while
+  // the grid scrolls under it.
+  QPoint Offset() const { return QPoint(horizontalOffset(), verticalOffset()); }
 
   void TrackHover(QListWidgetItem* hovered) {
     if (hovered == last_hover_item_) return;
@@ -196,21 +193,86 @@ private:
     if (hovered != nullptr) hover_timer_->start(kHoverDwellMs);
   }
 
+  void UpdateDrag() {
+    const QPoint current = drag_pos_ + Offset();
+    if (rubber_band_ == nullptr) {
+      // A press on a tile becomes a drag only once the cursor leaves that
+      // tile, so a click that wobbles a few pixels stays a click.
+      constexpr int kDragThreshold = 6;
+      const bool started = press_rect_.isValid()
+                               ? !press_rect_.contains(current)
+                               : (current - drag_origin_).manhattanLength() >= kDragThreshold;
+      if (!started) return;
+      // A fresh drag replaces the selection unless it started with a
+      // modifier held; either way, what's selected now is the floor a
+      // shrinking rect won't clear again.
+      if (!(drag_modifiers_ & (Qt::ControlModifier | Qt::ShiftModifier))) clearSelection();
+      base_selection_.clear();
+      for (QListWidgetItem* selected : selectedItems()) base_selection_.insert(selected);
+      TrackHover(nullptr);  // a dwell started before the drag would pop up mid-drag
+      rubber_band_ = new QRubberBand(QRubberBand::Rectangle, viewport());
+      rubber_band_->show();
+      if (autoscroll_timer_ == nullptr) {
+        autoscroll_timer_ = new QTimer(this);
+        autoscroll_timer_->setInterval(16);
+        connect(autoscroll_timer_, &QTimer::timeout, this, &LibraryGrid::AutoScrollStep);
+      }
+      autoscroll_timer_->start();
+    }
+    const QRect rect = QRect(drag_origin_, current).normalized();
+    rubber_band_->setGeometry(rect.translated(-Offset()));
+    // One select() call, not a setSelected per tile: each of those emits
+    // its own itemSelectionChanged.
+    QItemSelection selection;
+    for (int row = 0; row < count(); ++row) {
+      QListWidgetItem* it = item(row);
+      if (it->isHidden()) continue;
+      if (base_selection_.contains(it) || rect.intersects(visualItemRect(it).translated(Offset()))) {
+        const QModelIndex index = indexFromItem(it);
+        selection.select(index, index);
+      }
+    }
+    selectionModel()->select(selection, QItemSelectionModel::ClearAndSelect);
+  }
+
+  // Speed grows with how far into (or past) the edge band the cursor is.
+  void AutoScrollStep() {
+    const int height = viewport()->height();
+    int delta = 0;
+    if (drag_pos_.y() < kAutoScrollEdge) {
+      delta = drag_pos_.y() - kAutoScrollEdge;
+    } else if (drag_pos_.y() > height - kAutoScrollEdge) {
+      delta = drag_pos_.y() - (height - kAutoScrollEdge);
+    }
+    if (delta == 0) return;
+    delta = std::clamp(delta / 2, -40, 40);
+    if (delta == 0) delta = drag_pos_.y() < kAutoScrollEdge ? -1 : 1;
+    QScrollBar* bar = verticalScrollBar();
+    const int before = bar->value();
+    bar->setValue(before + delta);
+    if (bar->value() != before) UpdateDrag();
+  }
+
   void EndDrag() {
     tracking_drag_ = false;
+    if (autoscroll_timer_ != nullptr) autoscroll_timer_->stop();
+    setState(QAbstractItemView::NoState);
     if (rubber_band_ == nullptr) return;
-    // Deleted immediately, not deleteLater(): a second drag can start
-    // before a deferred delete would have run, and a stale hidden rubber
-    // band still parented to the viewport at its old geometry is exactly
-    // the kind of leftover state that made this bug hard to pin down.
+    // Deleted now, not deleteLater(): a second drag can start before a
+    // deferred delete runs.
     delete rubber_band_;
     rubber_band_ = nullptr;
     base_selection_.clear();
   }
 
-  QPoint drag_origin_;
+  bool drag_select_enabled_ = true;
   bool tracking_drag_ = false;
+  QPoint drag_origin_;  // content coordinates
+  QRect press_rect_;    // content coordinates; invalid for a press on empty space
+  QPoint drag_pos_;     // viewport coordinates, last seen
+  Qt::KeyboardModifiers drag_modifiers_;  // at the press
   QRubberBand* rubber_band_ = nullptr;
+  QTimer* autoscroll_timer_ = nullptr;
   QSet<QListWidgetItem*> base_selection_;
   QListWidgetItem* last_hover_item_ = nullptr;
   QTimer* hover_timer_ = nullptr;
@@ -665,6 +727,7 @@ void LibraryWindow::LoadPrefs() {
     mira_gui::theme::SetOverrides(overrides);
     if (prefs.theme) mira_gui::theme::Apply(QString::fromStdString(*prefs.theme));
     if (prefs.game_settings_in_sidebar) game_settings_in_sidebar_ = *prefs.game_settings_in_sidebar;
+    grid_->SetDragSelectEnabled(prefs.drag_select.value_or(true));
   });
 }
 
@@ -1531,7 +1594,7 @@ void LibraryWindow::ApplyFilter() {
   // grid_->clear() deletes every item; a stale last_hover_item_/pending
   // dwell timer pointing at one of them would be a use-after-free the next
   // time it fires.
-  grid_->ResetHover();
+  grid_->ForgetItems();
   ShowHoverCard(nullptr);
 
   grid_->blockSignals(true);

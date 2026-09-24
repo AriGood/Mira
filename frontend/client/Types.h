@@ -497,6 +497,8 @@ struct FrontendPrefs {
   // On (default): "Details & settings" edits a game inline in the right
   // panel instead of opening a dialog.
   std::optional<bool> game_settings_in_sidebar;
+  // On (default): dragging across the grid rubber-band selects tiles.
+  std::optional<bool> drag_select;
   // Shape adjustments layered over whatever the theme sets, in pixels — see
   // theme::Overrides. Unset means "leave it to the theme".
   std::optional<int> tile_spacing;

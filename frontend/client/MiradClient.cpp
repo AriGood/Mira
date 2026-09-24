@@ -310,6 +310,7 @@ FrontendPrefsResult GetFrontendPrefsSync() {
   read_bool("scan_on_startup", result.prefs.scan_on_startup);
   read_string("theme", result.prefs.theme);
   read_bool("game_settings_in_sidebar", result.prefs.game_settings_in_sidebar);
+  read_bool("drag_select", result.prefs.drag_select);
   read_int("tile_spacing", result.prefs.tile_spacing);
   read_int("grid_margin", result.prefs.grid_margin);
   read_int("tile_radius", result.prefs.tile_radius);
@@ -339,6 +340,7 @@ PatchConfigResult SaveFrontendPrefsSync(const FrontendPrefs& prefs) {
   if (prefs.game_settings_in_sidebar) {
     table["game_settings_in_sidebar"] = *prefs.game_settings_in_sidebar;
   }
+  if (prefs.drag_select) table["drag_select"] = *prefs.drag_select;
   if (prefs.tile_spacing) table["tile_spacing"] = *prefs.tile_spacing;
   if (prefs.grid_margin) table["grid_margin"] = *prefs.grid_margin;
   if (prefs.tile_radius) table["tile_radius"] = *prefs.tile_radius;
