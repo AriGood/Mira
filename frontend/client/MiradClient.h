@@ -106,6 +106,9 @@ public:
   // enough to just wait for, and the short timeout below means an
   // unreachable daemon cannot turn quitting into a hang.
   static PatchConfigResult SaveFrontendPrefsBlocking(const FrontendPrefs& prefs);
+  // For the window's size before it's first shown, so the compositor places
+  // it at its real size.
+  static FrontendPrefsResult GetFrontendPrefsBlocking();
 
   // GET /v1/games/{id}/artwork. Binary, not JSON, and a 404 is the ordinary
   // answer for a game nothing has been fetched for yet — see ArtworkResult.

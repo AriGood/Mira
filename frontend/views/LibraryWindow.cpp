@@ -456,7 +456,20 @@ QLabel* AddTrailingLabel(QPushButton* row) {
 
 LibraryWindow::LibraryWindow(QWidget* parent) : QMainWindow(parent) {
   setWindowTitle("Mira");
-  resize(1180, 720);
+  // Sized and centered before the first show: resizing once shown grows the
+  // window from its top-left corner, off center.
+  QSize size(1180, 720);
+  const mira_gui::FrontendPrefsResult saved = mira_gui::MiradClient::GetFrontendPrefsBlocking();
+  if (saved.ok && saved.prefs.window_width && saved.prefs.window_height) {
+    size = QSize(*saved.prefs.window_width, *saved.prefs.window_height);
+  }
+  if (const QScreen* screen = QGuiApplication::primaryScreen()) {
+    const QRect available = screen->availableGeometry();
+    size = size.boundedTo(available.size());
+    setGeometry(QStyle::alignedRect(Qt::LeftToRight, Qt::AlignCenter, size, available));
+  } else {
+    resize(size);
+  }
   // Custom top bar takes over move/resize/minimize/maximize/close — no OS
   // decoration left.
   setWindowFlags(Qt::Window | Qt::FramelessWindowHint);
@@ -699,9 +712,6 @@ void LibraryWindow::LoadPrefs() {
     if (!result.ok) return;  // non-fatal: the built-in defaults are already applied
     const mira_gui::FrontendPrefs& prefs = result.prefs;
 
-    if (prefs.window_width && prefs.window_height) {
-      resize(*prefs.window_width, *prefs.window_height);
-    }
     if (prefs.tile_width) {
       // Through the slider so its range clamp and SetTileWidth's cache
       // invalidation both apply.

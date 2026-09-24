@@ -1245,6 +1245,8 @@ PatchConfigResult MiradClient::SaveFrontendPrefsBlocking(const FrontendPrefs& pr
   return SaveFrontendPrefsSync(prefs);
 }
 
+FrontendPrefsResult MiradClient::GetFrontendPrefsBlocking() { return GetFrontendPrefsSync(); }
+
 void MiradClient::GetArtworkAsync(QObject* context, const std::string& id,
                                   std::function<void(ArtworkResult)> callback) {
   async::Run(context, [id] { return GetArtworkSync(id, "cover"); }, std::move(callback));
