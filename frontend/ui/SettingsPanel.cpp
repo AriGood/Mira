@@ -308,6 +308,7 @@ void SettingsPanel::BuildRows() {
 
   for (const auto& [category, rows] : GroupByCategory(categories)) {
     QFormLayout* form = nav_->AddCategory(category);
+    category_forms_[category] = form;
     int group = fields_[rows.front()].entry.group;
 
     for (const size_t i : rows) {
@@ -401,6 +402,31 @@ void SettingsPanel::BuildRows() {
       LoadGameModeStatus();
     }
   }
+  rows_built_ = true;
+  for (const SectionAction& action : section_actions_) AppendSectionAction(action);
+}
+
+void SettingsPanel::AddSectionAction(const QString& category, const QString& label, const QString& doc,
+                                     const QString& button_text, std::function<void()> activated) {
+  section_actions_.push_back({category, label, doc, button_text, std::move(activated)});
+  if (rows_built_) AppendSectionAction(section_actions_.back());
+}
+
+void SettingsPanel::AppendSectionAction(const SectionAction& action) {
+  QFormLayout* form = category_forms_.value(action.category);
+  if (form == nullptr) return;
+  if (!categories_with_actions_.contains(action.category)) {
+    nav_->AddDivider(form);
+    categories_with_actions_.insert(action.category);
+  }
+  auto* button = new QPushButton(action.button_text, this);
+  button->setToolTip(action.doc);
+  button->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Fixed);
+  connect(button, &QPushButton::clicked, this, action.activated);
+  auto* label = new QLabel(action.label, this);
+  label->setToolTip(action.doc);
+  form->addRow(label, button);
+  nav_->RegisterRow(form, button, QString("%1 %2 %3").arg(action.label, action.category, action.doc));
 }
 
 void SettingsPanel::LoadGameModeStatus() {

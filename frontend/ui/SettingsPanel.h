@@ -1,9 +1,12 @@
 #pragma once
 
+#include <QHash>
 #include <QKeySequence>
+#include <QSet>
 #include <QWidget>
 #include <QString>
 
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -45,6 +48,11 @@ public:
   // A widget pinned under the nav's category list, e.g. LibraryWindow's
   // Back/Reset/Save row.
   void SetFooterActions(QWidget* actions);
+
+  // A button row at the end of `category`'s page, for a one-off action that
+  // belongs next to those settings. Added once the schema has loaded.
+  void AddSectionAction(const QString& category, const QString& label, const QString& doc,
+                        const QString& button_text, std::function<void()> activated);
 
   // True if anything differs from what Load() last fetched or Save() last
   // confirmed — the signal a caller uses to warn before discarding.
@@ -97,6 +105,14 @@ private:
   // theme::Notifier::Changed so it never goes stale.
   void RefreshShapeDefaults();
   void BuildRows();
+  struct SectionAction {
+    QString category;
+    QString label;
+    QString doc;
+    QString button_text;
+    std::function<void()> activated;
+  };
+  void AppendSectionAction(const SectionAction& action);
   void LoadGameModeStatus();
   void PopulateRunnerCombos(const mira_gui::RunnersResult& result);
   void ResetField(size_t index);
@@ -120,6 +136,10 @@ private:
   std::vector<ShortcutField> shortcuts_;
   std::vector<Field> fields_;
   QString pending_focus_key_;  // FocusKey called before the schema arrived
+  std::vector<SectionAction> section_actions_;
+  QHash<QString, QFormLayout*> category_forms_;
+  QSet<QString> categories_with_actions_;
+  bool rows_built_ = false;
   // Read-only "is Feral GameMode installed/running" indicator on the
   // Launching category — not tied to any Field, since it isn't a config key.
   QLabel* gamemode_status_ = nullptr;
