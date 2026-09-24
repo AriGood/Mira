@@ -44,8 +44,8 @@ settings and prefixes are never touched.
 Triggers `POST /v1/library/scan` — walks every enabled library root right
 now rather than waiting for `mirad`'s own inotify watcher to notice.
 Prints the summary: `added: N  missing: N  restored: N`. Useful right
-after changing `library_roots` (the watcher needs a restart to pick up new
-roots; this doesn't).
+after changing `library_roots`: the watcher starts watching a new root at
+once, but only this picks up what was already in it.
 
 ## `mira list [--status S] [--tag T]`
 `GET /v1/games`, optionally filtered to one status

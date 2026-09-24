@@ -421,10 +421,8 @@ Schema::Schema() {
          .default_value = "~/.local/share/mira/gog",
          .doc = "Where GOG titles are installed to, one folder per game (see gog.folder_naming) — "
                 "unlike Legendary/butler, gogdl doesn't choose or remember an "
-                "install location on its own, so Mira has to. Deliberately outside "
-                "library_roots' usual defaults (e.g. ~/Games) — a real game install "
-                "here would otherwise also get auto-detected as a second, bogus "
-                "scan-sourced game."});
+                "install location on its own, so Mira has to. Never scanned, so it can sit "
+                "inside a library root."});
 
   s.Add({.key = "gog.folder_naming",
          .label = "GOG Folder Naming",
@@ -439,8 +437,8 @@ Schema::Schema() {
          .type = Type::String,
          .default_value = "~/.local/share/mira/itch",
          .doc = "Where itch.io titles are installed to — registered with butlerd as "
-                "an install location on first use. Deliberately outside "
-                "library_roots' usual defaults, same reasoning as gog.install_root."});
+                "an install location on first use. Never scanned, so it can sit inside a "
+                "library root."});
 
   s.Add({.key = "amazon.install_root",
          .label = "Amazon Install Dir",

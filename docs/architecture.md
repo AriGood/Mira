@@ -392,9 +392,9 @@ there — there is no runner layer yet to provision its prefix.
 
 `library/Watcher.{h,cpp}` is what makes detection automatic rather than
 requiring `mira scan`/`POST /v1/library/scan` by hand: one inotify watch per
-enabled root (read from `library_roots` once at startup — adding or removing
-a root needs a restart to be watched, though `POST /v1/library/scan` always
-picks up the current list immediately), debounced by polling a
+enabled root (read from `library_roots` at startup, and again whenever the
+API changes it — `Watcher::ReloadRoots`; a hand edit of `settings.toml`
+still needs a restart), debounced by polling a
 newly-created directory's total size until it stops changing for
 `scan.debounce_ms`, then running the same `Scanner::ScanRoot` logic the
 manual endpoint uses. A deletion needs no debounce and rescans its root

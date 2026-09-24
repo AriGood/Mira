@@ -21,6 +21,7 @@
 #include "core/Strings.h"
 #include "desktop/DesktopEntries.h"
 #include "library/Catalog.h"
+#include "library/GamesFolder.h"
 #include "library/AutoInstall.h"
 #include "library/PrefixNaming.h"
 #include "library/Relocate.h"
@@ -447,18 +448,22 @@ void Server::RegisterRoutes() {
     if (patch.is_discarded()) return SendError(res, 400, "invalid_json", "body is not valid JSON");
     Result<void> result = config_.Patch(patch);
     if (result) SyncDesktopEntries(config_, games_);
+    if (result && patch.is_object() && patch.contains("library_roots") && on_roots_changed_) on_roots_changed_();
     SendResult(res, result);
   });
 
   http_->Post("/v1/config/reset", [this](const Request& req, Response& res) {
     Result<void> result;
+    bool roots_reset = true;
     if (auto it = req.params.find("key"); it != req.params.end()) {
       result = config_.Reset(it->second);
+      roots_reset = it->second == "library_roots";
     } else {
       config_.ResetAll();
       result = config_.Save();
     }
     if (result) SyncDesktopEntries(config_, games_);
+    if (result && roots_reset && on_roots_changed_) on_roots_changed_();
     SendResult(res, result);
   });
 
@@ -641,6 +646,22 @@ void Server::RegisterRoutes() {
   // synchronously rather than returning a job id: there is no worker/job
   // queue yet (see docs/architecture.md), and a scan of a normal-sized
   // library completes well within an HTTP request.
+  http_->Post("/v1/library/games-folder", [this](const Request& req, Response& res) {
+    json body = json::parse(req.body, nullptr, false);
+    if (body.is_discarded() || !body.contains("path") || !body["path"].is_string()) {
+      return SendError(res, 400, "invalid_body", R"(expected {"path": "..."})");
+    }
+    if (auto set = library::SetGamesFolder(config_, body["path"]); !set) {
+      return SendError(res, 400, set.error().code, set.error().message);
+    }
+    if (on_roots_changed_) on_roots_changed_();
+    SendJson(res, {{"library_roots", config_.Get("library_roots")},
+                   {"prefix_root", config_.Get("prefix_root")},
+                   {"gog.install_root", config_.Get("gog.install_root")},
+                   {"itch.install_root", config_.Get("itch.install_root")},
+                   {"humble.download_root", config_.Get("humble.download_root")}});
+  });
+
   http_->Post("/v1/library/scan", [this](const Request&, Response& res) {
     library::Scanner scanner(config_, games_, events_);
     const library::ScanSummary summary = scanner.ScanAll();

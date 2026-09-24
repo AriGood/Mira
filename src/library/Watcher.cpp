@@ -73,6 +73,9 @@ Watcher::Watcher(config::Config& config, store::GameStore& games, api::EventBus&
   // during development (see tests/watcher_test.cpp).
   stop_fd_ = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
   if (stop_fd_ < 0) log::Error("Watcher: failed to create stop eventfd: {}", std::strerror(errno));
+  // Same reasoning as stop_fd_.
+  reload_fd_ = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
+  if (reload_fd_ < 0) log::Error("Watcher: failed to create reload eventfd: {}", std::strerror(errno));
 }
 
 Watcher::~Watcher() {
@@ -80,6 +83,7 @@ Watcher::~Watcher() {
   if (epoll_fd_ >= 0) ::close(epoll_fd_);
   if (timer_fd_ >= 0) ::close(timer_fd_);
   if (stop_fd_ >= 0) ::close(stop_fd_);
+  if (reload_fd_ >= 0) ::close(reload_fd_);
 }
 
 void Watcher::Stop() {
@@ -87,6 +91,36 @@ void Watcher::Stop() {
   const uint64_t one = 1;
   if (::write(stop_fd_, &one, sizeof(one)) < 0) {
     log::Error("Watcher::Stop: failed to signal eventfd: {}", std::strerror(errno));
+  }
+}
+
+void Watcher::ReloadRoots() {
+  if (reload_fd_ < 0) return;
+  const uint64_t one = 1;
+  if (::write(reload_fd_, &one, sizeof(one)) < 0) {
+    log::Error("Watcher::ReloadRoots: failed to signal eventfd: {}", std::strerror(errno));
+  }
+}
+
+void Watcher::WatchRoots() {
+  for (const auto& [wd, root] : watch_to_root_) inotify_rm_watch(inotify_fd_, wd);
+  watch_to_root_.clear();
+  pending_.clear();
+  RearmTimer();
+
+  for (const fs::path& root : config_.GetPathArray("library_roots")) {
+    std::error_code ec;
+    if (!fs::is_directory(root, ec)) {
+      log::Warn("Watcher: library root {} does not exist yet — not watched until it does", root.string());
+      continue;
+    }
+    const int wd = inotify_add_watch(inotify_fd_, root.c_str(), kWatchMask);
+    if (wd < 0) {
+      log::Error("Watcher: could not watch {}: {}", root.string(), std::strerror(errno));
+      continue;
+    }
+    watch_to_root_[wd] = root;
+    log::Info("watching {}", root.string());
   }
 }
 
@@ -126,22 +160,7 @@ void Watcher::Run() {
     return;
   }
 
-  for (const fs::path& root : config_.GetPathArray("library_roots")) {
-    std::error_code ec;
-    if (!fs::is_directory(root, ec)) {
-      log::Warn("Watcher: library root {} does not exist yet — not watched until it does "
-               "(restart mirad once it's created)",
-               root.string());
-      continue;
-    }
-    const int wd = inotify_add_watch(inotify_fd_, root.c_str(), kWatchMask);
-    if (wd < 0) {
-      log::Error("Watcher: could not watch {}: {}", root.string(), std::strerror(errno));
-      continue;
-    }
-    watch_to_root_[wd] = root;
-    log::Info("watching {}", root.string());
-  }
+  WatchRoots();
 
   epoll_event ev{};
   ev.events = EPOLLIN;
@@ -151,6 +170,8 @@ void Watcher::Run() {
   epoll_ctl(epoll_fd_, EPOLL_CTL_ADD, timer_fd_, &ev);
   ev.data.fd = stop_fd_;
   epoll_ctl(epoll_fd_, EPOLL_CTL_ADD, stop_fd_, &ev);
+  ev.data.fd = reload_fd_;
+  epoll_ctl(epoll_fd_, EPOLL_CTL_ADD, reload_fd_, &ev);
 
   epoll_event fired[8];
   while (true) {
@@ -164,6 +185,10 @@ void Watcher::Run() {
     for (int i = 0; i < n; ++i) {
       if (fired[i].data.fd == stop_fd_) {
         stop_requested = true;
+      } else if (fired[i].data.fd == reload_fd_) {
+        uint64_t signals = 0;
+        [[maybe_unused]] auto _ = ::read(reload_fd_, &signals, sizeof(signals));
+        WatchRoots();
       } else if (fired[i].data.fd == inotify_fd_) {
         HandleInotify();
       } else if (fired[i].data.fd == timer_fd_) {
