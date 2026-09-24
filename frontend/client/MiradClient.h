@@ -301,6 +301,11 @@ public:
   static void QueueTitleArtworkAsync(QObject* context, const std::string& source,
                                      std::vector<StoreTitle> titles,
                                      std::function<void(StoreActionResult)> callback);
+  // GET /v1/sources/{id}/removal and POST /v1/sources/{id}/remove.
+  static void GetRemovalPlanAsync(QObject* context, const std::string& source,
+                                  std::function<void(RemovalPlanResult)> callback);
+  static void RemoveSourceAsync(QObject* context, const std::string& source,
+                                std::function<void(RemoveSourceResult)> callback);
   // GET/POST /v1/itch/collections, DELETE /v1/itch/collections/{id}.
   static void GetItchCollectionsAsync(QObject* context, std::function<void(ItchCollectionsResult)> callback);
   static void AddItchCollectionAsync(QObject* context, const std::string& link,

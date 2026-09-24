@@ -453,6 +453,10 @@ QWidget* SourcePage::BuildOwnedSection() {
       ShowError(owned_note_, "Could not start the download.", r.error);
     });
   };
+  // Double-click does what the tile's button does, while it's clickable.
+  connect(owned_grid_, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem* item) {
+    if (item->data(GameTileDelegate::ActionEnabledRole).toBool() && owned_grid_->on_action) owned_grid_->on_action(item);
+  });
   layout->addWidget(owned_grid_);
   return owned_section_;
 }
@@ -816,17 +820,13 @@ void SourcePage::ShowLibraryMenu(const QPoint& pos) {
   QListWidgetItem* item = library_grid_->itemAt(pos);
   if (item == nullptr) return;
   const QString id = item->data(GameTileDelegate::IdRole).toString();
-  QMenu menu(this);
-  menu.addAction("Play", this, [this, id] { emit PlayRequested(id); });
-  menu.addAction("Game settings…", this, [this, id] { emit OpenGameRequested(id); });
-  // A store game's id is "<source>-<ref>".
+  // A store game's id is "<source>-<ref>"; those can also be updated.
   const QString prefix = source_.id + "-";
-  if (IsStore() && id_ != "humble" && id.startsWith(prefix)) {
-    const QString ref = id.mid(prefix.size());
-    menu.addAction("Update", this, [this, ref] { StartInstall(ref, /*update=*/true); });
-  }
-  menu.exec(library_grid_->viewport()->mapToGlobal(pos));
+  const QString update_ref = IsStore() && id_ != "humble" && id.startsWith(prefix) ? id.mid(prefix.size()) : QString();
+  emit GameMenuRequested(id, library_grid_->viewport()->mapToGlobal(pos), update_ref);
 }
+
+void SourcePage::UpdateTitle(const QString& ref) { StartInstall(ref, /*update=*/true); }
 
 void SourcePage::HandleEvent(const std::string& type, const std::string& data) {
   if (StoreEvent art; MiradClient::ParseTitleArtworkEvent(type, data, &art)) {

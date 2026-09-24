@@ -513,6 +513,10 @@ struct FrontendPrefs {
   std::optional<std::map<std::string, std::string>> shortcut_overrides;
   // Source ids unticked under "In sidebar" in Manage sources.
   std::optional<std::vector<std::string>> hidden_sources;
+  // The sidebar's source order, by id; sources missing from it follow.
+  std::optional<std::vector<std::string>> source_order;
+  // When each source last imported, as unix seconds.
+  std::optional<std::map<std::string, std::int64_t>> source_imported_at;
   // How many recently played games the sidebar lists besides running ones
   // (0 hides them), and whether source rows show a game count.
   std::optional<int> sidebar_recent_count;
@@ -696,6 +700,29 @@ struct StoreTitle {
   std::string title;
   bool installed = false;
   bool owned = true;  // false: listed from an itch collection, but paid and not bought
+};
+
+// GET /v1/sources/{id}/removal.
+struct RemovalPlanResult {
+  bool ok = false;
+  std::string error;
+  struct Game {
+    std::string id;
+    std::string name;
+    std::string deletes;  // empty: nothing on disk
+  };
+  std::vector<Game> games;
+  std::string launcher_dir;
+  std::vector<std::string> kept;
+  bool signs_out = false;
+};
+
+// POST /v1/sources/{id}/remove.
+struct RemoveSourceResult {
+  bool ok = false;
+  std::string error;
+  int removed = 0;
+  std::vector<std::string> problems;
 };
 
 // GET /v1/itch/collections.

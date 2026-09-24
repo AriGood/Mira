@@ -335,6 +335,20 @@ FrontendPrefsResult GetFrontendPrefsSync() {
     }
     result.prefs.hidden_sources = std::move(hidden);
   }
+  if (table.contains("source_imported_at") && table["source_imported_at"].is_object()) {
+    std::map<std::string, std::int64_t> imported;
+    for (const auto& [id, at] : table["source_imported_at"].items()) {
+      if (at.is_number_integer()) imported[id] = at.get<std::int64_t>();
+    }
+    result.prefs.source_imported_at = std::move(imported);
+  }
+  if (table.contains("source_order") && table["source_order"].is_array()) {
+    std::vector<std::string> order;
+    for (const json& id : table["source_order"]) {
+      if (id.is_string()) order.push_back(id.get<std::string>());
+    }
+    result.prefs.source_order = std::move(order);
+  }
   return result;
 }
 
@@ -364,6 +378,12 @@ PatchConfigResult SaveFrontendPrefsSync(const FrontendPrefs& prefs) {
     table["shortcuts"] = shortcuts;
   }
   if (prefs.hidden_sources) table["hidden_sources"] = *prefs.hidden_sources;
+  if (prefs.source_order) table["source_order"] = *prefs.source_order;
+  if (prefs.source_imported_at) {
+    json imported = json::object();
+    for (const auto& [id, at] : *prefs.source_imported_at) imported[id] = at;
+    table["source_imported_at"] = imported;
+  }
   if (prefs.sidebar_recent_count) table["sidebar_recent_count"] = *prefs.sidebar_recent_count;
   if (prefs.sidebar_source_counts) table["sidebar_source_counts"] = *prefs.sidebar_source_counts;
 
@@ -952,6 +972,43 @@ StoreActionResult QueueTitleArtworkSync(const std::string& source, const std::ve
   return {reply.ok, reply.error};
 }
 
+RemovalPlanResult GetRemovalPlanSync(const std::string& source) {
+  RemovalPlanResult result;
+  const transport::Reply reply = transport::Get("/v1/sources/" + source + "/removal");
+  if (!reply.ok) {
+    result.error = reply.error;
+    return result;
+  }
+  result.ok = true;
+  for (const json& game : reply.body.value("games", json::array())) {
+    result.games.push_back({.id = game.value("id", std::string()),
+                            .name = game.value("name", std::string()),
+                            .deletes = game.value("deletes", std::string())});
+  }
+  result.launcher_dir = reply.body.value("launcher_dir", std::string());
+  for (const json& path : reply.body.value("kept", json::array())) {
+    if (path.is_string()) result.kept.push_back(path.get<std::string>());
+  }
+  result.signs_out = reply.body.value("signs_out", false);
+  return result;
+}
+
+RemoveSourceResult RemoveSourceSync(const std::string& source) {
+  RemoveSourceResult result;
+  // Uninstalling can take a while (legendary, butler, nile).
+  const transport::Reply reply = transport::Post("/v1/sources/" + source + "/remove", {.read_timeout = std::chrono::minutes(10)});
+  if (!reply.ok) {
+    result.error = reply.error;
+    return result;
+  }
+  result.ok = true;
+  result.removed = reply.body.value("removed", 0);
+  for (const json& problem : reply.body.value("problems", json::array())) {
+    if (problem.is_string()) result.problems.push_back(problem.get<std::string>());
+  }
+  return result;
+}
+
 ItchCollectionsResult GetItchCollectionsSync() {
   ItchCollectionsResult result;
   const transport::Reply reply = transport::Get("/v1/itch/collections");
@@ -1443,6 +1500,16 @@ void MiradClient::QueueTitleArtworkAsync(QObject* context, const std::string& so
                                          std::function<void(StoreActionResult)> callback) {
   async::Run(context, [source, titles = std::move(titles)] { return QueueTitleArtworkSync(source, titles); },
              std::move(callback));
+}
+
+void MiradClient::GetRemovalPlanAsync(QObject* context, const std::string& source,
+                                      std::function<void(RemovalPlanResult)> callback) {
+  async::Run(context, [source] { return GetRemovalPlanSync(source); }, std::move(callback));
+}
+
+void MiradClient::RemoveSourceAsync(QObject* context, const std::string& source,
+                                    std::function<void(RemoveSourceResult)> callback) {
+  async::Run(context, [source] { return RemoveSourceSync(source); }, std::move(callback));
 }
 
 void MiradClient::GetItchCollectionsAsync(QObject* context,

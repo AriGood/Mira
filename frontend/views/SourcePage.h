@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QColor>
+#include <QPoint>
 #include <QHash>
 #include <QSet>
 #include <QString>
@@ -54,6 +55,8 @@ public:
   // The whole library; the page shows the games whose source is this one.
   void SetGames(const std::vector<GameSummary>& games, const std::set<std::string>& running);
   void UpdateCover(const QString& id);
+  // Starts an update of an installed store title.
+  void UpdateTitle(const QString& ref);
 
 signals:
   void BackRequested();
@@ -62,6 +65,9 @@ signals:
   void OpenSettingsRequested(QString focus_key);
   void PlayRequested(QString id);
   void OpenGameRequested(QString id);
+  // Right-click on an installed game: the library's own game menu, plus
+  // Update when `update_ref` is set.
+  void GameMenuRequested(QString id, QPoint global_pos, QString update_ref);
 
 private:
   bool IsStore() const { return source_.kind == SourceInfo::Kind::Store; }
