@@ -695,6 +695,21 @@ struct StoreTitle {
   std::string ref;
   std::string title;
   bool installed = false;
+  bool owned = true;  // false: listed from an itch collection, but paid and not bought
+};
+
+// GET /v1/itch/collections.
+struct ItchCollection {
+  std::int64_t id = 0;
+  std::string title;
+  std::int64_t games_count = 0;
+  bool own = false;  // the account's own, not added by link
+};
+
+struct ItchCollectionsResult {
+  bool ok = false;
+  std::string error;
+  std::vector<ItchCollection> collections;
 };
 
 struct StoreLibraryResult {
@@ -748,6 +763,7 @@ struct StoreEvent {
   std::string ref;     // install: the title's ref; download: the bundle key
   std::string error;   // only on "failed"
   bool update = false;  // install: an update rather than a first install
+  double progress = -1;  // install "progress": 0..1
 };
 
 }  // namespace mira_gui

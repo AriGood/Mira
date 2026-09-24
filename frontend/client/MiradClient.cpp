@@ -842,7 +842,8 @@ StoreLibraryResult GetStoreLibrarySync(const std::string& source) {
     if (!entry.is_object()) continue;
     result.titles.push_back({.ref = entry.value("ref", std::string()),
                              .title = entry.value("title", std::string()),
-                             .installed = entry.value("installed", false)});
+                             .installed = entry.value("installed", false),
+                             .owned = entry.value("owned", true)});
   }
   return result;
 }
@@ -948,6 +949,38 @@ StoreActionResult QueueTitleArtworkSync(const std::string& source, const std::ve
   json list = json::array();
   for (const StoreTitle& title : titles) list.push_back({{"ref", title.ref}, {"title", title.title}});
   const transport::Reply reply = transport::PostJson("/v1/library/artwork", {{"source", source}, {"titles", list}});
+  return {reply.ok, reply.error};
+}
+
+ItchCollectionsResult GetItchCollectionsSync() {
+  ItchCollectionsResult result;
+  const transport::Reply reply = transport::Get("/v1/itch/collections");
+  if (!reply.ok) {
+    result.error = reply.error;
+    return result;
+  }
+  if (!reply.body.is_array()) {
+    result.error = transport::UnexpectedResponse("GET /v1/itch/collections");
+    return result;
+  }
+  result.ok = true;
+  for (const json& entry : reply.body) {
+    if (!entry.is_object()) continue;
+    result.collections.push_back({.id = entry.value("id", std::int64_t{0}),
+                                  .title = entry.value("title", std::string()),
+                                  .games_count = entry.value("games_count", std::int64_t{0}),
+                                  .own = entry.value("own", false)});
+  }
+  return result;
+}
+
+StoreActionResult AddItchCollectionSync(const std::string& link) {
+  const transport::Reply reply = transport::PostJson("/v1/itch/collections", {{"link", link}});
+  return {reply.ok, reply.error};
+}
+
+StoreActionResult RemoveItchCollectionSync(std::int64_t id) {
+  const transport::Reply reply = transport::Delete("/v1/itch/collections/" + std::to_string(id));
   return {reply.ok, reply.error};
 }
 
@@ -1412,6 +1445,21 @@ void MiradClient::QueueTitleArtworkAsync(QObject* context, const std::string& so
              std::move(callback));
 }
 
+void MiradClient::GetItchCollectionsAsync(QObject* context,
+                                          std::function<void(ItchCollectionsResult)> callback) {
+  async::Run(context, [] { return GetItchCollectionsSync(); }, std::move(callback));
+}
+
+void MiradClient::AddItchCollectionAsync(QObject* context, const std::string& link,
+                                         std::function<void(StoreActionResult)> callback) {
+  async::Run(context, [link] { return AddItchCollectionSync(link); }, std::move(callback));
+}
+
+void MiradClient::RemoveItchCollectionAsync(QObject* context, std::int64_t id,
+                                            std::function<void(StoreActionResult)> callback) {
+  async::Run(context, [id] { return RemoveItchCollectionSync(id); }, std::move(callback));
+}
+
 bool MiradClient::ParseTitleArtworkEvent(const std::string& event_type, const std::string& data,
                                          StoreEvent* out) {
   constexpr std::string_view kPrefix = "library.artwork_";
@@ -1547,6 +1595,7 @@ bool MiradClient::ParseStoreEvent(const std::string& event_type, const std::stri
     out->source = entry.value("source", std::string());
     out->ref = entry.value("ref", std::string());
     out->update = entry.value("update", false);
+    if (out->state == "progress") out->progress = entry.value("progress", 0.0);
   } else if (out->kind == "download") {
     out->ref = entry.value("bundle_key", std::string());
   } else if (event_type.starts_with(kLauncher)) {

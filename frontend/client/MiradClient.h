@@ -301,6 +301,12 @@ public:
   static void QueueTitleArtworkAsync(QObject* context, const std::string& source,
                                      std::vector<StoreTitle> titles,
                                      std::function<void(StoreActionResult)> callback);
+  // GET/POST /v1/itch/collections, DELETE /v1/itch/collections/{id}.
+  static void GetItchCollectionsAsync(QObject* context, std::function<void(ItchCollectionsResult)> callback);
+  static void AddItchCollectionAsync(QObject* context, const std::string& link,
+                                     std::function<void(StoreActionResult)> callback);
+  static void RemoveItchCollectionAsync(QObject* context, std::int64_t id,
+                                        std::function<void(StoreActionResult)> callback);
   static void GetHumbleLibraryAsync(QObject* context,
                                     std::function<void(HumbleLibraryResult)> callback);
   static void DownloadHumbleBundleAsync(QObject* context, const std::string& bundle_key,

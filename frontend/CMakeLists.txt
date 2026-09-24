@@ -113,6 +113,8 @@ qt_add_executable(mira-gui
   dialogs/GameDetailPageDialog.h
   dialogs/InstallGameDialog.cpp
   dialogs/InstallGameDialog.h
+  dialogs/ItchCollectionsDialog.cpp
+  dialogs/ItchCollectionsDialog.h
   dialogs/LogViewerDialog.cpp
   dialogs/LogViewerDialog.h
   dialogs/ManageSourcesDialog.cpp

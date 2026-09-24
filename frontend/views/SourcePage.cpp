@@ -16,6 +16,7 @@
 #include <QVBoxLayout>
 
 #include "../client/MiradClient.h"
+#include "../dialogs/ItchCollectionsDialog.h"
 #include "../ui/ArtworkStore.h"
 #include "../ui/CoverArt.h"
 #include "../ui/DownloadTracker.h"
@@ -396,6 +397,16 @@ QWidget* SourcePage::BuildOwnedSection() {
   owned_refresh_ = new QPushButton("Refresh", owned_section_);
   owned_refresh_->setIcon(icons::For(icons::Glyph::Refresh));
   connect(owned_refresh_, &QPushButton::clicked, this, &SourcePage::RefreshOwned);
+  if (id_ == "itch") {
+    auto* collections = new QPushButton("Manage collections…", owned_section_);
+    collections->setToolTip("Show the games from itch.io collections here, yours or any added by link.");
+    connect(collections, &QPushButton::clicked, this, [this] {
+      ItchCollectionsDialog dialog(this);
+      dialog.exec();
+      if (dialog.Changed()) RefreshOwned();
+    });
+    header->addWidget(collections);
+  }
   header->addWidget(owned_refresh_);
   layout->addLayout(header);
 
@@ -685,6 +696,7 @@ void SourcePage::RefreshOwned() {
 void SourcePage::ShowOwned(const StoreLibraryResult& result) {
   owned_refresh_->setEnabled(true);
   owned_.clear();
+  not_owned_.clear();
   if (steam_settings_ != nullptr) steam_settings_->setVisible(false);
   if (!result.ok) {
     ShowError(owned_note_, "Could not list your games.", result.error);
@@ -696,6 +708,7 @@ void SourcePage::ShowOwned(const StoreLibraryResult& result) {
     downloads_->NoteTitle(source_.id, QString::fromStdString(title.ref), QString::fromStdString(title.title));
     if (!title.installed) {
       owned_.emplace_back(QString::fromStdString(title.ref), QString::fromStdString(title.title));
+      if (!title.owned) not_owned_.insert(QString::fromStdString(title.ref));
       uninstalled.push_back(title);
     }
   }
@@ -757,6 +770,13 @@ void SourcePage::RebuildOwnedTiles() {
     const DownloadTracker::Entry* running = downloads_->Find(source_.id + ":" + ref);
     if (running != nullptr && running->state == DownloadTracker::State::Running) {
       state = id_ == "humble" ? "Downloading…" : running->update ? "Updating…" : "Installing…";
+      if (running->progress >= 0) state = QString("%1 %2%").arg(state.chopped(1)).arg(qRound(running->progress * 100));
+    }
+    if (not_owned_.contains(ref)) {
+      item->setData(GameTileDelegate::ActionRole, QString("Not owned"));
+      item->setData(GameTileDelegate::ActionEnabledRole, false);
+      item->setToolTip(title + "\nA paid game from a collection. Buy it on itch.io to install it here.");
+      continue;
     }
     item->setData(GameTileDelegate::ActionRole, state.isEmpty() ? idle : state);
     item->setData(GameTileDelegate::ActionEnabledRole, state.isEmpty());
