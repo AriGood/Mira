@@ -3,6 +3,7 @@
 #include <json.hpp>
 
 #include <cctype>
+#include <chrono>
 #include <optional>
 #include <string_view>
 #include <utility>
@@ -882,6 +883,42 @@ std::string QueryEncode(const std::string& text) {
   return out;
 }
 
+GriddbMatchesResult GetGriddbMatchesSync(const std::string& id, const std::string& query) {
+  GriddbMatchesResult result;
+  std::string url = "/v1/games/" + id + "/metadata/matches";
+  if (!query.empty()) url += "?q=" + QueryEncode(query);
+  const transport::Reply reply = transport::Get(url, {.read_timeout = std::chrono::seconds(30)});
+  if (!reply.ok) {
+    result.error = reply.error;
+    return result;
+  }
+  result.ok = true;
+  result.query = reply.body.value("query", std::string());
+  result.chosen = reply.body.value("chosen", std::int64_t{0});
+  for (const json& entry : reply.body.value("matches", json::array())) {
+    GriddbMatch match;
+    match.id = entry.value("id", std::int64_t{0});
+    match.name = entry.value("name", std::string());
+    if (const std::int64_t released = entry.value("release_date", std::int64_t{0}); released > 0) {
+      const auto day = std::chrono::floor<std::chrono::days>(std::chrono::sys_seconds{std::chrono::seconds{released}});
+      match.year = static_cast<int>(std::chrono::year_month_day{day}.year());
+    }
+    result.matches.push_back(std::move(match));
+  }
+  return result;
+}
+
+GameActionResult SetGriddbMatchSync(const std::string& id, std::int64_t griddb_id) {
+  const transport::Reply reply =
+      transport::PostJson("/v1/games/" + id + "/metadata/match", {{"steamgriddb_id", griddb_id}});
+  return {reply.ok, reply.error};
+}
+
+GameActionResult WrongGriddbMatchSync(const std::string& id) {
+  const transport::Reply reply = transport::Post("/v1/games/" + id + "/metadata/wrong-match");
+  return {reply.ok, reply.error};
+}
+
 ArtworkResult GetTitleArtworkSync(const std::string& source, const std::string& ref) {
   ArtworkResult result;
   const transport::Blob blob =
@@ -1344,6 +1381,21 @@ void MiradClient::InstallStoreTitleAsync(QObject* context, const std::string& so
                                          std::function<void(StoreActionResult)> callback) {
   async::Run(context, [source, ref, update] { return InstallStoreTitleSync(source, ref, update); },
              std::move(callback));
+}
+
+void MiradClient::GetGriddbMatchesAsync(QObject* context, const std::string& id, const std::string& query,
+                                        std::function<void(GriddbMatchesResult)> callback) {
+  async::Run(context, [id, query] { return GetGriddbMatchesSync(id, query); }, std::move(callback));
+}
+
+void MiradClient::SetGriddbMatchAsync(QObject* context, const std::string& id, std::int64_t griddb_id,
+                                      std::function<void(GameActionResult)> callback) {
+  async::Run(context, [id, griddb_id] { return SetGriddbMatchSync(id, griddb_id); }, std::move(callback));
+}
+
+void MiradClient::WrongGriddbMatchAsync(QObject* context, const std::string& id,
+                                        std::function<void(GameActionResult)> callback) {
+  async::Run(context, [id] { return WrongGriddbMatchSync(id); }, std::move(callback));
 }
 
 void MiradClient::GetTitleArtworkAsync(QObject* context, const std::string& source, const std::string& ref,

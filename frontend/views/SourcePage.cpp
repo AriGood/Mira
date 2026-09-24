@@ -810,14 +810,10 @@ void SourcePage::ShowLibraryMenu(const QPoint& pos) {
 
 void SourcePage::HandleEvent(const std::string& type, const std::string& data) {
   if (StoreEvent art; MiradClient::ParseTitleArtworkEvent(type, data, &art)) {
-    if (art.source != id_) return;
-    const std::string id = id_ + "-" + art.ref;
-    const QString ref = QString::fromStdString(art.ref);
-    // Only for a tile already shown (its first TitleCover asks for itself),
-    // and not again for one replayed from before this page opened.
-    const bool shown = std::any_of(owned_.begin(), owned_.end(), [&ref](const auto& e) { return e.first == ref; });
-    if (art.state == "ready" && shown && !artwork_->HasArtwork(id)) artwork_->Invalidate(id);
-    if (art.state == "failed" && art.error == "no_steamgriddb_key" && art_key_ != nullptr) art_key_->setVisible(true);
+    // "ready" is LibraryWindow's: it has to land while this page is closed too.
+    if (art.source == id_ && art.state == "failed" && art.error == "no_steamgriddb_key" && art_key_ != nullptr) {
+      art_key_->setVisible(true);
+    }
     return;
   }
 

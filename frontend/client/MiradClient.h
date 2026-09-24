@@ -118,6 +118,19 @@ public:
   static void GetArtworkSlotAsync(QObject* context, const std::string& id, const std::string& slot,
                                   std::function<void(ArtworkResult)> callback);
 
+  // GET /v1/games/{id}/metadata/matches[?q=]: which SteamGridDB game the
+  // art could come from. Empty `query` searches the game's name.
+  static void GetGriddbMatchesAsync(QObject* context, const std::string& id, const std::string& query,
+                                    std::function<void(GriddbMatchesResult)> callback);
+  // POST .../metadata/match: take art from this SteamGridDB game (0: the top
+  // match) and refetch; game.metadata_ready follows.
+  static void SetGriddbMatchAsync(QObject* context, const std::string& id, std::int64_t griddb_id,
+                                  std::function<void(GameActionResult)> callback);
+  // POST .../metadata/wrong-match: move to the next match and refetch.
+  // Fails with no_more_matches past the last one.
+  static void WrongGriddbMatchAsync(QObject* context, const std::string& id,
+                                    std::function<void(GameActionResult)> callback);
+
   // GET /v1/games/{id}/metadata. A 404 is ordinary — nothing fetched yet, or
   // fetched and nothing found — and comes back as missing, not as an error.
   static void GetMetadataAsync(QObject* context, const std::string& id,

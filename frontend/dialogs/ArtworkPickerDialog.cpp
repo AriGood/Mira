@@ -1,7 +1,9 @@
 #include "ArtworkPickerDialog.h"
 
+#include <QComboBox>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QLineEdit>
 #include <QListWidget>
 #include <QPixmap>
 #include <QPushButton>
@@ -36,9 +38,30 @@ ArtworkPickerDialog::ArtworkPickerDialog(std::string game_id, std::string slot, 
     : QDialog(parent), id_(std::move(game_id)), slot_(std::move(slot)) {
   setWindowTitle(slot_ == "hero" ? "Choose hero art" : "Choose cover art");
   setModal(false);
-  resize(680, 520);
+  resize(680, 560);
 
-  auto* layout = new QHBoxLayout(this);
+  auto* outer = new QVBoxLayout(this);
+  // When the art is for the wrong game: SteamGridDB matched the name to
+  // something else. Picking another game refetches every candidate.
+  match_row_ = new QWidget(this);
+  auto* match_layout = new QHBoxLayout(match_row_);
+  match_layout->setContentsMargins(0, 0, 0, 0);
+  match_layout->addWidget(new QLabel("SteamGridDB game:", match_row_));
+  match_ = new QComboBox(match_row_);
+  match_->setMinimumWidth(240);
+  connect(match_, &QComboBox::activated, this, &ArtworkPickerDialog::ChooseMatch);
+  match_layout->addWidget(match_, /*stretch=*/1);
+  match_search_ = new QLineEdit(match_row_);
+  match_search_->setPlaceholderText("Search another name…");
+  match_search_->setClearButtonEnabled(true);
+  connect(match_search_, &QLineEdit::returnPressed, this,
+          [this] { LoadMatches(match_search_->text().trimmed()); });
+  match_layout->addWidget(match_search_);
+  match_row_->setVisible(false);
+  outer->addWidget(match_row_);
+
+  auto* layout = new QHBoxLayout();
+  outer->addLayout(layout, /*stretch=*/1);
 
   list_ = new QListWidget(this);
   list_->setMinimumWidth(260);
@@ -77,6 +100,49 @@ ArtworkPickerDialog::ArtworkPickerDialog(std::string game_id, std::string slot, 
   event_stream_.Start(this,
                       [this](std::string type, std::string data) { HandleEvent(type, data); });
   Load();
+  LoadMatches(QString());
+}
+
+void ArtworkPickerDialog::LoadMatches(const QString& query) {
+  match_->setEnabled(false);
+  MiradClient::GetGriddbMatchesAsync(this, id_, query.toStdString(), [this, query](GriddbMatchesResult result) {
+    match_->setEnabled(true);
+    // No key, or SteamGridDB unreachable: nothing to choose between.
+    if (!result.ok) {
+      if (!query.isEmpty()) SetStatus("Could not search SteamGridDB: " + QString::fromStdString(result.error), true);
+      return;
+    }
+    match_row_->setVisible(true);
+    match_->clear();
+    for (const GriddbMatch& match : result.matches) {
+      QString label = QString::fromStdString(match.name);
+      if (match.year > 0) label += QString(" (%1)").arg(match.year);
+      match_->addItem(label, QVariant::fromValue<qlonglong>(match.id));
+      if (match.id == result.chosen) match_->setCurrentIndex(match_->count() - 1);
+    }
+    if (result.matches.empty()) match_->addItem("No matches for \"" + QString::fromStdString(result.query) + "\"");
+    match_->setEnabled(!result.matches.empty());
+    // A search's results aren't in use until one is picked.
+    if (!query.isEmpty() && !result.matches.empty()) {
+      match_->setCurrentIndex(-1);
+      match_->setPlaceholderText("Pick the right game…");
+      match_->showPopup();
+    }
+  });
+}
+
+void ArtworkPickerDialog::ChooseMatch(int index) {
+  const QVariant id = match_->itemData(index);
+  if (!id.isValid() || busy_) return;
+  fetching_ = true;
+  SetBusy(true);
+  SetStatus("Fetching art for " + match_->itemText(index) + "…");
+  MiradClient::SetGriddbMatchAsync(this, id_, id.toLongLong(), [this](GameActionResult result) {
+    if (result.ok) return;  // game.metadata_ready reloads the list
+    fetching_ = false;
+    SetBusy(false);
+    SetStatus("Could not switch games: " + QString::fromStdString(result.error), /*error=*/true);
+  });
 }
 
 void ArtworkPickerDialog::Load() {

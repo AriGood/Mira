@@ -37,8 +37,9 @@ place, with the sidebar still up. There are three kinds:
   sign in by pasting what the store's login page shows, import what's
   installed. What the account owns but hasn't installed is a second tile grid
   with an Install pill on each tile (Humble: Download). Its covers are fetched
-  when the page lists them; stores without their own art need a SteamGridDB
-  key, and the page offers a button to Settings when one is missing.
+  when the page lists them, from the store's own art where mirad can find it.
+  A title with none needs a SteamGridDB key, and the page offers a button to
+  Settings when one is missing.
 - **Launchers** (Battle.net, Ubisoft Connect, EA app): install the launcher
   into its own prefix, open it, import the games installed through it.
 - **Local** (Steam, Lutris): import what the other program installed. Steam
@@ -283,6 +284,8 @@ Everything `api.md` marks implemented has a path through the UI:
 | `GET /v1/games/{id}/metadata` | `ui/HoverCard` (ProtonDB tier, developer, genres) on hover; `GameDetailPageDialog` (context menu → *More details…*) for screenshots, trailers, requirements, DLC, content descriptors, achievements; also `art_candidates.cover`/`.hero` for `ArtworkPickerDialog` |
 | `POST /v1/games/{id}/metadata/refresh` | the tile context menu's *Refresh metadata && cover art*, and *Library → Fetch missing cover art* |
 | `POST /v1/games/{id}/artwork?type=` | *Choose cover art…* / *Choose hero art…* (`ArtworkPickerDialog`) |
+| `GET /v1/games/{id}/metadata/matches`, `POST .../metadata/match` | `ArtworkPickerDialog`'s SteamGridDB game row: which game the art comes from, with a search for another name |
+| `POST /v1/games/{id}/metadata/wrong-match` | the tile context menu's *Art is for the wrong game* |
 | `POST /v1/games/{id}/run` | *Run in prefix…* (`RunInPrefixDialog`) |
 | `POST /v1/games/{id}/finish-install` | *Mark as installed* |
 | `GET /v1/games/{id}/installer`, `POST .../install` | *Install…* (`InstallGameDialog`), for a `needs_install` or `broken` game |

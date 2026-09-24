@@ -105,6 +105,16 @@ void ArtworkStore::Invalidate(const std::string& id) {
   Request(key);
 }
 
+void ArtworkStore::TitleArtworkReady(const std::string& id) {
+  const QString key = QString::fromStdString(id);
+  if (!titles_.contains(key) || original_.contains(key)) return;
+  if (queued_.contains(key)) {
+    ask_again_.insert(key);  // its answer may predate the fetch
+  } else if (answered_.contains(key)) {
+    Invalidate(id);
+  }
+}
+
 void ArtworkStore::InvalidateRendering(const std::string& id) {
   // Every scaled copy, not just the current tile size — the zoom slider
   // leaves entries behind at every size it passed through.
@@ -145,6 +155,10 @@ void ArtworkStore::Pump() {
           InvalidateRendering(id.toStdString());
           emit CoverChanged(id);
         }
+      }
+      if (ask_again_.remove(id) && !original_.contains(id)) {
+        answered_.remove(id);
+        Request(id);
       }
       Pump();
     };

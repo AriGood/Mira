@@ -1854,6 +1854,9 @@ void LibraryWindow::ShowContextMenu(const QPoint& pos) {
                                    "installed program"
                                  : "Only applies to a game that still needs installing");
   QAction* refresh_metadata = menu.addAction("Refresh metadata && cover art");
+  QAction* wrong_art = menu.addAction("Art is for the wrong game");
+  wrong_art->setToolTip("Take art from SteamGridDB's next match for this name. Choose cover art… "
+                        "lets you pick the game yourself.");
   QAction* view_log = menu.addAction("View log…");
   QAction* winetricks = menu.addAction("Run winetricks…");
   QAction* relocate = menu.addAction("Move to Mira's folders…");
@@ -1917,6 +1920,15 @@ void LibraryWindow::ShowContextMenu(const QPoint& pos) {
     mira_gui::actions::FinishInstall(this, id, [this] { RefreshGames(); });
   } else if (chosen == refresh_metadata) {
     RefreshMetadata(id);
+  } else if (chosen == wrong_art) {
+    mira_gui::MiradClient::WrongGriddbMatchAsync(this, id, [this, name](mira_gui::GameActionResult result) {
+      if (!result.ok) {
+        mira_gui::notify::Failed(this, "Could not find other art for " + name + ".",
+                                 QString::fromStdString(result.error));
+        return;
+      }
+      mira_gui::notify::Notice(this, "Fetching " + name + "'s art from the next SteamGridDB match…");
+    });
   } else if (chosen == view_log) {
     mira_gui::actions::ViewLog(this, id, name);
   } else if (chosen == winetricks) {
@@ -2698,6 +2710,11 @@ void LibraryWindow::HandleGameEvent(const std::string& type, const std::string& 
 
   // Doesn't consume it: the toasts below still want installs.
   downloads_->HandleEvent(type, data);
+
+  if (mira_gui::StoreEvent art; mira_gui::MiradClient::ParseTitleArtworkEvent(type, data, &art)) {
+    if (art.state == "ready") artwork_->TitleArtworkReady(art.source + "-" + art.ref);
+    return;
+  }
 
   if (mira_gui::InstallEvent install; mira_gui::MiradClient::ParseInstallEvent(type, data, &install)) {
     const mira_gui::GameSummary* game = FindGame(install.id);

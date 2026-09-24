@@ -64,6 +64,10 @@ public:
   // For `game.metadata_ready`, and for an explicit refresh.
   void Invalidate(const std::string& id);
 
+  // mirad fetched a store title's cover. Refetches it if TitleCover has
+  // asked for it and got nothing yet; otherwise the first ask gets it.
+  void TitleArtworkReady(const std::string& id);
+
   // Drop the scaled copies only — the originals are still good. For a
   // rename, which changes the placeholder's initials but not the artwork.
   void InvalidateRendering(const std::string& id);
@@ -89,6 +93,7 @@ private:
   QHash<QString, QPixmap> scaled_;    // by "id@tile_width"
   QSet<QString> answered_;            // asked and heard back, either way
   QSet<QString> queued_;              // in `pending_` or in flight
+  QSet<QString> ask_again_;           // in flight when mirad said it has art now
   QQueue<QString> pending_;
   QHash<QString, std::pair<std::string, std::string>> titles_;  // id -> {source, ref}
   int in_flight_ = 0;
