@@ -16,6 +16,7 @@
 #include <set>
 
 #include "core/Log.h"
+#include "proc/ProcessIndex.h"
 #include "proc/Session.h"
 #include "proc/Stats.h"
 #include "runner/Exec.h"
@@ -132,8 +133,22 @@ void ForEachPrefixProcess(const std::string& data_dir, Fn&& fn) {
   ::closedir(proc_dir);
 }
 
+// Every process of the game, for signalling it.
 std::set<pid_t> FindExternal(const ExternalMatch& match) {
   return match.appid.empty() ? FindDirProcesses(match.data_dir, match.win_dir) : FindSteamProcesses(match.appid);
+}
+
+// Whether the game is running, from a cached index: a Steam game by the
+// reaper Steam wraps it in, a launcher game by its folder in the prefix.
+std::set<pid_t> MatchExternal(const ProcessIndex& index, const ExternalMatch& match) {
+  std::set<pid_t> found;
+  for (const auto& [pid, info] : index.Processes()) {
+    const bool hit = match.appid.empty()
+                         ? InPrefix(info.prefix, match.data_dir) && info.argv0.starts_with(match.win_dir + "/")
+                         : info.steam_launch == match.appid;
+    if (hit) found.insert(pid);
+  }
+  return found;
 }
 
 }  // namespace
@@ -631,10 +646,12 @@ void ProcessSupervisor::WatchExternal(std::string game_id, ExternalMatch match, 
                                       std::string post_script) {
   std::set<pid_t> matched;
   std::int64_t started_at = 0;
+  ProcessIndex index;  // after the first refresh, each tick only lists /proc
 
   // Detection phase: wait for the launch to actually produce a process.
   while (!stopping_.load(std::memory_order_relaxed) && matched.empty()) {
-    matched = FindExternal(match);
+    index.Refresh();
+    matched = MatchExternal(index, match);
     if (!matched.empty()) break;
     if (model::NowSeconds() - requested_at >= match.detect_timeout_s) {
       log::Warn("never detected a process for {} after {}s -- giving up", game_id, match.detect_timeout_s);
@@ -660,13 +677,12 @@ void ProcessSupervisor::WatchExternal(std::string game_id, ExternalMatch match, 
   running_event["state"] = "running";
   events_.Publish("game.state", std::move(running_event));
 
-  // Liveness phase: re-scan every tick rather than just poll the pids
-  // already found, since the process tree can reshape early on (pressure-
-  // vessel/proton forking further children) and a stale pid set would
-  // report "exited" the moment the first-seen process happens to reap.
+  // Liveness phase: re-match every tick rather than just poll the pids
+  // already found, since the process tree can reshape early on.
   std::int64_t credited = 0;
   while (!stopping_.load(std::memory_order_relaxed)) {
-    const std::set<pid_t> current = FindExternal(match);
+    index.Refresh();
+    const std::set<pid_t> current = MatchExternal(index, match);
     if (current.empty() && !AnyAlive(matched)) break;
     if (!current.empty()) matched = current;
 
@@ -679,7 +695,7 @@ void ProcessSupervisor::WatchExternal(std::string game_id, ExternalMatch match, 
       const auto deadline = kill_deadlines_.find(game_id);
       if (deadline != kill_deadlines_.end() && model::NowSeconds() >= deadline->second) {
         log::Warn("{} (launched externally) ignored SIGTERM; sending SIGKILL", game_id);
-        for (pid_t found : matched) ::kill(found, SIGKILL);
+        for (pid_t found : FindExternal(match)) ::kill(found, SIGKILL);
         kill_deadlines_.erase(deadline);
       }
     }
