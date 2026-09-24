@@ -45,6 +45,10 @@ Result<Source> SourceFor(const config::Config& config, const std::string& kind) 
     return Source{.repo = config.GetString("runner_sources.itch.repo"),
                  .asset_pattern = config.GetString("runner_sources.itch.asset_pattern")};
   }
+  if (kind == "amazon") {
+    return Source{.repo = config.GetString("runner_sources.amazon.repo"),
+                 .asset_pattern = config.GetString("runner_sources.amazon.asset_pattern")};
+  }
   if (kind == "humble") {
     return Source{.repo = config.GetString("runner_sources.humble.repo"),
                  .asset_pattern = config.GetString("runner_sources.humble.asset_pattern")};

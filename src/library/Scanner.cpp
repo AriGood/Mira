@@ -12,6 +12,7 @@
 #include "library/AutoSetup.h"
 #include "library/Detector.h"
 #include "library/WinePrefix.h"
+#include "launchers/Launchers.h"
 #include "runner/RunnerRegistry.h"
 
 namespace mira::library {
@@ -89,6 +90,11 @@ ScanSummary Scanner::ScanAll() {
     total.restored += partial.restored;
     std::ranges::move(partial.added_games, std::back_inserter(total.added_games));
   }
+  if (config_.GetBool("launchers.auto_import")) {
+    launchers::ImportSummary imported = launchers::ImportAll(config_, games_, events_);
+    total.added += imported.added;
+    std::ranges::move(imported.added_games, std::back_inserter(total.added_games));
+  }
   return total;
 }
 
@@ -105,7 +111,8 @@ ScanSummary Scanner::ScanRoot(const fs::path& root) {
   // via GogImporter/ItchImporter) shouldn't also get double-detected here
   // as one big bogus game named after the wrapper folder itself.
   const std::vector<fs::path> excluded_roots = {prefix_root, config_.GetPath("gog.install_root"),
-                                                config_.GetPath("itch.install_root")};
+                                                config_.GetPath("itch.install_root"),
+                                                config_.GetPath("amazon.install_root")};
   const DetectorSettings detector_settings = SettingsFromConfig(config_);
   const Detector detector(detector_settings);
   AutoSetup auto_setup(config_, games_, events_);

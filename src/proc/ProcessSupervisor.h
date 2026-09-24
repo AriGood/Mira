@@ -22,6 +22,19 @@ namespace mira::proc {
 // Exposed for testing the prefix-collision rule (see the .cpp).
 std::set<pid_t> FindPrefixProcesses(const std::string& data_dir);
 
+// Every pid in data_dir's prefix whose command line starts under win_dir
+// (lowercase with forward slashes, e.g. "c:/program files (x86)/hearthstone").
+std::set<pid_t> FindDirProcesses(const std::string& data_dir, const std::string& win_dir);
+
+// How a game Mira didn't spawn itself is found in /proc: by Steam appid, or
+// by folder inside a store launcher's prefix.
+struct ExternalMatch {
+  std::string appid;
+  std::string data_dir;
+  std::string win_dir;
+  std::int64_t detect_timeout_s = 60;
+};
+
 // Tracks the games currently running. One watcher thread per running game —
 // fine at launcher scale, and unlike a blanket waitpid(-1) reaper it can't
 // steal the exit status of runner::RunAndWait's own provisioning children.
@@ -67,6 +80,10 @@ public:
   Result<void> TrackSteamLaunch(const model::Game& game, const std::string& appid,
                                 std::string post_script = "");
 
+  // Same, for a game a store launcher (Battle.net, Ubisoft, EA) starts.
+  Result<void> TrackLauncherLaunch(const model::Game& game, const std::string& win_dir,
+                                   std::int64_t detect_timeout_s, std::string post_script = "");
+
   // SIGTERM to the running game's whole process group, if any. Returns as
   // soon as the signal is sent; if the game ignores it, the watcher escalates
   // to SIGKILL after stop_timeout_s rather than blocking the caller.
@@ -80,8 +97,9 @@ private:
   void WatchReconciledLive(std::string game_id, pid_t wrapper_pid, std::filesystem::path session_path);
   void FinalizeWrappedSession(const std::string& game_id, const proc::SessionRecord& record,
                               const std::filesystem::path& session_path);
-  void WatchSteam(std::string game_id, std::string appid, std::int64_t requested_at,
-                  std::string post_script);
+  Result<void> TrackExternal(const model::Game& game, ExternalMatch match, std::string post_script);
+  void WatchExternal(std::string game_id, ExternalMatch match, std::int64_t requested_at,
+                     std::string post_script);
 
   store::GameStore& games_;
   api::EventBus& events_;
@@ -90,7 +108,7 @@ private:
   mutable std::mutex mutex_;
   std::map<std::string, pid_t> running_;
   std::map<std::string, std::string> prefixes_;  // game id -> data_dir, for Stop()
-  std::map<std::string, std::string> steam_appids_;  // game id -> appid, for Stop()/WatchSteam()
+  std::map<std::string, ExternalMatch> external_;  // game id -> match, for Stop()/WatchExternal()
   std::map<std::string, std::int64_t> kill_deadlines_;  // game id -> when to SIGKILL
   std::set<std::string> stop_requested_;  // Stop() was called; the exit isn't a crash
   std::map<std::string, std::thread> watchers_;

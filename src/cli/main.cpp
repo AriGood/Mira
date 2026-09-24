@@ -471,6 +471,128 @@ int CmdLutris(int argc, char** argv) {
   return 2;
 }
 
+int CmdAmazon(int argc, char** argv) {
+  const std::string_view sub = argc > 0 ? argv[0] : "";
+  auto client = Connect();
+  if (sub == "status") {
+    auto res = client.Get("/v1/amazon/status");
+    if (!Ok(res)) {
+      PrintError(res);
+      return 1;
+    }
+    const json status = json::parse(res->body);
+    const json& nile = status["nile"];
+    if (!nile.value("installed", false)) {
+      std::puts("nile: not installed — run \"mira amazon setup\"");
+      return 0;
+    }
+    std::printf("nile: installed (%s, %s) at %s\n", nile.value("source", "").c_str(), nile.value("version", "").c_str(),
+                nile.value("path", "").c_str());
+    std::puts(status.value("authenticated", false) ? "authenticated" : "not authenticated — run \"mira amazon login\"");
+    return 0;
+  }
+  if (sub == "login") {
+    auto res = client.Post("/v1/amazon/login");
+    if (!Ok(res)) {
+      PrintError(res);
+      return 1;
+    }
+    std::printf("Visit this URL and log in:\n%s\n"
+                "It ends on an amazon.com page. Paste that page's whole address-bar URL:\nurl: ",
+                json::parse(res->body).value("url", "").c_str());
+    std::string pasted;
+    std::getline(std::cin, pasted);
+    while (!pasted.empty() && std::isspace(static_cast<unsigned char>(pasted.back()))) pasted.pop_back();
+    if (pasted.empty()) {
+      std::fprintf(stderr, "mira: nothing entered\n");
+      return 2;
+    }
+    auto auth = client.Post("/v1/amazon/auth", json{{"redirect", pasted}}.dump(), "application/json");
+    if (!Ok(auth)) {
+      PrintError(auth);
+      return 1;
+    }
+    std::puts("logged in");
+    return 0;
+  }
+  if (sub == "setup" || sub == "logout" || sub == "import") {
+    auto res = client.Post(std::format("/v1/amazon/{}", sub));
+    if (!Ok(res)) {
+      PrintError(res);
+      return 1;
+    }
+    if (sub == "setup") std::puts("downloading nile — `mira amazon status` to check on it");
+    if (sub == "logout") std::puts("logged out");
+    if (sub == "import") {
+      const json summary = json::parse(res->body);
+      std::printf("added: %lld  updated: %lld\n", summary.value("added", 0LL), summary.value("updated", 0LL));
+    }
+    return 0;
+  }
+  std::fprintf(stderr,
+               "usage: mira amazon setup|status|login|logout|import\n"
+               "       (installing is source-generic: mira library install amazon <id>)\n");
+  return 2;
+}
+
+int CmdLauncher(int argc, char** argv) {
+  const std::string_view sub = argc > 0 ? argv[0] : "";
+  auto client = Connect();
+  if (sub == "list") {
+    auto res = client.Get("/v1/launchers");
+    if (!Ok(res)) {
+      PrintError(res);
+      return 1;
+    }
+    for (const json& launcher : json::parse(res->body)) {
+      const std::string state = launcher.value("installed", false) ? "installed"
+                                : launcher.value("install_state", "") == "running" ? "installing"
+                                                                                  : "not installed";
+      std::printf("%-10s %-16s %s\n", launcher.value("id", "").c_str(), launcher.value("name", "").c_str(),
+                  state.c_str());
+    }
+    return 0;
+  }
+  if ((sub == "install" || sub == "import") && argc >= 2) {
+    auto res = client.Post(std::format("/v1/launchers/{}/{}", argv[1], sub));
+    if (!Ok(res)) {
+      PrintError(res);
+      return 1;
+    }
+    if (sub == "install") {
+      std::printf("installing — `mira launcher list` to check on it\n");
+    } else {
+      const json summary = json::parse(res->body);
+      std::printf("added: %lld  updated: %lld\n", summary.value("added", 0LL), summary.value("updated", 0LL));
+    }
+    return 0;
+  }
+  if (sub == "open" && argc >= 2) {
+    json body = json::object();
+    for (int i = 2; i < argc; ++i) {
+      const std::string_view arg = argv[i];
+      if ((arg == "--launch" || arg == "--install") && i + 1 < argc) {
+        body["action"] = arg.substr(2);
+        body["ref"] = argv[++i];
+      } else {
+        std::fprintf(stderr, "mira: unknown launcher option \"%s\"\n", argv[i]);
+        return 2;
+      }
+    }
+    auto res = client.Post(std::format("/v1/launchers/{}/open", argv[1]), body.dump(), "application/json");
+    if (!Ok(res)) {
+      PrintError(res);
+      return 1;
+    }
+    return 0;
+  }
+  std::fprintf(stderr,
+               "usage: mira launcher list\n"
+               "       mira launcher install|import <battlenet|ubisoft|ea>\n"
+               "       mira launcher open <id> [--launch REF | --install REF]\n");
+  return 2;
+}
+
 int CmdEpicSetup() {
   auto client = Connect();
   auto res = client.Post("/v1/epic/legendary/install");
@@ -1499,6 +1621,8 @@ void PrintUsage() {
       "  library relocate        relocate every tracked game (see `mira relocate`)\n"
       "  steam scan             detect installed Steam games\n"
       "  lutris import          import games from Lutris's own database\n"
+      "  launcher list|install|import|open   Battle.net, Ubisoft Connect and EA app\n"
+      "  amazon setup|status|login|logout|import   Amazon Games via nile\n"
       "  desktop-entries list    list already-installed .desktop entries that could become games\n"
       "  desktop-entries import <id> [<id>...]   add the picked ones (covers Flatpak apps too)\n"
       "  gamemode status         check whether GameMode is installed/running\n"
@@ -1536,6 +1660,8 @@ int main(int argc, char** argv) {
   if (command == "add") return CmdAdd(rest_argc, rest);
   if (command == "steam") return CmdSteam(rest_argc, rest);
   if (command == "lutris") return CmdLutris(rest_argc, rest);
+  if (command == "launcher") return CmdLauncher(rest_argc, rest);
+  if (command == "amazon") return CmdAmazon(rest_argc, rest);
   if (command == "epic") return CmdEpic(rest_argc, rest);
   if (command == "gog") return CmdGog(rest_argc, rest);
   if (command == "itch") return CmdItch(rest_argc, rest);

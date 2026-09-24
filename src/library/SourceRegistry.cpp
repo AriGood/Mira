@@ -1,5 +1,6 @@
 #include "library/SourceRegistry.h"
 
+#include "amazon/AmazonSource.h"
 #include "epic/EpicSource.h"
 #include "gog/GogSource.h"
 #include "itch/ItchSource.h"
@@ -14,6 +15,7 @@ std::vector<std::unique_ptr<ILibrarySource>> BuildSources() {
   sources.push_back(std::make_unique<steam::SteamSource>());
   sources.push_back(std::make_unique<gog::GogSource>());
   sources.push_back(std::make_unique<itch::ItchSource>());
+  sources.push_back(std::make_unique<amazon::AmazonSource>());
   return sources;
 }
 

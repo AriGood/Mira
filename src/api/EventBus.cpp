@@ -2,6 +2,12 @@
 
 namespace mira::api {
 
+EventBus::EventBus(size_t capacity)
+    : next_id_(std::chrono::duration_cast<std::chrono::milliseconds>(
+                   std::chrono::system_clock::now().time_since_epoch())
+                   .count()),
+      capacity_(capacity) {}
+
 model::Event EventBus::Publish(std::string type, nlohmann::json payload) {
   model::Event event;
   {

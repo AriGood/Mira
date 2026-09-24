@@ -316,6 +316,14 @@ Schema::Schema() {
                 "plain file (installer, archive, or DRM-free build), added as a "
                 "game manually afterward like any other manually-acquired title."});
 
+  s.Add({.key = "amazon.enabled",
+         .label = "Enable Amazon Games",
+         .type = Type::Bool,
+         .default_value = true,
+         .doc = "Use nile (Heroic's Amazon Games client) to log in, list and install Amazon Games / Prime "
+                "Gaming titles. Installed games run through Mira's own Wine/Proton runner. See \"mira "
+                "amazon setup\" if nile isn't already installed."});
+
   s.Add({.key = "lutris.enabled",
          .label = "Enable Lutris",
          .type = Type::Bool,
@@ -391,6 +399,13 @@ Schema::Schema() {
          .doc = "Path to the humble-cli binary. Empty tries Mira's own managed "
                 "download (see \"mira humble setup\"), then $PATH."});
 
+  s.Add({.key = "amazon.nile_bin",
+         .label = "Amazon Nile Binary",
+         .type = Type::String,
+         .default_value = "",
+         .doc = "Path to the nile binary. Empty tries Mira's own managed download "
+                "(see \"mira amazon setup\"), then $PATH."});
+
   s.Add({.key = "lutris.data_dir",
          .label = "Lutris Data Directory",
          .type = Type::String,
@@ -426,6 +441,13 @@ Schema::Schema() {
          .doc = "Where itch.io titles are installed to — registered with butlerd as "
                 "an install location on first use. Deliberately outside "
                 "library_roots' usual defaults, same reasoning as gog.install_root."});
+
+  s.Add({.key = "amazon.install_root",
+         .label = "Amazon Install Dir",
+         .type = Type::String,
+         .default_value = "~/.local/share/mira/amazon",
+         .doc = "Where Amazon titles are installed to, one folder per game. Outside library_roots for the "
+                "same reason as gog.install_root."});
 
   s.Add({.key = "humble.download_root",
          .label = "Humble Install Dir",
@@ -553,6 +575,18 @@ Schema::Schema() {
          .label = "Humble Asset Pattern",
          .type = Type::String,
          .default_value = std::string(runner_sources::kHumbleCliAssetPattern),
+         .doc = "Glob a release's assets are filtered to before offering one to download."});
+
+  s.Add({.key = "runner_sources.amazon.repo",
+         .label = "Amazon Repository",
+         .type = Type::String,
+         .default_value = std::string(runner_sources::kNileRepo),
+         .doc = "GitHub \"owner/repo\" nile (the Amazon Games client) is downloaded from."});
+
+  s.Add({.key = "runner_sources.amazon.asset_pattern",
+         .label = "Amazon Asset Pattern",
+         .type = Type::String,
+         .default_value = std::string(runner_sources::kNileAssetPattern),
          .doc = "Glob a release's assets are filtered to before offering one to download."});
 
   // --- Launching -------------------------------------------------------------
@@ -695,6 +729,52 @@ Schema::Schema() {
          .type = Type::String,
          .default_value = "/S",
          .doc = "Arguments for a silent NSIS install. /D is added."});
+
+  // --- Store launchers ------------------------------------------------------
+  s.Section("Store Launchers");
+
+  s.Add({.key = "launchers.auto_import",
+         .label = "Import Launcher Games on Scan",
+         .type = Type::Bool,
+         .default_value = true,
+         .doc = "Import games installed through a store launcher (Battle.net, Ubisoft Connect, EA app) "
+                "on every scan."});
+
+  s.Add({.key = "launchers.runner",
+         .label = "Launcher Runner",
+         .type = Type::String,
+         .default_value = "",
+         .doc = "Runner for a store launcher's prefix, e.g. \"proton:GE-Proton11-7\". Empty uses "
+                "default_runner.windows. Games it installs use the same one."});
+
+  s.Add({.key = "launchers.detect_timeout_s",
+         .label = "Launcher Game Start Timeout (seconds)",
+         .type = Type::Int,
+         .default_value = 300,
+         .doc = "How long to wait for a launcher to start a game (updates, login) before giving up tracking it.",
+         .constraint = Range(10, 3600)});
+
+  s.Add({.key = "launchers.umu_lookup",
+         .label = "Look Up umu IDs",
+         .type = Type::Bool,
+         .default_value = true,
+         .doc = "Look up each newly imported launcher game at umu.openwinecomponents.org so its protonfixes "
+                "apply. Sends only the store name and the game's store id."});
+
+  s.Divider();
+
+  s.Add({.key = "launchers.ubisoft.disable_overlay",
+         .label = "Disable Ubisoft Overlay",
+         .type = Type::Bool,
+         .default_value = true,
+         .doc = "Turn off the Ubisoft Connect overlay when installing it; it often breaks games under Wine."});
+
+  s.Add({.key = "launchers.battlenet.disable_hw_accel",
+         .label = "Disable Battle.net Hardware Acceleration",
+         .type = Type::Bool,
+         .default_value = true,
+         .doc = "Turn off Battle.net's hardware acceleration when installing it; its UI renders blank under "
+                "Wine otherwise."});
 
   // --- Detection -------------------------------------------------------------
   s.Section("Detection");

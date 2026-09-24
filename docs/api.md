@@ -267,8 +267,11 @@ if it's already over `launch.log_max_mb` (default 64).
 
 ### `POST /v1/games/{id}/stop` — implemented
 Sends SIGTERM to the game's process group **and** every process running in
-its prefix, escalating to SIGKILL after `launch.stop_timeout_s`. 409 if not
-running.
+its prefix, escalating to SIGKILL after `launch.stop_timeout_s`. If it isn't running,
+returns `{"status": "not_running"}` and publishes `game.state` with state
+`idle`, so a client that missed the exit can clear it. mirad also publishes
+`idle` for every game at startup, and event ids start from the clock, so a
+client reconnecting across a restart resumes cleanly.
 
 The prefix half matters on Proton/Wine: `setsid()`/`setpgid()` during startup
 leaves the process group nearly empty (measured: 1 of 16 processes reached).
@@ -541,7 +544,7 @@ entitlements meant 120 rows in a file the README promises stays
 hand-editable, each carrying a meaningless `data_dir`/`runner_ref`/
 `play_seconds`.
 
-### `GET /v1/library[?source=epic|steam|gog|itch]` — implemented
+### `GET /v1/library[?source=epic|steam|gog|itch|amazon]` — implemented
 Every entitlement the configured sources can report, or one source's with
 `?source=`:
 ```json
@@ -828,6 +831,64 @@ humble-cli itself exits 0 and prints "Nothing to download" for these,
 which isn't a failure, but isn't a real download either.
 
 ---
+
+## Amazon Games
+
+Wraps [nile](https://github.com/imLinguin/nile) (Heroic's Amazon Games
+client). Install and update go through `POST /v1/library/install|update`
+with `source: "amazon"` and the product id as `ref`; titles land in
+`amazon.install_root`. An installed game (`amazon-<product id>`) runs its
+`fuel.json` launch command through Mira's own runner, with the Amazon SDK
+variables `nile launch` would set.
+
+### `GET /v1/amazon/status` — implemented
+`{nile: {installed, source, path, version}, authenticated}`.
+
+### `POST /v1/amazon/setup` — implemented
+`202`; downloads nile's latest release. Events `amazon.setup.started/finished/failed`.
+
+### `POST /v1/amazon/login` — implemented
+`{url}` to open in a browser. The login ends on an amazon.com page.
+
+### `POST /v1/amazon/auth` — implemented
+Body `{redirect}`: that page's URL, or its `openid.oa2.authorization_code`
+value. Finishes the login started above.
+
+### `POST /v1/amazon/logout` — implemented
+
+### `POST /v1/amazon/import` — implemented
+`{added, updated}` from nile's `installed.json`.
+
+## Store launchers
+
+Battle.net, Ubisoft Connect and the EA app have no Linux client, so each is
+installed once into its own prefix (game `launcher-<id>`). Games installed
+through a launcher are imported as their own games (`<id>-<ref>`, source
+`battlenet`/`ubisoft`/`ea`) sharing its prefix and runner. Launching one asks
+the launcher to start it; the game's own processes are tracked for playtime
+and `stop`, and the launcher keeps running. `launchers.auto_import` imports
+on every scan. umu's `STORE` and, when found, `GAMEID` are set so
+protonfixes apply.
+
+### `GET /v1/launchers` — implemented
+`[{id, name, game_id, installed, install_state, interactive_install, prefix, error}]`.
+`install_state` is `idle`, `running`, `finished` or `failed`.
+
+### `POST /v1/launchers/{id}/install` — implemented
+`202`. Makes the prefix, runs the winetricks steps, then the launcher's
+installer: silent for Ubisoft and EA, shown for Battle.net. Imports its
+games afterwards. `409 install_running`. Events
+`launcher.install.started/finished/failed`.
+
+### `POST /v1/launchers/{id}/import` — implemented
+`{added, updated}`. Battle.net games are found by their default folders,
+Ubisoft by the launcher's registry keys, EA by each game's
+`__Installer/installerdata.xml`. `409 launcher_not_installed`.
+
+### `POST /v1/launchers/{id}/open` — implemented
+Body `{action?: "launch"|"install", ref?}`. Opens the launcher, or asks it
+to launch or install a game by store id (Battle.net product code such as
+`WTCG`, Ubisoft id, EA offer ids). Not tracked.
 
 ## Desktop entries
 

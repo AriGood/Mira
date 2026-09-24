@@ -26,6 +26,8 @@
 #include "library/Relocate.h"
 #include "library/Scanner.h"
 #include "library/SourceRegistry.h"
+#include "amazon/AmazonImporter.h"
+#include "amazon/Nile.h"
 #include "desktop/DesktopEntryScanner.h"
 #include "epic/EpicImporter.h"
 #include "epic/EpicInstaller.h"
@@ -37,6 +39,7 @@
 #include "itch/Itch.h"
 #include "itch/ItchImporter.h"
 #include "itch/ItchInstaller.h"
+#include "launchers/Launchers.h"
 #include "lutris/LutrisImporter.h"
 #include "metadata/MetadataFetcher.h"
 #include "proc/ProcessSupervisor.h"
@@ -326,9 +329,46 @@ Server::Server(config::Config& config, store::GameStore& games, EventBus& events
       http_(std::make_unique<httplib::Server>()),
       supervisor_(games, events, config.GetInt("launch.stop_timeout_s")) {}
 
-Server::~Server() = default;
+Server::~Server() {
+  stopping_.store(true, std::memory_order_relaxed);
+  if (launcher_watch_.joinable()) launcher_watch_.join();
+}
 
-void Server::ReconcileSessions() { supervisor_.Reconcile(games_.Dir() / "sessions"); }
+// A game started from inside a running launcher (not through Mira) is
+// picked up here, so it still shows as playing and its playtime counts.
+void Server::WatchLauncherGames() {
+  constexpr auto kTick = std::chrono::milliseconds(500);
+  constexpr int kTicksPerScan = 6;
+  for (int tick = 0; !stopping_.load(std::memory_order_relaxed); ++tick) {
+    std::this_thread::sleep_for(kTick);
+    if (tick % kTicksPerScan != 0) continue;
+    for (const launchers::Launcher& launcher : launchers::All()) {
+      const auto host = games_.Find(launchers::GameId(launcher));
+      if (!host || host->data_dir.empty() || proc::FindPrefixProcesses(host->data_dir).empty()) continue;
+      for (const model::Game& game : games_.All()) {
+        if (game.source != launcher.id || supervisor_.IsRunning(game.id)) continue;
+        const std::string win_dir = launchers::WindowsDir(game);
+        if (proc::FindDirProcesses(game.data_dir, win_dir).empty()) continue;
+        const config::Resolver resolver(config_, game.overrides);
+        if (supervisor_.TrackLauncherLaunch(game, win_dir, 10, resolver.GetString("launch.post_script"))) {
+          events_.Publish("game.launched", {{"id", game.id}, {"via", "launcher"}, {"tracked", true}});
+        }
+      }
+    }
+  }
+}
+
+void Server::ReconcileSessions() {
+  supervisor_.Reconcile(games_.Dir() / "sessions");
+  // A client that stayed open across a restart may still show games from
+  // the old daemon as running.
+  for (const model::Game& game : games_.All()) {
+    if (supervisor_.IsRunning(game.id)) continue;
+    json event = GameJson(game, supervisor_);
+    event["state"] = "idle";
+    events_.Publish("game.state", std::move(event));
+  }
+}
 
 Result<void> Server::Serve(const std::filesystem::path& socket_path) {
   std::error_code ec;
@@ -346,6 +386,7 @@ Result<void> Server::Serve(const std::filesystem::path& socket_path) {
                                ec);
 
   log::Info("listening on {}", socket_path.string());
+  launcher_watch_ = std::thread(&Server::WatchLauncherGames, this);
   if (!http_->listen_after_bind()) {
     return Err("socket_listen_failed", "httplib server exited unexpectedly");
   }
@@ -832,6 +873,157 @@ void Server::RegisterRoutes() {
     SendJson(res, {{"added", summary->added}, {"updated", summary->updated}});
   });
 
+  // --- amazon -------------------------------------------------------------
+  //
+  // Wraps nile (Heroic's Amazon Games client) for login, library and
+  // downloads; installing goes through /v1/library/install like the other
+  // stores. Installed games run through Mira's own runners.
+
+  http_->Get("/v1/amazon/status", [this](const Request&, Response& res) {
+    const amazon::AmazonAuthStatus status = amazon::Status(config_);
+    SendJson(res, {{"nile", {{"installed", status.nile.installed},
+                             {"source", status.nile.source},
+                             {"path", status.nile.path},
+                             {"version", status.nile.version}}},
+                  {"authenticated", status.authenticated}});
+  });
+
+  http_->Post("/v1/amazon/setup", [this](const Request&, Response& res) {
+    auto releases = runner::ListReleases(config_, "amazon");
+    if (!releases) return SendError(res, 502, releases.error().code, releases.error().message);
+    if (releases->empty()) return SendError(res, 404, "no_release_found", "no matching nile release found");
+
+    const runner::ReleaseAsset asset = releases->front();
+    events_.Publish("amazon.setup.started", {{"tag", asset.tag}});
+    std::thread([this, asset] {
+      if (auto installed = amazon::InstallNileBinary(config_, asset); !installed) {
+        log::Error("nile install failed ({}): {}", asset.tag, installed.error().message);
+        events_.Publish("amazon.setup.failed", {{"tag", asset.tag}, {"error", installed.error().message}});
+      } else {
+        log::Info("installed nile {}", asset.tag);
+        events_.Publish("amazon.setup.finished", {{"tag", asset.tag}});
+      }
+    }).detach();
+    SendJson(res, {{"status", "downloading"}, {"tag", asset.tag}}, 202);
+  });
+
+  // Two steps: this returns the Amazon login URL; /v1/amazon/auth takes the
+  // amazon.com URL the browser ends on after logging in.
+  http_->Post("/v1/amazon/login", [this](const Request&, Response& res) {
+    const auto url = amazon::BeginLogin(config_);
+    if (!url) return SendError(res, 409, url.error().code, url.error().message);
+    SendJson(res, {{"url", *url}});
+  });
+
+  http_->Post("/v1/amazon/auth", [this](const Request& req, Response& res) {
+    const json body = json::parse(req.body, nullptr, false);
+    if (body.is_discarded() || !body.contains("redirect") || !body["redirect"].is_string()) {
+      return SendError(res, 400, "invalid_body", R"(expected {"redirect": "..."})");
+    }
+    if (auto logged_in = amazon::FinishLogin(config_, body["redirect"]); !logged_in) {
+      return SendError(res, 400, logged_in.error().code, logged_in.error().message);
+    }
+    SendJson(res, {{"authenticated", true}});
+  });
+
+  http_->Post("/v1/amazon/logout", [this](const Request&, Response& res) {
+    if (auto logged_out = amazon::Logout(config_); !logged_out) {
+      return SendError(res, 400, logged_out.error().code, logged_out.error().message);
+    }
+    SendJson(res, {{"status", "logged_out"}});
+  });
+
+  http_->Post("/v1/amazon/import", [this](const Request&, Response& res) {
+    amazon::AmazonImporter importer(config_, games_, events_);
+    auto summary = importer.Import();
+    if (!summary) return SendError(res, 404, summary.error().code, summary.error().message);
+    SyncDesktopEntries(config_, games_);
+    for (const model::Game& game : summary->added_games) metadata_fetches_.Enqueue(config_, events_, game);
+    SendJson(res, {{"added", summary->added}, {"updated", summary->updated}});
+  });
+
+  // --- store launchers --------------------------------------------------
+  //
+  // Battle.net, Ubisoft Connect and the EA app, each installed into its own
+  // prefix. Their games are imported as Mira games and launched through them.
+
+  http_->Get("/v1/launchers", [this](const Request&, Response& res) {
+    json list = json::array();
+    for (const launchers::Launcher& launcher : launchers::All()) {
+      const auto game = games_.Find(launchers::GameId(launcher));
+      list.push_back({{"id", launcher.id},
+                      {"name", launcher.name},
+                      {"game_id", launchers::GameId(launcher)},
+                      {"installed", launchers::Installed(games_, launcher)},
+                      {"install_state", launchers::InstallState(launcher)},
+                      {"interactive_install", launcher.interactive},
+                      {"prefix", game ? game->data_dir : ""},
+                      {"error", game ? game->last_error : ""}});
+    }
+    SendJson(res, list);
+  });
+
+  http_->Post(R"(/v1/launchers/([^/]+)/install)", [this](const Request& req, Response& res) {
+    const launchers::Launcher* launcher = launchers::Find(req.matches[1].str());
+    if (!launcher) return SendError(res, 404, "launcher_not_found", "no such launcher");
+    if (!launchers::BeginInstall(*launcher)) {
+      return SendError(res, 409, "install_running", std::format("{} is already installing", launcher->name));
+    }
+    events_.Publish("launcher.install.started", {{"id", launcher->id}});
+    std::thread([this, launcher] {
+      const auto done = launchers::Install(config_, games_, *launcher);
+      if (const auto stored = games_.Find(launchers::GameId(*launcher))) {
+        events_.Publish("game.updated", GameJson(*stored, supervisor_));
+      }
+      if (!done) {
+        events_.Publish("launcher.install.failed", {{"id", launcher->id}, {"error", done.error().message}});
+        return;
+      }
+      if (const auto imported = launchers::Import(config_, games_, events_, *launcher)) {
+        for (const model::Game& game : imported->added_games) metadata_fetches_.Enqueue(config_, events_, game);
+      }
+      SyncDesktopEntries(config_, games_);
+      events_.Publish("launcher.install.finished", {{"id", launcher->id}});
+    }).detach();
+    SendJson(res, {{"status", "installing"}, {"id", launcher->id}}, 202);
+  });
+
+  http_->Post(R"(/v1/launchers/([^/]+)/import)", [this](const Request& req, Response& res) {
+    const launchers::Launcher* launcher = launchers::Find(req.matches[1].str());
+    if (!launcher) return SendError(res, 404, "launcher_not_found", "no such launcher");
+    const auto summary = launchers::Import(config_, games_, events_, *launcher);
+    if (!summary) return SendError(res, 409, summary.error().code, summary.error().message);
+    SyncDesktopEntries(config_, games_);
+    for (const model::Game& game : summary->added_games) metadata_fetches_.Enqueue(config_, events_, game);
+    SendJson(res, {{"added", summary->added}, {"updated", summary->updated}});
+  });
+
+  // Opens the launcher, optionally asking it to launch or install a game by
+  // its store id (Battle.net product code, Ubisoft id, EA offer ids).
+  http_->Post(R"(/v1/launchers/([^/]+)/open)", [this](const Request& req, Response& res) {
+    const launchers::Launcher* launcher = launchers::Find(req.matches[1].str());
+    if (!launcher) return SendError(res, 404, "launcher_not_found", "no such launcher");
+    const json body = json::parse(req.body.empty() ? "{}" : req.body, nullptr, false);
+    if (body.is_discarded() || !body.is_object()) return SendError(res, 400, "invalid_body", "expected a JSON object");
+    const std::string action = body.value("action", std::string("launch"));
+    if (action != "launch" && action != "install") {
+      return SendError(res, 400, "invalid_action", "action must be launch or install");
+    }
+    model::Game target;
+    target.source = "launcher";
+    target.source_ref = launcher->id;
+    if (const std::string ref = body.value("ref", std::string()); !ref.empty()) {
+      target.source = launcher->id;
+      target.source_ref = ref;
+    }
+    auto command = launchers::BuildCommand(config_, games_, target, action);
+    if (!command) return SendError(res, 409, command.error().code, command.error().message);
+    if (auto spawned = runner::SpawnDetached(*command); !spawned) {
+      return SendError(res, 500, spawned.error().code, spawned.error().message);
+    }
+    SendJson(res, {{"status", "opened"}});
+  });
+
   // --- itch -----------------------------------------------------------
   //
   // Wraps butlerd (itch.io's own launcher-integration daemon) for auth,
@@ -1032,7 +1224,7 @@ void Server::RegisterRoutes() {
     json body = json::parse(req.body, nullptr, false);
     if (body.is_discarded() || !body.contains("source") || !body["source"].is_string() ||
         !body.contains("ref") || !body["ref"].is_string()) {
-      return SendError(res, 400, "invalid_body", R"(expected {"source": "epic"|"steam"|"gog"|"itch", "ref": "..."})");
+      return SendError(res, 400, "invalid_body", R"(expected {"source": "epic"|"steam"|"gog"|"itch"|"amazon", "ref": "..."})");
     }
     const std::string source = body["source"];
     const std::string ref = body["ref"];
@@ -1193,6 +1385,33 @@ void Server::RegisterRoutes() {
     const std::string pre_script = resolver.GetString("launch.pre_script");
     const std::string post_script = resolver.GetString("launch.post_script");
 
+    // A store launcher game (Battle.net, Ubisoft, EA) is started by its
+    // launcher, which keeps running after the game exits; the game's own
+    // processes are what's tracked.
+    if (launchers::ForGame(*game)) {
+      if (supervisor_.IsRunning(game->id)) {
+        return SendError(res, 409, "already_running", std::format("\"{}\" is already running", game->id));
+      }
+      auto command = launchers::BuildCommand(config_, games_, *game);
+      if (!command) return SendError(res, 409, command.error().code, command.error().message);
+      if (auto ran = RunPreScriptInline(pre_script); !ran) {
+        return SendError(res, 409, ran.error().code, ran.error().message);
+      }
+      ApplyLaunchEnv(*command, resolver.GetStringArray("launch.env"));
+      if (auto spawned = runner::SpawnDetached(*command); !spawned) {
+        return SendError(res, 500, spawned.error().code, spawned.error().message);
+      }
+      [[maybe_unused]] auto _ =
+          games_.Update(game->id, [](model::Game& g) { g.last_played_at = model::NowSeconds(); });
+      events_.Publish("game.launched", {{"id", game->id}, {"via", "launcher"}, {"tracked", true}});
+      if (auto started = supervisor_.TrackLauncherLaunch(*game, launchers::WindowsDir(*game),
+                                                         config_.GetInt("launchers.detect_timeout_s"), post_script);
+          !started) {
+        log::Warn("couldn't start tracking {}: {}", game->id, started.error().message);
+      }
+      return SendJson(res, {{"status", "launched_via_launcher"}, {"tracked", true}});
+    }
+
     // A Steam-sourced game defaults to asking the Steam client to launch it
     // (steam://rungameid/<appid>) rather than Mira execing it directly: full
     // achievements/overlay support, and Steam's own accounting is what
@@ -1328,6 +1547,17 @@ void Server::RegisterRoutes() {
 
   http_->Post(R"(/v1/games/([^/]+)/stop)", [this](const Request& req, Response& res) {
     if (auto stopped = supervisor_.Stop(req.matches[1]); !stopped) {
+      // A client that still shows it running (it missed the exit, e.g. across
+      // a mirad restart) gets told it's stopped instead of an error it can't
+      // get out of.
+      if (stopped.error().code == "not_running") {
+        if (const auto game = games_.Find(req.matches[1])) {
+          json event = GameJson(*game, supervisor_);
+          event["state"] = "idle";
+          events_.Publish("game.state", std::move(event));
+          return SendJson(res, {{"status", "not_running"}});
+        }
+      }
       return SendError(res, 409, stopped.error().code, stopped.error().message);
     }
     SendJson(res, {{"status", "stopping"}});
