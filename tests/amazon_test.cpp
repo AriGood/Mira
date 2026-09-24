@@ -8,13 +8,14 @@
 #include "api/EventBus.h"
 #include "config/Config.h"
 #include "store/GameStore.h"
+#include "support/TestEnv.h"
 
 using namespace mira;
 namespace fs = std::filesystem;
 
 TEST_CASE("amazon: installed games launch from their fuel.json") {
-  const fs::path dir = fs::temp_directory_path() / "mira-tests" / "amazon-import";
-  fs::remove_all(dir);
+  test::TestEnv env("amazon-import");
+  const fs::path dir = env.dir;
   fs::create_directories(dir / "nile");
   fs::create_directories(dir / "games/Some Game");
   ::setenv("NILE_CONFIG_PATH", dir.c_str(), 1);
@@ -28,20 +29,13 @@ TEST_CASE("amazon: installed games launch from their fuel.json") {
       << "{ // json5 comment\n \"SchemaVersion\": \"2\", \"Main\": {\"Command\": \"bin\\\\Game.exe\", "
          "\"Args\": [\"-fuel\"], \"WorkingSubdirOverride\": \"bin\"}}";
 
-  config::Config config(dir / "settings.toml");
-  config.Load();
-  REQUIRE(config.Set("prefix_root", (dir / "prefixes").string()));
-  store::GameStore games(dir / "games.toml");
-  games.Load();
-  api::EventBus events;
-
-  amazon::AmazonImporter importer(config, games, events);
+  amazon::AmazonImporter importer(env.config, env.games, env.events);
   const auto summary = importer.Import();
   ::unsetenv("NILE_CONFIG_PATH");
   REQUIRE(summary);
   CHECK(summary->added == 1);
 
-  const auto game = games.Find("amazon-amzn1.adg.product.abc");
+  const auto game = env.games.Find("amazon-amzn1.adg.product.abc");
   REQUIRE(game);
   CHECK(game->name == "Some Game");
   CHECK(game->exe_path == "bin/Game.exe");

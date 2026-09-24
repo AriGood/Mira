@@ -276,7 +276,7 @@ each installed into its own prefix. See [the API](api.md#store-launchers).
 
 Imported games launch with `mira launch` like any other.
 
-## `mira metadata <id> [--refresh]`
+## `mira metadata <id> [--refresh | --matches [QUERY] | --wrong | --match N | --match-id ID]`
 `GET /v1/games/{id}/metadata` — prints the cached cover-art/store-info JSON
 (description, genres, release date, developers/publishers, price, Steam
 review summary, ProtonDB tier — see `docs/api.md`'s Metadata section for
@@ -285,6 +285,11 @@ which fields come from where). `--refresh` instead calls `POST
 `game.metadata_ready`/`.metadata_failed`. Cover art itself has no CLI
 command — it's a binary image, only reachable via `GET
 /v1/games/{id}/artwork` directly.
+
+`--matches` lists SteamGridDB's matches for the game's name, starred where
+the art comes from. `--wrong` says the art is for the wrong game and moves
+to the next match. `--match N` picks the Nth from that list (`0` goes back
+to the top match); `--match-id` takes a SteamGridDB id directly.
 
 ## `mira runners`
 `GET /v1/runners` — every installed Proton/Wine build, one per line:

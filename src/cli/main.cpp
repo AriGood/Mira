@@ -1175,22 +1175,87 @@ int CmdMetadata(int argc, char** argv) {
   if (argc < 1) {
     std::fprintf(stderr,
                  "usage: mira metadata <id> [--refresh]\n"
-                 "  prints cached cover-art/store-info JSON; --refresh re-fetches first\n"
-                 "  (cover art itself is only reachable via GET /v1/games/{id}/artwork,\n"
-                 "  not printable here).\n");
+                 "       mira metadata <id> --matches [QUERY]\n"
+                 "       mira metadata <id> --wrong\n"
+                 "       mira metadata <id> --match N | --match-id STEAMGRIDDB_ID\n"
+                 "  prints cached cover-art/store-info JSON; --refresh re-fetches first.\n"
+                 "  --matches lists SteamGridDB's matches for the game's name; --match N takes\n"
+                 "  art from the Nth of them instead (0 goes back to the top match). --wrong\n"
+                 "  says the art is for the wrong game and moves to the next match.\n");
     return 2;
   }
   const std::string id = argv[0];
-  const bool refresh = argc > 1 && std::string_view(argv[1]) == "--refresh";
-
+  const std::string_view flag = argc > 1 ? argv[1] : "";
   auto client = Connect();
-  if (refresh) {
+
+  if (flag == "--refresh") {
     auto posted = client.Post(std::format("/v1/games/{}/metadata/refresh", id));
     if (!Ok(posted)) {
       PrintError(posted);
       return 1;
     }
     std::puts("fetching — watch `mira watch` for game.metadata_ready/.metadata_failed");
+    return 0;
+  }
+
+  if (flag == "--wrong") {
+    auto posted = client.Post(std::format("/v1/games/{}/metadata/wrong-match", id));
+    if (!Ok(posted)) {
+      PrintError(posted);
+      return 1;
+    }
+    const json match = json::parse(posted->body).value("match", json::object());
+    std::printf("switched to \"%s\" (SteamGridDB %lld), fetching its art\n", match.value("name", "").c_str(),
+                static_cast<long long>(match.value("id", std::int64_t{0})));
+    return 0;
+  }
+
+  if (flag == "--matches" || flag == "--match" || flag == "--match-id") {
+    std::int64_t chosen_id = -1;
+    if (flag == "--match-id" && argc > 2) chosen_id = std::atoll(argv[2]);
+    if (flag == "--matches" || flag == "--match") {
+      httplib::Params params;
+      if (flag == "--matches" && argc > 2) params.emplace("q", argv[2]);
+      auto res = client.Get(std::format("/v1/games/{}/metadata/matches", id), params, httplib::Headers{});
+      if (!Ok(res)) {
+        PrintError(res);
+        return 1;
+      }
+      const json body = json::parse(res->body);
+      const json& matches = body["matches"];
+      if (flag == "--matches") {
+        const std::int64_t chosen = body.value("chosen", std::int64_t{0});
+        int n = 0;
+        for (const json& match : matches) {
+          const std::int64_t match_id = match.value("id", std::int64_t{0});
+          const bool active = chosen == 0 ? n == 0 : chosen == match_id;
+          std::printf("%s%2d  %-10lld %s\n", active ? "*" : " ", ++n, static_cast<long long>(match_id),
+                      match.value("name", "").c_str());
+        }
+        if (matches.empty()) std::puts("no matches");
+        return 0;
+      }
+      const int n = argc > 2 ? std::atoi(argv[2]) : -1;
+      if (n == 0) {
+        chosen_id = 0;
+      } else if (n < 1 || n > static_cast<int>(matches.size())) {
+        std::fprintf(stderr, "mira: pick a number from `mira metadata %s --matches`\n", id.c_str());
+        return 2;
+      } else {
+        chosen_id = matches[n - 1].value("id", std::int64_t{0});
+      }
+    }
+    if (chosen_id < 0) {
+      std::fprintf(stderr, "usage: mira metadata <id> --match-id STEAMGRIDDB_ID\n");
+      return 2;
+    }
+    auto posted = client.Post(std::format("/v1/games/{}/metadata/match", id),
+                              json{{"steamgriddb_id", chosen_id}}.dump(), "application/json");
+    if (!Ok(posted)) {
+      PrintError(posted);
+      return 1;
+    }
+    std::puts("fetching art from the chosen match");
     return 0;
   }
 

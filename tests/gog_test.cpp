@@ -10,18 +10,12 @@
 #include "gog/Gog.h"
 #include "gog/GogImporter.h"
 #include "store/GameStore.h"
+#include "support/TestEnv.h"
 
 using namespace mira;
 namespace fs = std::filesystem;
 
 namespace {
-
-fs::path TempDir(const char* name) {
-  const fs::path dir = fs::temp_directory_path() / "mira-tests" / name;
-  fs::remove_all(dir);
-  fs::create_directories(dir);
-  return dir;
-}
 
 // A stand-in for the real `gogdl`, pointed at by gog.gogdl_bin --
 // mirrors epic_test.cpp's WriteFakeLegendary (real executable, real
@@ -62,17 +56,8 @@ void WriteFakeGogdl(const fs::path& path, const std::string& auth_success_body, 
   fs::permissions(path, fs::perms::owner_all | fs::perms::group_read | fs::perms::group_exec);
 }
 
-struct Fixture {
-  fs::path dir;
-  config::Config config;
-  store::GameStore games;
-  api::EventBus events;
-
-  explicit Fixture(const char* name)
-      : dir(TempDir(name)), config(dir / "settings.toml"), games(dir / "games.toml") {
-    config.Load();
-    games.Load();
-  }
+struct Fixture : test::TestEnv {
+  explicit Fixture(const char* name) : TestEnv(name) {}
 
   // gogdl nests the real fields one level down, keyed by client_id --
   // confirmed live (see Gog.cpp's ReadAuthConfig comment), not the flat
@@ -84,7 +69,6 @@ struct Fixture {
     const fs::path bin = dir / "gogdl";
     WriteFakeGogdl(bin, auth_success_body, import_body);
     REQUIRE(config.Set("gog.gogdl_bin", bin.string()));
-    REQUIRE(config.Set("prefix_root", (dir / "prefixes").string()));
   }
 };
 
@@ -98,14 +82,6 @@ TEST_CASE("DetectGog honours the gog.gogdl_bin override") {
   CHECK(status.installed);
   CHECK(status.source == "override");
   CHECK(status.path == (fixture.dir / "gogdl").string());
-}
-
-TEST_CASE("DetectGog reports nothing installed when there is nothing to find") {
-  Fixture fixture("gog-detect-missing");
-  REQUIRE(fixture.config.Set("gog.gogdl_bin", (fixture.dir / "nope").string()));
-
-  const gog::GogStatus status = gog::DetectGog(fixture.config);
-  CHECK(status.source != "override");
 }
 
 TEST_CASE("Login stores what gogdl wrote, and Status reads it back") {

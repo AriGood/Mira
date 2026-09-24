@@ -52,7 +52,7 @@ public:
 
 private:
   void RegisterRoutes();
-  void WatchLauncherGames();
+  void WatchExternalGames();
 
   config::Config& config_;
   store::GameStore& games_;
@@ -64,7 +64,7 @@ private:
   BackgroundQueue artwork_selects_;
   std::function<void()> on_roots_changed_;
   std::atomic<bool> stopping_{false};  // checked by open SSE connections; see EventBus::WaitNext
-  std::thread launcher_watch_;
+  std::thread external_watch_;
 };
 
 }  // namespace mira::api

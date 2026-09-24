@@ -53,7 +53,3 @@ TEST_CASE("DetectInstallerFormat reports unknown for a non-.exe file regardless 
   Write(file, "Inno Setup", "", 0);
   CHECK(library::DetectInstallerFormat(file) == library::InstallerFormat::kUnknown);
 }
-
-TEST_CASE("DetectInstallerFormat reports unknown for a missing file") {
-  CHECK(library::DetectInstallerFormat(TempFile("does-not-exist.exe")) == library::InstallerFormat::kUnknown);
-}

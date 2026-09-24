@@ -1,4 +1,6 @@
 #include <doctest.h>
+
+#include <sstream>
 #include <signal.h>
 #include <sys/wait.h>
 
@@ -11,6 +13,7 @@
 
 #include "api/EventBus.h"
 #include "core/Command.h"
+#include "proc/ProcessIndex.h"
 #include "proc/ProcessSupervisor.h"
 #include "proc/Session.h"
 #include "runner/Exec.h"
@@ -89,7 +92,7 @@ TEST_CASE("ProcessSupervisor::Launch rejects a duplicate launch while one is alr
   CHECK(WaitFor([&] { return !supervisor.IsRunning("long-running"); }, std::chrono::seconds(5)));
 }
 
-TEST_CASE("ProcessSupervisor::TrackSteamLaunch detects and tracks a process by SteamAppId, "
+TEST_CASE("ProcessSupervisor::TrackSteamLaunch detects and tracks Steam's reaper for the AppId, "
          "records playtime, and runs post_script on exit") {
   const fs::path state = TempDir("proc-steam-track-state");
   const fs::path marker = state / "post-ran";
@@ -103,17 +106,14 @@ TEST_CASE("ProcessSupervisor::TrackSteamLaunch detects and tracks a process by S
   game.id = "steam-game";
   REQUIRE(games.Upsert(game).has_value());
 
-  // Simulate what Steam itself would have produced: a process carrying
-  // SteamAppId in its environment. Not spawned via ProcessSupervisor at all
-  // -- exactly the scenario TrackSteamLaunch exists for. In the real
-  // scenario this process's parent is the actual Steam client, which reaps
-  // it once it exits; here the test itself is the parent (SpawnDetached was
-  // called directly, not through Steam), so it has to reap it the same way
-  // or the child sits as a zombie forever -- kill(pid, 0) still succeeds
-  // for a zombie, which would make AnyAlive() never report it gone.
+  // Simulate Steam's own wrapper: a process named reaper with "SteamLaunch
+  // AppId=<id>" in its command line. The test is its parent, so it reaps it
+  // (a zombie still passes kill(pid, 0)). "; true" keeps sh from exec'ing
+  // sleep, which would replace that command line.
+  const fs::path fake_reaper = state / "reaper";
+  fs::create_symlink("/bin/sh", fake_reaper);
   Command fake_steam_process;
-  fake_steam_process.argv = {"sh", "-c", "sleep 2"};
-  fake_steam_process.env["SteamAppId"] = "999999";
+  fake_steam_process.argv = {fake_reaper.string(), "-c", "sleep 2; true", "SteamLaunch", "AppId=999999"};
   auto pid = runner::SpawnDetached(fake_steam_process);
   REQUIRE(pid.has_value());
   std::thread reaper([pid = *pid] { ::waitpid(pid, nullptr, 0); });
@@ -349,4 +349,15 @@ TEST_CASE("FindPrefixProcesses matches umu's rewritten WINEPREFIX and an empty o
   ::kill(-*pid, SIGKILL);
   ::kill(*pid, SIGKILL);
   ::waitpid(*pid, nullptr, 0);
+}
+
+TEST_CASE("SteamLaunchAppId reads Steam's reaper wrapper and nothing else") {
+  const auto parse = [](const std::string& argv0, const std::string& rest) {
+    std::istringstream in(rest);
+    return proc::SteamLaunchAppId(argv0, in);
+  };
+  const std::string args = std::string("SteamLaunch\0AppId=2225070\0--\0/x/_v2-entry-point\0AppId=1\0", 55);
+  CHECK(parse("/home/u/.local/share/Steam/ubuntu12_32/reaper", args) == "2225070");
+  CHECK(parse("/usr/bin/python3", args).empty());
+  CHECK(parse("/home/u/.local/share/Steam/ubuntu12_32/reaper", std::string("--\0AppId=5\0", 11)).empty());
 }
