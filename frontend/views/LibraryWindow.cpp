@@ -338,14 +338,30 @@ public:
 
 protected:
   void mousePressEvent(QMouseEvent* event) override {
-    const Qt::Edges edges = EdgesAt(size(), event->pos());
-    if (event->button() == Qt::LeftButton && !window_->isMaximized() &&
-        window_->windowHandle() != nullptr && edges != Qt::Edges()) {
-      window_->windowHandle()->startSystemResize(edges);
-      event->accept();
-      return;
+    QWindow* handle = window_->windowHandle();
+    if (event->button() == Qt::LeftButton && !window_->isMaximized() && handle != nullptr) {
+      const Qt::Edges edges = ResizableEdgesAt(event->pos());
+      if (edges != Qt::Edges()) {
+        handle->startSystemResize(edges);
+        event->accept();
+        return;
+      }
+      // The strip above the top bar moves the window like the bar does.
+      if (event->pos().y() <= kResizeMargin) {
+        handle->startSystemMove();
+        event->accept();
+        return;
+      }
     }
     QWidget::mousePressEvent(event);
+  }
+
+  void mouseDoubleClickEvent(QMouseEvent* event) override {
+    if (event->pos().y() <= kResizeMargin && ResizableEdgesAt(event->pos()) == Qt::Edges()) {
+      window_->isMaximized() ? window_->showNormal() : window_->showMaximized();
+      return;
+    }
+    QWidget::mouseDoubleClickEvent(event);
   }
 
   void mouseMoveEvent(QMouseEvent* event) override {
@@ -353,7 +369,7 @@ protected:
       unsetCursor();
       return;
     }
-    const Qt::Edges edges = EdgesAt(size(), event->pos());
+    const Qt::Edges edges = ResizableEdgesAt(event->pos());
     if ((edges & Qt::LeftEdge) && (edges & Qt::TopEdge)) {
       setCursor(Qt::SizeFDiagCursor);
     } else if ((edges & Qt::RightEdge) && (edges & Qt::BottomEdge)) {
@@ -372,6 +388,20 @@ protected:
   }
 
 private:
+  // Edges under `pos` that resize. The top edge only resizes at its
+  // corners; the rest of it moves the window, since a drag up there (often
+  // toward the top of the screen, e.g. out of a tiled corner) is meant to
+  // move it. Wayland doesn't tell a window where it is, so this can't
+  // depend on the screen edges.
+  Qt::Edges ResizableEdgesAt(const QPoint& pos) const {
+    constexpr int kCorner = 14;
+    Qt::Edges edges = EdgesAt(size(), pos);
+    if (!(edges & Qt::TopEdge)) return edges;
+    if (pos.x() <= kCorner) return Qt::TopEdge | Qt::LeftEdge;
+    if (pos.x() >= width() - kCorner) return Qt::TopEdge | Qt::RightEdge;
+    return edges & ~Qt::Edges(Qt::TopEdge);
+  }
+
   QMainWindow* window_;
 };
 
@@ -899,9 +929,9 @@ bool LibraryWindow::eventFilter(QObject* watched, QEvent* event) {
         break;
     }
   }
-  // Only the top bar's own empty background reaches here — a click on a
-  // child control goes to that child instead.
-  if (watched == top_bar_) {
+  // The top bar's and sidebar header's own background, plus labels on them
+  // (a label passes its clicks up); a click on a control goes to it instead.
+  if (watched == top_bar_ || watched == sidebar_header_) {
     if (event->type() == QEvent::MouseButtonPress) {
       auto* mouse = static_cast<QMouseEvent*>(event);
       if (mouse->button() == Qt::LeftButton && windowHandle() != nullptr) {
@@ -1379,6 +1409,9 @@ QWidget* LibraryWindow::BuildSidebar() {
   header_layout->setSpacing(8);
   auto* badge = new QLabel("M", header);
   badge->setObjectName("sidebar_badge");
+  // Like the top bar, the header moves the window.
+  sidebar_header_ = header;
+  header->installEventFilter(this);
   badge->setFixedSize(22, 22);
   badge->setAlignment(Qt::AlignCenter);
   header_layout->addWidget(badge);
