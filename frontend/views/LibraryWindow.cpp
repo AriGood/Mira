@@ -2773,4 +2773,24 @@ void LibraryWindow::HandleGameEvent(const std::string& type, const std::string& 
 
   mira_gui::GameSummary game;
   if (mira_gui::MiradClient::ParseGameSummary(data, &game)) UpsertGame(game);
+
+  // open_config_on_add: open a newly detected game's settings to check them.
+  // Only for a lone arrival; a scan that finds several opens nothing rather
+  // than stacking cards.
+  if (type == "game.added" && mira_gui::MiradClient::ParseOpenConfig(data) && !game.id.empty()) {
+    pending_added_.push_back(game.id);
+    if (added_timer_ == nullptr) {
+      added_timer_ = new QTimer(this);
+      added_timer_->setSingleShot(true);
+      added_timer_->setInterval(1500);
+      connect(added_timer_, &QTimer::timeout, this, [this] {
+        const std::vector<std::string> added = std::move(pending_added_);
+        pending_added_.clear();
+        if (added.size() == 1 && GridShown() && !GameEditOpen() && FindGame(added.front()) != nullptr) {
+          OpenGameDialog(added.front());
+        }
+      });
+    }
+    added_timer_->start();
+  }
 }

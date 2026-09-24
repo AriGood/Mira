@@ -1373,6 +1373,11 @@ void MiradClient::RelocateLibraryAsync(QObject* context,
   async::Run(context, [] { return RelocateLibrarySync(); }, std::move(callback));
 }
 
+bool MiradClient::ParseOpenConfig(const std::string& data) {
+  const json entry = json::parse(data, nullptr, false);
+  return entry.is_object() && entry.value("open_config", false);
+}
+
 bool MiradClient::ParseInstallEvent(const std::string& event_type, const std::string& data,
                                     InstallEvent* out) {
   constexpr std::string_view kPrefix = "game.install.";
