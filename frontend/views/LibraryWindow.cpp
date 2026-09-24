@@ -105,8 +105,7 @@ public:
   // Before clear() deletes every item -- a pending dwell timer, the next
   // hover-changed check, or a drag in progress could still hold one of them.
   void ForgetItems() {
-    if (hover_timer_ != nullptr) hover_timer_->stop();
-    last_hover_item_ = nullptr;
+    hover_.Forget();
     EndDrag();
   }
 
@@ -133,7 +132,7 @@ protected:
       }
       return;
     }
-    TrackHover(itemAt(event->pos()));
+    hover_.Track(itemAt(event->pos()));
     QListWidget::mouseMoveEvent(event);
   }
 
@@ -145,7 +144,7 @@ protected:
   }
 
   void leaveEvent(QEvent* event) override {
-    TrackHover(nullptr);
+    hover_.Track(nullptr);
     QListWidget::leaveEvent(event);
   }
 
@@ -168,35 +167,18 @@ protected:
       event->accept();
       return;
     }
+    hover_.Track(nullptr);  // the tile is about to scroll out from under its card
     QListWidget::wheelEvent(event);
     if (rubber_band_ != nullptr) UpdateDrag();
   }
 
 private:
-  // Debounced: a card popping up on every tile the cursor merely crosses
-  // while scanning the grid would be worse than not having one.
-  static constexpr int kHoverDwellMs = 280;
   // Within this far of the top/bottom edge (or past it), a drag scrolls.
   static constexpr int kAutoScrollEdge = 40;
 
   // Viewport to content coordinates, so a drag's origin stays put while
   // the grid scrolls under it.
   QPoint Offset() const { return QPoint(horizontalOffset(), verticalOffset()); }
-
-  void TrackHover(QListWidgetItem* hovered) {
-    if (hovered == last_hover_item_) return;
-    last_hover_item_ = hovered;
-    if (hover_timer_ == nullptr) {
-      hover_timer_ = new QTimer(this);
-      hover_timer_->setSingleShot(true);
-      connect(hover_timer_, &QTimer::timeout, this, [this] {
-        if (on_hover_item) on_hover_item(last_hover_item_);
-      });
-    }
-    hover_timer_->stop();
-    if (on_hover_item) on_hover_item(nullptr);  // hide immediately on change or leave
-    if (hovered != nullptr) hover_timer_->start(kHoverDwellMs);
-  }
 
   void UpdateDrag() {
     const QPoint current = drag_pos_ + Offset();
@@ -214,7 +196,7 @@ private:
       if (!(drag_modifiers_ & (Qt::ControlModifier | Qt::ShiftModifier))) clearSelection();
       base_selection_.clear();
       for (QListWidgetItem* selected : selectedItems()) base_selection_.insert(selected);
-      TrackHover(nullptr);  // a dwell started before the drag would pop up mid-drag
+      hover_.Track(nullptr);  // a dwell started before the drag would pop up mid-drag
       rubber_band_ = new QRubberBand(QRubberBand::Rectangle, viewport());
       rubber_band_->show();
       if (autoscroll_timer_ == nullptr) {
@@ -279,8 +261,9 @@ private:
   QRubberBand* rubber_band_ = nullptr;
   QTimer* autoscroll_timer_ = nullptr;
   QSet<QListWidgetItem*> base_selection_;
-  QListWidgetItem* last_hover_item_ = nullptr;
-  QTimer* hover_timer_ = nullptr;
+  mira_gui::HoverDwell hover_{[this](QListWidgetItem* item) {
+    if (on_hover_item) on_hover_item(item);
+  }};
 };
 
 namespace {
@@ -489,23 +472,23 @@ LibraryWindow::LibraryWindow(QWidget* parent) : QMainWindow(parent) {
 
   splitter_ = new QSplitter(Qt::Horizontal, this);
   splitter_->addWidget(BuildSidebar());
-  // A source page takes the grid's place here, leaving the sidebar up.
+  // A source page or the classic table takes the grid's place here, leaving
+  // the sidebar up.
   main_stack_ = new QStackedWidget(this);
   grid_page_ = BuildGrid();
   main_stack_->addWidget(grid_page_);
+  classic_page_ = BuildClassicPage();
+  main_stack_->addWidget(classic_page_);
   splitter_->addWidget(main_stack_);
   splitter_->setStretchFactor(0, 0);
   splitter_->setStretchFactor(1, 1);
   splitter_->setSizes({232, 850});
   splitter_->setChildrenCollapsible(false);
 
-  // Settings is built lazily by OpenSettings() and covers this slot; the
-  // classic table is built once here since it has no per-open state to go
-  // stale. A game's edit card is a separate overlay, not a page here.
+  // Settings is built lazily by OpenSettings() and covers this slot. A
+  // game's edit card is a separate overlay, not a page here.
   content_stack_ = new QStackedWidget(this);
   content_stack_->addWidget(splitter_);
-  classic_page_ = BuildClassicPage();
-  content_stack_->addWidget(classic_page_);
 
   auto* central = new RootWidget(this);
   // StackAll: the game-edit overlay is a chrome sibling, not a
@@ -846,6 +829,32 @@ bool LibraryWindow::eventFilter(QObject* watched, QEvent* event) {
       return true;
     }
   }
+  // A recently played row shows its game's hover card, after a tile's dwell.
+  if (watched->property("hover_game").isValid()) {
+    if (event->type() == QEvent::Enter) {
+      if (recent_hover_ == nullptr) {
+        recent_hover_ = new QTimer(this);
+        recent_hover_->setSingleShot(true);
+        recent_hover_->setInterval(mira_gui::card::kDwellMs);
+        connect(recent_hover_, &QTimer::timeout, this, [this] {
+          if (recent_hover_row_ == nullptr) return;
+          const mira_gui::GameSummary* game =
+              FindGame(recent_hover_row_->property("hover_game").toString().toStdString());
+          if (game == nullptr) return;
+          const QString hint = running_ids_.contains(game->id) ? "Right-click to stop it."
+                               : game->status == "ready"       ? "Click to play."
+                                                               : QString();
+          ShowHoverCardFor(*game, QRect(recent_hover_row_->mapToGlobal(QPoint(0, 0)), recent_hover_row_->size()),
+                           hint);
+        });
+      }
+      recent_hover_row_ = qobject_cast<QWidget*>(watched);
+      recent_hover_->start();
+    } else if (event->type() == QEvent::Leave || event->type() == QEvent::MouseButtonPress) {
+      if (recent_hover_ != nullptr) recent_hover_->stop();
+      ShowHoverCard(nullptr);
+    }
+  }
   return QMainWindow::eventFilter(watched, event);
 }
 
@@ -1045,7 +1054,14 @@ QWidget* LibraryWindow::BuildTopBar() {
     toggle_layout->addWidget(button);
   }
   connect(grid_view_button_, &QToolButton::clicked, this, &LibraryWindow::ShowLibrary);
-  connect(table_view_button_, &QToolButton::clicked, this, &LibraryWindow::OpenClassicView);
+  // A second click on Table goes back to the grid.
+  connect(table_view_button_, &QToolButton::clicked, this, [this] {
+    if (ClassicShown()) {
+      CloseClassicView();
+    } else {
+      OpenClassicView();
+    }
+  });
   layout->addWidget(view_toggle_);
 
   zoom_ = new QSlider(Qt::Horizontal, top_bar_);
@@ -1422,11 +1438,9 @@ QWidget* LibraryWindow::BuildSidebar() {
 
   fetch_art_button_ = new QToolButton(sidebar);
   fetch_art_button_->setObjectName("fetch_art");
-  fetch_art_button_->setToolTip(
-      "Fetch missing cover art: re-fetch metadata for every game with no cover. mirad only "
-      "fetches automatically for a newly detected game, so a game that failed once — or a "
-      "non-Steam game from before a SteamGridDB key was set — stays without one until asked "
-      "again.");
+  // mirad only fetches on its own for a newly found game, so one that failed
+  // once stays bare until asked again.
+  fetch_art_button_->setToolTip("Fetch missing cover art for every game without one");
   connect(fetch_art_button_, &QToolButton::clicked, this, &LibraryWindow::FetchMissingArtwork);
   actions->addWidget(fetch_art_button_);
   layout->addSpacing(6);
@@ -1729,13 +1743,6 @@ void LibraryWindow::ApplyFilter() {
     item->setData(mira_gui::GameTileDelegate::RunningRole, running_ids_.contains(game.id));
     item->setData(mira_gui::GameTileDelegate::StatusTextRole, InstallText(game.id));
     item->setData(Qt::DecorationRole, CoverFor(game));
-    // Only for an error: the plain name case is already covered by the
-    // HoverCard, and Qt's own tooltip popping up alongside it just doubled
-    // up on the same text in a worse-looking box.
-    if (!game.last_error.empty()) {
-      item->setToolTip(QString("%1\n%2").arg(QString::fromStdString(game.name),
-                                             QString::fromStdString(game.last_error)));
-    }
     if (game.id == previously_selected) to_select = item;
   }
   grid_->blockSignals(false);
@@ -1827,23 +1834,15 @@ void LibraryWindow::ShowHoverCard(QListWidgetItem* item) {
   const mira_gui::GameSummary* game = FindGame(id);
   if (game == nullptr) return;
 
-  if (hover_card_ == nullptr) hover_card_ = new mira_gui::HoverCard(this);
-  hover_card_->ShowGame(*game, running_ids_.contains(id));
-  hover_card_->adjustSize();
+  const QRect tile = grid_->visualItemRect(item);
+  ShowHoverCardFor(*game, QRect(grid_->viewport()->mapToGlobal(tile.topLeft()), tile.size()));
+}
 
-  const QRect tile_rect = grid_->visualItemRect(item);
-  const QPoint top_right = grid_->viewport()->mapToGlobal(tile_rect.topRight());
-  QPoint pos(top_right.x() + 8, top_right.y());
-  // To the right of the tile by default; the left side instead if that
-  // would run off the screen (a tile in the grid's rightmost column).
-  if (QScreen* screen = QGuiApplication::screenAt(top_right)) {
-    if (pos.x() + hover_card_->width() > screen->availableGeometry().right()) {
-      const QPoint top_left = grid_->viewport()->mapToGlobal(tile_rect.topLeft());
-      pos.setX(top_left.x() - hover_card_->width() - 8);
-    }
-  }
-  hover_card_->move(pos);
-  hover_card_->show();
+void LibraryWindow::ShowHoverCardFor(const mira_gui::GameSummary& game, const QRect& anchor,
+                                     const QString& hint) {
+  if (hover_card_ == nullptr) hover_card_ = new mira_gui::HoverCard(this);
+  hover_card_->ShowGame(game, running_ids_.contains(game.id), hint);
+  hover_card_->PopUpBeside(anchor);
 }
 
 void LibraryWindow::ShowContextMenu(const QPoint& pos) {
@@ -2213,19 +2212,20 @@ void LibraryWindow::SetGridControlsEnabled(bool enabled) {
   }
   // Back from Settings onto a source page: the grid is still covered.
   if (enabled && source_page_ != nullptr) SetSourceControlsEnabled(false);
+  if (enabled && ClassicShown()) zoom_->setEnabled(false);
 }
 
 void LibraryWindow::UpdateLibraryNavActive() {
   using mira_gui::icons::Glyph;
   const mira_gui::theme::Tokens& tokens = mira_gui::theme::Current();
 
-  const bool library_active = GridShown() && !GameEditOpen();
+  const bool classic_active = ClassicShown();
+  const bool library_active = (GridShown() || classic_active) && !GameEditOpen();
   if (library_nav_ != nullptr) {
     library_nav_->setChecked(library_active);
     library_nav_->setIcon(
         mira_gui::icons::For(Glyph::Home, library_active ? tokens.on_accent : tokens.text));
   }
-  const bool classic_active = content_stack_->currentWidget() == classic_page_;
   if (grid_view_button_ != nullptr) {
     grid_view_button_->setChecked(!classic_active);
     table_view_button_->setChecked(classic_active);
@@ -2432,7 +2432,7 @@ QWidget* LibraryWindow::BuildGameEditCard(const std::string& id) {
 }
 
 void LibraryWindow::OpenSource(const mira_gui::SourceInfo& source) {
-  if (content_stack_->currentWidget() == classic_page_) CloseClassicView();
+  if (ClassicShown()) CloseClassicView();
   if (source_page_ != nullptr) {
     main_stack_->removeWidget(source_page_);
     source_page_->deleteLater();
@@ -2482,6 +2482,10 @@ bool LibraryWindow::GridShown() const {
   return content_stack_->currentWidget() == splitter_ && main_stack_->currentWidget() == grid_page_;
 }
 
+bool LibraryWindow::ClassicShown() const {
+  return content_stack_->currentWidget() == splitter_ && main_stack_->currentWidget() == classic_page_;
+}
+
 QString LibraryWindow::InstallText(const std::string& id) const {
   using State = mira_gui::DownloadTracker::State;
   const mira_gui::DownloadTracker::Entry* entry =
@@ -2513,7 +2517,7 @@ void LibraryWindow::DownloadChanged(const QString& key) {
 void LibraryWindow::ShowGame(const std::string& id) {
   if (SettingsOpen()) RequestCloseSettings();
   if (GameEditOpen()) RequestCloseGameEdit();
-  if (content_stack_->currentWidget() == classic_page_) CloseClassicView();
+  if (ClassicShown()) CloseClassicView();
   if (source_page_ != nullptr) CloseSource();
   for (int row = 0; row < grid_->count(); ++row) {
     QListWidgetItem* item = grid_->item(row);
@@ -2676,11 +2680,11 @@ void LibraryWindow::RefreshRecentlyPlayed() {
     const std::string id = game->id;
     if (is_running) {
       AddTrailingLabel(row)->setText("Playing");
-      row->setToolTip("Playing now. Right-click to stop it.");
     } else if (game->status == "ready") {
       connect(row, &QPushButton::clicked, this, [this, id] { LaunchGame(id); });
-      row->setToolTip("Click to play");
     }
+    row->setProperty("hover_game", QString::fromStdString(id));
+    row->installEventFilter(this);
     row->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(row, &QWidget::customContextMenuRequested, this,
             [this, row, id](const QPoint& pos) { ShowGameMenu(id, row->mapToGlobal(pos)); });
@@ -2724,7 +2728,7 @@ void LibraryWindow::ShowLibrary() {
     RequestCloseSettings();
   } else if (GameEditOpen()) {
     RequestCloseGameEdit();
-  } else if (content_stack_->currentWidget() == classic_page_) {
+  } else if (ClassicShown()) {
     CloseClassicView();
   } else if (source_page_ != nullptr) {
     CloseSource();
@@ -2732,34 +2736,24 @@ void LibraryWindow::ShowLibrary() {
   UpdateLibraryNavActive();
 }
 
+// Filter, sort and search apply to the table too; only tile size doesn't.
 void LibraryWindow::OpenClassicView() {
   if (source_page_ != nullptr) CloseSource();
-  content_stack_->setCurrentWidget(classic_page_);
-  SetGridControlsEnabled(false);
+  ShowHoverCard(nullptr);
+  main_stack_->setCurrentWidget(classic_page_);
+  zoom_->setEnabled(false);
   UpdateLibraryNavActive();
 }
 
 void LibraryWindow::CloseClassicView() {
-  content_stack_->setCurrentWidget(splitter_);
-  SetGridControlsEnabled(true);
+  main_stack_->setCurrentWidget(grid_page_);
+  zoom_->setEnabled(true);
   UpdateLibraryNavActive();
 }
 
 QWidget* LibraryWindow::BuildClassicPage() {
   auto* page = new QWidget(this);
   auto* layout = new QVBoxLayout(page);
-  layout->setContentsMargins(16, 12, 16, 16);
-  layout->setSpacing(10);
-
-  auto* header = new QHBoxLayout();
-  auto* back = new QPushButton("← Back", page);
-  connect(back, &QPushButton::clicked, this, &LibraryWindow::CloseClassicView);
-  auto* title = new QLabel("Classic table view", page);
-  title->setProperty("role", "heading");
-  header->addWidget(back);
-  header->addWidget(title);
-  header->addStretch(1);
-  layout->addLayout(header);
 
   classic_table_ = new QTableWidget(0, 7, page);
   classic_table_->setHorizontalHeaderLabels(
@@ -2770,9 +2764,12 @@ QWidget* LibraryWindow::BuildClassicPage() {
   classic_table_->setAlternatingRowColors(true);
   classic_table_->verticalHeader()->setVisible(false);
   classic_table_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
-  for (int column = 1; column <= 6; ++column) {
+  for (int column = 1; column <= 5; ++column) {
     classic_table_->horizontalHeader()->setSectionResizeMode(column, QHeaderView::ResizeToContents);
   }
+  classic_table_->horizontalHeader()->setSectionResizeMode(6, QHeaderView::Fixed);
+  // No column sort until one is clicked: rows keep the sidebar's sort order.
+  classic_table_->horizontalHeader()->setSortIndicator(-1, Qt::AscendingOrder);
   classic_table_->setShowGrid(false);
   connect(classic_table_, &QTableWidget::cellDoubleClicked, this, [this](int row, int) {
     QTableWidgetItem* item = classic_table_->item(row, 0);
@@ -2835,7 +2832,7 @@ void LibraryWindow::RefreshClassicTable() {
     launch_button->setEnabled(running || can_launch);
     if (!running && !can_launch) {
       launch_button->setToolTip(
-          QString("Not launchable while %1").arg(QString::fromStdString(game.status)));
+          QString("Can't launch: %1").arg(mira_gui::StatusLabel(game.status).toLower()));
     }
     connect(launch_button, &QPushButton::clicked, this, [this, id] { ToggleRunning(id); });
     actions_layout->addWidget(launch_button);
@@ -2847,6 +2844,11 @@ void LibraryWindow::RefreshClassicTable() {
     actions_layout->addWidget(delete_button);
 
     classic_table_->setCellWidget(row, 6, actions_widget);
+    // ResizeToContents ignores cell widgets, which clipped the buttons. The
+    // cell also loses base.qss's 4px item padding on each side.
+    actions_widget->ensurePolished();
+    classic_table_->setColumnWidth(
+        6, std::max(classic_table_->columnWidth(6), actions_widget->sizeHint().width() + 8));
   }
   classic_table_->setSortingEnabled(true);
 }

@@ -4,6 +4,7 @@
 #include <QList>
 #include <QMainWindow>
 #include <QPixmap>
+#include <QPointer>
 #include <QSet>
 #include <QSize>
 #include <QString>
@@ -56,9 +57,9 @@ struct SourceInfo;
 // native titlebar. Frameless, so it owns its own
 // move/resize/minimize/maximize/close.
 //
-// `mira-gui --classic` still opens MainWindow standalone; the sidebar's
-// Classic table view row instead shows the same table as a content_stack_
-// page, reading this window's own games_/running_ids_.
+// `mira-gui --classic` still opens MainWindow standalone; the top bar's
+// table toggle instead shows the same table in the grid's place, reading
+// this window's own games_/running_ids_.
 //
 // Selection model: one click selects a tile, a second (double) click
 // launches, right-click opens the per-game menu. Hovering a tile shows a
@@ -130,6 +131,9 @@ private:
   // nullptr hides it; otherwise positions and fills a persistent HoverCard
   // for that tile. Called by LibraryGrid::on_hover_item after its dwell.
   void ShowHoverCard(QListWidgetItem* item);
+  // `anchor` is global; the card goes beside it.
+  void ShowHoverCardFor(const mira_gui::GameSummary& game, const QRect& anchor,
+                        const QString& hint = QString());
   void ShowContextMenu(const QPoint& pos);
   void ShowGameMenu(const std::string& id, const QPoint& global_pos);
   void ShowSidebarMenu(const QPoint& global_pos);
@@ -201,6 +205,7 @@ private:
   void SetSourceControlsEnabled(bool enabled);
   // The grid is what's on screen: not Settings, the classic table, or a source page.
   bool GridShown() const;
+  bool ClassicShown() const;
   void RelocateLibrary();
   // A download or install moved along: tile text and the top bar's count.
   void DownloadChanged(const QString& key);
@@ -286,10 +291,10 @@ private:
   mira_gui::SourcePage* source_page_ = nullptr;
 
   QSplitter* splitter_ = nullptr;
-  // The splitter's right side: grid_page_, or source_page_ over it.
+  // The splitter's right side: grid_page_, classic_page_, or source_page_.
   QStackedWidget* main_stack_ = nullptr;
   QWidget* grid_page_ = nullptr;
-  // Swaps the splitter out for Settings/classic table, full-screen. A
+  // Swaps the splitter out for Settings, full-screen. A
   // game's edit card is a separate overlay (game_edit_overlay_) that stays
   // over the grid instead.
   QStackedWidget* content_stack_ = nullptr;
@@ -317,6 +322,9 @@ private:
   QLabel* footer_ = nullptr;
   QLabel* empty_hint_ = nullptr;
   mira_gui::HoverCard* hover_card_ = nullptr;
+  // Dwell before a recently played row's hover card.
+  QTimer* recent_hover_ = nullptr;
+  QPointer<QWidget> recent_hover_row_;
 
   std::vector<mira_gui::GameSummary> games_;
   std::set<std::string> running_ids_;

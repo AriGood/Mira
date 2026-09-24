@@ -20,6 +20,7 @@
 #include "../ui/CoverArt.h"
 #include "../ui/DownloadTracker.h"
 #include "../ui/GameTileDelegate.h"
+#include "../ui/HoverCard.h"
 #include "../ui/Icons.h"
 #include "../ui/Theme.h"
 #include "../ui/TileGrid.h"
@@ -377,6 +378,7 @@ QWidget* SourcePage::BuildLibrarySection() {
   connect(library_grid_, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem* item) {
     emit PlayRequested(item->data(GameTileDelegate::IdRole).toString());
   });
+  library_grid_->on_hover_item = [this](QListWidgetItem* item) { ShowHoverCard(library_grid_, item); };
   layout->addWidget(library_grid_);
   return section;
 }
@@ -427,7 +429,8 @@ QWidget* SourcePage::BuildOwnedSection() {
   }
 
   owned_grid_ = new TileGrid(kTile, owned_section_);
-  owned_grid_->on_action = [this](QListWidgetItem* item) {
+  owned_grid_->on_hover_item = [this](QListWidgetItem* item) { ShowHoverCard(owned_grid_, item); };
+  owned_grid_->on_action =[this](QListWidgetItem* item) {
     const QString ref = item->data(GameTileDelegate::IdRole).toString();
     if (id_ != "humble") {
       StartInstall(ref, /*update=*/false);
@@ -451,6 +454,10 @@ void SourcePage::SetGames(const std::vector<GameSummary>& games, const std::set<
   const QString selected = library_grid_->currentItem() != nullptr
                                ? library_grid_->currentItem()->data(GameTileDelegate::IdRole).toString()
                                : QString();
+  games_ = games;
+  running_ = running;
+  library_grid_->ForgetItems();
+  ShowHoverCard(nullptr, nullptr);
   library_grid_->clear();
   library_count_ = 0;
   for (const GameSummary& game : games) {
@@ -463,7 +470,6 @@ void SourcePage::SetGames(const std::vector<GameSummary>& games, const std::set<
     item->setData(GameTileDelegate::StatusRole, QString::fromStdString(game.status));
     item->setData(GameTileDelegate::RunningRole, running.contains(game.id));
     item->setData(Qt::DecorationRole, artwork_->Cover(game, kTile, devicePixelRatioF()));
-    item->setToolTip(QString::fromStdString(game.name));
     if (id == selected) library_grid_->setCurrentItem(item);
   }
   library_heading_->setText(Heading("In your library", library_count_));
@@ -742,6 +748,8 @@ void SourcePage::ShowBundles(const HumbleLibraryResult& result) {
 }
 
 void SourcePage::RebuildOwnedTiles() {
+  owned_grid_->ForgetItems();
+  ShowHoverCard(nullptr, nullptr);
   owned_grid_->clear();
   const QString idle = id_ == "humble" ? "Download" : "Install";
   for (const auto& [ref, title] : owned_) {
@@ -760,7 +768,6 @@ void SourcePage::RebuildOwnedTiles() {
     }
     item->setData(GameTileDelegate::ActionRole, state.isEmpty() ? idle : state);
     item->setData(GameTileDelegate::ActionEnabledRole, state.isEmpty());
-    item->setToolTip(title);
   }
   owned_heading_->setText(Heading(id_ == "humble" ? "Your purchases" : "Not installed",
                                   static_cast<int>(owned_.size())));
@@ -790,6 +797,28 @@ void SourcePage::ApplyFilter() {
     }
     grid->FitHeight();
   }
+}
+
+void SourcePage::ShowHoverCard(TileGrid* grid, QListWidgetItem* item) {
+  if (item == nullptr) {
+    if (hover_card_ != nullptr) hover_card_->hide();
+    return;
+  }
+  if (hover_card_ == nullptr) hover_card_ = new HoverCard(this);
+  if (grid == library_grid_) {
+    const std::string id = item->data(GameTileDelegate::IdRole).toString().toStdString();
+    const auto game = std::ranges::find(games_, id, &GameSummary::id);
+    if (game == games_.end()) return;
+    hover_card_->ShowGame(*game, running_.contains(id));
+  } else {
+    // A tile's pill says what's under way; an idle one just says Install.
+    const QString status = item->data(GameTileDelegate::ActionEnabledRole).toBool()
+                               ? (id_ == "humble" ? "Not downloaded" : "Not installed")
+                               : item->data(GameTileDelegate::ActionRole).toString();
+    hover_card_->ShowTitle(item->data(GameTileDelegate::NameRole).toString(), status, source_.name);
+  }
+  const QRect tile = grid->visualItemRect(item);
+  hover_card_->PopUpBeside(QRect(grid->viewport()->mapToGlobal(tile.topLeft()), tile.size()));
 }
 
 void SourcePage::ShowLibraryMenu(const QPoint& pos) {

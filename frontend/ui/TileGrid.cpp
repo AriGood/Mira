@@ -56,7 +56,13 @@ QListWidgetItem* TileGrid::ActionItemAt(const QPoint& pos) const {
 
 void TileGrid::mouseMoveEvent(QMouseEvent* event) {
   viewport()->setCursor(ActionItemAt(event->pos()) != nullptr ? Qt::PointingHandCursor : Qt::ArrowCursor);
+  hover_.Track(itemAt(event->pos()));
   QListWidget::mouseMoveEvent(event);
+}
+
+void TileGrid::leaveEvent(QEvent* event) {
+  hover_.Track(nullptr);
+  QListWidget::leaveEvent(event);
 }
 
 void TileGrid::mouseReleaseEvent(QMouseEvent* event) {
@@ -69,6 +75,9 @@ void TileGrid::mouseReleaseEvent(QMouseEvent* event) {
   QListWidget::mouseReleaseEvent(event);
 }
 
-void TileGrid::wheelEvent(QWheelEvent* event) { event->ignore(); }
+void TileGrid::wheelEvent(QWheelEvent* event) {
+  hover_.Track(nullptr);  // the tile is about to scroll out from under its card
+  event->ignore();
+}
 
 }  // namespace mira_gui

@@ -113,8 +113,8 @@ void SettingsPanel::BuildInterfaceGroup() {
   game_settings_in_sidebar_ = new QCheckBox(box);
   game_settings_in_sidebar_->setChecked(true);
   game_settings_in_sidebar_->setToolTip(
-      "\"Details & settings\" edits a game inline in the right panel instead of opening a "
-      "separate window.");
+      "\"Details & settings\" edits a game in a card over the library instead of a separate "
+      "window.");
   form->addRow("Edit a game in the sidebar", game_settings_in_sidebar_);
   nav_->RegisterRow(form, game_settings_in_sidebar_, "edit a game in the sidebar");
 
