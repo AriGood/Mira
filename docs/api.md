@@ -356,6 +356,9 @@ needs; see `docs/architecture.md` if that stops being true.
 Runs `/v1/games/{id}/relocate` with no body for every game. Returns
 `{"moved": N, "failed": N}`.
 
+Any `PATCH /v1/config` or reset that touches `library_roots` also makes the
+watcher re-read it; a mirad restart is no longer needed.
+
 ### `POST /v1/library/scan` — implemented
 Walks every enabled library root immediately: detects new game folders,
 auto-configures and stores them (publishing `game.added` for each); marks
@@ -374,8 +377,8 @@ This is the on-demand counterpart to automatic detection — `mirad` also
 watches every root continuously via inotify (see
 `library::Watcher`/`docs/architecture.md`) and calls this same scan logic
 itself once a new folder's contents stop changing, with no request needed.
-A change to `library_roots` needs a daemon restart to be picked up by the
-watcher; this endpoint works immediately either way.
+The watcher follows a `library_roots` change made through the API, but only
+sees new arrivals; this endpoint also picks up what was already there.
 
 ---
 

@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <thread>
 
@@ -45,6 +46,10 @@ public:
   // GET /v1/games a client makes.
   void ReconcileSessions();
 
+  // Called after a request changes library_roots, so the watcher can follow.
+  // Set once, before Serve().
+  void SetOnLibraryRootsChanged(std::function<void()> callback) { on_roots_changed_ = std::move(callback); }
+
 private:
   void RegisterRoutes();
   void WatchExternalGames();
@@ -57,6 +62,7 @@ private:
   metadata::FetchQueue metadata_fetches_;
   BackgroundQueue tricks_queue_;
   BackgroundQueue artwork_selects_;
+  std::function<void()> on_roots_changed_;
   std::atomic<bool> stopping_{false};  // checked by open SSE connections; see EventBus::WaitNext
   std::thread external_watch_;
 };

@@ -27,10 +27,11 @@ public:
   Watcher(const Watcher&) = delete;
   Watcher& operator=(const Watcher&) = delete;
 
-  // Reads library_roots once at construction time; adding or removing a root
-  // afterwards needs a restart to take effect (no live re-registration yet).
+  // Watches library_roots as they are when Run() starts; ReloadRoots()
+  // re-reads them. Both Stop() and ReloadRoots() are safe from any thread.
   void Run();
   void Stop();
+  void ReloadRoots();
 
 private:
   struct Pending {
@@ -44,6 +45,8 @@ private:
   void HandleDebounceTick();
   void ScheduleCheck(const std::filesystem::path& root, const std::filesystem::path& path, bool is_archive);
   void RearmTimer();
+  // Drops every root watch and adds library_roots afresh. Run()'s thread only.
+  void WatchRoots();
 
   config::Config& config_;
   store::GameStore& games_;
@@ -54,6 +57,7 @@ private:
   int epoll_fd_ = -1;
   int timer_fd_ = -1;
   int stop_fd_ = -1;
+  int reload_fd_ = -1;
 
   std::map<int, std::filesystem::path> watch_to_root_;  // inotify watch descriptor -> root
   std::map<std::string, Pending> pending_;               // absolute dir path -> debounce state

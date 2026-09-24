@@ -8,6 +8,7 @@
 #include "config/Config.h"
 #include "library/Watcher.h"
 #include "store/GameStore.h"
+#include "support/TestEnv.h"
 
 using namespace mira;
 namespace fs = std::filesystem;
@@ -90,6 +91,31 @@ TEST_CASE("Watcher picks up a new game folder in each of two watched roots") {
   REQUIRE(hollow_knight.has_value());
   CHECK(hollow_knight->platform == model::Platform::Native);
   CHECK(hollow_knight->install_path == (apps_root / "Hollow Knight").string());
+}
+
+TEST_CASE("Watcher follows library_roots after ReloadRoots") {
+  test::TestEnv env("watch-reload");
+  const fs::path old_root = env.dir / "old";
+  const fs::path new_root = env.dir / "new";
+  fs::create_directories(old_root);
+  fs::create_directories(new_root);
+  REQUIRE(env.config.Set("library_roots", nlohmann::json::array({old_root.string()})));
+  REQUIRE(env.config.Set("scan.debounce_ms", 100));
+
+  library::Watcher watcher(env.config, env.games, env.events);
+  std::thread watcher_thread([&] { watcher.Run(); });
+  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+  REQUIRE(env.config.Set("library_roots", nlohmann::json::array({new_root.string()})));
+  watcher.ReloadRoots();
+  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+  test::Touch(new_root / "Celeste" / "Celeste", "", /*executable=*/true);
+  CHECK(WaitForGameAdded(env.events, std::chrono::seconds(5)));
+
+  watcher.Stop();
+  watcher_thread.join();
+  CHECK(env.games.Find("celeste").has_value());
 }
 
 TEST_CASE("Watcher never rediscovers its own prefix directory as a game") {

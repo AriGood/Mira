@@ -480,18 +480,22 @@ void Server::RegisterRoutes() {
     if (patch.is_discarded()) return SendError(res, 400, "invalid_json", "body is not valid JSON");
     Result<void> result = config_.Patch(patch);
     if (result) SyncDesktopEntries(config_, games_);
+    if (result && patch.is_object() && patch.contains("library_roots") && on_roots_changed_) on_roots_changed_();
     SendResult(res, result);
   });
 
   http_->Post("/v1/config/reset", [this](const Request& req, Response& res) {
     Result<void> result;
+    bool roots_reset = true;
     if (auto it = req.params.find("key"); it != req.params.end()) {
       result = config_.Reset(it->second);
+      roots_reset = it->second == "library_roots";
     } else {
       config_.ResetAll();
       result = config_.Save();
     }
     if (result) SyncDesktopEntries(config_, games_);
+    if (result && roots_reset && on_roots_changed_) on_roots_changed_();
     SendResult(res, result);
   });
 
