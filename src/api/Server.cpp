@@ -795,7 +795,8 @@ void Server::RegisterRoutes() {
                                   {"path", status.legendary.path},
                                   {"version", status.legendary.version}}},
                   {"authenticated", status.authenticated},
-                  {"account", status.account}});
+                  {"account", status.account},
+                  {"login_url", epic::kLoginUrl}});
   });
 
   // The user pastes back the code shown at epic::kLoginUrl, visited in
@@ -848,7 +849,8 @@ void Server::RegisterRoutes() {
                               {"source", status.gogdl.source},
                               {"path", status.gogdl.path},
                               {"version", status.gogdl.version}}},
-                  {"authenticated", status.authenticated}});
+                  {"authenticated", status.authenticated},
+                  {"login_url", gog::kLoginUrl}});
   });
 
   http_->Post("/v1/gog/setup", [this](const Request&, Response& res) {
@@ -1070,7 +1072,8 @@ void Server::RegisterRoutes() {
                                {"source", status.butler.source},
                                {"path", status.butler.path},
                                {"version", status.butler.version}}},
-                  {"authenticated", status.authenticated}});
+                  {"authenticated", status.authenticated},
+                  {"login_url", itch::kApiKeysUrl}});
   });
 
   http_->Post("/v1/itch/setup", [this](const Request&, Response& res) {
@@ -1138,7 +1141,8 @@ void Server::RegisterRoutes() {
                                    {"source", status.humble_cli.source},
                                    {"path", status.humble_cli.path},
                                    {"version", status.humble_cli.version}}},
-                  {"authenticated", status.authenticated}});
+                  {"authenticated", status.authenticated},
+                  {"login_url", humble::kLoginUrl}});
   });
 
   http_->Post("/v1/humble/setup", [this](const Request&, Response& res) {

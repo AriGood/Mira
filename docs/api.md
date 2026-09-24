@@ -644,16 +644,17 @@ The layered "don't assume setup" call — checks Legendary is installed
 first, and only then asks it about auth:
 ```json
 { "legendary": { "installed": true, "source": "managed", "path": "...", "version": "..." },
-  "authenticated": true, "account": "Exo03" }
+  "authenticated": true, "account": "Exo03", "login_url": "https://www.epicgames.com/id/login?..." }
 ```
 Never errors: "not installed" and "not authenticated" are both just fields.
+`login_url` is the page `POST /v1/epic/auth`'s code comes from.
 
 ### `POST /v1/epic/auth` — implemented
 Body `{"code": "..."}`. Mira stores no Epic credentials of its own —
 Legendary owns its session (`~/.config/legendary/user.json`) and this only
-shuttles the code to it. The user visits Epic's login page in their own
-browser and pastes back the `authorizationCode` it shows; `mira epic login`
-accepts the whole JSON blob from that page and pulls the field out.
+shuttles the code to it. The user visits `login_url` in their own browser
+and pastes back the `authorizationCode` it shows, or the whole JSON page;
+mirad pulls the field out itself (`invalid_code` if it can't).
 
 Verified by re-checking status afterward rather than by the subprocess's
 exit code, because `legendary auth --code` **exits 0 even when the code is
@@ -710,7 +711,7 @@ local path), `info`, and `launch` (never used here). Two real consequences:
 ### `GET /v1/gog/status` — implemented
 ```json
 { "gogdl": { "installed": true, "source": "managed", "path": "...", "version": "..." },
-  "authenticated": true }
+  "authenticated": true, "login_url": "https://auth.gog.com/auth?..." }
 ```
 No account name — gogdl exposes no cheap "who am I" call the way Legendary
 does; `authenticated` just reflects whether a stored token is present and
@@ -724,8 +725,8 @@ Downloads gogdl's latest GitHub release binary into
 latest release.
 
 ### `POST /v1/gog/auth` — implemented
-Body `{"code": "..."}` — the `code` query param from GOG's own login-page
-redirect (`mira gog login` prints the URL). Verified by re-checking status
+Body `{"code": "..."}` — the `code` query param from the redirect that
+`login_url` ends on, or that whole redirect URL (mirad pulls the code out). Verified by re-checking status
 afterward, not the exit code — gogdl's `auth` handler prints `{"error":
 true}` on a rejected code but still exits 0 (confirmed live, the same
 lie Legendary's own `auth --code` tells).
@@ -756,7 +757,7 @@ consequence worth knowing: changing `itch.butler_bin` takes effect only on
 ### `GET /v1/itch/status` — implemented
 ```json
 { "butler": { "installed": true, "source": "managed", "path": "...", "version": "..." },
-  "authenticated": true }
+  "authenticated": true, "login_url": "https://itch.io/user/settings/api-keys" }
 ```
 `authenticated` reflects whether an itch.io API key is stored — never
 connects to butlerd just to check this.
@@ -806,7 +807,8 @@ convention) rather than a stable machine format.
 
 ### `GET /v1/humble/status` — implemented
 ### `POST /v1/humble/setup` — implemented
-Same shape as gog/itch's equivalents.
+Same shape as gog/itch's equivalents; status's tool key is `humble_cli`
+and its `login_url` is Humble's own login page.
 
 ### `POST /v1/humble/auth` — implemented
 Body `{"session_key": "..."}` — the `_simpleauth_sess` cookie value,

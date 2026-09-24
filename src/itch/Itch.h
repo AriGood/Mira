@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <string_view>
 
 #include "config/Config.h"
 #include "core/Result.h"
@@ -29,6 +30,9 @@ Result<void> InstallButlerBinary(const config::Config& config, const runner::Rel
 // Legendary/gogdl persist their own tokens on disk, so Mira keeps it
 // instead.
 std::filesystem::path ApiKeyFile(const config::Config& config);
+
+// Where an itch.io API key is made. Keys don't expire.
+inline constexpr std::string_view kApiKeysUrl = "https://itch.io/user/settings/api-keys";
 
 struct ItchAuthStatus {
   ItchStatus butler;

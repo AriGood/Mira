@@ -153,7 +153,16 @@ EpicAuthStatus Status(const config::Config& config) {
   return status;
 }
 
-Result<void> Login(const config::Config& config, const std::string& code) {
+Result<void> Login(const config::Config& config, const std::string& pasted) {
+  std::string code = Trim(pasted);
+  if (code.starts_with('{')) {
+    const json page = json::parse(code, nullptr, false);
+    if (page.is_discarded() || !page.contains("authorizationCode") || !page["authorizationCode"].is_string()) {
+      return Err("invalid_code", "that looks like JSON but has no \"authorizationCode\" field");
+    }
+    code = page["authorizationCode"].get<std::string>();
+  }
+  if (code.empty()) return Err("invalid_code", "no code entered");
   // legendary's own exit code is not trustworthy here: `auth --code` with an
   // invalid or expired code still exits 0, only reporting the failure as an
   // "[cli] ERROR: Login attempt failed" line in its output (confirmed against

@@ -22,6 +22,8 @@
 #include "config/Config.h"
 #include "core/Paths.h"
 #include "epic/Legendary.h"
+#include "gog/Gog.h"
+#include "itch/Itch.h"
 #include "setup/Setup.h"
 
 namespace {
@@ -660,22 +662,9 @@ int CmdEpicLogin() {
     return 2;
   }
 
-  // Epic's own redirect page shows the whole exchange response as raw JSON
-  // ({"authorizationCode": "...", ...}), not just the one field legendary
-  // actually needs -- accepted as-is here rather than making the user hunt
-  // through it for the right key themselves.
-  std::string code = pasted;
-  if (pasted.front() == '{') {
-    json parsed = json::parse(pasted, nullptr, false);
-    if (parsed.is_discarded() || !parsed.contains("authorizationCode")) {
-      std::fprintf(stderr, "mira: that looked like JSON but had no \"authorizationCode\" field\n");
-      return 2;
-    }
-    code = parsed["authorizationCode"];
-  }
-
+  // mirad pulls the code out of Epic's whole JSON page itself.
   auto client = Connect();
-  json body = {{"code", code}};
+  json body = {{"code", pasted}};
   auto res = client.Post("/v1/epic/auth", body.dump(), "application/json");
   if (!Ok(res)) {
     PrintError(res);
@@ -820,11 +809,11 @@ int CmdGogLogin() {
   }
 
   std::printf(
-      "Visit https://auth.gog.com/auth?client_id=46899977096215655&redirect_uri=https%%3A%%2F%%2Fembed.gog.com"
-      "%%2Fon_login_success%%3Forigin%%3Dclient&response_type=code&layout=client2, log in, and log in. It "
-      "redirects to a blank page — GOG's own client_id, not something Mira can point at a nicer landing page.\n"
+      "Visit %s and log in. It redirects to a blank page — GOG's own client_id, not something Mira can point "
+      "at a nicer landing page.\n"
       "Paste the whole address-bar URL from that blank page (or just the \"code\" value, if you'd rather pull "
-      "it out yourself):\nurl or code: ");
+      "it out yourself):\nurl or code: ",
+      std::string(mira::gog::kLoginUrl).c_str());
   std::string pasted;
   std::getline(std::cin, pasted);
   while (!pasted.empty() && std::isspace(static_cast<unsigned char>(pasted.back()))) pasted.pop_back();
@@ -836,17 +825,9 @@ int CmdGogLogin() {
     return 2;
   }
 
-  // Accept the whole redirected URL too, not just the bare code -- GOG's
-  // redirect page is blank, no JSON to eyeball the way Epic's is.
-  std::string code = pasted;
-  if (const size_t marker = pasted.find("code="); marker != std::string::npos) {
-    const size_t value_start = marker + 5;
-    const size_t amp = pasted.find('&', value_start);
-    code = pasted.substr(value_start, amp == std::string::npos ? std::string::npos : amp - value_start);
-  }
-
+  // mirad accepts the whole redirected URL and pulls the code out itself.
   auto client = Connect();
-  json body = {{"code", code}};
+  json body = {{"code", pasted}};
   auto res = client.Post("/v1/gog/auth", body.dump(), "application/json");
   if (!Ok(res)) {
     PrintError(res);
@@ -938,7 +919,7 @@ int CmdItchLogin() {
     }
   }
 
-  std::printf("Paste an API key from https://itch.io/user/settings/api-keys:\napi key: ");
+  std::printf("Paste an API key from %s:\napi key: ", std::string(mira::itch::kApiKeysUrl).c_str());
   std::string key;
   std::getline(std::cin, key);
   while (!key.empty() && std::isspace(static_cast<unsigned char>(key.back()))) key.pop_back();
