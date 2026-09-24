@@ -126,10 +126,6 @@ public:
   // match) and refetch; game.metadata_ready follows.
   static void SetGriddbMatchAsync(QObject* context, const std::string& id, std::int64_t griddb_id,
                                   std::function<void(GameActionResult)> callback);
-  // POST .../metadata/wrong-match: move to the next match and refetch.
-  // Fails with no_more_matches past the last one.
-  static void WrongGriddbMatchAsync(QObject* context, const std::string& id,
-                                    std::function<void(GameActionResult)> callback);
 
   // GET /v1/games/{id}/metadata. A 404 is ordinary — nothing fetched yet, or
   // fetched and nothing found — and comes back as missing, not as an error.

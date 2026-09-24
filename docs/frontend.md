@@ -285,7 +285,6 @@ Everything `api.md` marks implemented has a path through the UI:
 | `POST /v1/games/{id}/metadata/refresh` | the tile context menu's *Refresh metadata && cover art*, and *Library → Fetch missing cover art* |
 | `POST /v1/games/{id}/artwork?type=` | *Choose cover art…* / *Choose hero art…* (`ArtworkPickerDialog`) |
 | `GET /v1/games/{id}/metadata/matches`, `POST .../metadata/match` | `ArtworkPickerDialog`'s SteamGridDB game row: which game the art comes from, with a search for another name |
-| `POST /v1/games/{id}/metadata/wrong-match` | the tile context menu's *Art is for the wrong game* |
 | `POST /v1/games/{id}/run` | *Run in prefix…* (`RunInPrefixDialog`) |
 | `POST /v1/games/{id}/finish-install` | *Mark as installed* |
 | `GET /v1/games/{id}/installer`, `POST .../install` | *Install…* (`InstallGameDialog`), for a `needs_install` or `broken` game |

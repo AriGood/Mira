@@ -914,11 +914,6 @@ GameActionResult SetGriddbMatchSync(const std::string& id, std::int64_t griddb_i
   return {reply.ok, reply.error};
 }
 
-GameActionResult WrongGriddbMatchSync(const std::string& id) {
-  const transport::Reply reply = transport::Post("/v1/games/" + id + "/metadata/wrong-match");
-  return {reply.ok, reply.error};
-}
-
 ArtworkResult GetTitleArtworkSync(const std::string& source, const std::string& ref) {
   ArtworkResult result;
   const transport::Blob blob =
@@ -1391,11 +1386,6 @@ void MiradClient::GetGriddbMatchesAsync(QObject* context, const std::string& id,
 void MiradClient::SetGriddbMatchAsync(QObject* context, const std::string& id, std::int64_t griddb_id,
                                       std::function<void(GameActionResult)> callback) {
   async::Run(context, [id, griddb_id] { return SetGriddbMatchSync(id, griddb_id); }, std::move(callback));
-}
-
-void MiradClient::WrongGriddbMatchAsync(QObject* context, const std::string& id,
-                                        std::function<void(GameActionResult)> callback) {
-  async::Run(context, [id] { return WrongGriddbMatchSync(id); }, std::move(callback));
 }
 
 void MiradClient::GetTitleArtworkAsync(QObject* context, const std::string& source, const std::string& ref,
