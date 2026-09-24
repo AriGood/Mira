@@ -532,6 +532,46 @@ struct GamesFolderResult {
   std::string error;
 };
 
+// GET /v1/games/{id}/installer[?path=].
+struct InstallerInfoResult {
+  bool ok = false;
+  std::string error;
+  std::string path;
+  std::int64_t size_bytes = 0;
+  std::string format;  // "inno" | "nsis" | "unknown"
+  bool silent = false;  // Mira knows how to run it without its window
+};
+
+// GET /v1/games/{id}/install/progress.
+struct InstallProgressResult {
+  bool ok = false;
+  std::string error;
+  std::string state;  // "idle" | "queued" | "running" | "finished" | "failed"
+  std::int64_t bytes_written = 0;
+};
+
+// A `game.install.started` / `.finished` / `.failed` payload.
+struct InstallEvent {
+  std::string id;
+  std::string state;
+  std::string error;  // only on "failed"
+};
+
+// POST /v1/games/{id}/relocate, /v1/games/{id}/install, and the like:
+// success only means mirad accepted or finished it.
+struct GameActionResult {
+  bool ok = false;
+  std::string error;
+};
+
+// POST /v1/library/relocate.
+struct RelocateLibraryResult {
+  bool ok = false;
+  std::string error;
+  int moved = 0;
+  int failed = 0;
+};
+
 // GET /v1/games/{id}/log?lines= — the game's own log tail. An empty
 // `lines` means nothing was ever logged, not an error.
 struct GameLogResult {

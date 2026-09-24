@@ -119,17 +119,20 @@ void GameTileDelegate::paint(QPainter* painter, const QStyleOptionViewItem& opti
 
   // "Ready" says nothing worth a line on every tile — only a state that
   // needs attention (or Playing) earns one.
-  if (running || status != "ready") {
+  const QString status_text = index.data(StatusTextRole).toString();
+  if (running || status != "ready" || !status_text.isEmpty()) {
     QFont status_font = option.font;
     status_font.setPixelSize(qMax(9, status_font.pixelSize() > 0 ? status_font.pixelSize() - 2 : 10));
     painter->setFont(status_font);
     const QRect status_rect(rect.left() + 8, rect.bottom() - 19, rect.width() - 16, 15);
     painter->setPen(Qt::NoPen);
-    painter->setBrush(StatusColor(status).lighter(160));
+    painter->setBrush((status_text.isEmpty() ? StatusColor(status) : tokens.status_setting_up).lighter(160));
     painter->drawEllipse(QPoint(status_rect.left() + 3, status_rect.center().y()), 3, 3);
     painter->setPen(QColor(255, 255, 255, 170));
     painter->drawText(status_rect.adjusted(12, 0, 0, 0), Qt::AlignLeft | Qt::AlignVCenter,
-                      running ? QString("Playing") : StatusLabel(status));
+                      !status_text.isEmpty() ? status_text
+                      : running              ? QString("Playing")
+                                             : StatusLabel(status));
   }
 
   const QString action = index.data(ActionRole).toString();
