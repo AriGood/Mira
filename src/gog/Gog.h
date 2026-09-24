@@ -51,11 +51,17 @@ struct GogAuthStatus {
 // to check this, unlike epic::Status (gogdl has no cheap "status" call).
 GogAuthStatus Status(const config::Config& config);
 
-// `code` is the authorization code from GOG's own login page redirect,
-// same shape as Epic's pasted code. gogdl bakes in GOG Galaxy's own public
+// GOG Galaxy's own public login page, the one gogdl's client_id belongs to.
+// It ends on a blank page whose URL carries the code.
+inline constexpr std::string_view kLoginUrl =
+    "https://auth.gog.com/auth?client_id=46899977096215655&redirect_uri=https%3A%2F%2Fembed.gog.com"
+    "%2Fon_login_success%3Forigin%3Dclient&response_type=code&layout=client2";
+
+// `pasted` is the authorization code from kLoginUrl's redirect, or that
+// whole redirect URL. gogdl bakes in GOG Galaxy's own public
 // client_id/client_secret (confirmed in heroic-gogdl's auth.py) -- Mira
 // never needs its own.
-Result<void> Login(const config::Config& config, const std::string& code);
+Result<void> Login(const config::Config& config, const std::string& pasted);
 
 // Just removes AuthConfigPath -- gogdl has no "auth --delete" the way
 // Legendary does.

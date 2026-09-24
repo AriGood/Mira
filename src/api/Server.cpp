@@ -480,18 +480,22 @@ void Server::RegisterRoutes() {
     if (patch.is_discarded()) return SendError(res, 400, "invalid_json", "body is not valid JSON");
     Result<void> result = config_.Patch(patch);
     if (result) SyncDesktopEntries(config_, games_);
+    if (result && patch.is_object() && patch.contains("library_roots") && on_roots_changed_) on_roots_changed_();
     SendResult(res, result);
   });
 
   http_->Post("/v1/config/reset", [this](const Request& req, Response& res) {
     Result<void> result;
+    bool roots_reset = true;
     if (auto it = req.params.find("key"); it != req.params.end()) {
       result = config_.Reset(it->second);
+      roots_reset = it->second == "library_roots";
     } else {
       config_.ResetAll();
       result = config_.Save();
     }
     if (result) SyncDesktopEntries(config_, games_);
+    if (result && roots_reset && on_roots_changed_) on_roots_changed_();
     SendResult(res, result);
   });
 
@@ -739,7 +743,7 @@ void Server::RegisterRoutes() {
     if (!summary) return SendError(res, 404, summary.error().code, summary.error().message);
     SyncDesktopEntries(config_, games_);
     for (const model::Game& game : summary->added_games) metadata_fetches_.Enqueue(config_, events_, game);
-    SendJson(res, {{"added", summary->added}, {"updated", summary->updated}, {"skipped", summary->skipped}});
+    SendJson(res, {{"added", summary->added}, {"updated", summary->updated}, {"other_runner", summary->other_runner}, {"incomplete", summary->incomplete}});
   });
 
   // --- epic -------------------------------------------------------------
@@ -795,7 +799,8 @@ void Server::RegisterRoutes() {
                                   {"path", status.legendary.path},
                                   {"version", status.legendary.version}}},
                   {"authenticated", status.authenticated},
-                  {"account", status.account}});
+                  {"account", status.account},
+                  {"login_url", epic::kLoginUrl}});
   });
 
   // The user pastes back the code shown at epic::kLoginUrl, visited in
@@ -848,7 +853,8 @@ void Server::RegisterRoutes() {
                               {"source", status.gogdl.source},
                               {"path", status.gogdl.path},
                               {"version", status.gogdl.version}}},
-                  {"authenticated", status.authenticated}});
+                  {"authenticated", status.authenticated},
+                  {"login_url", gog::kLoginUrl}});
   });
 
   http_->Post("/v1/gog/setup", [this](const Request&, Response& res) {
@@ -1070,7 +1076,8 @@ void Server::RegisterRoutes() {
                                {"source", status.butler.source},
                                {"path", status.butler.path},
                                {"version", status.butler.version}}},
-                  {"authenticated", status.authenticated}});
+                  {"authenticated", status.authenticated},
+                  {"login_url", itch::kApiKeysUrl}});
   });
 
   http_->Post("/v1/itch/setup", [this](const Request&, Response& res) {
@@ -1138,7 +1145,8 @@ void Server::RegisterRoutes() {
                                    {"source", status.humble_cli.source},
                                    {"path", status.humble_cli.path},
                                    {"version", status.humble_cli.version}}},
-                  {"authenticated", status.authenticated}});
+                  {"authenticated", status.authenticated},
+                  {"login_url", humble::kLoginUrl}});
   });
 
   http_->Post("/v1/humble/setup", [this](const Request&, Response& res) {

@@ -7,6 +7,8 @@
 #include <QSize>
 #include <QString>
 
+#include <cstdint>
+#include <map>
 #include <set>
 #include <string>
 #include <vector>
@@ -30,6 +32,7 @@ class QAction;
 class QToolButton;
 class QListWidgetItem;
 class QTableWidget;
+class QTimer;
 
 // QListWidget with setViewportMargins made public — Qt keeps it protected on
 // QAbstractScrollArea. Defined in LibraryWindow.cpp; this file only ever
@@ -41,6 +44,8 @@ class GameEditForm;
 class GameTileDelegate;
 class HoverCard;
 class SettingsPanel;
+class SourcePage;
+struct SourceInfo;
 }
 
 // Primary library view: cover-art grid, a left sidebar (filters, sort,
@@ -176,7 +181,22 @@ private:
   void RefreshClassicTable();
   void OpenClassicView();
   void CloseClassicView();
-  // `announce` is false for the bulk path, where one toast covers the batch
+  // A store or launcher's page, rebuilt fresh on each open.
+  void OpenSource(const mira_gui::SourceInfo& source);
+  void CloseSource();
+  // Hides the sources turned off in Settings (`<id>.enabled`), and asks
+  // which stores are signed in and which launchers installed.
+  void RefreshSourceNavs();
+  // Greys out and moves down the sources with nothing set up yet.
+  void UpdateSourceNavs();
+  void SetSourceControlsEnabled(bool enabled);
+  // The grid is what's on screen: not Settings, the classic table, or a source page.
+  bool GridShown() const;
+  void RelocateLibrary();
+  // While installing_ isn't empty: asks mirad how far each install has got.
+  void PollInstalls();
+  // "Installing… 1.2 GB" for a game mid-install, else empty.
+  QString InstallText(const std::string& id) const;  // `announce` is false for the bulk path, where one toast covers the batch
   // and per-game messages would be one notification per game.
   void RefreshMetadata(const std::string& id, bool announce = true);
   void OpenArtworkPicker(const std::string& id, const std::string& slot);
@@ -233,8 +253,17 @@ private:
   QPushButton* classic_view_nav_ = nullptr;
   // Where PopulateLibraryActions() adds its icon+label rows.
   QVBoxLayout* library_actions_layout_ = nullptr;
+  // One sidebar row per mira_gui::AllSources() entry, same order.
+  QList<QPushButton*> source_navs_;
+  QVBoxLayout* source_nav_layout_ = nullptr;
+  // Store signed in / launcher installed, by source id, as last asked.
+  QHash<QString, bool> source_ready_;
+  mira_gui::SourcePage* source_page_ = nullptr;
 
   QSplitter* splitter_ = nullptr;
+  // The splitter's right side: grid_page_, or source_page_ over it.
+  QStackedWidget* main_stack_ = nullptr;
+  QWidget* grid_page_ = nullptr;
   // Swaps the splitter out for Settings/classic table, full-screen. A
   // game's edit card is a separate overlay (game_edit_overlay_) that stays
   // over the grid instead.
@@ -266,6 +295,13 @@ private:
 
   std::vector<mira_gui::GameSummary> games_;
   std::set<std::string> running_ids_;
+  // Games whose installer mirad is running, with the bytes written so far.
+  std::map<std::string, std::int64_t> installing_;
+  QTimer* install_poll_ = nullptr;
+  // game.added events asking for their settings to open, gathered briefly
+  // so a scan's burst of them opens nothing.
+  std::vector<std::string> pending_added_;
+  QTimer* added_timer_ = nullptr;
   // Whether RefreshGames() has ever completed successfully.
   bool loaded_ = false;
   // Games the user explicitly asked to refresh — a metadata failure for one

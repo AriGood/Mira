@@ -37,6 +37,9 @@ struct GameSummary {
   // the frontend treats specially: excluded from the library by default,
   // shown only by the Hidden filter (Ctrl+H).
   std::vector<std::string> tags;
+  // Which importer owns it: "scan", "steam", "epic", "lutris", "battlenet",
+  // ... ("launcher" for a store launcher's own install).
+  std::string source;
 };
 
 struct GamesResult {
@@ -443,14 +446,12 @@ struct SteamScanResult {
   int updated = 0;
 };
 
-// POST /v1/lutris/import. `skipped` counts Lutris rows this import cannot
-// use — a non-wine runner, or a wine game whose yaml records no prefix.
+// POST /v1/lutris/import.
 struct LutrisImportResult {
   bool ok = false;
   std::string error;
   int added = 0;
   int updated = 0;
-  int skipped = 0;
 };
 
 // POST /v1/games/{id}/run — an arbitrary executable inside this game's own
@@ -497,6 +498,8 @@ struct FrontendPrefs {
   // On (default): "Details & settings" edits a game inline in the right
   // panel instead of opening a dialog.
   std::optional<bool> game_settings_in_sidebar;
+  // On (default): dragging across the grid rubber-band selects tiles.
+  std::optional<bool> drag_select;
   // Shape adjustments layered over whatever the theme sets, in pixels — see
   // theme::Overrides. Unset means "leave it to the theme".
   std::optional<int> tile_spacing;
@@ -514,6 +517,46 @@ struct FrontendPrefsResult {
   bool ok = false;
   std::string error;
   FrontendPrefs prefs;
+};
+
+// GET /v1/games/{id}/installer[?path=].
+struct InstallerInfoResult {
+  bool ok = false;
+  std::string error;
+  std::string path;
+  std::int64_t size_bytes = 0;
+  std::string format;  // "inno" | "nsis" | "unknown"
+  bool silent = false;  // Mira knows how to run it without its window
+};
+
+// GET /v1/games/{id}/install/progress.
+struct InstallProgressResult {
+  bool ok = false;
+  std::string error;
+  std::string state;  // "idle" | "queued" | "running" | "finished" | "failed"
+  std::int64_t bytes_written = 0;
+};
+
+// A `game.install.started` / `.finished` / `.failed` payload.
+struct InstallEvent {
+  std::string id;
+  std::string state;
+  std::string error;  // only on "failed"
+};
+
+// POST /v1/games/{id}/relocate, /v1/games/{id}/install, and the like:
+// success only means mirad accepted or finished it.
+struct GameActionResult {
+  bool ok = false;
+  std::string error;
+};
+
+// POST /v1/library/relocate.
+struct RelocateLibraryResult {
+  bool ok = false;
+  std::string error;
+  int moved = 0;
+  int failed = 0;
 };
 
 // GET /v1/games/{id}/log?lines= — the game's own log tail. An empty
@@ -595,6 +638,93 @@ struct DesktopEntryImportResult {
 struct DesktopEntrySyncResult {
   bool ok = false;
   std::string error;
+};
+
+// GET /v1/<store>/status for "epic", "gog", "itch" and "humble". `tool` is
+// the helper mirad drives for that store (Legendary, gogdl, butler,
+// humble-cli).
+struct StoreStatusResult {
+  bool ok = false;
+  std::string error;
+  bool tool_installed = false;
+  std::string tool_version;
+  bool authenticated = false;
+  std::string account;  // Epic only
+  std::string login_url;
+};
+
+// Setup, sign-in, sign-out, and the detached install/download kick-offs:
+// success only means mirad accepted it.
+struct StoreActionResult {
+  bool ok = false;
+  std::string error;
+};
+
+// POST /v1/<store>/import.
+struct StoreImportResult {
+  bool ok = false;
+  std::string error;
+  int added = 0;
+  int updated = 0;
+};
+
+// One GET /v1/library entry: something the account owns.
+struct StoreTitle {
+  std::string ref;
+  std::string title;
+  bool installed = false;
+};
+
+struct StoreLibraryResult {
+  bool ok = false;
+  std::string error;
+  std::vector<StoreTitle> titles;
+};
+
+struct HumbleBundle {
+  std::string key;
+  std::string name;
+  bool claimed = false;
+};
+
+struct HumbleLibraryResult {
+  bool ok = false;
+  std::string error;
+  std::vector<HumbleBundle> bundles;
+};
+
+// GET /v1/launchers: Battle.net, Ubisoft Connect, the EA app.
+struct LauncherInfo {
+  std::string id;  // also the `source` of the games imported through it
+  std::string name;
+  std::string game_id;  // the launcher's own game record
+  bool installed = false;
+  std::string install_state;  // "idle" | "running" | "finished" | "failed"
+  bool interactive_install = false;
+  std::string error;
+};
+
+struct LaunchersResult {
+  bool ok = false;
+  std::string error;
+  std::vector<LauncherInfo> launchers;
+};
+
+// POST /v1/amazon/login: the login page to open, made fresh each time.
+struct LoginUrlResult {
+  bool ok = false;
+  std::string error;
+  std::string url;
+};
+
+// A store helper's setup, a library install/update, a Humble download or a
+// launcher install moving along, from the event stream.
+struct StoreEvent {
+  std::string source;  // "epic" | "gog" | "itch" | "humble" | "amazon" | "steam" | a launcher id
+  std::string kind;    // "setup" | "install" | "download"
+  std::string state;   // "started" | "finished" | "failed"
+  std::string ref;     // install: the title's ref; download: the bundle key
+  std::string error;   // only on "failed"
 };
 
 }  // namespace mira_gui

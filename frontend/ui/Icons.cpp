@@ -132,6 +132,10 @@ void PaintGlyph(QPainter& painter, Glyph glyph, const QColor& color) {
           QPolygonF({QPointF(5.2, 8.5), QPointF(8.0, 11.3), QPointF(10.8, 8.5)}));
       painter.drawLine(QPointF(4.0, 13.0), QPointF(12.0, 13.0));
       return;
+    case Glyph::Store:
+      painter.drawRoundedRect(QRectF(3.0, 5.5, 10.0, 8.5), 1.2, 1.2);
+      painter.drawArc(QRectF(5.5, 2.5, 5.0, 6.0), 0, 180 * 16);
+      return;
     case Glyph::Clock:
       painter.drawEllipse(QPointF(8.0, 8.0), 5.5, 5.5);
       painter.drawLine(QPointF(8.0, 5.0), QPointF(8.0, 8.0));

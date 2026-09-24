@@ -16,6 +16,14 @@ constexpr int kScrimHeight = 62;
 
 }  // namespace
 
+QRect GameTileDelegate::ActionRect(const QRect& cell, const QString& text, const QFont& font) {
+  const int inset = theme::Current().tile_spacing;
+  QFont bold = font;
+  bold.setWeight(QFont::DemiBold);
+  const int width = QFontMetrics(bold).horizontalAdvance(text) + 20;
+  return QRect(cell.right() - inset - 6 - width + 1, cell.top() + inset + 6, width, 24);
+}
+
 GameTileDelegate::GameTileDelegate(QObject* parent, QSize tile)
     : QStyledItemDelegate(parent), tile_(tile) {}
 
@@ -111,17 +119,34 @@ void GameTileDelegate::paint(QPainter* painter, const QStyleOptionViewItem& opti
 
   // "Ready" says nothing worth a line on every tile — only a state that
   // needs attention (or Playing) earns one.
-  if (running || status != "ready") {
+  const QString status_text = index.data(StatusTextRole).toString();
+  if (running || status != "ready" || !status_text.isEmpty()) {
     QFont status_font = option.font;
     status_font.setPixelSize(qMax(9, status_font.pixelSize() > 0 ? status_font.pixelSize() - 2 : 10));
     painter->setFont(status_font);
     const QRect status_rect(rect.left() + 8, rect.bottom() - 19, rect.width() - 16, 15);
     painter->setPen(Qt::NoPen);
-    painter->setBrush(StatusColor(status).lighter(160));
+    painter->setBrush((status_text.isEmpty() ? StatusColor(status) : tokens.status_setting_up).lighter(160));
     painter->drawEllipse(QPoint(status_rect.left() + 3, status_rect.center().y()), 3, 3);
     painter->setPen(QColor(255, 255, 255, 170));
     painter->drawText(status_rect.adjusted(12, 0, 0, 0), Qt::AlignLeft | Qt::AlignVCenter,
-                      running ? QString("Playing") : StatusLabel(status));
+                      !status_text.isEmpty() ? status_text
+                      : running              ? QString("Playing")
+                                             : StatusLabel(status));
+  }
+
+  const QString action = index.data(ActionRole).toString();
+  if (!action.isEmpty()) {
+    const bool enabled = index.data(ActionEnabledRole).toBool();
+    const QRect pill = ActionRect(option.rect, action, option.font);
+    QFont pill_font = option.font;
+    pill_font.setWeight(QFont::DemiBold);
+    painter->setFont(pill_font);
+    painter->setPen(Qt::NoPen);
+    painter->setBrush(enabled ? tokens.accent : QColor(0, 0, 0, 150));
+    painter->drawRoundedRect(pill, pill.height() / 2.0, pill.height() / 2.0);
+    painter->setPen(enabled ? tokens.on_accent : QColor(255, 255, 255, 200));
+    painter->drawText(pill, Qt::AlignCenter, action);
   }
 
   // Border last, so selection reads on top of the artwork.

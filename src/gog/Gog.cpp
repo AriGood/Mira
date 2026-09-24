@@ -124,7 +124,13 @@ GogAuthStatus Status(const config::Config& config) {
   return status;
 }
 
-Result<void> Login(const config::Config& config, const std::string& code) {
+Result<void> Login(const config::Config& config, const std::string& pasted) {
+  std::string code = Trim(pasted);
+  if (const size_t marker = code.find("code="); marker != std::string::npos) {
+    code = code.substr(marker + 5);
+    code = code.substr(0, code.find('&'));
+  }
+  if (code.empty()) return Err("invalid_code", "no code entered");
   // Same posture as epic::Login: verify by re-reading what gogdl actually
   // wrote, not by trusting a nonzero/zero exit code — gogdl's own `auth`
   // handler prints {"error": true} on a rejected code but still exits 0

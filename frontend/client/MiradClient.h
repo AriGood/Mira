@@ -241,7 +241,74 @@ public:
   // GET /v1/games returns. False unless `data` is a JSON object carrying a
   // non-empty string id — callers dispatch on the event type first, and this
   // is the second line of defence behind that.
+  // --- Installers and relocation ---------------------------------------------
+
+  // The game's own installer, or `path` (absolute, or relative to its
+  // install folder) when choosing a different one.
+  static void GetInstallerInfoAsync(QObject* context, const std::string& id, const std::string& path,
+                                    std::function<void(InstallerInfoResult)> callback);
+  // Detached; an InstallEvent follows. Empty `installer` uses the game's own.
+  static void InstallGameAsync(QObject* context, const std::string& id, bool interactive,
+                               const std::string& installer,
+                               std::function<void(GameActionResult)> callback);
+  static void GetInstallProgressAsync(QObject* context, const std::string& id,
+                                      std::function<void(InstallProgressResult)> callback);
+  // Moves the game's files and prefix into Mira's own layout.
+  static void RelocateGameAsync(QObject* context, const std::string& id,
+                                std::function<void(GameActionResult)> callback);
+  static void RelocateLibraryAsync(QObject* context,
+                                   std::function<void(RelocateLibraryResult)> callback);
+  static bool ParseInstallEvent(const std::string& event_type, const std::string& data,
+                                InstallEvent* out);
+
+  // --- Stores (Epic, GOG, itch.io, Humble Bundle) ---------------------------
+
+  static void GetStoreStatusAsync(QObject* context, const std::string& source,
+                                  std::function<void(StoreStatusResult)> callback);
+  // Downloads the store's helper tool, detached; a StoreEvent says when done.
+  static void SetupStoreToolAsync(QObject* context, const std::string& source,
+                                  std::function<void(StoreActionResult)> callback);
+  // `credential` is whatever the user pasted: a code, a whole login page or
+  // redirect URL, an API key, or a session cookie, per store.
+  static void SignInStoreAsync(QObject* context, const std::string& source,
+                               const std::string& credential,
+                               std::function<void(StoreActionResult)> callback);
+  static void SignOutStoreAsync(QObject* context, const std::string& source,
+                                std::function<void(StoreActionResult)> callback);
+  static void ImportStoreAsync(QObject* context, const std::string& source,
+                               std::function<void(StoreImportResult)> callback);
+  // GET /v1/library?source= — owned titles, installed or not.
+  static void GetStoreLibraryAsync(QObject* context, const std::string& source,
+                                   std::function<void(StoreLibraryResult)> callback);
+  static void InstallStoreTitleAsync(QObject* context, const std::string& source,
+                                     const std::string& ref, bool update,
+                                     std::function<void(StoreActionResult)> callback);
+  static void GetHumbleLibraryAsync(QObject* context,
+                                    std::function<void(HumbleLibraryResult)> callback);
+  static void DownloadHumbleBundleAsync(QObject* context, const std::string& bundle_key,
+                                        std::function<void(StoreActionResult)> callback);
+
+  // Amazon's login URL is made per attempt (PKCE), not a fixed page.
+  static void BeginAmazonLoginAsync(QObject* context, std::function<void(LoginUrlResult)> callback);
+
+  // --- Store launchers (Battle.net, Ubisoft Connect, EA app) ----------------
+
+  static void GetLaunchersAsync(QObject* context, std::function<void(LaunchersResult)> callback);
+  // Detached; a StoreEvent with kind "setup" and the launcher's id follows.
+  static void InstallLauncherAsync(QObject* context, const std::string& id,
+                                   std::function<void(StoreActionResult)> callback);
+  static void ImportLauncherAsync(QObject* context, const std::string& id,
+                                  std::function<void(StoreImportResult)> callback);
+  static void OpenLauncherAsync(QObject* context, const std::string& id,
+                                std::function<void(StoreActionResult)> callback);
+
+  static bool ParseStoreEvent(const std::string& event_type, const std::string& data,
+                              StoreEvent* out);
+
   static bool ParseGameSummary(const std::string& data, GameSummary* out);
+
+  // A game.added payload's `open_config` (open_config_on_add).
+  static bool ParseOpenConfig(const std::string& data);
 
   // Parses a `game.state` payload (`{"id", "state": "running" | "exited" |
   // "crashed", ...}`, docs/api.md) down to just id/state — enough to know

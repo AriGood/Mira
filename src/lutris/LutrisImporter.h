@@ -21,7 +21,10 @@ std::optional<std::filesystem::path> FindLutrisDataDir(const config::Config& con
 struct LutrisImportSummary {
   int added = 0;
   int updated = 0;
-  int skipped = 0;  // rows Lutris runs through something other than wine (steam, linux, ...)
+  // Rows on a runner Mira leaves to something else (steam, flatpak, dosbox, ...).
+  int other_runner = 0;
+  // Wine/linux rows whose config can't be imported as-is (no prefix, relative exe, ...).
+  int incomplete = 0;
 
   // See ScanSummary::added_games (library/Scanner.h) for why a metadata
   // fetch isn't triggered from in here.

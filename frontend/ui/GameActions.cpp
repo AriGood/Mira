@@ -10,6 +10,7 @@
 
 #include "../client/MiradClient.h"
 #include "../dialogs/DeleteGameDialog.h"
+#include "../dialogs/InstallGameDialog.h"
 #include "../dialogs/LogViewerDialog.h"
 #include "../dialogs/RunInPrefixDialog.h"
 #include "../dialogs/WinetricksDialog.h"
@@ -155,6 +156,52 @@ void BatchDelete(QWidget* parent, const std::vector<std::pair<std::string, QStri
             }
             if (on_done) on_done();
           });
+    });
+  }
+}
+
+void Install(QWidget* parent, const std::string& id, const std::string& install_path,
+             const QString& name) {
+  InstallGameDialog dialog(id, install_path, name, parent);
+  dialog.exec();
+}
+
+void Relocate(QWidget* parent, const std::vector<std::pair<std::string, QString>>& games,
+              std::function<void()> on_done) {
+  if (games.empty()) return;
+  const QString question =
+      games.size() == 1
+          ? QString("Move %1 into your games folder, and its prefix into the prefixes folder?")
+                .arg(games.front().second)
+          : QString("Move these %1 games into your games folder, and their prefixes into the "
+                    "prefixes folder?")
+                .arg(games.size());
+  if (!notify::Confirm(parent, "Move to Mira's folders",
+                       question + " Folders are named after the game. Games installed by a store "
+                                  "(Steam, Epic, GOG, itch.io) keep their install folder; only the "
+                                  "prefix moves.",
+                       "Move")) {
+    return;
+  }
+
+  auto remaining = std::make_shared<int>(static_cast<int>(games.size()));
+  auto failed = std::make_shared<QStringList>();
+  auto first_error = std::make_shared<QString>();
+  for (const auto& [id, name] : games) {
+    MiradClient::RelocateGameAsync(parent, id, [parent, name, remaining, failed, first_error,
+                                                on_done, total = games.size()](GameActionResult result) {
+      if (!result.ok) {
+        *failed << name;
+        if (first_error->isEmpty()) *first_error = QString::fromStdString(result.error);
+      }
+      if (--*remaining > 0) return;
+      // Nothing on screen shows a path, so success gets a notice.
+      const int moved = static_cast<int>(total) - static_cast<int>(failed->size());
+      if (moved > 0) notify::Notice(parent, QString("Moved %1 game%2.").arg(moved).arg(moved == 1 ? "" : "s"));
+      if (!failed->isEmpty()) {
+        notify::Failed(parent, QString("Could not move %1.").arg(failed->join(", ")), *first_error);
+      }
+      if (on_done) on_done();
     });
   }
 }

@@ -2,6 +2,8 @@
 
 #include <json.hpp>
 
+#include <cctype>
+#include <optional>
 #include <string_view>
 #include <utility>
 
@@ -310,6 +312,7 @@ FrontendPrefsResult GetFrontendPrefsSync() {
   read_bool("scan_on_startup", result.prefs.scan_on_startup);
   read_string("theme", result.prefs.theme);
   read_bool("game_settings_in_sidebar", result.prefs.game_settings_in_sidebar);
+  read_bool("drag_select", result.prefs.drag_select);
   read_int("tile_spacing", result.prefs.tile_spacing);
   read_int("grid_margin", result.prefs.grid_margin);
   read_int("tile_radius", result.prefs.tile_radius);
@@ -339,6 +342,7 @@ PatchConfigResult SaveFrontendPrefsSync(const FrontendPrefs& prefs) {
   if (prefs.game_settings_in_sidebar) {
     table["game_settings_in_sidebar"] = *prefs.game_settings_in_sidebar;
   }
+  if (prefs.drag_select) table["drag_select"] = *prefs.drag_select;
   if (prefs.tile_spacing) table["tile_spacing"] = *prefs.tile_spacing;
   if (prefs.grid_margin) table["grid_margin"] = *prefs.grid_margin;
   if (prefs.tile_radius) table["tile_radius"] = *prefs.tile_radius;
@@ -543,7 +547,6 @@ LutrisImportResult ImportLutrisSync() {
   result.ok = true;
   result.added = reply.body.value("added", 0);
   result.updated = reply.body.value("updated", 0);
-  result.skipped = reply.body.value("skipped", 0);
   return result;
 }
 
@@ -719,6 +722,282 @@ DesktopEntryImportResult ImportDesktopEntriesSync(const std::vector<std::string>
 
 DesktopEntrySyncResult SyncDesktopEntriesSync() {
   const transport::Reply reply = transport::Post("/v1/desktop-entries/sync");
+  return {reply.ok, reply.error};
+}
+
+// Per-store endpoint names. Humble has no import or sign-out of its own.
+struct StoreEndpoints {
+  std::string status;
+  std::string tool_key;  // the tool's object in the status reply
+  std::string setup;
+  std::string credential_field;
+};
+
+std::optional<StoreEndpoints> EndpointsFor(const std::string& source) {
+  if (source == "epic") return StoreEndpoints{"/v1/epic/status", "legendary", "/v1/epic/legendary/install", "code"};
+  if (source == "gog") return StoreEndpoints{"/v1/gog/status", "gogdl", "/v1/gog/setup", "code"};
+  if (source == "itch") return StoreEndpoints{"/v1/itch/status", "butler", "/v1/itch/setup", "api_key"};
+  if (source == "humble") {
+    return StoreEndpoints{"/v1/humble/status", "humble_cli", "/v1/humble/setup", "session_key"};
+  }
+  if (source == "amazon") return StoreEndpoints{"/v1/amazon/status", "nile", "/v1/amazon/setup", "redirect"};
+  return std::nullopt;
+}
+
+std::string UnknownStore(const std::string& source) { return "Unknown store \"" + source + "\"."; }
+
+StoreStatusResult GetStoreStatusSync(const std::string& source) {
+  StoreStatusResult result;
+  const std::optional<StoreEndpoints> endpoints = EndpointsFor(source);
+  if (!endpoints) {
+    result.error = UnknownStore(source);
+    return result;
+  }
+  // Humble's status asks humble-cli itself, over the network.
+  const transport::Reply reply = transport::Get(endpoints->status, {.read_timeout = std::chrono::seconds(30)});
+  if (!reply.ok) {
+    result.error = reply.error;
+    return result;
+  }
+  if (!reply.body.is_object()) {
+    result.error = transport::UnexpectedResponse("GET " + endpoints->status);
+    return result;
+  }
+  result.ok = true;
+  const json tool = reply.body.value(endpoints->tool_key, json::object());
+  if (tool.is_object()) {
+    result.tool_installed = tool.value("installed", false);
+    result.tool_version = tool.value("version", std::string());
+  }
+  result.authenticated = reply.body.value("authenticated", false);
+  result.account = reply.body.value("account", std::string());
+  result.login_url = reply.body.value("login_url", std::string());
+  return result;
+}
+
+StoreActionResult SetupStoreToolSync(const std::string& source) {
+  const std::optional<StoreEndpoints> endpoints = EndpointsFor(source);
+  if (!endpoints) return {false, UnknownStore(source)};
+  // Asks GitHub for the newest release before answering.
+  const transport::Reply reply = transport::Post(endpoints->setup, {.read_timeout = std::chrono::seconds(30)});
+  return {reply.ok, reply.error};
+}
+
+StoreActionResult SignInStoreSync(const std::string& source, const std::string& credential) {
+  const std::optional<StoreEndpoints> endpoints = EndpointsFor(source);
+  if (!endpoints) return {false, UnknownStore(source)};
+  const transport::Reply reply = transport::PostJson("/v1/" + source + "/auth",
+                                                     {{endpoints->credential_field, credential}},
+                                                     {.read_timeout = std::chrono::seconds(60)});
+  return {reply.ok, reply.error};
+}
+
+StoreActionResult SignOutStoreSync(const std::string& source) {
+  const transport::Reply reply = transport::Post("/v1/" + source + "/logout");
+  return {reply.ok, reply.error};
+}
+
+StoreImportResult ImportStoreSync(const std::string& source) {
+  StoreImportResult result;
+  // Provisions a prefix per new game, so a first import can take a while.
+  const transport::Reply reply =
+      transport::Post("/v1/" + source + "/import", {.read_timeout = std::chrono::seconds(300)});
+  if (!reply.ok) {
+    result.error = reply.error;
+    return result;
+  }
+  result.ok = true;
+  result.added = reply.body.value("added", 0);
+  result.updated = reply.body.value("updated", 0);
+  return result;
+}
+
+StoreLibraryResult GetStoreLibrarySync(const std::string& source) {
+  StoreLibraryResult result;
+  const transport::Reply reply =
+      transport::Get("/v1/library?source=" + source, {.read_timeout = std::chrono::seconds(60)});
+  if (!reply.ok) {
+    result.error = reply.error;
+    return result;
+  }
+  if (!reply.body.is_array()) {
+    result.error = transport::UnexpectedResponse("GET /v1/library");
+    return result;
+  }
+  result.ok = true;
+  for (const json& entry : reply.body) {
+    if (!entry.is_object()) continue;
+    result.titles.push_back({.ref = entry.value("ref", std::string()),
+                             .title = entry.value("title", std::string()),
+                             .installed = entry.value("installed", false)});
+  }
+  return result;
+}
+
+StoreActionResult InstallStoreTitleSync(const std::string& source, const std::string& ref, bool update) {
+  const transport::Reply reply = transport::PostJson(update ? "/v1/library/update" : "/v1/library/install",
+                                                     {{"source", source}, {"ref", ref}});
+  return {reply.ok, reply.error};
+}
+
+HumbleLibraryResult GetHumbleLibrarySync() {
+  HumbleLibraryResult result;
+  const transport::Reply reply = transport::Get("/v1/humble/library", {.read_timeout = std::chrono::seconds(60)});
+  if (!reply.ok) {
+    result.error = reply.error;
+    return result;
+  }
+  if (!reply.body.is_array()) {
+    result.error = transport::UnexpectedResponse("GET /v1/humble/library");
+    return result;
+  }
+  result.ok = true;
+  for (const json& entry : reply.body) {
+    if (!entry.is_object()) continue;
+    result.bundles.push_back({.key = entry.value("key", std::string()),
+                              .name = entry.value("name", std::string()),
+                              .claimed = entry.value("claimed", false)});
+  }
+  return result;
+}
+
+StoreActionResult DownloadHumbleBundleSync(const std::string& bundle_key) {
+  const transport::Reply reply = transport::PostJson("/v1/humble/download", {{"bundle_key", bundle_key}});
+  return {reply.ok, reply.error};
+}
+
+// Percent-encodes everything outside RFC 3986's unreserved set.
+std::string QueryEncode(const std::string& text) {
+  static constexpr char kHex[] = "0123456789ABCDEF";
+  std::string out;
+  for (const unsigned char c : text) {
+    if (std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
+      out += static_cast<char>(c);
+    } else {
+      out += '%';
+      out += kHex[c >> 4];
+      out += kHex[c & 15];
+    }
+  }
+  return out;
+}
+
+InstallerInfoResult GetInstallerInfoSync(const std::string& id, const std::string& path) {
+  InstallerInfoResult result;
+  std::string url = "/v1/games/" + id + "/installer";
+  if (!path.empty()) url += "?path=" + QueryEncode(path);
+  const transport::Reply reply = transport::Get(url);
+  if (!reply.ok) {
+    result.error = reply.error;
+    return result;
+  }
+  result.ok = true;
+  result.path = reply.body.value("path", std::string());
+  result.size_bytes = reply.body.value("size_bytes", std::int64_t{0});
+  result.format = reply.body.value("format", std::string("unknown"));
+  result.silent = reply.body.value("silent", false);
+  return result;
+}
+
+GameActionResult InstallGameSync(const std::string& id, bool interactive, const std::string& installer) {
+  json body = {{"interactive", interactive}};
+  if (!installer.empty()) body["installer"] = installer;
+  const transport::Reply reply = transport::PostJson("/v1/games/" + id + "/install", body);
+  return {reply.ok, reply.error};
+}
+
+InstallProgressResult GetInstallProgressSync(const std::string& id) {
+  InstallProgressResult result;
+  const transport::Reply reply = transport::Get("/v1/games/" + id + "/install/progress");
+  if (!reply.ok) {
+    result.error = reply.error;
+    return result;
+  }
+  result.ok = true;
+  result.state = reply.body.value("state", std::string("idle"));
+  result.bytes_written = reply.body.value("bytes_written", std::int64_t{0});
+  return result;
+}
+
+GameActionResult RelocateGameSync(const std::string& id) {
+  // Can copy a whole game across filesystems.
+  const transport::Reply reply =
+      transport::PostJson("/v1/games/" + id + "/relocate", json::object(), {.read_timeout = std::chrono::hours(2)});
+  return {reply.ok, reply.error};
+}
+
+RelocateLibraryResult RelocateLibrarySync() {
+  RelocateLibraryResult result;
+  const transport::Reply reply = transport::Post("/v1/library/relocate", {.read_timeout = std::chrono::hours(12)});
+  if (!reply.ok) {
+    result.error = reply.error;
+    return result;
+  }
+  result.ok = true;
+  result.moved = reply.body.value("moved", 0);
+  result.failed = reply.body.value("failed", 0);
+  return result;
+}
+
+LoginUrlResult BeginAmazonLoginSync() {
+  LoginUrlResult result;
+  const transport::Reply reply = transport::Post("/v1/amazon/login", {.read_timeout = std::chrono::seconds(30)});
+  if (!reply.ok) {
+    result.error = reply.error;
+    return result;
+  }
+  result.url = reply.body.value("url", std::string());
+  result.ok = !result.url.empty();
+  if (!result.ok) result.error = transport::UnexpectedResponse("POST /v1/amazon/login");
+  return result;
+}
+
+LaunchersResult GetLaunchersSync() {
+  LaunchersResult result;
+  const transport::Reply reply = transport::Get("/v1/launchers");
+  if (!reply.ok) {
+    result.error = reply.error;
+    return result;
+  }
+  if (!reply.body.is_array()) {
+    result.error = transport::UnexpectedResponse("GET /v1/launchers");
+    return result;
+  }
+  result.ok = true;
+  for (const json& entry : reply.body) {
+    if (!entry.is_object()) continue;
+    result.launchers.push_back({.id = entry.value("id", std::string()),
+                                .name = entry.value("name", std::string()),
+                                .game_id = entry.value("game_id", std::string()),
+                                .installed = entry.value("installed", false),
+                                .install_state = entry.value("install_state", std::string()),
+                                .interactive_install = entry.value("interactive_install", false),
+                                .error = entry.value("error", std::string())});
+  }
+  return result;
+}
+
+StoreActionResult InstallLauncherSync(const std::string& id) {
+  const transport::Reply reply = transport::Post("/v1/launchers/" + id + "/install");
+  return {reply.ok, reply.error};
+}
+
+StoreImportResult ImportLauncherSync(const std::string& id) {
+  StoreImportResult result;
+  const transport::Reply reply =
+      transport::Post("/v1/launchers/" + id + "/import", {.read_timeout = std::chrono::seconds(120)});
+  if (!reply.ok) {
+    result.error = reply.error;
+    return result;
+  }
+  result.ok = true;
+  result.added = reply.body.value("added", 0);
+  result.updated = reply.body.value("updated", 0);
+  return result;
+}
+
+StoreActionResult OpenLauncherSync(const std::string& id) {
+  const transport::Reply reply = transport::PostJson("/v1/launchers/" + id + "/open", json::object());
   return {reply.ok, reply.error};
 }
 
@@ -1000,6 +1279,174 @@ bool MiradClient::ParseNotification(const std::string& data, NotificationEvent* 
   out->message = payload.value("message", std::string());
   if (out->message.empty()) return false;
   out->level = payload.value("level", std::string("info"));
+  return true;
+}
+
+void MiradClient::GetStoreStatusAsync(QObject* context, const std::string& source,
+                                      std::function<void(StoreStatusResult)> callback) {
+  async::Run(context, [source] { return GetStoreStatusSync(source); }, std::move(callback));
+}
+
+void MiradClient::SetupStoreToolAsync(QObject* context, const std::string& source,
+                                      std::function<void(StoreActionResult)> callback) {
+  async::Run(context, [source] { return SetupStoreToolSync(source); }, std::move(callback));
+}
+
+void MiradClient::SignInStoreAsync(QObject* context, const std::string& source,
+                                   const std::string& credential,
+                                   std::function<void(StoreActionResult)> callback) {
+  async::Run(context, [source, credential] { return SignInStoreSync(source, credential); },
+             std::move(callback));
+}
+
+void MiradClient::SignOutStoreAsync(QObject* context, const std::string& source,
+                                    std::function<void(StoreActionResult)> callback) {
+  async::Run(context, [source] { return SignOutStoreSync(source); }, std::move(callback));
+}
+
+void MiradClient::ImportStoreAsync(QObject* context, const std::string& source,
+                                   std::function<void(StoreImportResult)> callback) {
+  async::Run(context, [source] { return ImportStoreSync(source); }, std::move(callback));
+}
+
+void MiradClient::GetStoreLibraryAsync(QObject* context, const std::string& source,
+                                       std::function<void(StoreLibraryResult)> callback) {
+  async::Run(context, [source] { return GetStoreLibrarySync(source); }, std::move(callback));
+}
+
+void MiradClient::InstallStoreTitleAsync(QObject* context, const std::string& source,
+                                         const std::string& ref, bool update,
+                                         std::function<void(StoreActionResult)> callback) {
+  async::Run(context, [source, ref, update] { return InstallStoreTitleSync(source, ref, update); },
+             std::move(callback));
+}
+
+void MiradClient::GetHumbleLibraryAsync(QObject* context,
+                                        std::function<void(HumbleLibraryResult)> callback) {
+  async::Run(context, [] { return GetHumbleLibrarySync(); }, std::move(callback));
+}
+
+void MiradClient::DownloadHumbleBundleAsync(QObject* context, const std::string& bundle_key,
+                                            std::function<void(StoreActionResult)> callback) {
+  async::Run(context, [bundle_key] { return DownloadHumbleBundleSync(bundle_key); },
+             std::move(callback));
+}
+
+void MiradClient::GetInstallerInfoAsync(QObject* context, const std::string& id, const std::string& path,
+                                        std::function<void(InstallerInfoResult)> callback) {
+  async::Run(context, [id, path] { return GetInstallerInfoSync(id, path); }, std::move(callback));
+}
+
+void MiradClient::InstallGameAsync(QObject* context, const std::string& id, bool interactive,
+                                   const std::string& installer,
+                                   std::function<void(GameActionResult)> callback) {
+  async::Run(context, [id, interactive, installer] { return InstallGameSync(id, interactive, installer); },
+             std::move(callback));
+}
+
+void MiradClient::GetInstallProgressAsync(QObject* context, const std::string& id,
+                                          std::function<void(InstallProgressResult)> callback) {
+  async::Run(context, [id] { return GetInstallProgressSync(id); }, std::move(callback));
+}
+
+void MiradClient::RelocateGameAsync(QObject* context, const std::string& id,
+                                    std::function<void(GameActionResult)> callback) {
+  async::Run(context, [id] { return RelocateGameSync(id); }, std::move(callback));
+}
+
+void MiradClient::RelocateLibraryAsync(QObject* context,
+                                       std::function<void(RelocateLibraryResult)> callback) {
+  async::Run(context, [] { return RelocateLibrarySync(); }, std::move(callback));
+}
+
+bool MiradClient::ParseOpenConfig(const std::string& data) {
+  const json entry = json::parse(data, nullptr, false);
+  return entry.is_object() && entry.value("open_config", false);
+}
+
+bool MiradClient::ParseInstallEvent(const std::string& event_type, const std::string& data,
+                                    InstallEvent* out) {
+  constexpr std::string_view kPrefix = "game.install.";
+  if (!event_type.starts_with(kPrefix)) return false;
+  const json entry = json::parse(data, nullptr, false);
+  if (entry.is_discarded() || !entry.is_object()) return false;
+  out->state = event_type.substr(kPrefix.size());
+  out->id = entry.value("id", std::string());
+  out->error = entry.value("error", std::string());
+  return !out->id.empty();
+}
+
+void MiradClient::BeginAmazonLoginAsync(QObject* context,
+                                        std::function<void(LoginUrlResult)> callback) {
+  async::Run(context, [] { return BeginAmazonLoginSync(); }, std::move(callback));
+}
+
+void MiradClient::GetLaunchersAsync(QObject* context, std::function<void(LaunchersResult)> callback) {
+  async::Run(context, [] { return GetLaunchersSync(); }, std::move(callback));
+}
+
+void MiradClient::InstallLauncherAsync(QObject* context, const std::string& id,
+                                       std::function<void(StoreActionResult)> callback) {
+  async::Run(context, [id] { return InstallLauncherSync(id); }, std::move(callback));
+}
+
+void MiradClient::ImportLauncherAsync(QObject* context, const std::string& id,
+                                      std::function<void(StoreImportResult)> callback) {
+  async::Run(context, [id] { return ImportLauncherSync(id); }, std::move(callback));
+}
+
+void MiradClient::OpenLauncherAsync(QObject* context, const std::string& id,
+                                    std::function<void(StoreActionResult)> callback) {
+  async::Run(context, [id] { return OpenLauncherSync(id); }, std::move(callback));
+}
+
+bool MiradClient::ParseStoreEvent(const std::string& event_type, const std::string& data,
+                                  StoreEvent* out) {
+  // Each store's setup event has its own prefix; installs and downloads
+  // share one each.
+  static const std::pair<std::string_view, std::string_view> kSetupPrefixes[] = {
+      {"epic.legendary.install.", "epic"},
+      {"gog.setup.", "gog"},
+      {"itch.setup.", "itch"},
+      {"humble.setup.", "humble"},
+      {"amazon.setup.", "amazon"},
+  };
+  std::string_view state;
+  for (const auto& [prefix, source] : kSetupPrefixes) {
+    if (event_type.starts_with(prefix)) {
+      out->source = source;
+      out->kind = "setup";
+      state = std::string_view(event_type).substr(prefix.size());
+    }
+  }
+  constexpr std::string_view kInstall = "library.install.";
+  constexpr std::string_view kDownload = "humble.download.";
+  constexpr std::string_view kLauncher = "launcher.install.";
+  if (event_type.starts_with(kLauncher)) {
+    out->kind = "setup";  // source is the launcher id, read below
+    state = std::string_view(event_type).substr(kLauncher.size());
+  } else if (event_type.starts_with(kInstall)) {
+    out->kind = "install";
+    state = std::string_view(event_type).substr(kInstall.size());
+  } else if (event_type.starts_with(kDownload)) {
+    out->source = "humble";
+    out->kind = "download";
+    state = std::string_view(event_type).substr(kDownload.size());
+  }
+  if (state.empty()) return false;
+
+  const json entry = json::parse(data, nullptr, false);
+  if (entry.is_discarded() || !entry.is_object()) return false;
+  out->state = std::string(state);
+  if (out->kind == "install") {
+    out->source = entry.value("source", std::string());
+    out->ref = entry.value("ref", std::string());
+  } else if (out->kind == "download") {
+    out->ref = entry.value("bundle_key", std::string());
+  } else if (event_type.starts_with(kLauncher)) {
+    out->source = entry.value("id", std::string());
+  }
+  out->error = entry.value("error", std::string());
   return true;
 }
 

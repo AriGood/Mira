@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "config/Config.h"
@@ -31,6 +32,9 @@ HumbleStatus DetectHumbleCli(const config::Config& config);
 Result<void> InstallHumbleCliBinary(const config::Config& config, const runner::ReleaseAsset& asset);
 
 Result<std::string> RunHumbleCli(const config::Config& config, std::vector<std::string> args);
+
+// Log in here in a browser, then copy its _simpleauth_sess cookie.
+inline constexpr std::string_view kLoginUrl = "https://www.humblebundle.com/login";
 
 struct HumbleAuthStatus {
   HumbleStatus humble_cli;

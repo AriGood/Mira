@@ -20,7 +20,16 @@ public:
     NameRole,
     StatusRole,
     RunningRole,
+    // Optional: a button-like pill painted in the tile's top-right corner
+    // ("Install", "Installing…"). Hit-test clicks with ActionRect.
+    ActionRole,
+    ActionEnabledRole,
+    // Optional: replaces the status line's text ("Installing… 1.2 GB").
+    StatusTextRole,
   };
+
+  // Where the ActionRole pill sits inside a tile's cell.
+  static QRect ActionRect(const QRect& cell, const QString& text, const QFont& font);
 
   GameTileDelegate(QObject* parent, QSize tile);
 

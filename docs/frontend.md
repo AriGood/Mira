@@ -8,8 +8,8 @@ that decision is load-bearing and is not restated here.
 ## Two views, both kept
 
 `mira-gui` opens on **the grid** (`views/LibraryWindow`): cover tiles and a
-left sidebar (filters, sort, search, Library/Classic-view navigation,
-Settings, and a status line), with a custom top bar in place of a native
+left sidebar (filters, sort, search, Library/Classic-view navigation, a
+Sources list, Settings, and a status line), with a custom top bar in place of a native
 titlebar — Add/Import Games, tile size, and window controls (minimize/maximize/
 close), inspired by Lutris. It is modelled on Playnite's shelf for the tile
 browsing itself, which is the interaction most people arriving at a Linux
@@ -27,6 +27,29 @@ It is reachable as `mira-gui --classic`, or from the grid sidebar's *Classic
 table view* row, which opens it as a second top-level window rather than
 swapping the grid out.
 
+### Sources
+
+The sidebar's *Sources* rows each open `views/SourcePage` in the grid's
+place, with the sidebar still up. There are three kinds:
+
+- **Stores** (Epic Games, GOG, itch.io, Amazon Games, Humble Bundle): download
+  the helper tool mirad drives (Legendary, gogdl, butler, nile, humble-cli),
+  sign in by pasting what the store's login page shows, import what's
+  installed. What the account owns but hasn't installed is a second tile grid
+  with an Install pill on each tile (Humble: Download).
+- **Launchers** (Battle.net, Ubisoft Connect, EA app): install the launcher
+  into its own prefix, open it, import the games installed through it.
+- **Local** (Steam, Lutris): import what the other program installed. Steam
+  also lists owned games once a Web API key is set.
+
+Every page opens on a banner in the source's color with its status, then the
+games from that source (`GameSummary::source`) as cover tiles
+(`ui/TileGrid`, which grows to fit instead of scrolling). A setup card appears
+only while a step is left. A tile not yet installed has no artwork to show:
+mirad reports only a title for it, so it gets the generated placeholder. A
+source turned off in Settings (`<id>.enabled`) is left out of the list. Paste
+parsing and login URLs come from mirad, so the page holds only wording.
+
 Neither is a fallback for the other. The grid is the better browser; the
 table is the better audit tool for a library that was just scanned, where
 the question is "what did detection get wrong" and the answer is a column.
@@ -38,6 +61,9 @@ said.
 
 One click selects a tile (or, with Ctrl/Shift or a drag, several — the
 context menu then offers a reduced batch version of its usual actions). A
+drag that starts on a tile only begins once the cursor leaves that tile, and
+it scrolls the grid near the top or bottom edge. *Drag to select* on the
+Interface tab turns it off. A
 second (double) click launches. Right-click opens the per-game menu.
 Launching on the first click would turn a misclick into a started game, so a
 single click never launches anything.
@@ -199,8 +225,9 @@ This matters more than it looks:
   | `theme` | a theme name, or `auto` to follow the desktop — see "Theming" |
   | `tile_spacing`, `grid_margin` | grid layout, in pixels; `-1` means "leave it to the theme" |
   | `tile_radius`, `panel_radius`, `control_radius` | corner rounding, same `-1` rule |
+  | `drag_select` | whether dragging across the grid selects tiles (default on) |
 
-  `scan_on_startup`, `theme` and
+  `scan_on_startup`, `theme`, `drag_select` and
   the five shape keys get rows in the settings screen, on an Interface tab
   ahead of the schema-driven ones.
   The rest are implicit UI state: they are saved by using the window, not by
@@ -243,7 +270,13 @@ Everything `api.md` marks implemented has a path through the UI:
 | `POST /v1/games/{id}/artwork?type=` | *Choose cover art…* / *Choose hero art…* (`ArtworkPickerDialog`) |
 | `POST /v1/games/{id}/run` | *Run in prefix…* (`RunInPrefixDialog`) |
 | `POST /v1/games/{id}/finish-install` | *Mark as installed* |
+| `GET /v1/games/{id}/installer`, `POST .../install` | *Install…* (`InstallGameDialog`), for a `needs_install` or `broken` game |
+| `GET /v1/games/{id}/install/progress` | the tile's "Installing… 1.2 GB" while `game.install.*` says one runs |
+| `POST /v1/games/{id}/relocate`, `/v1/library/relocate` | *Move to Mira's folders…* (tile and batch menus), *Move games into Mira's folders…* (sidebar) |
 | `POST /v1/library/scan` | on startup, and *View → Refresh library* |
+| `GET /v1/library`, `POST /v1/library/install\|update` | `SourcePage`'s Not installed tiles, and Update on its library tiles |
+| `/v1/{epic,gog,itch,amazon,humble}/*` | `SourcePage` for each store |
+| `/v1/launchers/*` | `SourcePage` for Battle.net, Ubisoft Connect, the EA app |
 | `GET`/`PATCH /v1/config`, `/reset` | `SettingsDialog` |
 | `GET /v1/config/schema` | generates `SettingsDialog` and `OverridesEditor` |
 | `GET /v1/runners` | runner pickers, and `RunnerDialog`'s installed list |
@@ -253,9 +286,11 @@ Everything `api.md` marks implemented has a path through the UI:
 | `POST /v1/lutris/import` | *Library → Import Lutris games* |
 | `GET /v1/events` | `EventStream` |
 
-Events handled: `game.added`, `game.updated`, `game.removed`, `game.state`,
-`game.launched`, `game.metadata_ready`/`.metadata_failed`,
-`runners.download.started`/`.finished`/`.failed`.
+Events handled: `game.added` (and its `open_config`), `game.updated`,
+`game.removed`, `game.state`, `game.launched`,
+`game.metadata_ready`/`.metadata_failed`, `game.install.*`,
+`runners.download.started`/`.finished`/`.failed`, and on a source page the
+store/launcher setup, `library.install.*` and `humble.download.*` events.
 
 **Dispatch on the event type, always.** Only `game.added` and `game.updated`
 carry a game record, and the library views check for exactly those two
