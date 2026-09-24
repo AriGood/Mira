@@ -1355,7 +1355,7 @@ void Server::RegisterRoutes() {
       if (source == "steam") title.runner_ref = "steam:" + title.source_ref;
       titles.push_back(std::move(title));
     }
-    SendJson(res, {{"queued", title_art_.Enqueue(config_, events_, std::move(titles))}}, 202);
+    SendJson(res, {{"queued", metadata_fetches_.EnqueueTitles(config_, events_, std::move(titles))}}, 202);
   });
 
   http_->Post("/v1/library/install", [library_install_or_update](const Request& req, Response& res) {

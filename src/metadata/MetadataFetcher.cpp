@@ -250,13 +250,38 @@ void FetchProtonDb(const std::string& appid, json& info) {
 // file already gives SteamGridDB's own top autocomplete result
 // (FetchGriddbCandidates) -- a generic title can still match the wrong
 // game, which is the accepted tradeoff of matching by name at all.
-std::string FindSteamAppId(const std::string& name) {
+//
+// `exact` only accepts a result whose name matches `name` ignoring case,
+// spaces and punctuation: for art, where a wrong match shows.
+std::string FindSteamAppId(const std::string& name, bool exact = false) {
+  const auto normalize = [](std::string_view text) {
+    std::string out;
+    for (const unsigned char c : text) {
+      if (std::isalnum(c)) out += static_cast<char>(std::tolower(c));
+    }
+    return out;
+  };
+  // A scanned game's name is its folder's: "CloneDroneintheDangerZone" or
+  // "Hollow_Knight" finds nothing until split into words.
+  std::string term;
+  for (std::size_t i = 0; i < name.size(); ++i) {
+    const unsigned char c = name[i];
+    if (c == '_' || c == '.' || c == '-') {
+      term += ' ';
+      continue;
+    }
+    if (i > 0 && std::isupper(c) && std::islower(static_cast<unsigned char>(name[i - 1]))) term += ' ';
+    term += static_cast<char>(c);
+  }
   const json search = CurlJson(
       {"curl", "-sSL", std::format("https://store.steampowered.com/api/storesearch/?term={}&l=english&cc=us",
-                                   UrlEncode(name))});
+                                   UrlEncode(term))});
   if (search.is_discarded()) return {};
   for (const auto& item : Value(search, "items", json::array())) {
-    if (Value(item, "type", std::string()) != "game") continue;
+    // "app" (games, DLC, demos), not "sub"/"bundle". It was checked against
+    // "game", which Steam never sends, so this never matched anything.
+    if (Value(item, "type", std::string()) != "app") continue;
+    if (exact && normalize(Value(item, "name", std::string())) != normalize(name)) continue;
     if (const std::int64_t id = Value(item, "id", std::int64_t{0}); id != 0) return std::to_string(id);
   }
   return {};
@@ -615,21 +640,30 @@ Result<void> FetchNonSteam(const config::Config& config, const std::string& name
   }
 
   const std::string api_key = config.GetString("steamgriddb.api_key");
-  // An error rather than a silent skip. There is no other free cover-art
-  // source for a non-Steam game, so with no key there is nothing this
-  // function can ever do — and reporting success left the caller with a
-  // cache entry, a game.metadata_ready event and no picture, which reads as
-  // "Mira looked and there was nothing" rather than "Mira was never given
-  // the one thing it needed". A found ProtonDB tier is still something,
-  // though, so that alone is not treated the same as finding nothing at all.
-  if (api_key.empty()) {
-    if (found_protondb) return {};
-    return Err("no_steamgriddb_key",
-               "non-Steam games need a SteamGridDB API key for cover art — set "
-               "steamgriddb.api_key (it is free, from steamgriddb.com)");
+  if (!api_key.empty()) FetchGriddbCandidates(config, api_key, name, game_id, griddb_id, info);
+
+  // No key, or SteamGridDB had nothing: Steam's own art, if Steam sells a
+  // game of exactly this name.
+  if (!info.contains("artwork") && config.GetBool("metadata.steam_art_by_name")) {
+    if (const std::string appid = FindSteamAppId(name, /*exact=*/true); !appid.empty()) {
+      FetchArtworkInto(config, SteamCoverUrl(appid), game_id, "steam_cdn", "cover", info);
+      if (!info.contains("hero")) {
+        FetchArtworkInto(config, std::format("https://cdn.akamai.steamstatic.com/steam/apps/{}/library_hero.jpg", appid),
+                         game_id, "steam_cdn", "hero", info);
+      }
+    }
   }
 
-  FetchGriddbCandidates(config, api_key, name, game_id, griddb_id, info);
+  // An error rather than a silent skip when there's nothing to show and no
+  // key: reporting success left the caller with a cache entry, a
+  // game.metadata_ready event and no picture, which reads as "Mira looked
+  // and there was nothing" rather than "Mira was never given the one thing
+  // it needed". A found ProtonDB tier is still something, though.
+  if (api_key.empty() && !info.contains("artwork") && !found_protondb) {
+    return Err("no_steamgriddb_key",
+               "no cover found for this game — a SteamGridDB API key finds more; set "
+               "steamgriddb.api_key (it is free, from steamgriddb.com)");
+  }
   return {};
 }
 
@@ -716,17 +750,23 @@ Result<void> Fetch(const config::Config& config, const model::Game& game) {
 
 Result<void> FetchCover(const config::Config& config, const model::Game& game) {
   json info = {{"fetched_at", model::NowSeconds()}, {"source", game.source}};
-  if (!FetchStoreCover(config, game, info)) {
-    const std::string api_key = config.GetString("steamgriddb.api_key");
-    if (api_key.empty()) {
-      return Err("no_steamgriddb_key", "set steamgriddb.api_key for covers of games from this store");
-    }
+  const std::string api_key = config.GetString("steamgriddb.api_key");
+  if (!FetchStoreCover(config, game, info) && !api_key.empty()) {
     const std::string auth_header = std::format("Authorization: Bearer {}", api_key);
     if (const std::int64_t griddb_id = FindGriddbId(auth_header, game.name); griddb_id != 0) {
       FetchGriddbSlot(config, auth_header, griddb_id, game.id, "grids", "cover", info);
     }
   }
-  if (!info.contains("artwork")) return Err("no_artwork", "no cover found for \"" + game.name + "\"");
+  // Same last resort as a tracked game's: Steam's art for the same name.
+  if (!info.contains("artwork") && game.source != "steam" && config.GetBool("metadata.steam_art_by_name")) {
+    if (const std::string appid = FindSteamAppId(game.name, /*exact=*/true); !appid.empty()) {
+      FetchArtworkInto(config, SteamCoverUrl(appid), game.id, "steam_cdn", "cover", info);
+    }
+  }
+  if (!info.contains("artwork")) {
+    if (api_key.empty()) return Err("no_steamgriddb_key", "no cover found; set steamgriddb.api_key to look further");
+    return Err("no_artwork", "no cover found for \"" + game.name + "\"");
+  }
 
   const fs::path metadata_file = MetadataFile(config, game.id);
   std::error_code ec;

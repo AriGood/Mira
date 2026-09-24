@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -80,7 +81,8 @@ TEST_CASE("FetchQueue::Enqueue is a no-op when metadata.enabled is false") {
   {
     metadata::FetchQueue queue;
     queue.Enqueue(config, events, game);
-  }  // destructor blocks until any spawned fetch finishes -- none should exist
+    queue.WaitIdle();  // nothing should have been queued to wait for
+  }
 
   CHECK_FALSE(fs::exists(metadata::MetadataFile(config, game.id)));
 }
@@ -116,6 +118,7 @@ TEST_CASE("FetchQueue::Enqueue force=true bypasses metadata.enabled") {
   config::Config config(dir / "settings.toml");
   config.Load();
   REQUIRE(config.Set("metadata.enabled", false).has_value());
+  REQUIRE(config.Set("metadata.steam_art_by_name", false).has_value());
 
   api::EventBus events;
   model::Game game;
@@ -125,7 +128,8 @@ TEST_CASE("FetchQueue::Enqueue force=true bypasses metadata.enabled") {
   {
     metadata::FetchQueue queue;
     queue.Enqueue(config, events, game, /*force=*/true);
-  }  // destructor blocks until the forced fetch completes
+    queue.WaitIdle();
+  }
 
   // The fetch ran, which with no key means it ran and failed — the event is
   // the observable, since a failed fetch deliberately writes no cache file.
@@ -137,6 +141,32 @@ TEST_CASE("FetchQueue::Enqueue force=true bypasses metadata.enabled") {
         std::string::npos);
 }
 
+TEST_CASE("FetchQueue runs every queued game once, through a bounded set of workers") {
+  const fs::path dir = TempDir("metadata-bulk");
+  config::Config config(dir / "settings.toml");
+  config.Load();
+  // No key and no Steam lookup: each fetch fails fast, offline.
+  REQUIRE(config.Set("metadata.steam_art_by_name", false).has_value());
+
+  api::EventBus events;
+  {
+    metadata::FetchQueue queue;
+    for (int i = 0; i < 40; ++i) {
+      model::Game game;
+      game.id = "bulk-" + std::to_string(i);
+      game.name = game.id;
+      queue.Enqueue(config, events, game, /*force=*/true);
+    }
+    queue.WaitIdle();
+  }
+
+  std::set<std::string> fetched;
+  for (const model::Event& event : events.Since(0)) {
+    if (event.type == "game.metadata_failed") fetched.insert(event.payload.value("id", std::string()));
+  }
+  CHECK(fetched.size() == 40);
+}
+
 TEST_CASE("A failed fetch publishes game.metadata_failed and no game.metadata_ready") {
   // What a client keys off: metadata_ready has to mean there is something to
   // show, or a frontend refreshing its artwork on that event refreshes into
@@ -144,6 +174,7 @@ TEST_CASE("A failed fetch publishes game.metadata_failed and no game.metadata_re
   const fs::path dir = TempDir("metadata-failed-event");
   config::Config config(dir / "settings.toml");
   config.Load();
+  REQUIRE(config.Set("metadata.steam_art_by_name", false).has_value());
 
   api::EventBus events;
   model::Game game;
@@ -153,6 +184,7 @@ TEST_CASE("A failed fetch publishes game.metadata_failed and no game.metadata_re
   {
     metadata::FetchQueue queue;
     queue.Enqueue(config, events, game);
+    queue.WaitIdle();
   }
 
   for (const model::Event& event : events.Since(0)) {

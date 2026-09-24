@@ -226,6 +226,14 @@ Schema::Schema() {
                 "its name; set it when that picks the wrong game (see `mira metadata <id> --matches`).",
          .constraint = Range(0, 1e12)});
 
+  s.Add({.key = "metadata.steam_art_by_name",
+         .label = "Steam Art by Name",
+         .type = Type::Bool,
+         .default_value = true,
+         .doc = "When a game has no art from its own store or SteamGridDB, use Steam's cover for a Steam "
+                "game of exactly the same name (ignoring case and punctuation). Needs no API key. Sends "
+                "the game's name to Steam's public search API."});
+
   s.Add({.key = "metadata.protondb_for_non_steam",
          .label = "ProtonDB for Non-Steam Games",
          .type = Type::Bool,

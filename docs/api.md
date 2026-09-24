@@ -1019,12 +1019,20 @@ Steam-owned (`runner_ref` starting `"steam:"`):
   `cover`/`hero`/`logo`/`icon` candidates the same as below — added to
   `art_candidates` as alternates to switch to, never overwriting Steam's own
   default `cover`/`hero`.
-- **Everything else**: [SteamGridDB](https://www.steamgriddb.com), matched
-  by name search, for four art slots — `cover` (grids), `hero`, `logo`
-  (transparent overlay), `icon` — there is no equivalent free metadata
-  source for a non-Steam game beyond art. Needs `steamgriddb.api_key` set.
-  **Without one the fetch fails with `no_steamgriddb_key`**, carried on
-  `game.metadata_failed` — the signal for "set a key", not "no art exists".
+- **GOG, itch and Amazon**: the store's own cover and hero from GOG
+  Galaxy's public games database (`gamesdb.gog.com`), keyed by the store's
+  id; Amazon also falls back to nile's cached art. No key needed.
+  SteamGridDB, below, then only adds alternates.
+- **Everything else** (and GOG/itch/Amazon games gamesdb doesn't know):
+  [SteamGridDB](https://www.steamgriddb.com), matched by name search, for
+  four art slots — `cover` (grids), `hero`, `logo` (transparent overlay),
+  `icon` — when `steamgriddb.api_key` is set. Failing that, with
+  `metadata.steam_art_by_name` on (the default), Steam's cover and hero for
+  a Steam game of exactly the same name (ignoring case and punctuation;
+  folder names like `CloneDroneintheDangerZone` are split into words to
+  search). **With no key and no art found the fetch fails with
+  `no_steamgriddb_key`**, carried on `game.metadata_failed` — the signal
+  that a key would find more.
   Every slot's full candidate list is cached too (`art_candidates` below),
   so a different one can be picked via `POST /v1/games/{id}/artwork?type=`.
   If `metadata.protondb_for_non_steam` is on (default off), a Steam AppID is
@@ -1039,9 +1047,12 @@ Steam-owned (`runner_ref` starting `"steam:"`):
 Fetched automatically the moment a game is first detected (`POST
 /v1/library/scan`, the inotify watcher, and `POST /v1/steam/scan` all
 trigger it for newly-added games only — never re-fetched on every rescan of
-an already-known game) via a small in-process queue that bounds every
-outstanding fetch to the daemon's own lifetime, so a slow or unreachable
-source never blocks a scan. Controlled by `metadata.enabled` (default on).
+an already-known game) via an in-process queue: three workers, so a scan or
+bulk refresh of hundreds of games doesn't get rate-limited by Steam or
+SteamGridDB; a game already waiting isn't queued twice; tracked games go
+ahead of store titles (`POST /v1/library/artwork`). A slow or unreachable
+source never blocks a scan, and on shutdown whatever hasn't started is
+dropped. Controlled by `metadata.enabled` (default on).
 
 ### `GET /v1/games/{id}/metadata` — implemented
 The cached JSON verbatim, `{"source": "steam"|"steamgriddb", "fetched_at":
