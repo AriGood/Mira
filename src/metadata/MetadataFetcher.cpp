@@ -11,7 +11,9 @@
 #include <json.hpp>
 
 #include <cstdlib>
+#include <cstring>
 
+#include "amazon/Nile.h"
 #include "core/Command.h"
 #include "config/Resolver.h"
 #include "core/Log.h"
@@ -260,6 +262,114 @@ std::string FindSteamAppId(const std::string& name) {
   return {};
 }
 
+// One of Epic's keyImages by type, from Legendary's cached metadata.
+std::string FindKeyImage(const json& key_images, std::string_view type) {
+  for (const auto& image : key_images) {
+    if (Value(image, "type", std::string()) == type) return Value(image, "url", std::string());
+  }
+  return {};
+}
+
+// Steam's vertical library cover for `appid`. Newer apps keep their art
+// under a hashed path, so the fixed library_600x900.jpg 404s for them; the
+// store browse API says where it really is. No key needed.
+std::string SteamCoverUrl(const std::string& appid) {
+  const std::string input = std::format(
+      R"({{"ids":[{{"appid":{}}}],"context":{{"language":"english","country_code":"US"}},)"
+      R"("data_request":{{"include_assets":true}}}})",
+      appid);
+  const json items = CurlJson(
+      {"curl", "-sSL",
+       "https://api.steampowered.com/IStoreBrowseService/GetItems/v1?input_json=" + UrlEncode(input)});
+  json assets;
+  if (const json list = Value(Value(items, "response", json::object()), "store_items", json::array());
+      !list.empty()) {
+    assets = Value(list[0], "assets", json::object());
+  }
+  const std::string format = Value(assets, "asset_url_format", std::string());
+  const std::string file = Value(assets, "library_capsule", std::string());
+  if (format.empty() || file.empty()) {
+    return std::format("https://cdn.akamai.steamstatic.com/steam/apps/{}/library_600x900.jpg", appid);
+  }
+  std::string path = format;
+  if (const std::size_t at = path.find("${FILENAME}"); at != std::string::npos) {
+    path.replace(at, std::string_view("${FILENAME}").size(), file);
+  }
+  return "https://shared.akamai.steamstatic.com/store_item_assets/" + path;
+}
+
+// GOG Galaxy's games database: art for a release on any store it
+// integrates with ("gog", "steam", "itch", "amazon", ...), keyed by that
+// store's own id. Public, no key. Returns the image URL for `field`
+// ("vertical_cover", "horizontal_artwork", "logo"), or empty.
+std::string GamesDbImageUrl(std::string_view platform, const std::string& external_id, std::string_view field) {
+  const json release = CurlJson({"curl", "-sSL",
+                                 std::format("https://gamesdb.gog.com/platforms/{}/external_releases/{}", platform,
+                                             UrlEncode(external_id))});
+  std::string url = Value(Value(Value(release, "game", json::object()), std::string(field).c_str(), json::object()),
+                          "url_format", std::string());
+  if (url.empty()) return {};
+  for (const auto& [token, value] : {std::pair{"{formatter}", ""}, std::pair{"{ext}", "jpg"}}) {
+    if (const std::size_t at = url.find(token); at != std::string::npos) url.replace(at, std::strlen(token), value);
+  }
+  return url;
+}
+
+// gamesdb's name for a Mira source, where it has one.
+std::string_view GamesDbPlatform(const std::string& source) {
+  if (source == "gog" || source == "itch" || source == "steam" || source == "amazon") return source;
+  return {};
+}
+
+// nile's cached library entry art for an Amazon product: square-ish, but
+// better than nothing when gamesdb doesn't know the game.
+std::string AmazonImageUrl(const std::string& product_id) {
+  const json library = amazon::ReadNileFile("library.json");
+  if (!library.is_array()) return {};
+  for (const json& item : library) {
+    const json product = Value(item, "product", json::object());
+    if (Value(product, "id", std::string()) != product_id) continue;
+    const json detail = Value(product, "productDetail", json::object());
+    const json details = Value(detail, "details", json::object());
+    for (const char* key : {"iconUrl", "logoUrl"}) {
+      if (std::string url = Value(details, key, std::string()); !url.empty()) return url;
+      if (std::string url = Value(detail, key, std::string()); !url.empty()) return url;
+    }
+  }
+  return {};
+}
+
+// A store's own cover for one of its games, from wherever it has one, into
+// info's cover slot. Returns whether one landed.
+bool FetchStoreCover(const config::Config& config, const model::Game& game, json& info) {
+  if (game.runner_ref.starts_with("steam:")) {
+    const std::string appid = game.runner_ref.substr(std::string_view("steam:").size());
+    if (FetchArtworkInto(config, SteamCoverUrl(appid), game.id, "steam_cdn", "cover", info)) return true;
+  }
+  if (game.source == "epic") {
+    std::ifstream in(epic::LegendaryMetadataFile(game.source_ref));
+    const json parsed = in ? json::parse(in, nullptr, false) : json();
+    const json key_images = Value(Value(parsed, "metadata", json::object()), "keyImages", json::array());
+    if (const std::string url = FindKeyImage(key_images, "DieselStoreFrontTall");
+        !url.empty() && FetchArtworkInto(config, url, game.id, "epic", "cover", info)) {
+      return true;
+    }
+  }
+  if (const std::string_view platform = GamesDbPlatform(game.source); !platform.empty() && !game.source_ref.empty()) {
+    if (const std::string url = GamesDbImageUrl(platform, game.source_ref, "vertical_cover");
+        !url.empty() && FetchArtworkInto(config, url, game.id, "gog_gamesdb", "cover", info)) {
+      return true;
+    }
+  }
+  if (game.source == "amazon") {
+    if (const std::string url = AmazonImageUrl(game.source_ref);
+        !url.empty() && FetchArtworkInto(config, url, game.id, "amazon", "cover", info)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 void FetchSteamOwned(const config::Config& config, const std::string& appid, const std::string& name,
                      const std::string& game_id, std::int64_t griddb_id, json& info) {
   const json store = CurlJson(
@@ -363,8 +473,7 @@ void FetchSteamOwned(const config::Config& config, const std::string& appid, con
   // alternate. Negative id: a real SteamGridDB id is always positive.
   constexpr std::int64_t kSteamCdnCandidateId = -1;
 
-  const std::string cover_url =
-      std::format("https://cdn.akamai.steamstatic.com/steam/apps/{}/library_600x900.jpg", appid);
+  const std::string cover_url = SteamCoverUrl(appid);
   if (FetchArtworkInto(config, cover_url, game_id, "steam_cdn", "cover", info, kSteamCdnCandidateId)) {
     info["art_candidates"]["cover"] = json::array({{{"id", kSteamCdnCandidateId},
                                                      {"url", cover_url},
@@ -400,14 +509,6 @@ void FetchSteamOwned(const config::Config& config, const std::string& appid, con
   if (const std::string api_key = config.GetString("steamgriddb.api_key"); !api_key.empty()) {
     FetchGriddbCandidates(config, api_key, name, game_id, griddb_id, info);
   }
-}
-
-// One of Epic's keyImages by type, from Legendary's cached metadata.
-std::string FindKeyImage(const json& key_images, std::string_view type) {
-  for (const auto& image : key_images) {
-    if (Value(image, "type", std::string()) == type) return Value(image, "url", std::string());
-  }
-  return {};
 }
 
 // Legendary's own catalog cache already has title metadata and store art
@@ -584,10 +685,20 @@ Result<void> Fetch(const config::Config& config, const model::Game& game) {
     FetchSteamOwned(config, game.runner_ref.substr(std::string_view("steam:").size()), game.name, game.id,
                     griddb_id, info);
   } else {
-    info["source"] = "steamgriddb";
+    // GOG, itch and Amazon games have their store's own art in gamesdb;
+    // SteamGridDB then only adds alternates, so it may fail.
+    const bool found = FetchStoreCover(config, game, info);
+    info["source"] = found ? game.source : "steamgriddb";
+    if (found) {
+      if (const std::string_view platform = GamesDbPlatform(game.source); !platform.empty()) {
+        if (const std::string hero = GamesDbImageUrl(platform, game.source_ref, "horizontal_artwork"); !hero.empty()) {
+          FetchArtworkInto(config, hero, game.id, "gog_gamesdb", "hero", info);
+        }
+      }
+    }
     // Returned before anything is written: a failure here means nothing was
     // fetched, and a cache file would make the next attempt look answered.
-    if (Result<void> fetched = FetchNonSteam(config, game.name, game.id, griddb_id, info); !fetched) {
+    if (Result<void> fetched = FetchNonSteam(config, game.name, game.id, griddb_id, info); !fetched && !found) {
       return std::unexpected(fetched.error());
     }
   }
@@ -605,20 +716,7 @@ Result<void> Fetch(const config::Config& config, const model::Game& game) {
 
 Result<void> FetchCover(const config::Config& config, const model::Game& game) {
   json info = {{"fetched_at", model::NowSeconds()}, {"source", game.source}};
-  if (game.runner_ref.starts_with("steam:")) {
-    const std::string appid = game.runner_ref.substr(std::string_view("steam:").size());
-    FetchArtworkInto(config, std::format("https://cdn.akamai.steamstatic.com/steam/apps/{}/library_600x900.jpg", appid),
-                     game.id, "steam_cdn", "cover", info);
-  } else if (game.source == "epic") {
-    std::ifstream in(epic::LegendaryMetadataFile(game.source_ref));
-    const json parsed = in ? json::parse(in, nullptr, false) : json();
-    const json key_images = Value(Value(parsed, "metadata", json::object()), "keyImages", json::array());
-    if (const std::string url = FindKeyImage(key_images, "DieselStoreFrontTall"); !url.empty()) {
-      FetchArtworkInto(config, url, game.id, "epic", "cover", info);
-    }
-  }
-
-  if (!info.contains("artwork")) {
+  if (!FetchStoreCover(config, game, info)) {
     const std::string api_key = config.GetString("steamgriddb.api_key");
     if (api_key.empty()) {
       return Err("no_steamgriddb_key", "set steamgriddb.api_key for covers of games from this store");

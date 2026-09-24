@@ -19,8 +19,9 @@ namespace mira::metadata {
 Result<void> Fetch(const config::Config& config, const model::Game& game);
 
 // Only a cover, for a store title not installed yet: the store's own where
-// there is one (Steam's CDN, Epic via Legendary), else SteamGridDB's. Much
-// cheaper than Fetch across a whole store library; installing runs Fetch.
+// there is one (Steam's CDN, Epic via Legendary, GOG's gamesdb for GOG, itch
+// and Amazon), else SteamGridDB's. Much cheaper than Fetch across a whole
+// store library; installing runs Fetch.
 Result<void> FetchCover(const config::Config& config, const model::Game& game);
 
 // SteamGridDB's matches for `name`, best first: [{id, name, release_date?}].

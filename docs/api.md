@@ -620,9 +620,13 @@ source, or a ref that's empty or holds a `/`.
 `{"source": "epic", "titles": [{"ref": "...", "title": "..."}]}`. Queues a
 cover fetch for each title not cached or already queued, answering 202
 `{"queued": n}` (0 when `metadata.enabled` is false). Fetches run one at a
-time and only get the cover: Steam's CDN for Steam, Legendary's cached
-store art for Epic, else SteamGridDB's top match (needs
-`steamgriddb.api_key`). Each ends in `library.artwork_ready` or
+time and only get the cover, from the store's own art where there is some:
+Steam's store API for Steam, Legendary's cached store art for Epic, GOG
+Galaxy's public games database (gamesdb.gog.com) for GOG, itch and Amazon,
+nile's cached art for Amazon. Otherwise it's SteamGridDB's top match (needs
+`steamgriddb.api_key`). Installed GOG, itch and Amazon games get their cover
+and hero from gamesdb the same way, with SteamGridDB only adding
+alternates. Each ends in `library.artwork_ready` or
 `library.artwork_failed`.
 
 ---
