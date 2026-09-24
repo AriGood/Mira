@@ -52,6 +52,7 @@
 #include "../dialogs/DesktopEntryImportDialog.h"
 #include "../dialogs/GameDetailDialog.h"
 #include "../dialogs/GameDetailPageDialog.h"
+#include "../dialogs/ManageSourcesDialog.h"
 #include "../dialogs/RunnerDialog.h"
 
 #include "../ui/AboutPanel.h"
@@ -425,6 +426,25 @@ protected:
   }
 };
 
+QLabel* SidebarHeading(QWidget* parent, const QString& text) {
+  auto* label = new QLabel(text, parent);
+  label->setProperty("role", "muted");
+  label->setStyleSheet("font-weight: 600; letter-spacing: 0.04em; margin-top: 14px; margin-bottom: 2px;");
+  return label;
+}
+
+// A muted label on the row's right, e.g. a game count.
+QLabel* AddTrailingLabel(QPushButton* row) {
+  auto* layout = new QHBoxLayout(row);
+  layout->setContentsMargins(0, 0, 10, 0);
+  layout->addStretch(1);
+  auto* label = new QLabel(row);
+  label->setProperty("role", "muted");
+  label->setAttribute(Qt::WA_TransparentForMouseEvents);
+  layout->addWidget(label);
+  return label;
+}
+
 }  // namespace
 
 LibraryWindow::LibraryWindow(QWidget* parent) : QMainWindow(parent) {
@@ -495,10 +515,7 @@ LibraryWindow::LibraryWindow(QWidget* parent) : QMainWindow(parent) {
 
   setCentralWidget(central);
 
-  // After BuildShortcuts, not before: PopulateLibraryActions reads common_'s
-  // actions, which BuildShortcuts is what populates.
   BuildShortcuts();
-  PopulateLibraryActions();
   UpdateLibraryNavActive();
 
   LoadPrefs();
@@ -507,40 +524,6 @@ LibraryWindow::LibraryWindow(QWidget* parent) : QMainWindow(parent) {
 
   event_stream_.Start(this,
                       [this](std::string type, std::string data) { HandleGameEvent(type, data); });
-}
-
-void LibraryWindow::PopulateLibraryActions() {
-  using mira_gui::icons::Glyph;
-  QVBoxLayout* actions = library_actions_layout_;
-
-  // Same flat row style as library_nav_ above (QSS already covers it by
-  // parentage). Refresh/Shortcuts/About moved to the top bar; Close
-  // window/Quit dropped (the × and tray icon already cover them).
-  auto row = [this, actions](Glyph glyph, const QString& text, auto slot) {
-    auto* button = new QPushButton(text, actions->parentWidget());
-    button->setFlat(true);
-    button->setIcon(mira_gui::icons::For(glyph));
-    connect(button, &QPushButton::clicked, this, slot);
-    actions->addWidget(button);
-    return button;
-  };
-
-  row(Glyph::Wrench, "Runners…", &LibraryWindow::OpenRunners);
-  row(Glyph::Image, "Fetch missing cover art", &LibraryWindow::FetchMissingArtwork)
-      ->setToolTip(
-          "Re-fetch metadata for every game with no cover. mirad only fetches automatically for a "
-          "newly detected game, so a game that failed once — or a non-Steam game from before a "
-          "SteamGridDB key was set — stays without one until asked again.");
-  row(Glyph::Grid, "Regenerate desktop entries", &LibraryWindow::SyncDesktopEntries)
-      ->setToolTip(
-          "Rewrites Mira's own mira-<id>.desktop entries immediately, without waiting for the "
-          "next library change to pick up a desktop_entries.* setting edit.");
-  row(Glyph::Trash, "Remove all desktop entries…", &LibraryWindow::RemoveAllDesktopEntries)
-      ->setToolTip("Turns off desktop entries and deletes every one Mira generated.");
-  row(Glyph::Home, "Move games into Mira's folders…", &LibraryWindow::RelocateLibrary)
-      ->setToolTip(
-          "Moves every game's files into your games folder and its prefix into the prefixes "
-          "folder. Changing those folders in Settings moves nothing until this runs.");
 }
 
 void LibraryWindow::BuildShortcuts() {
@@ -742,6 +725,14 @@ void LibraryWindow::LoadPrefs() {
     mira_gui::theme::SetOverrides(overrides);
     if (prefs.theme) mira_gui::theme::Apply(QString::fromStdString(*prefs.theme));
     if (prefs.game_settings_in_sidebar) game_settings_in_sidebar_ = *prefs.game_settings_in_sidebar;
+    if (prefs.hidden_sources) {
+      hidden_sources_.clear();
+      for (const std::string& id : *prefs.hidden_sources) hidden_sources_.insert(QString::fromStdString(id));
+    }
+    recent_count_ = prefs.sidebar_recent_count.value_or(kDefaultRecentCount);
+    show_source_counts_ = prefs.sidebar_source_counts.value_or(true);
+    UpdateSourceNavs();
+    RefreshRecentlyPlayed();
     grid_->SetDragSelectEnabled(prefs.drag_select.value_or(true));
   });
 }
@@ -785,7 +776,12 @@ void LibraryWindow::ApplyTopBarIcons() {
   maximize_button_->setIcon(
       mira_gui::icons::For(isMaximized() ? Glyph::Restore : Glyph::Maximize));
   close_button_->setIcon(mira_gui::icons::For(Glyph::Close));
-  add_games_->setIcon(mira_gui::icons::For(Glyph::Plus));
+  add_games_->setIcon(mira_gui::icons::For(Glyph::Plus, mira_gui::theme::Current().on_accent));
+  runners_nav_->setIcon(mira_gui::icons::For(Glyph::Wrench));
+  fetch_art_button_->setIcon(mira_gui::icons::For(Glyph::Image));
+  manage_sources_button_->setIcon(mira_gui::icons::For(Glyph::Sliders, mira_gui::theme::Current().text_muted));
+  grid_view_button_->setIcon(mira_gui::icons::For(Glyph::Grid));
+  table_view_button_->setIcon(mira_gui::icons::For(Glyph::Table));
 
   // The filter+sort pill's own static icons -- its text and the popover's
   // rows restyle separately (UpdateFilterSortSummary, restyle_filter_rows).
@@ -1014,6 +1010,24 @@ QWidget* LibraryWindow::BuildTopBar() {
 
   layout->addStretch(1);
 
+  view_toggle_ = new QWidget(top_bar_);
+  view_toggle_->setObjectName("view_toggle");
+  auto* toggle_layout = new QHBoxLayout(view_toggle_);
+  toggle_layout->setContentsMargins(0, 0, 0, 0);
+  toggle_layout->setSpacing(0);
+  grid_view_button_ = new QToolButton(view_toggle_);
+  grid_view_button_->setToolTip("Grid view");
+  table_view_button_ = new QToolButton(view_toggle_);
+  table_view_button_->setToolTip("Table view");
+  for (QToolButton* button : {grid_view_button_, table_view_button_}) {
+    button->setCheckable(true);
+    button->setAutoRaise(true);
+    toggle_layout->addWidget(button);
+  }
+  connect(grid_view_button_, &QToolButton::clicked, this, &LibraryWindow::ShowLibrary);
+  connect(table_view_button_, &QToolButton::clicked, this, &LibraryWindow::OpenClassicView);
+  layout->addWidget(view_toggle_);
+
   zoom_ = new QSlider(Qt::Horizontal, top_bar_);
   zoom_->setRange(120, 260);
   zoom_->setValue(tile_width_);
@@ -1205,9 +1219,27 @@ void LibraryWindow::UpdateFilterSortSummary() {
 QWidget* LibraryWindow::BuildSidebar() {
   auto* sidebar = new QWidget(this);
   sidebar->setObjectName("left_sidebar");
+  // Rows with their own menu handle it first; the rest fall through to here.
+  sidebar->setContextMenuPolicy(Qt::CustomContextMenu);
+  connect(sidebar, &QWidget::customContextMenuRequested, this,
+          [this, sidebar](const QPoint& pos) { ShowSidebarMenu(sidebar->mapToGlobal(pos)); });
   auto* layout = new QVBoxLayout(sidebar);
   layout->setContentsMargins(10, 14, 10, 10);
   layout->setSpacing(2);
+
+  auto* header = new QWidget(sidebar);
+  auto* header_layout = new QHBoxLayout(header);
+  header_layout->setContentsMargins(6, 0, 6, 10);
+  header_layout->setSpacing(8);
+  auto* badge = new QLabel("M", header);
+  badge->setObjectName("sidebar_badge");
+  badge->setFixedSize(22, 22);
+  badge->setAlignment(Qt::AlignCenter);
+  header_layout->addWidget(badge);
+  auto* title = new QLabel("Mira", header);
+  title->setObjectName("sidebar_title");
+  header_layout->addWidget(title, /*stretch=*/1);
+  layout->addWidget(header);
 
   // Always visible (not just a "back" affordance): checked/highlighted
   // exactly when the grid is the current content — see UpdateLibraryNavActive.
@@ -1216,56 +1248,21 @@ QWidget* LibraryWindow::BuildSidebar() {
   library_nav_->setFlat(true);
   library_nav_->setCheckable(true);
   library_nav_->setChecked(true);
-  connect(library_nav_, &QPushButton::clicked, this, [this] {
-    if (SettingsOpen()) {
-      RequestCloseSettings();
-    } else if (GameEditOpen()) {
-      RequestCloseGameEdit();
-    } else if (content_stack_->currentWidget() == classic_page_) {
-      CloseClassicView();
-    } else if (source_page_ != nullptr) {
-      CloseSource();
-    }
-  });
+  connect(library_nav_, &QPushButton::clicked, this, &LibraryWindow::ShowLibrary);
   layout->addWidget(library_nav_);
 
-  classic_view_nav_ = new QPushButton("Classic table view", sidebar);
-  classic_view_nav_->setObjectName("classic_view_nav");
-  classic_view_nav_->setFlat(true);
-  classic_view_nav_->setCheckable(true);
-  connect(classic_view_nav_, &QPushButton::clicked, this, &LibraryWindow::OpenClassicView);
-  layout->addWidget(classic_view_nav_);
+  runners_nav_ = new QPushButton("Runner settings", sidebar);
+  runners_nav_->setFlat(true);
+  connect(runners_nav_, &QPushButton::clicked, this, &LibraryWindow::OpenRunners);
+  layout->addWidget(runners_nav_);
 
-  layout->addSpacing(10);
+  settings_button_ = new QPushButton("Settings", sidebar);
+  settings_button_->setObjectName("sidebar_settings");
+  settings_button_->setFlat(true);
+  connect(settings_button_, &QPushButton::clicked, this, [this] { OpenSettings(); });
+  layout->addWidget(settings_button_);
 
-  add_games_ = new QToolButton(sidebar);
-  add_games_->setObjectName("add_games");
-  add_games_->setText("Add/Import Games");
-  add_games_->setToolButtonStyle(Qt::ToolButtonTextOnly);
-  add_games_->setPopupMode(QToolButton::InstantPopup);
-  // QToolButton's own sizeHint is Preferred but stays content-sized in
-  // practice next to a QPushButton row with the same nominal policy —
-  // Expanding makes it actually stretch to the sidebar's full width.
-  add_games_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-  auto* add_games_menu = new QMenu(add_games_);
-  add_games_menu->addAction("Scan library folders", this, &LibraryWindow::ScanLibrary);
-  add_games_menu->addAction("Import Steam library", this, &LibraryWindow::ImportSteamLibrary);
-  add_games_menu
-      ->addAction("Import Lutris games", this, &LibraryWindow::ImportLutrisLibrary)
-      ->setToolTip(
-          "Read Lutris's own database and add its Wine games here. Nothing is moved or renamed, "
-          "in either launcher's files — a game stays playable in Lutris too.");
-  add_games_menu
-      ->addAction("Import desktop entries…", this, &LibraryWindow::ImportDesktopEntries)
-      ->setToolTip(
-          "Pick from already-installed application-menu entries — including Flatpak apps, via "
-          "their own X-Flatpak key.");
-  add_games_menu->addSeparator();
-  add_games_menu->addAction("Add game manually…", this, &LibraryWindow::AddGameManually);
-  add_games_->setMenu(add_games_menu);
-  layout->addWidget(add_games_);
-
-  layout->addSpacing(10);
+  layout->addWidget(SidebarHeading(sidebar, "LIBRARY"));
 
   search_ = new QLineEdit(sidebar);
   search_->setObjectName("library_search");
@@ -1274,7 +1271,7 @@ QWidget* LibraryWindow::BuildSidebar() {
   connect(search_, &QLineEdit::textChanged, this, [this] { ApplyFilter(); });
   layout->addWidget(search_);
 
-  layout->addSpacing(10);
+  layout->addSpacing(8);
 
   // Pill summarizing filter+sort, opening a self-dismissing Qt::Popup with
   // the actual rows/buttons.
@@ -1315,9 +1312,8 @@ QWidget* LibraryWindow::BuildSidebar() {
   };
   layout->addWidget(pill);
 
-  // The LIBRARY and SOURCES rows scroll, so they never set the window's
-  // minimum height.
-  layout->addSpacing(14);
+  // The SOURCES and RECENTLY PLAYED rows scroll, so they never set the
+  // window's minimum height.
   auto* nav_scroll = new QScrollArea(sidebar);
   nav_scroll->setWidgetResizable(true);
   nav_scroll->setFrameShape(QFrame::NoFrame);
@@ -1329,42 +1325,83 @@ QWidget* LibraryWindow::BuildSidebar() {
   nav_layout->setContentsMargins(0, 0, 0, 0);
   nav_layout->setSpacing(2);
 
-  const auto heading = [nav_content, nav_layout](const QString& text) {
-    auto* label = new QLabel(text, nav_content);
-    label->setProperty("role", "muted");
-    label->setStyleSheet("font-weight: 600; letter-spacing: 0.04em;");
-    nav_layout->addWidget(label);
-  };
-  heading("LIBRARY");
-  // Filled in by PopulateLibraryActions(), after BuildShortcuts() populates
-  // common_.
-  library_actions_layout_ = new QVBoxLayout();
-  library_actions_layout_->setSpacing(2);
-  nav_layout->addLayout(library_actions_layout_);
+  auto* sources_heading = new QWidget(nav_content);
+  auto* sources_heading_layout = new QHBoxLayout(sources_heading);
+  sources_heading_layout->setContentsMargins(0, 0, 0, 0);
+  sources_heading_layout->addWidget(SidebarHeading(sources_heading, "SOURCES"), /*stretch=*/1);
+  manage_sources_button_ = new QToolButton(sources_heading);
+  manage_sources_button_->setAutoRaise(true);
+  manage_sources_button_->setToolTip("Manage sources");
+  connect(manage_sources_button_, &QToolButton::clicked, this, &LibraryWindow::OpenManageSources);
+  sources_heading_layout->addWidget(manage_sources_button_, 0, Qt::AlignBottom);
+  nav_layout->addWidget(sources_heading);
 
-  nav_layout->addSpacing(14);
-  heading("SOURCES");
-  // Its own layout so UpdateSourceNavs can reorder the rows.
   source_nav_layout_ = new QVBoxLayout();
   source_nav_layout_->setSpacing(2);
   for (const mira_gui::SourceInfo& source : mira_gui::AllSources()) {
     auto* nav = new QPushButton(source.name, nav_content);
     nav->setFlat(true);
     nav->setCheckable(true);
+    nav->setVisible(false);  // until UpdateSourceNavs knows it's set up
+    source_counts_.append(AddTrailingLabel(nav));
     connect(nav, &QPushButton::clicked, this, [this, source] { OpenSource(source); });
+    nav->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(nav, &QWidget::customContextMenuRequested, this,
+            [this, nav, source](const QPoint& pos) { ShowSourceMenu(source, nav->mapToGlobal(pos)); });
     source_nav_layout_->addWidget(nav);
     source_navs_.append(nav);
   }
   nav_layout->addLayout(source_nav_layout_);
+
+  recent_heading_ = SidebarHeading(nav_content, "RECENTLY PLAYED");
+  recent_heading_->setVisible(false);
+  nav_layout->addWidget(recent_heading_);
+  recent_layout_ = new QVBoxLayout();
+  recent_layout_->setSpacing(2);
+  nav_layout->addLayout(recent_layout_);
+
   nav_layout->addStretch(1);
   nav_scroll->setWidget(nav_content);
   layout->addWidget(nav_scroll, /*stretch=*/1);
 
-  settings_button_ = new QPushButton("Settings", sidebar);
-  settings_button_->setObjectName("sidebar_settings");
-  settings_button_->setFlat(true);
-  connect(settings_button_, &QPushButton::clicked, this, [this] { OpenSettings(); });
-  layout->addWidget(settings_button_);
+  auto* actions = new QHBoxLayout();
+  actions->setSpacing(6);
+  add_games_ = new QToolButton(sidebar);
+  add_games_->setObjectName("add_games");
+  add_games_->setText("Add games");
+  add_games_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+  add_games_->setPopupMode(QToolButton::InstantPopup);
+  // QToolButton stays content-sized otherwise.
+  add_games_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+  auto* add_games_menu = new QMenu(add_games_);
+  add_games_menu->addAction("Scan library folders", this, &LibraryWindow::ScanLibrary);
+  add_games_menu->addAction("Import Steam library", this, &LibraryWindow::ImportSteamLibrary);
+  add_games_menu
+      ->addAction("Import Lutris games", this, &LibraryWindow::ImportLutrisLibrary)
+      ->setToolTip(
+          "Read Lutris's own database and add its Wine games here. Nothing is moved or renamed, "
+          "in either launcher's files — a game stays playable in Lutris too.");
+  add_games_menu
+      ->addAction("Import desktop entries…", this, &LibraryWindow::ImportDesktopEntries)
+      ->setToolTip(
+          "Pick from already-installed application-menu entries — including Flatpak apps, via "
+          "their own X-Flatpak key.");
+  add_games_menu->addSeparator();
+  add_games_menu->addAction("Add game manually…", this, &LibraryWindow::AddGameManually);
+  add_games_->setMenu(add_games_menu);
+  actions->addWidget(add_games_, /*stretch=*/1);
+
+  fetch_art_button_ = new QToolButton(sidebar);
+  fetch_art_button_->setObjectName("fetch_art");
+  fetch_art_button_->setToolTip(
+      "Fetch missing cover art: re-fetch metadata for every game with no cover. mirad only "
+      "fetches automatically for a newly detected game, so a game that failed once — or a "
+      "non-Steam game from before a SteamGridDB key was set — stays without one until asked "
+      "again.");
+  connect(fetch_art_button_, &QToolButton::clicked, this, &LibraryWindow::FetchMissingArtwork);
+  actions->addWidget(fetch_art_button_);
+  layout->addSpacing(6);
+  layout->addLayout(actions);
 
   // Replaces the old bottom bar entirely.
   footer_ = new QLabel(sidebar);
@@ -1700,6 +1737,7 @@ void LibraryWindow::ApplyFilter() {
   RefreshClassicTable();
   if (source_page_ != nullptr) source_page_->SetGames(games_, running_ids_);
   UpdateSourceNavs();
+  RefreshRecentlyPlayed();
 }
 
 const mira_gui::GameSummary* LibraryWindow::FindGame(const std::string& id) const {
@@ -1796,12 +1834,16 @@ void LibraryWindow::ShowContextMenu(const QPoint& pos) {
     return;
   }
 
-  const std::string id = item->data(mira_gui::GameTileDelegate::IdRole).toString().toStdString();
-  const QString name = item->data(mira_gui::GameTileDelegate::NameRole).toString();
-  const std::string status =
-      item->data(mira_gui::GameTileDelegate::StatusRole).toString().toStdString();
-  const bool running = running_ids_.contains(id);
+  ShowGameMenu(item->data(mira_gui::GameTileDelegate::IdRole).toString().toStdString(),
+               grid_->viewport()->mapToGlobal(pos));
+}
+
+void LibraryWindow::ShowGameMenu(const std::string& id, const QPoint& global_pos) {
   const mira_gui::GameSummary* current_game = FindGame(id);
+  if (current_game == nullptr) return;
+  const QString name = QString::fromStdString(current_game->name);
+  const std::string status = current_game->status;
+  const bool running = running_ids_.contains(id);
 
   QMenu menu(this);
   QAction* play = menu.addAction(running ? "Stop" : "Play");
@@ -1865,7 +1907,7 @@ void LibraryWindow::ShowContextMenu(const QPoint& pos) {
   menu.addSeparator();
   QAction* remove = menu.addAction("Remove from library…");
 
-  QAction* chosen = menu.exec(grid_->viewport()->mapToGlobal(pos));
+  QAction* chosen = menu.exec(global_pos);
   if (chosen == play) {
     ToggleRunning(id);
   } else if (chosen == details) {
@@ -2136,7 +2178,7 @@ void LibraryWindow::SetGridControlsEnabled(bool enabled) {
   for (QWidget* control :
        {filter_sort_button_, static_cast<QWidget*>(add_games_), static_cast<QWidget*>(search_),
         static_cast<QWidget*>(zoom_), static_cast<QWidget*>(settings_button_),
-        static_cast<QWidget*>(classic_view_nav_)}) {
+        static_cast<QWidget*>(view_toggle_), static_cast<QWidget*>(fetch_art_button_)}) {
     control->setEnabled(enabled);
   }
   // Back from Settings onto a source page: the grid is still covered.
@@ -2154,10 +2196,9 @@ void LibraryWindow::UpdateLibraryNavActive() {
         mira_gui::icons::For(Glyph::Home, library_active ? tokens.on_accent : tokens.text));
   }
   const bool classic_active = content_stack_->currentWidget() == classic_page_;
-  if (classic_view_nav_ != nullptr) {
-    classic_view_nav_->setChecked(classic_active);
-    classic_view_nav_->setIcon(
-        mira_gui::icons::For(Glyph::Table, classic_active ? tokens.on_accent : tokens.text));
+  if (grid_view_button_ != nullptr) {
+    grid_view_button_->setChecked(!classic_active);
+    table_view_button_->setChecked(classic_active);
   }
   const QString open_source = content_stack_->currentWidget() == splitter_ && source_page_ != nullptr
                                   ? source_page_->property("source_id").toString()
@@ -2165,10 +2206,9 @@ void LibraryWindow::UpdateLibraryNavActive() {
   const std::vector<mira_gui::SourceInfo>& sources = mira_gui::AllSources();
   for (int i = 0; i < source_navs_.size() && i < static_cast<int>(sources.size()); ++i) {
     const bool active = sources[i].id == open_source;
-    const bool unset = source_navs_[i]->property("unset").toBool();
     source_navs_[i]->setChecked(active);
-    source_navs_[i]->setIcon(mira_gui::icons::For(
-        Glyph::Store, active ? tokens.on_accent : unset ? tokens.text_muted : tokens.text));
+    source_navs_[i]->setIcon(mira_gui::icons::For(Glyph::Dot, active ? tokens.on_accent : sources[i].color));
+    source_counts_[i]->setStyleSheet(active ? QString("color: %1;").arg(tokens.on_accent.name()) : QString());
   }
 }
 
@@ -2219,6 +2259,20 @@ QWidget* LibraryWindow::BuildSettingsPage() {
             RefreshSourceNavs();
           });
   layout->addWidget(settings_panel_, /*stretch=*/1);
+
+  settings_panel_->AddSectionAction(
+      "Library", "Move games into Mira's folders",
+      "Moves every game's files into your games folder and its prefix into the prefixes folder. "
+      "Changing those folders moves nothing until this runs.",
+      "Move games…", [this] { RelocateLibrary(); });
+  settings_panel_->AddSectionAction(
+      "Desktop Entries", "Regenerate desktop entries",
+      "Rewrites Mira's own mira-<id>.desktop entries immediately, without waiting for the next "
+      "library change to pick up a desktop_entries.* setting edit.",
+      "Regenerate", [this] { SyncDesktopEntries(); });
+  settings_panel_->AddSectionAction("Desktop Entries", "Remove all desktop entries",
+                                    "Turns off desktop entries and deletes every one Mira generated.",
+                                    "Remove…", [this] { RemoveAllDesktopEntries(); });
 
   // Pinned under the settings nav's category list.
   auto* actions = new QWidget();
@@ -2455,12 +2509,13 @@ void LibraryWindow::RelocateLibrary() {
 
 void LibraryWindow::RefreshSourceNavs() {
   mira_gui::MiradClient::GetConfigAsync(this, [this](mira_gui::ConfigResult result) {
-    if (!result.ok) return;  // every source stays listed
-    const std::vector<mira_gui::SourceInfo>& sources = mira_gui::AllSources();
-    for (int i = 0; i < source_navs_.size() && i < static_cast<int>(sources.size()); ++i) {
-      const auto found = result.values.find(sources[i].id.toStdString() + ".enabled");
-      source_navs_[i]->setVisible(found == result.values.end() || found->second != "false");
+    if (!result.ok) return;
+    disabled_sources_.clear();
+    for (const mira_gui::SourceInfo& source : mira_gui::AllSources()) {
+      const auto found = result.values.find(source.id.toStdString() + ".enabled");
+      if (found != result.values.end() && found->second == "false") disabled_sources_.insert(source.id);
     }
+    UpdateSourceNavs();
   });
   // A store counts as set up once signed in, a launcher once installed.
   for (const mira_gui::SourceInfo& source : mira_gui::AllSources()) {
@@ -2482,33 +2537,148 @@ void LibraryWindow::RefreshSourceNavs() {
 
 void LibraryWindow::UpdateSourceNavs() {
   if (source_nav_layout_ == nullptr) return;
-  std::set<std::string> with_games;
-  for (const mira_gui::GameSummary& game : games_) with_games.insert(game.source);
+  std::map<std::string, int> counts;
+  for (const mira_gui::GameSummary& game : games_) ++counts[game.source];
 
-  // Set up first, then the rest greyed out; AllSources() order within each.
   const std::vector<mira_gui::SourceInfo>& sources = mira_gui::AllSources();
-  std::vector<QPushButton*> ready;
-  std::vector<QPushButton*> unset;
   for (int i = 0; i < source_navs_.size() && i < static_cast<int>(sources.size()); ++i) {
     const QString& id = sources[i].id;
-    const bool is_ready = with_games.contains(id.toStdString()) || source_ready_.value(id, false);
-    QPushButton* nav = source_navs_[i];
-    if (nav->property("unset").toBool() == is_ready) {
-      nav->setProperty("unset", !is_ready);
-      nav->style()->unpolish(nav);
-      nav->style()->polish(nav);
-    }
-    nav->setToolTip(is_ready ? QString() : "Not set up yet");
-    (is_ready ? ready : unset).push_back(nav);
+    const auto count = counts.find(id.toStdString());
+    const int games = count == counts.end() ? 0 : count->second;
+    const bool ready = games > 0 || source_ready_.value(id, false);
+    source_navs_[i]->setVisible(ready && !hidden_sources_.contains(id) && !disabled_sources_.contains(id));
+    source_counts_[i]->setText(show_source_counts_ ? QString::number(games) : QString());
   }
-  int row = 0;
-  for (const std::vector<QPushButton*>* group : {&ready, &unset}) {
-    for (QPushButton* nav : *group) {
-      source_nav_layout_->removeWidget(nav);
-      source_nav_layout_->insertWidget(row++, nav);
+  UpdateLibraryNavActive();
+}
+
+void LibraryWindow::OpenManageSources() {
+  std::map<std::string, int> counts;
+  for (const mira_gui::GameSummary& game : games_) ++counts[game.source];
+  std::vector<ManageSourcesDialog::Entry> entries;
+  for (const mira_gui::SourceInfo& source : mira_gui::AllSources()) {
+    const auto count = counts.find(source.id.toStdString());
+    const int games = count == counts.end() ? 0 : count->second;
+    entries.push_back({.source = source,
+                       .ready = games > 0 || source_ready_.value(source.id, false),
+                       .games = games,
+                       .in_sidebar = !hidden_sources_.contains(source.id)});
+  }
+  ManageSourcesDialog dialog(entries, this);
+  connect(&dialog, &ManageSourcesDialog::SidebarToggled, this,
+          [this](const QString& id, bool shown) { SetSourceHidden(id, !shown); });
+  QString open_id;
+  connect(&dialog, &ManageSourcesDialog::OpenRequested, this, [&open_id](const QString& id) { open_id = id; });
+  dialog.exec();
+  if (open_id.isEmpty()) return;
+  for (const mira_gui::SourceInfo& source : mira_gui::AllSources()) {
+    if (source.id == open_id) OpenSource(source);
+  }
+}
+
+void LibraryWindow::SetSourceHidden(const QString& id, bool hidden) {
+  if (hidden) {
+    hidden_sources_.insert(id);
+  } else {
+    hidden_sources_.remove(id);
+  }
+  UpdateSourceNavs();
+  mira_gui::FrontendPrefs prefs;
+  std::vector<std::string> ids;
+  for (const QString& hidden_id : hidden_sources_) ids.push_back(hidden_id.toStdString());
+  std::ranges::sort(ids);
+  prefs.hidden_sources = std::move(ids);
+  mira_gui::MiradClient::SaveFrontendPrefsAsync(this, prefs, [](mira_gui::PatchConfigResult) {});
+}
+
+void LibraryWindow::RefreshRecentlyPlayed() {
+  if (recent_layout_ == nullptr) return;
+  // deleteLater: a row's own click or menu may be what got us here.
+  while (QLayoutItem* item = recent_layout_->takeAt(0)) {
+    if (item->widget() != nullptr) item->widget()->deleteLater();
+    delete item;
+  }
+  // Every running game, then up to recent_count_ others by last played.
+  std::vector<const mira_gui::GameSummary*> running;
+  std::vector<const mira_gui::GameSummary*> played;
+  for (const mira_gui::GameSummary& game : games_) {
+    if (running_ids_.contains(game.id)) {
+      running.push_back(&game);
+    } else if (game.last_played_at) {
+      played.push_back(&game);
     }
   }
-  UpdateLibraryNavActive();  // icon colors follow the unset state
+  std::ranges::sort(played, [](const mira_gui::GameSummary* a, const mira_gui::GameSummary* b) {
+    return *a->last_played_at > *b->last_played_at;
+  });
+  if (played.size() > static_cast<size_t>(recent_count_)) played.resize(recent_count_);
+  played.insert(played.begin(), running.begin(), running.end());
+  recent_heading_->setVisible(!played.empty());
+
+  const mira_gui::theme::Tokens& tokens = mira_gui::theme::Current();
+  QWidget* parent = recent_heading_->parentWidget();
+  for (const mira_gui::GameSummary* game : played) {
+    const bool is_running = running_ids_.contains(game->id);
+    auto* row = new QPushButton(QString::fromStdString(game->name), parent);
+    row->setFlat(true);
+    row->setIcon(mira_gui::icons::For(mira_gui::icons::Glyph::Dot, is_running ? tokens.running : tokens.border));
+    const std::string id = game->id;
+    if (is_running) {
+      AddTrailingLabel(row)->setText("Playing");
+      row->setToolTip("Playing now. Right-click to stop it.");
+    } else if (game->status == "ready") {
+      connect(row, &QPushButton::clicked, this, [this, id] { LaunchGame(id); });
+      row->setToolTip("Click to play");
+    }
+    row->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(row, &QWidget::customContextMenuRequested, this,
+            [this, row, id](const QPoint& pos) { ShowGameMenu(id, row->mapToGlobal(pos)); });
+    recent_layout_->addWidget(row);
+  }
+}
+
+void LibraryWindow::ShowSourceMenu(const mira_gui::SourceInfo& source, const QPoint& global_pos) {
+  QMenu menu(this);
+  QAction* open = menu.addAction("Open " + source.name);
+  QAction* hide = menu.addAction("Hide from sidebar");
+  menu.addSeparator();
+  QAction* manage = menu.addAction("Manage sources…");
+  QAction* settings = menu.addAction("Sidebar settings…");
+  QAction* chosen = menu.exec(global_pos);
+  if (chosen == open) {
+    OpenSource(source);
+  } else if (chosen == hide) {
+    SetSourceHidden(source.id, true);
+  } else if (chosen == manage) {
+    OpenManageSources();
+  } else if (chosen == settings) {
+    OpenSettings(mira_gui::SettingsPanel::kSidebarKey);
+  }
+}
+
+void LibraryWindow::ShowSidebarMenu(const QPoint& global_pos) {
+  QMenu menu(this);
+  QAction* manage = menu.addAction("Manage sources…");
+  QAction* settings = menu.addAction("Sidebar settings…");
+  QAction* chosen = menu.exec(global_pos);
+  if (chosen == manage) {
+    OpenManageSources();
+  } else if (chosen == settings) {
+    OpenSettings(mira_gui::SettingsPanel::kSidebarKey);
+  }
+}
+
+void LibraryWindow::ShowLibrary() {
+  if (SettingsOpen()) {
+    RequestCloseSettings();
+  } else if (GameEditOpen()) {
+    RequestCloseGameEdit();
+  } else if (content_stack_->currentWidget() == classic_page_) {
+    CloseClassicView();
+  } else if (source_page_ != nullptr) {
+    CloseSource();
+  }
+  UpdateLibraryNavActive();
 }
 
 void LibraryWindow::OpenClassicView() {

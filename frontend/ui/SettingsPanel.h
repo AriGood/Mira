@@ -1,9 +1,12 @@
 #pragma once
 
+#include <QHash>
 #include <QKeySequence>
+#include <QSet>
 #include <QWidget>
 #include <QString>
 
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -34,6 +37,9 @@ class SettingsPanel : public QWidget {
 public:
   explicit SettingsPanel(QWidget* parent = nullptr);
 
+  // FocusKey target for the frontend-only Sidebar page.
+  static constexpr const char* kSidebarKey = "frontend.sidebar";
+
   // Patches every changed field. Emits SaveFinished either way; the caller
   // decides what "done" means (close a dialog, switch back to the grid).
   void Save();
@@ -45,6 +51,11 @@ public:
   // A widget pinned under the nav's category list, e.g. LibraryWindow's
   // Back/Reset/Save row.
   void SetFooterActions(QWidget* actions);
+
+  // A button row at the end of `category`'s page, for a one-off action that
+  // belongs next to those settings. Added once the schema has loaded.
+  void AddSectionAction(const QString& category, const QString& label, const QString& doc,
+                        const QString& button_text, std::function<void()> activated);
 
   // True if anything differs from what Load() last fetched or Save() last
   // confirmed — the signal a caller uses to warn before discarding.
@@ -90,6 +101,9 @@ private:
   void LoadFrontendPrefs();
   void BuildInterfaceGroup();
   void BuildShortcutsGroup();
+  void BuildSidebarGroup();
+  QSet<QString> CurrentHiddenSources() const;
+  bool SidebarDirty() const;
   QWidget* MakeShapeControl(ShapeField& field, const QString& label, int maximum,
                             const QString& tip);
   // Shows each shape spinbox's special "unset" value as the actual number
@@ -97,6 +111,14 @@ private:
   // theme::Notifier::Changed so it never goes stale.
   void RefreshShapeDefaults();
   void BuildRows();
+  struct SectionAction {
+    QString category;
+    QString label;
+    QString doc;
+    QString button_text;
+    std::function<void()> activated;
+  };
+  void AppendSectionAction(const SectionAction& action);
   void LoadGameModeStatus();
   void PopulateRunnerCombos(const mira_gui::RunnersResult& result);
   void ResetField(size_t index);
@@ -112,6 +134,12 @@ private:
   bool game_settings_in_sidebar_original_ = true;
   QCheckBox* drag_select_ = nullptr;
   bool drag_select_original_ = true;
+  QSpinBox* recent_count_ = nullptr;
+  int recent_count_original_ = 3;
+  QCheckBox* source_counts_ = nullptr;
+  bool source_counts_original_ = true;
+  std::vector<std::pair<QString, QCheckBox*>> source_checks_;  // source id, "show in sidebar"
+  QSet<QString> hidden_sources_original_;
   ShapeField tile_spacing_;
   ShapeField grid_margin_;
   ShapeField tile_radius_;
@@ -120,6 +148,10 @@ private:
   std::vector<ShortcutField> shortcuts_;
   std::vector<Field> fields_;
   QString pending_focus_key_;  // FocusKey called before the schema arrived
+  std::vector<SectionAction> section_actions_;
+  QHash<QString, QFormLayout*> category_forms_;
+  QSet<QString> categories_with_actions_;
+  bool rows_built_ = false;
   // Read-only "is Feral GameMode installed/running" indicator on the
   // Launching category — not tied to any Field, since it isn't a config key.
   QLabel* gamemode_status_ = nullptr;

@@ -132,6 +132,18 @@ void PaintGlyph(QPainter& painter, Glyph glyph, const QColor& color) {
           QPolygonF({QPointF(5.2, 8.5), QPointF(8.0, 11.3), QPointF(10.8, 8.5)}));
       painter.drawLine(QPointF(4.0, 13.0), QPointF(12.0, 13.0));
       return;
+    case Glyph::Sliders:
+      for (const qreal y : {4.5, 8.0, 11.5}) painter.drawLine(QPointF(2.5, y), QPointF(13.5, y));
+      painter.setBrush(color);
+      painter.drawEllipse(QPointF(10.5, 4.5), 1.6, 1.6);
+      painter.drawEllipse(QPointF(5.5, 8.0), 1.6, 1.6);
+      painter.drawEllipse(QPointF(9.0, 11.5), 1.6, 1.6);
+      return;
+    case Glyph::Dot:
+      painter.setPen(Qt::NoPen);
+      painter.setBrush(color);
+      painter.drawEllipse(QPointF(8.0, 8.0), 3.5, 3.5);
+      return;
     case Glyph::Store:
       painter.drawRoundedRect(QRectF(3.0, 5.5, 10.0, 8.5), 1.2, 1.2);
       painter.drawArc(QRectF(5.5, 2.5, 5.0, 6.0), 0, 180 * 16);

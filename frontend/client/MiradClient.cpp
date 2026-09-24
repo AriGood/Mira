@@ -318,12 +318,21 @@ FrontendPrefsResult GetFrontendPrefsSync() {
   read_int("tile_radius", result.prefs.tile_radius);
   read_int("panel_radius", result.prefs.panel_radius);
   read_int("control_radius", result.prefs.control_radius);
+  read_int("sidebar_recent_count", result.prefs.sidebar_recent_count);
+  read_bool("sidebar_source_counts", result.prefs.sidebar_source_counts);
   if (table.contains("shortcuts") && table["shortcuts"].is_object()) {
     std::map<std::string, std::string> overrides;
     for (const auto& [id, keys] : table["shortcuts"].items()) {
       if (keys.is_string()) overrides[id] = keys.get<std::string>();
     }
     result.prefs.shortcut_overrides = std::move(overrides);
+  }
+  if (table.contains("hidden_sources") && table["hidden_sources"].is_array()) {
+    std::vector<std::string> hidden;
+    for (const json& id : table["hidden_sources"]) {
+      if (id.is_string()) hidden.push_back(id.get<std::string>());
+    }
+    result.prefs.hidden_sources = std::move(hidden);
   }
   return result;
 }
@@ -353,6 +362,9 @@ PatchConfigResult SaveFrontendPrefsSync(const FrontendPrefs& prefs) {
     for (const auto& [id, keys] : *prefs.shortcut_overrides) shortcuts[id] = keys;
     table["shortcuts"] = shortcuts;
   }
+  if (prefs.hidden_sources) table["hidden_sources"] = *prefs.hidden_sources;
+  if (prefs.sidebar_recent_count) table["sidebar_recent_count"] = *prefs.sidebar_recent_count;
+  if (prefs.sidebar_source_counts) table["sidebar_source_counts"] = *prefs.sidebar_source_counts;
 
   // Short, because SaveFrontendPrefsBlocking runs this on the UI thread
   // while a window is closing.

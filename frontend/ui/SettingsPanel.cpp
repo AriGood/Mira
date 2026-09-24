@@ -11,6 +11,7 @@
 #include <QLineEdit>
 #include <QSpinBox>
 
+#include "../views/SourcePage.h"
 #include "KeyBindings.h"
 #include "Notify.h"
 #include "SettingsNav.h"
@@ -37,10 +38,54 @@ SettingsPanel::SettingsPanel(QWidget* parent) : QWidget(parent) {
   layout->addWidget(nav_, /*stretch=*/1);
 
   BuildInterfaceGroup();
+  BuildSidebarGroup();
   BuildShortcutsGroup();
 
   setEnabled(false);
   Load();
+}
+
+void SettingsPanel::BuildSidebarGroup() {
+  auto* form = nav_->AddCategory("Sidebar");
+  QWidget* box = form->parentWidget();
+
+  recent_count_ = new QSpinBox(box);
+  recent_count_->setRange(0, 10);
+  recent_count_->setValue(recent_count_original_);
+  recent_count_->setSpecialValueText("Off");
+  recent_count_->setToolTip("How many recently played games to list. Running games always show.");
+  form->addRow("Recently played", recent_count_);
+  nav_->RegisterRow(form, recent_count_, "sidebar recently played recent games count");
+
+  source_counts_ = new QCheckBox(box);
+  source_counts_->setChecked(source_counts_original_);
+  source_counts_->setToolTip("Show how many games each source has next to its name.");
+  form->addRow("Show game counts", source_counts_);
+  nav_->RegisterRow(form, source_counts_, "sidebar source game counts number");
+
+  nav_->AddDivider(form);
+  for (const mira_gui::SourceInfo& source : mira_gui::AllSources()) {
+    auto* check = new QCheckBox(box);
+    check->setChecked(true);
+    check->setToolTip("Only sources that are set up are listed in the sidebar.");
+    form->addRow(QString("Show %1").arg(source.name), check);
+    nav_->RegisterRow(form, check, QString("sidebar show source %1").arg(source.name));
+    source_checks_.emplace_back(source.id, check);
+  }
+}
+
+QSet<QString> SettingsPanel::CurrentHiddenSources() const {
+  QSet<QString> hidden;
+  for (const auto& [id, check] : source_checks_) {
+    if (!check->isChecked()) hidden.insert(id);
+  }
+  return hidden;
+}
+
+bool SettingsPanel::SidebarDirty() const {
+  return recent_count_->value() != recent_count_original_ ||
+         source_counts_->isChecked() != source_counts_original_ ||
+         CurrentHiddenSources() != hidden_sources_original_;
 }
 
 void SettingsPanel::BuildInterfaceGroup() {
@@ -238,6 +283,16 @@ void SettingsPanel::LoadFrontendPrefs() {
       drag_select_original_ = *result.prefs.drag_select;
       drag_select_->setChecked(drag_select_original_);
     }
+    recent_count_original_ = result.prefs.sidebar_recent_count.value_or(recent_count_original_);
+    recent_count_->setValue(recent_count_original_);
+    recent_count_original_ = recent_count_->value();  // after the clamp
+    source_counts_original_ = result.prefs.sidebar_source_counts.value_or(true);
+    source_counts_->setChecked(source_counts_original_);
+    hidden_sources_original_.clear();
+    for (const std::string& id : result.prefs.hidden_sources.value_or(std::vector<std::string>{})) {
+      hidden_sources_original_.insert(QString::fromStdString(id));
+    }
+    for (const auto& [id, check] : source_checks_) check->setChecked(!hidden_sources_original_.contains(id));
     const auto shape = [](ShapeField& field, const std::optional<int>& pref) {
       field.spin->setValue(pref ? *pref : -1);
       field.original = field.spin->value();  // after the clamp
@@ -284,6 +339,10 @@ void SettingsPanel::Load() {
 
 void SettingsPanel::FocusKey(const QString& key) {
   const std::string wanted = key.toStdString();
+  if (key == kSidebarKey) {
+    nav_->RevealRow(recent_count_);
+    return;
+  }
   const auto it = std::ranges::find(fields_, wanted, [](const Field& f) { return f.entry.key; });
   if (it == fields_.end()) {
     // Schema not loaded yet, most likely — try again once it is.
@@ -308,6 +367,7 @@ void SettingsPanel::BuildRows() {
 
   for (const auto& [category, rows] : GroupByCategory(categories)) {
     QFormLayout* form = nav_->AddCategory(category);
+    category_forms_[category] = form;
     int group = fields_[rows.front()].entry.group;
 
     for (const size_t i : rows) {
@@ -401,6 +461,31 @@ void SettingsPanel::BuildRows() {
       LoadGameModeStatus();
     }
   }
+  rows_built_ = true;
+  for (const SectionAction& action : section_actions_) AppendSectionAction(action);
+}
+
+void SettingsPanel::AddSectionAction(const QString& category, const QString& label, const QString& doc,
+                                     const QString& button_text, std::function<void()> activated) {
+  section_actions_.push_back({category, label, doc, button_text, std::move(activated)});
+  if (rows_built_) AppendSectionAction(section_actions_.back());
+}
+
+void SettingsPanel::AppendSectionAction(const SectionAction& action) {
+  QFormLayout* form = category_forms_.value(action.category);
+  if (form == nullptr) return;
+  if (!categories_with_actions_.contains(action.category)) {
+    nav_->AddDivider(form);
+    categories_with_actions_.insert(action.category);
+  }
+  auto* button = new QPushButton(action.button_text, this);
+  button->setToolTip(action.doc);
+  button->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Fixed);
+  connect(button, &QPushButton::clicked, this, action.activated);
+  auto* label = new QLabel(action.label, this);
+  label->setToolTip(action.doc);
+  form->addRow(label, button);
+  nav_->RegisterRow(form, button, QString("%1 %2 %3").arg(action.label, action.category, action.doc));
 }
 
 void SettingsPanel::LoadGameModeStatus() {
@@ -496,6 +581,7 @@ bool SettingsPanel::IsDirty() const {
   if (theme_->currentData().toString() != theme_original_) return true;
   if (game_settings_in_sidebar_->isChecked() != game_settings_in_sidebar_original_) return true;
   if (drag_select_->isChecked() != drag_select_original_) return true;
+  if (SidebarDirty()) return true;
   for (const ShapeField* field :
        {&tile_spacing_, &grid_margin_, &tile_radius_, &panel_radius_, &control_radius_}) {
     if (field->spin->value() != field->original) return true;
@@ -515,6 +601,9 @@ void SettingsPanel::DiscardChanges() {
   if (theme_index >= 0) theme_->setCurrentIndex(theme_index);
   game_settings_in_sidebar_->setChecked(game_settings_in_sidebar_original_);
   drag_select_->setChecked(drag_select_original_);
+  recent_count_->setValue(recent_count_original_);
+  source_counts_->setChecked(source_counts_original_);
+  for (const auto& [id, check] : source_checks_) check->setChecked(!hidden_sources_original_.contains(id));
   for (ShapeField* field :
        {&tile_spacing_, &grid_margin_, &tile_radius_, &panel_radius_, &control_radius_}) {
     field->spin->setValue(field->original);
@@ -538,8 +627,18 @@ void SettingsPanel::Save() {
   if (scan_on_startup_->isChecked() != scan_on_startup_original_ ||
       theme_name != theme_original_ || shapes_changed || shortcuts_changed ||
       game_settings_in_sidebar != game_settings_in_sidebar_original_ ||
-      drag_select_->isChecked() != drag_select_original_) {
+      drag_select_->isChecked() != drag_select_original_ || SidebarDirty()) {
     mira_gui::FrontendPrefs prefs;
+    prefs.sidebar_recent_count = recent_count_->value();
+    prefs.sidebar_source_counts = source_counts_->isChecked();
+    const QSet<QString> hidden = CurrentHiddenSources();
+    std::vector<std::string> hidden_ids;
+    for (const QString& id : hidden) hidden_ids.push_back(id.toStdString());
+    std::ranges::sort(hidden_ids);
+    prefs.hidden_sources = std::move(hidden_ids);
+    recent_count_original_ = *prefs.sidebar_recent_count;
+    source_counts_original_ = *prefs.sidebar_source_counts;
+    hidden_sources_original_ = hidden;
     prefs.scan_on_startup = scan_on_startup_->isChecked();
     prefs.theme = theme_name.toStdString();
     prefs.game_settings_in_sidebar = game_settings_in_sidebar;

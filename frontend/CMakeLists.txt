@@ -111,6 +111,8 @@ qt_add_executable(mira-gui
   dialogs/InstallGameDialog.h
   dialogs/LogViewerDialog.cpp
   dialogs/LogViewerDialog.h
+  dialogs/ManageSourcesDialog.cpp
+  dialogs/ManageSourcesDialog.h
   dialogs/RunInPrefixDialog.cpp
   dialogs/RunInPrefixDialog.h
   dialogs/RunnerDialog.cpp
