@@ -39,6 +39,39 @@ TEST_CASE("ParseGameSummary rejects a payload from a different event") {
   CHECK_FALSE(MiradClient::ParseGameSummary(R"({"id": 42})", &game));
 }
 
+TEST_CASE("ParseArtThumbsEvent reads which previews are ready and which failed") {
+  ArtThumbsEvent event;
+  REQUIRE(MiradClient::ParseArtThumbsEvent(
+      R"({"id": "hades", "type": "hero", "ready": [1, -1], "failed": [7, "x"]})", &event));
+  CHECK(event.id == "hades");
+  CHECK(event.slot == "hero");
+  CHECK(event.ready == std::vector<std::int64_t>{1, -1});
+  CHECK(event.failed == std::vector<std::int64_t>{7});
+  CHECK(event.error.empty());
+
+  CHECK_FALSE(MiradClient::ParseArtThumbsEvent(R"({"type": "hero"})", &event));
+  CHECK_FALSE(MiradClient::ParseArtThumbsEvent("not json", &event));
+}
+
+TEST_CASE("ParseArtCandidatesEvent reads a page of candidates, or why there isn't one") {
+  ArtCandidatesEvent event;
+  REQUIRE(MiradClient::ParseArtCandidatesEvent(
+      R"({"id": "ripples", "type": "cover", "page": 1, "total": 16, "request": "42",
+          "candidates": [{"id": 9, "style": "alternate", "nsfw": true}]})",
+      &event));
+  CHECK(event.page == 1);
+  CHECK(event.total == 16);
+  CHECK(event.request == "42");
+  REQUIRE(event.candidates.size() == 1);
+  CHECK(event.candidates[0].nsfw);
+  CHECK(event.candidates[0].source == "steamgriddb");
+
+  REQUIRE(MiradClient::ParseArtCandidatesEvent(
+      R"({"id": "ripples", "type": "cover", "page": 0, "code": "no_steamgriddb_key", "error": "set it"})", &event));
+  CHECK(event.code == "no_steamgriddb_key");
+  CHECK(event.candidates.empty());
+}
+
 TEST_CASE("ParseMetadataEvent carries the code, not just the message") {
   // The UI branches on the code. It exists precisely so that deciding what
   // to do about a failure never means pattern-matching English prose.

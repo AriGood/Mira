@@ -45,6 +45,8 @@ class QTimer;
 class LibraryGrid;
 
 namespace mira_gui {
+class ArtPickerPanel;
+class CoverChip;
 class DownloadTracker;
 class DownloadsPanel;
 class GameEditForm;
@@ -231,7 +233,10 @@ private:
   QString InstallText(const std::string& id) const;  // `announce` is false for the bulk path, where one toast covers the batch
   // and per-game messages would be one notification per game.
   void RefreshMetadata(const std::string& id, bool announce = true);
-  void OpenArtworkPicker(const std::string& id, const std::string& slot);
+  // Swaps the game card's fields for its art picker on `slot`, and back.
+  void OpenArtPicker(const std::string& slot);
+  void CloseArtPicker(bool applied = false);
+  bool ArtPickerOpen() const;
   void FetchMissingArtwork();
   void SyncDesktopEntries();
   void RemoveAllDesktopEntries();
@@ -338,6 +343,15 @@ private:
   QStackedLayout* root_stack_ = nullptr;
   mira_gui::GameEditForm* game_edit_form_ = nullptr;
   mira_gui::HeroBackdrop* game_edit_backdrop_ = nullptr;  // the card itself
+  mira_gui::CoverChip* game_edit_cover_ = nullptr;
+  // The fields' scroll area, and the art picker once first opened.
+  QStackedWidget* game_edit_stack_ = nullptr;
+  mira_gui::ArtPickerPanel* game_edit_picker_ = nullptr;
+  QPushButton* game_edit_hero_button_ = nullptr;
+  QPushButton* game_edit_cover_button_ = nullptr;
+  QPushButton* game_edit_back_ = nullptr;
+  QPushButton* game_edit_advanced_ = nullptr;
+  QPushButton* game_edit_save_ = nullptr;
   bool game_settings_in_sidebar_ = true;
   // Built once at startup, not per-open like settings_page_/game_edit_card_
   // — it has no per-session state to go stale, so it just stays synced via

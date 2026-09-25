@@ -413,6 +413,62 @@ TEST_CASE("POST /v1/games/{id}/artwork validates before enqueuing a candidate do
   CHECK(ok->status == 202);
 }
 
+TEST_CASE("Artwork thumb routes validate the batch and serve only a cached preview") {
+  LiveServer server(TempDir("server-artwork-thumbs"));
+
+  model::Game game;
+  game.id = "celeste";
+  game.name = "Celeste";
+  REQUIRE(server.games().Upsert(game).has_value());
+
+  httplib::Client client = server.Client();
+
+  auto missing_type = client.Post("/v1/games/celeste/artwork/thumbs", R"({"candidate_ids": [1]})", "application/json");
+  REQUIRE(missing_type != nullptr);
+  CHECK(missing_type->status == 400);
+
+  auto empty = client.Post("/v1/games/celeste/artwork/thumbs?type=cover", R"({"candidate_ids": []})",
+                           "application/json");
+  REQUIRE(empty != nullptr);
+  CHECK(empty->status == 400);
+
+  auto ok = client.Post("/v1/games/celeste/artwork/thumbs?type=cover", R"({"candidate_ids": [1, -1]})",
+                        "application/json");
+  REQUIRE(ok != nullptr);
+  CHECK(ok->status == 202);
+
+  auto bad_page = client.Post("/v1/games/celeste/artwork/candidates?type=cover&page=-1", "", "application/json");
+  REQUIRE(bad_page != nullptr);
+  CHECK(bad_page->status == 400);
+  auto page = client.Post("/v1/games/celeste/artwork/candidates?type=cover&page=1", "", "application/json");
+  REQUIRE(page != nullptr);
+  CHECK(page->status == 202);
+
+  auto not_cached = client.Get("/v1/games/celeste/artwork/thumb?type=cover&candidate_id=7");
+  REQUIRE(not_cached != nullptr);
+  CHECK(not_cached->status == 404);
+
+  auto no_id = client.Get("/v1/games/celeste/artwork/thumb?type=cover");
+  REQUIRE(no_id != nullptr);
+  CHECK(no_id->status == 400);
+
+  const fs::path thumbs = fs::path(server.config().File()).parent_path() / "cache" / "thumbs" / "celeste";
+  fs::create_directories(thumbs);
+  std::ofstream(thumbs / "cover_7", std::ios::binary) << "\x89PNG fake";
+  auto cached = client.Get("/v1/games/celeste/artwork/thumb?type=cover&candidate_id=7");
+  REQUIRE(cached != nullptr);
+  CHECK(cached->status == 200);
+  CHECK(cached->get_header_value("Content-Type") == "image/png");
+
+  // A quitting GUI throws them all away.
+  auto cleared = client.Delete("/v1/artwork/thumbs");
+  REQUIRE(cleared != nullptr);
+  CHECK(cleared->status == 204);
+  auto gone = client.Get("/v1/games/celeste/artwork/thumb?type=cover&candidate_id=7");
+  REQUIRE(gone != nullptr);
+  CHECK(gone->status == 404);
+}
+
 TEST_CASE("/v1/library/artwork serves a store title's cached cover and skips it when queuing") {
   LiveServer server(TempDir("server-library-artwork"));
 

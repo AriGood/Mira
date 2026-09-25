@@ -192,6 +192,9 @@ QHash<QString, QString> QssValues(const Tokens& tokens) {
       {"error", ColorToQss(tokens.error)},
       {"info", ColorToQss(tokens.info)},
   };
+  QColor accent_soft = tokens.accent;
+  accent_soft.setAlphaF(0.3);
+  values.insert("accent_soft", ColorToQss(accent_soft));
   values.insert("radius_panel", QString("%1px").arg(tokens.radius_panel));
   values.insert("radius_control", QString("%1px").arg(tokens.radius_control));
   values.insert("font_size_small", QString("%1px").arg(tokens.font_size_small));

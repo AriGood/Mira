@@ -62,6 +62,7 @@ private:
   metadata::FetchQueue metadata_fetches_;
   BackgroundQueue tricks_queue_;
   BackgroundQueue artwork_selects_;
+  BackgroundQueue artwork_thumbs_;
   std::function<void()> on_roots_changed_;
   std::atomic<bool> stopping_{false};  // checked by open SSE connections; see EventBus::WaitNext
   std::thread external_watch_;

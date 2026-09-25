@@ -4,7 +4,9 @@
 #include <QObject>
 #include <QPointer>
 
+#include <exception>
 #include <functional>
+#include <string>
 #include <thread>
 #include <utility>
 
@@ -39,7 +41,14 @@ template <typename Result, typename Work>
 void Run(QObject* context, Work work, std::function<void(Result)> callback) {
   QPointer<QObject> guard(context);
   std::thread([guard, work = std::move(work), callback = std::move(callback)]() mutable {
-    Result result = work();
+    // An exception escaping this thread would abort the whole app. One from
+    // parsing (nlohmann's type errors) becomes the result's error instead.
+    Result result{};
+    try {
+      result = work();
+    } catch (const std::exception& e) {
+      if constexpr (requires { result.error = std::string(); }) result.error = e.what();
+    }
     Deliver(guard, [callback, result = std::move(result)]() mutable { callback(std::move(result)); });
   }).detach();
 }

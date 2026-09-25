@@ -20,6 +20,7 @@
 #include "core/Paths.h"
 #include "library/Scanner.h"
 #include "library/Watcher.h"
+#include "metadata/MetadataFetcher.h"
 #include "store/GameStore.h"
 
 namespace {
@@ -91,6 +92,8 @@ int main(int argc, char** argv) {
   // before Serve() so a re-adopted still-running game is already tracked by
   // the time the very first client request arrives.
   server.ReconcileSessions();
+  // Left over if the last GUI never got to clear them (killed, or crashed).
+  mira::metadata::ClearCandidateThumbs(config);
 
   const std::filesystem::path socket_path =
       socket_override.empty() ? mira::paths::Expand(config.GetString("socket_path")) : socket_override;
@@ -130,5 +133,6 @@ int main(int argc, char** argv) {
   watcher.Stop();
   server_thread.join();
   watcher_thread.join();
+  mira::metadata::ClearCandidateThumbs(config);
   return 0;
 }

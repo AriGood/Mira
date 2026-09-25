@@ -34,6 +34,13 @@ void HeroBackdrop::ShowGame(const GameSummary& game) {
 
 void HeroBackdrop::RefreshCover(const std::string& id) {
   if (id != game_.id) return;
+  cover_preview_ = QPixmap();
+  rendered_ = QPixmap();
+  update();
+}
+
+void HeroBackdrop::SetPreview(const QString& slot, const QPixmap& preview) {
+  (slot == "hero" ? hero_preview_ : cover_preview_) = preview;
   rendered_ = QPixmap();
   update();
 }
@@ -57,6 +64,7 @@ void HeroBackdrop::LoadHero() {
         return;
       }
       hero_ = pixmap;
+      hero_preview_ = QPixmap();
       rendered_ = QPixmap();
       update();
     });
@@ -64,7 +72,9 @@ void HeroBackdrop::LoadHero() {
 }
 
 QPixmap HeroBackdrop::Source() const {
+  if (!hero_preview_.isNull()) return hero_preview_;
   if (!hero_.isNull()) return hero_;
+  if (!cover_preview_.isNull()) return cover_preview_;
   if (artwork_ != nullptr && artwork_->HasArtwork(game_.id)) return artwork_->RawArtwork(game_.id);
   // The same generated art as its tile, so the card still carries its colors.
   return PlaceholderCover(QString::fromStdString(game_.name), QString::fromStdString(game_.id), QSize(200, 300), 1);
@@ -87,7 +97,7 @@ void HeroBackdrop::paintEvent(QPaintEvent*) {
       QPixmap scaled = source.scaled(band.size() * dpr, Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
       // A cover is portrait: a slice of it reads as noise, so blur it into
       // a wash of its colors (down to a few pixels and back up).
-      if (hero_.isNull()) {
+      if (hero_.isNull() && hero_preview_.isNull()) {
         scaled = scaled.scaled(scaled.size() / 64, Qt::IgnoreAspectRatio, Qt::SmoothTransformation)
                      .scaled(scaled.size(), Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
       }
@@ -116,6 +126,55 @@ void HeroBackdrop::paintEvent(QPaintEvent*) {
 
   painter.setPen(QPen(tokens.border, 1));
   painter.drawPath(card);
+}
+
+CoverChip::CoverChip(ArtworkStore* artwork, QWidget* parent) : QWidget(parent), artwork_(artwork) {
+  setFixedSize(48, 72);
+  if (artwork_ != nullptr) {
+    connect(artwork_, &ArtworkStore::CoverChanged, this,
+            [this](const QString& id) { RefreshCover(id.toStdString()); });
+  }
+}
+
+void CoverChip::ShowGame(const GameSummary& game) {
+  game_ = game;
+  preview_ = QPixmap();
+  update();
+}
+
+void CoverChip::RefreshCover(const std::string& id) {
+  if (id != game_.id) return;
+  preview_ = QPixmap();
+  update();
+}
+
+void CoverChip::SetPreview(const QPixmap& preview) {
+  preview_ = preview;
+  update();
+}
+
+void CoverChip::paintEvent(QPaintEvent*) {
+  const theme::Tokens& tokens = theme::Current();
+  QPainter painter(this);
+  painter.setRenderHint(QPainter::Antialiasing);
+  painter.setRenderHint(QPainter::SmoothPixmapTransform);
+  const QRectF box = QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5);
+  QPainterPath path;
+  path.addRoundedRect(box, tokens.radius_tile, tokens.radius_tile);
+  painter.setClipPath(path);
+  if (!preview_.isNull()) {
+    const QPixmap filled =
+        preview_.scaled(size() * devicePixelRatioF(), Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
+    const QRectF source((filled.width() - width() * devicePixelRatioF()) / 2,
+                        (filled.height() - height() * devicePixelRatioF()) / 2, width() * devicePixelRatioF(),
+                        height() * devicePixelRatioF());
+    painter.drawPixmap(QRectF(rect()), filled, source);
+  } else if (artwork_ != nullptr && !game_.id.empty()) {
+    painter.drawPixmap(rect(), artwork_->Cover(game_, size(), devicePixelRatioF()));
+  }
+  painter.setClipping(false);
+  painter.setPen(QPen(QColor(255, 255, 255, 40), 1));
+  painter.drawPath(path);
 }
 
 }  // namespace mira_gui

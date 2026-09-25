@@ -289,10 +289,12 @@ Everything `api.md` marks implemented has a path through the UI:
 | `POST /v1/games/{id}/launch`, `/stop` | Play/Stop, tile double-click, context menu |
 | `GET /v1/games/{id}/artwork` | `ui/ArtworkStore` — grid tiles and `ui/GameEditForm`'s hero/cover box |
 | `GET /v1/games/{id}/artwork?type=hero` | `ui/GameEditForm`'s banner, in place of the cover when a game has one |
-| `GET /v1/games/{id}/metadata` | `ui/HoverCard` (ProtonDB tier, developer, genres) on hover; `GameDetailPageDialog` (context menu → *More details…*) for screenshots, trailers, requirements, DLC, content descriptors, achievements; also `art_candidates.cover`/`.hero` for `ArtworkPickerDialog` |
+| `GET /v1/games/{id}/metadata` | `ui/HoverCard` (ProtonDB tier, developer, genres) on hover; `GameDetailPageDialog` (context menu → *More details…*) for screenshots, trailers, requirements, DLC, content descriptors, achievements; also `art_candidates.cover`/`.hero` for `ui/ArtPickerPanel` |
 | `POST /v1/games/{id}/metadata/refresh` | the tile context menu's *Refresh metadata && cover art*, and *Library → Fetch missing cover art* |
-| `POST /v1/games/{id}/artwork?type=` | *Choose cover art…* / *Choose hero art…* (`ArtworkPickerDialog`) |
-| `GET /v1/games/{id}/metadata/matches`, `POST .../metadata/match` | `ArtworkPickerDialog`'s SteamGridDB game row: which game the art comes from, with a search for another name |
+| `POST /v1/games/{id}/artwork?type=` | the game card's *Change hero* / *Change cover* (`ui/ArtPickerPanel`), on *Use this hero/cover* |
+| `POST /v1/games/{id}/artwork/candidates` | `ui/ArtPickerPanel`: SteamGridDB's candidates, a page at a time as the grid scrolls |
+| `POST /v1/games/{id}/artwork/thumbs`, `GET .../artwork/thumb` | `ui/ArtPickerPanel`'s grid previews, a screenful at a time |
+| `GET /v1/games/{id}/metadata/matches`, `POST .../metadata/match` | `ui/ArtPickerPanel`'s *Art from* menu: which game the art comes from, with a search for another name |
 | `POST /v1/games/{id}/run` | *Run in prefix…* (`RunInPrefixDialog`) |
 | `POST /v1/games/{id}/finish-install` | *Mark as installed* |
 | `GET /v1/games/{id}/installer`, `POST .../install` | *Install…* (`InstallGameDialog`), for a `needs_install` or `broken` game |
@@ -361,7 +363,7 @@ notification, in one of two kinds:
 Only two things are still popups: a question the caller can't proceed
 without (`Confirm`, `ConfirmUnsaved`), and content that *is* the answer to a
 button (`Info`). A dialog that already has
-a status line of its own (`RunnersPage`, `ArtworkPickerDialog`, the log
+a status line of its own (`RunnersPage`, `ArtPickerPanel`, the log
 viewer's text pane) reports its errors there instead of notifying over
 itself.
 
@@ -442,23 +444,31 @@ artwork" can only be answered by asking for it. That is the reason for the
 ask-once and in-flight rules above; a flag on `GET /v1/games` would remove
 the need for both.
 
-**`ArtworkPickerDialog`** (*Choose cover art…* / *Choose hero art…*, one
-instance per slot) lists a SteamGridDB game's cached `art_candidates.cover`
-or `.hero` by style and dimensions rather than showing a thumbnail grid: each
-candidate's own `url`/`thumb` point at SteamGridDB's CDN, and the frontend
-has no HTTP client for the open internet, only mirad's socket. The row
-matching the slot's `candidate_id` (GET .../metadata) is marked "(current)"
-and pre-selected on open. Picking a row applies it immediately (`POST
-.../artwork?type=`) and, once its own `EventStream` sees
-`game.artwork_selected`, redraws the preview from the real image mirad just
-fetched and cached — that redraw *is* the preview. The same event also
-reaches `LibraryWindow::HandleGameEvent`, which invalidates the game's
-`ArtworkStore` entry (cover) or `GameEditForm`'s own banner cache (hero) so
-the grid tile/edit page follow without waiting for the picker to close. A game
-with no candidates cached (no `steamgriddb.api_key` set, or SteamGridDB has
-no match for the name) says so instead of showing an empty list — this now
-includes Steam-owned games too, which get SteamGridDB candidates as
-alternates alongside their Steam-CDN default when a key is set.
+**`ArtPickerPanel`** is the game card's *Change hero* / *Change cover*: it
+takes the place of the card's fields, and the footer becomes *Cancel* / *Use
+this hero*. It shows a slot's candidates as a grid of previews, with a chip
+per style to filter by. The cached `art_candidates` show first; SteamGridDB's
+own pages (`POST .../artwork/candidates`) then replace its entries, in
+SteamGridDB's order, and more pages load as the grid scrolls near the end. So
+`steamgriddb.nsfw` applies the next time the picker opens, with no metadata
+refetch. The frontend has no HTTP client for the open
+internet, so mirad fetches the previews (`POST .../artwork/thumbs`, up to 64
+ids) and the panel reads each one back once `game.artwork_thumbs_ready` names
+it. Only what is on screen, plus a screen ahead, is asked for; scrolling or
+filtering asks for more. Previews stay cached while the card is open, so
+switching slots is instant; mirad's copies are deleted when the GUI quits
+(`MiradClient::ClearArtThumbsBlocking` in `closeEvent`). Art SteamGridDB marks
+adult gets an *NSFW* badge.
+
+Clicking a preview only shows it: a hero behind the card (`HeroBackdrop`), a
+cover in the header's `CoverChip`. *Use* applies it (`POST
+.../artwork?type=`) and closes the picker; the preview stays up until the new
+art arrives, or reverts with a notice if the select fails.
+`LibraryWindow::HandleGameEvent` reacts to `game.artwork_selected` as it
+always has, so the grid tile follows too. A game with no candidates says so,
+with *Look again on SteamGridDB* (a metadata refresh). The *Art from* menu,
+shown when a `steamgriddb.api_key` is set, switches which SteamGridDB game the
+candidates come from.
 
 ## Tests
 

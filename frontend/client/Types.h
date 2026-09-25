@@ -4,6 +4,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 // The plain data mirad's REST API speaks, as C++ structs.
@@ -116,6 +117,37 @@ struct ArtCandidate {
   int width = 0;
   int height = 0;
   std::string style;
+  std::string source;  // "steamgriddb", "steam_cdn", "epic", "lutris"
+  bool nsfw = false;   // SteamGridDB marks it adult
+};
+
+// game.artwork_thumbs_ready: which previews one POST .../artwork/thumbs batch
+// left on disk. `error` only when the whole batch failed.
+struct ArtThumbsEvent {
+  std::string id;
+  std::string slot;
+  std::vector<std::int64_t> ready;
+  std::vector<std::int64_t> failed;
+  std::string error;
+};
+
+// game.artwork_candidates_ready: one page of SteamGridDB's art for a slot
+// (POST .../artwork/candidates). `code`/`error` when it couldn't be fetched.
+struct ArtCandidatesEvent {
+  std::string id;
+  std::string slot;
+  int page = 0;
+  int total = 0;
+  std::string request;  // as passed to FetchArtCandidatesAsync
+  std::vector<ArtCandidate> candidates;
+  std::string code;
+  std::string error;
+};
+
+// GET .../artwork/thumb for each id of a batch; an id without a cached
+// preview is left out.
+struct ArtThumbsResult {
+  std::vector<std::pair<std::int64_t, std::string>> images;  // id, bytes
 };
 
 struct GameMetadata {

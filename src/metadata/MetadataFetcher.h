@@ -1,7 +1,9 @@
 #pragma once
 
+#include <cstdint>
 #include <filesystem>
 #include <string>
+#include <vector>
 
 #include "config/Config.h"
 #include "core/Result.h"
@@ -41,6 +43,33 @@ Result<void> SelectArtwork(const config::Config& config, const std::string& game
 // wherever this particular Config was actually opened from, real daemon or
 // an isolated test instance, instead of re-resolving the environment itself
 // and risking a mismatch.
+// One page (50) of SteamGridDB's art for a game's slot, asked for now, so the
+// current steamgriddb.nsfw applies and results past the first 50 a metadata
+// fetch cached are reachable: {"page", "total", "candidates": [...]}, each
+// candidate shaped like art_candidates' and added to that cached list.
+Result<nlohmann::json> FetchCandidatePage(const config::Config& config, const std::string& game_id,
+                                          const std::string& slot, int page);
+
+// Which candidates of one FetchCandidateThumbs batch have a preview on disk.
+struct ThumbBatch {
+  std::vector<std::int64_t> ready;
+  std::vector<std::int64_t> failed;
+};
+
+// Downloads the preview of each listed art_candidates[slot] entry not cached
+// yet, all at once: SteamGridDB's small `thumb`, else the image itself.
+// Looked up by id, like SelectArtwork, so no caller-supplied URL is fetched.
+Result<ThumbBatch> FetchCandidateThumbs(const config::Config& config, const std::string& game_id,
+                                        const std::string& slot, const std::vector<std::int64_t>& candidate_ids);
+
+// One candidate's cached preview, or an empty path if it isn't fetched yet.
+std::filesystem::path CandidateThumbFile(const config::Config& config, const std::string& game_id,
+                                         const std::string& slot, std::int64_t candidate_id);
+
+// Previews are only for a picker that's open, so they're thrown away when
+// the GUI quits and when mirad starts or stops, rather than kept like art.
+void ClearCandidateThumbs(const config::Config& config);
+
 std::filesystem::path MetadataFile(const config::Config& config, const std::string& game_id);
 std::filesystem::path ArtworkDir(const config::Config& config, const std::string& game_id);
 
