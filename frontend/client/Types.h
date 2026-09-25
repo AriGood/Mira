@@ -621,7 +621,7 @@ struct InstallerInfoResult {
   std::string error;
   std::string path;
   std::int64_t size_bytes = 0;
-  std::string format;  // "inno" | "nsis" | "unknown"
+  std::string format;  // "inno" | "nsis" | "msi" | "unknown"
   bool silent = false;  // Mira knows how to run it without its window
 };
 

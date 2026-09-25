@@ -714,10 +714,10 @@ Schema::Schema() {
   s.Add({.key = "scan.auto_run_installers",
          .label = "Run Installers Automatically",
          .type = Type::Bool,
-         .default_value = true,
-         .doc = "Silently run a detected installer (Inno Setup, NSIS) as soon as it's found, the same "
-                "way a detected archive auto-extracts. Unrecognized formats and failed runs stay "
-                "needs_install for `mira install`."});
+         .default_value = false,
+         .doc = "Silently run a detected installer (Inno Setup, NSIS, MSI) as soon as it's found. "
+                "Off by default: installers wait as needs_install until you run one with "
+                "`mira install` or Install… in the GUI."});
 
   s.Add({.key = "install.retry_failed",
          .label = "Retry Failed Installs",
