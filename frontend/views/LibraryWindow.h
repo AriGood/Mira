@@ -51,6 +51,7 @@ class GameEditForm;
 class GameTileDelegate;
 class HeroBackdrop;
 class HoverCard;
+class RunnersPage;
 class SettingsPanel;
 class SourcePage;
 struct SourceInfo;
@@ -193,7 +194,9 @@ private:
   // Moves `id` to just before the visible row `before` (end if -1).
   void MoveSource(const QString& id, int before);
   int SourceDropRow(int y) const;
+  // The Runners page, in the grid's place like a source page.
   void OpenRunners();
+  void CloseRunners();
   void OpenAbout();
   void OpenGameDetailPage(const std::string& id);
   void ScanLibrary();
@@ -309,6 +312,7 @@ private:
   // Store signed in / launcher installed, by source id, as last asked.
   QHash<QString, bool> source_ready_;
   mira_gui::SourcePage* source_page_ = nullptr;
+  mira_gui::RunnersPage* runners_page_ = nullptr;
 
   QSplitter* splitter_ = nullptr;
   // The splitter's right side: grid_page_, classic_page_, or source_page_.

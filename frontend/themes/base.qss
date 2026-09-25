@@ -587,7 +587,7 @@ QScrollArea {
  * The scrim and the card (ui/HeroBackdrop) are painted in code; these are
  * what sits over the card's hero art. */
 
-QLabel#game_edit_title {
+QLabel#game_edit_title, QLabel#page_title {
   font-size: 22px;
   font-weight: 700;
 }
@@ -603,4 +603,60 @@ QPushButton#hero_action {
 
 QPushButton#hero_action:hover {
   background: rgba(20, 22, 27, 0.8);
+}
+
+/* --- Runners page -------------------------------------------------------- */
+
+QFrame#runners_card {
+  background: @surface;
+  border: 1px solid @border;
+  border-radius: @radius_panel;
+}
+
+QFrame#runner_row {
+  background: transparent;
+  border: 1px solid @border;
+  border-radius: @radius_panel;
+}
+
+QFrame#runner_row[current="true"] {
+  border-color: @accent;
+}
+
+QFrame#catalog_row {
+  border: none;
+  border-bottom: 1px solid @border;
+}
+
+QPushButton#danger {
+  color: @error;
+}
+
+QWidget#segmented {
+  background: @surface;
+  border: 1px solid @border;
+  border-radius: @radius_panel;
+}
+
+QWidget#segmented QPushButton {
+  background: transparent;
+  border: none;
+  padding: 5px 18px;
+}
+
+QWidget#segmented QPushButton:checked {
+  background: @accent;
+  color: @on_accent;
+  font-weight: 600;
+}
+
+QFrame#runners_card QProgressBar {
+  background: @border;
+  border: none;
+  border-radius: 2px;
+}
+
+QFrame#runners_card QProgressBar::chunk {
+  background: @accent;
+  border-radius: 2px;
 }

@@ -59,7 +59,6 @@
 #include "../dialogs/GameDetailDialog.h"
 #include "../dialogs/GameDetailPageDialog.h"
 #include "../dialogs/ManageSourcesDialog.h"
-#include "../dialogs/RunnerDialog.h"
 
 #include "../ui/AboutPanel.h"
 #include "../ui/CoverArt.h"
@@ -79,6 +78,7 @@
 #include "../ui/Shortcuts.h"
 #include "../ui/Theme.h"
 #include "../ui/Tray.h"
+#include "RunnersPage.h"
 #include "SourcePage.h"
 
 // setViewportMargins is protected on QAbstractScrollArea; this just republishes
@@ -482,6 +482,7 @@ LibraryWindow::LibraryWindow(QWidget* parent) : QMainWindow(parent) {
     ApplyLayoutTokens();
     ApplyFilter();
     ApplyTopBarIcons();
+    UpdateLibraryNavActive();  // the checked rows' icons are on_accent
   });
 
   splitter_ = new QSplitter(Qt::Horizontal, this);
@@ -991,8 +992,25 @@ void LibraryWindow::closeEvent(QCloseEvent* event) {
 }
 
 void LibraryWindow::OpenRunners() {
-  RunnerDialog dialog(this);
-  dialog.exec();
+  if (runners_page_ != nullptr) return;
+  if (ClassicShown()) CloseClassicView();
+  if (source_page_ != nullptr) CloseSource();
+  runners_page_ = new mira_gui::RunnersPage(downloads_, this);
+  runners_page_->SetGames(games_);
+  main_stack_->addWidget(runners_page_);
+  main_stack_->setCurrentWidget(runners_page_);
+  SetSourceControlsEnabled(false);
+  UpdateLibraryNavActive();
+}
+
+void LibraryWindow::CloseRunners() {
+  if (runners_page_ == nullptr) return;
+  main_stack_->setCurrentWidget(grid_page_);
+  main_stack_->removeWidget(runners_page_);
+  runners_page_->deleteLater();
+  runners_page_ = nullptr;
+  SetSourceControlsEnabled(true);
+  UpdateLibraryNavActive();
 }
 
 void LibraryWindow::OpenAbout() {
@@ -1379,8 +1397,9 @@ QWidget* LibraryWindow::BuildSidebar() {
   connect(library_nav_, &QPushButton::clicked, this, &LibraryWindow::ShowLibrary);
   layout->addWidget(library_nav_);
 
-  runners_nav_ = new QPushButton("Runner settings", sidebar);
+  runners_nav_ = new QPushButton("Runners", sidebar);
   runners_nav_->setFlat(true);
+  runners_nav_->setCheckable(true);
   connect(runners_nav_, &QPushButton::clicked, this, &LibraryWindow::OpenRunners);
   layout->addWidget(runners_nav_);
 
@@ -1875,6 +1894,7 @@ void LibraryWindow::ApplyFilter() {
 
   RefreshClassicTable();
   if (source_page_ != nullptr) source_page_->SetGames(games_, running_ids_);
+  if (runners_page_ != nullptr) runners_page_->SetGames(games_);
   UpdateSourceNavs();
   RefreshRecentlyPlayed();
 }
@@ -2317,7 +2337,7 @@ void LibraryWindow::SetGridControlsEnabled(bool enabled) {
     control->setEnabled(enabled);
   }
   // Back from Settings onto a source page: the grid is still covered.
-  if (enabled && source_page_ != nullptr) SetSourceControlsEnabled(false);
+  if (enabled && (source_page_ != nullptr || runners_page_ != nullptr)) SetSourceControlsEnabled(false);
   if (enabled && ClassicShown()) zoom_->setEnabled(false);
 }
 
@@ -2331,6 +2351,11 @@ void LibraryWindow::UpdateLibraryNavActive() {
     library_nav_->setChecked(library_active);
     library_nav_->setIcon(
         mira_gui::icons::For(Glyph::Home, library_active ? tokens.on_accent : tokens.text));
+  }
+  if (runners_nav_ != nullptr) {
+    const bool runners_active = runners_page_ != nullptr && content_stack_->currentWidget() == splitter_;
+    runners_nav_->setChecked(runners_active);
+    runners_nav_->setIcon(mira_gui::icons::For(Glyph::Wrench, runners_active ? tokens.on_accent : tokens.text));
   }
   if (grid_view_button_ != nullptr) {
     grid_view_button_->setChecked(!classic_active);
@@ -2608,6 +2633,7 @@ QWidget* LibraryWindow::BuildGameEditCard(const std::string& id) {
 
 void LibraryWindow::OpenSource(const mira_gui::SourceInfo& source) {
   if (ClassicShown()) CloseClassicView();
+  CloseRunners();
   if (source_page_ != nullptr) {
     main_stack_->removeWidget(source_page_);
     source_page_->deleteLater();
@@ -2706,6 +2732,7 @@ void LibraryWindow::ShowGame(const std::string& id) {
   if (GameEditOpen()) RequestCloseGameEdit();
   if (ClassicShown()) CloseClassicView();
   if (source_page_ != nullptr) CloseSource();
+  CloseRunners();
   for (int row = 0; row < grid_->count(); ++row) {
     QListWidgetItem* item = grid_->item(row);
     if (item->isHidden() || item->data(mira_gui::GameTileDelegate::IdRole).toString().toStdString() != id) {
@@ -3071,6 +3098,8 @@ void LibraryWindow::ShowLibrary() {
     CloseClassicView();
   } else if (source_page_ != nullptr) {
     CloseSource();
+  } else if (runners_page_ != nullptr) {
+    CloseRunners();
   }
   UpdateLibraryNavActive();
 }
@@ -3078,6 +3107,7 @@ void LibraryWindow::ShowLibrary() {
 // Filter, sort and search apply to the table too; only tile size doesn't.
 void LibraryWindow::OpenClassicView() {
   if (source_page_ != nullptr) CloseSource();
+  CloseRunners();
   ShowHoverCard(nullptr);
   main_stack_->setCurrentWidget(classic_page_);
   zoom_->setEnabled(false);
