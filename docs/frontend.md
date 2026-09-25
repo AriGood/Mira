@@ -1,512 +1,173 @@
 # The frontend (`mira-gui`)
 
-What the Qt frontend does, how it is put together, and which parts of
-[`api.md`](api.md) it uses. For *why* the frontend is a REST client rather
-than a second copy of the backend, see [`architecture.md`](architecture.md);
-that decision is load-bearing and is not restated here.
+`mira-gui` is a Qt6 client of the REST API in [`api.md`](api.md). It never links against `mira_core`.
 
-## Two views, both kept
+## Windows
 
-`mira-gui` opens on **the grid** (`views/LibraryWindow`): cover tiles and a
-left sidebar (filters, sort, search, Library navigation, a
-Sources list, Settings, and a status line), with a custom top bar in place of a native
-titlebar — Add/Import Games, tile size, and window controls (minimize/maximize/
-close), inspired by Lutris. It is modelled on Playnite's shelf for the tile
-browsing itself, which is the interaction most people arriving at a Linux
-game launcher already know.
+`mira-gui` opens on the **grid** (`views/LibraryWindow`): cover tiles, a left sidebar and a custom top bar in place of a native titlebar. The window is frameless. Dragging the top bar's empty area or the sidebar header moves it, double-clicking the top bar toggles maximize, and the edges resize. Moves and resizes go through `QWindow::startSystemMove`/`startSystemResize` so they work on Wayland and X11.
 
-The window is frameless (`Qt::FramelessWindowHint`): the top bar owns
-move (`QWindow::startSystemMove`, dragging its own empty background) and
-double-click-to-maximize, and a `RootWidget` central widget reserves a few
-pixels at each edge for `QWindow::startSystemResize`. Both go through the
-compositor rather than repositioning the window by hand, which is what makes
-them work under Wayland as well as X11.
+The **table** (`views/MainWindow`) shows every field of every game. The top bar's grid/table toggle shows it in the grid's place, filtered and sorted by the same sidebar controls. `mira-gui --classic` opens it as its own window.
 
-**The table** (`views/MainWindow`) shows every field of every game at once.
-It is reachable as `mira-gui --classic`. The top bar's grid/table toggle shows
-the same table in the grid's place, next to the sidebar, filtered and sorted
-by the same sidebar controls; clicking *Table* again goes back to the grid.
+### Sidebar
 
-### Sources
+From top to bottom: the Mira header, the Library, Runners and Settings rows, search with the filter and sort menu, the sources, recently played games, and the Add games button.
 
-The sidebar's *Sources* rows each open `views/SourcePage` in the grid's
-place, with the sidebar still up. There are three kinds:
+Only sources that are set up show in the sidebar. *Manage sources* (`dialogs/ManageSourcesDialog`) lists every source, sets which ones show and their order, and opens the page of one that isn't set up yet.
 
-- **Stores** (Epic Games, GOG, itch.io, Amazon Games, Humble Bundle): download
-  the helper tool mirad drives (Legendary, gogdl, butler, nile, humble-cli),
-  sign in by pasting what the store's login page shows, import what's
-  installed. What the account owns but hasn't installed is a second tile grid
-  with an Install pill on each tile (Humble: Download). Its covers are fetched
-  when the page lists them, from the store's own art where mirad can find it.
-  A title with none needs a SteamGridDB key, and the page offers a button to
-  Settings when one is missing.
-- **Launchers** (Battle.net, Ubisoft Connect, EA app): install the launcher
-  into its own prefix, open it, import the games installed through it.
-- **Local** (Steam, Lutris): import what the other program installed. Steam
-  also lists owned games once a Web API key is set.
+### Source pages
 
-Every page opens on a banner in the source's color with its status, then the
-games from that source (`GameSummary::source`) as cover tiles
-(`ui/TileGrid`, which grows to fit instead of scrolling). A setup card appears
-only while a step is left. A tile not yet installed gets its cover from
-`/v1/library/artwork`, the placeholder until that arrives (Humble bundles
-always: they aren't games). A source turned off in Settings (`<id>.enabled`) is left out of the list. Paste
-parsing and login URLs come from mirad, so the page holds only wording.
+Each source row opens `views/SourcePage` in the grid's place:
+
+- **Stores** (Epic Games, GOG, itch.io, Amazon Games, Humble Bundle): install the helper tool, sign in by pasting what the login page shows, import installed games. Owned games that aren't installed show as a second grid with an Install button (Download for Humble).
+- **Launchers** (Battle.net, Ubisoft Connect, EA app): install the launcher into its own prefix, open it, import its games.
+- **Local** (Steam, Lutris): import what the other program installed. Steam also lists owned games once a Web API key is set.
+
+A page shows a banner with the source's status, a setup card while a step is left, and the source's games as tiles (`ui/TileGrid`). Covers for games that aren't installed come from `/v1/library/artwork`. Login URLs and paste parsing come from `mirad`, so the page only holds wording. A source turned off with `<id>.enabled` isn't listed.
+
+### Runners page
+
+`views/RunnersPage` has a Proton/Wine switch that filters both of its lists:
+
+- **Installed** builds show their label and source. Builds Mira downloaded can be updated or removed; distro and Steam builds show as managed outside Mira. After an update it offers to remove the old build. *Make default* and *Pick automatically instead* set `default_runner.windows`.
+- **Get more** lists releases from the chosen source, with an Install button on each.
+
+A banner offers to install umu-launcher or winetricks when either is missing.
 
 ### Downloads
 
-The top bar's download button (with a count while anything runs) opens
-`ui/DownloadsPanel`, listing what `ui/DownloadTracker` has seen, newest
-first: game installers, store installs and updates, Humble downloads,
-launcher installs, store helper downloads and runner downloads. The tracker
-is fed from the library window's event stream, which mirad replays on
-connect, so work started before the GUI shows too. Only game installers
-report progress (bytes written); the rest show a busy bar until they finish
-or fail. A finished install offers *Show*, which selects the game in the
-grid. Source pages read the tracker too, so an Install pill still says
-"Installing…" after leaving and reopening the page.
+The top bar's download button opens `ui/DownloadsPanel`. It lists everything `ui/DownloadTracker` has seen from the event stream: game installers, store installs and updates, Humble downloads, launcher installs, tool downloads and runner downloads. `mirad` replays recent events on connect, so work started before the GUI opened also shows. Only game installers report progress (bytes written). A finished install offers *Show*, which selects the game.
 
-Neither is a fallback for the other. The grid is the better browser; the
-table is the better audit tool for a library that was just scanned, where
-the question is "what did detection get wrong" and the answer is a column.
-Both are thin clients over the same `MiradClient` calls and each holds its
-own `EventStream`, so two open windows cannot disagree about what the daemon
-said.
+### Selection and hover
 
-### Selection model
+One click selects a tile. Ctrl, Shift or a drag selects several, and the context menu then offers batch actions. Double-click launches. A single click never launches, so a misclick can't start a game. *Drag to select* on the Interface tab turns drag selection off.
 
-One click selects a tile (or, with Ctrl/Shift or a drag, several — the
-context menu then offers a reduced batch version of its usual actions). A
-drag that starts on a tile only begins once the cursor leaves that tile, and
-it scrolls the grid near the top or bottom edge. *Drag to select* on the
-Interface tab turns it off. A
-second (double) click launches. Right-click opens the per-game menu.
-Launching on the first click would turn a misclick into a started game, so a
-single click never launches anything.
-
-Hovering a tile for ~280ms shows `ui/HoverCard`, a floating, non-modal
-preview built from the `GameSummary` already in memory (name, status,
-platform/runner) plus one `GET /v1/games/{id}/metadata` call for the
-ProtonDB tier and developer/genres — the old right sidebar's job, without a
-permanent panel taking up space. It never shows over a multi-selection.
-Store pages' tiles and the sidebar's recently played rows show the same card
-(a not-installed title gets its name, state and store).
-
-Every other tooltip goes through `ui/ToolTip`, an app-wide event filter that
-draws it as the same card, under the hovered widget (beside a menu item)
-rather than at the cursor. Menu actions' own tooltips show too.
-`ui/AboutPanel` (logo, version, authors, repository, license) moved to
-*Help → About Mira* — a frameless window has no native Help menu to hang a
-dialog off, so it's a plain `QDialog` built in `LibraryWindow::OpenAbout`.
+Hovering a tile shows `ui/HoverCard` with the name, status, runner, ProtonDB tier, developer and genres. Tooltips everywhere go through `ui/ToolTip`, which draws them as the same card.
 
 ### Keyboard
 
-`Ctrl+Q` quits, `Ctrl+W` closes one window, `F1` lists every key the focused
-window responds to. Those three are installed by `ui/Shortcuts` on both
-views, so the classic table — which has no menu bar to hang an action on —
-still has them.
+`ui/KeyBindings` holds every shortcut, and each can be changed in Settings (stored in `shortcut_overrides`). `ui/Shortcuts` installs `Ctrl+Q`, `Ctrl+W` and `F1` (list of shortcuts) on both windows. The grid adds `Ctrl+F` search, `Esc`, `Ctrl+1` to `Ctrl+8` filters, `F5`/`Ctrl+R` refresh, `Ctrl+,` settings, tile size keys and, while the grid has focus, `Enter` to play or stop, `Alt+Enter` for details and `Delete` to remove. That last group is scoped to the grid so the keys still work in the search box.
 
-Quit goes through `QApplication::closeAllWindows()` rather than `quit()`,
-because `LibraryWindow` saves its layout in `closeEvent` and a quit that
-skipped that handler would drop the prefs silently.
-
-The grid adds: `Ctrl+F` search, `Esc` (clears the search first, the
-selection second), `Ctrl+1`–`Ctrl+8` filters, `F5`/`Ctrl+R` refresh,
-`Ctrl+,` settings, `Ctrl++`/`Ctrl+-`/`Ctrl+0` tile size, and — only while
-the grid itself has focus — `Enter` to play or stop, `Alt+Enter` for details,
-`Delete` to remove.
-
-That last group is scoped `Qt::WidgetWithChildrenShortcut` rather than to the
-window. `Delete` and `Enter` have to keep meaning what they mean inside the
-search box, and window-scoped actions would swallow them: typing a game's
-name and pressing Backspace-Delete would otherwise open the remove prompt for
-whatever tile happened to be selected.
-
-`Ctrl+Q` and `Ctrl+,` are spelled out rather than taken from
-`QKeySequence::Quit`/`::Preferences`. Qt binds `Preferences` on macOS only,
-so the Settings row showed no shortcut at all on Linux.
+Quit goes through `QApplication::closeAllWindows()` so `LibraryWindow::closeEvent` saves its prefs.
 
 ## Theming
 
-`mira-gui` sets its own style, palette and stylesheet at startup
-(`ui/Theme.cpp`), rather than inheriting the desktop's. Fusion is the base
-style: it is fully palette-driven and identical everywhere, so our stylesheet
-is not layering over Breeze or Adwaita and inheriting whatever they drew for
-the parts it does not name.
+`ui/Theme` sets the Fusion style, palette and stylesheet at startup instead of inheriting the desktop's.
 
-A **theme is a TOML token file**, never raw selectors. One stylesheet ships
-with the app (`themes/base.qss`) and every `@token` in it is substituted from
-the theme being applied, so a user theme cannot break when a widget is renamed
-or restructured. Bundled themes (`mira-dark`, `mira-light`) are embedded in the
-binary; a user's own go in `$XDG_CONFIG_HOME/mira/themes/*.toml` and show up in
-the settings picker. Every key is optional — anything missing, misspelled or of
-the wrong type falls back to the built-in default rather than failing the file,
-so a half-written theme still produces a usable window.
+A theme is a TOML file of tokens. `themes/base.qss` is the only stylesheet, and every `@token` in it is filled from the current theme. `mira-dark` and `mira-light` are built in; user themes go in `$XDG_CONFIG_HOME/mira/themes/*.toml`. Missing or invalid keys fall back to the defaults. The `theme` pref is a theme name or `auto`, which follows the desktop's light/dark setting.
 
-The `theme` preference is a theme name or `auto`, which follows the desktop's
-own light/dark setting (`QStyleHints::colorScheme`) and keeps following it.
+`theme::Overrides` applies tile spacing, grid padding and corner radii from `frontend.toml` on top of any theme. `-1` means "use the theme's value".
 
-**Shape is adjustable without writing a theme.** `theme::Overrides` carries a
-handful of pixel values from `frontend.toml` — tile spacing, grid padding and
-the tile, panel and control corner radii — and is applied on top of whatever
-theme is current, so switching theme keeps them. They are preferences about
-one library rather than part of a theme's identity, which is why they live in
-`frontend.toml`. `-1` is how the file spells "leave it to the theme": the keys
-have to stay writable to be cleared again, and a merge patch cannot drop one.
+Widgets that paint by hand read tokens directly and repaint on `theme::Notifier::Changed`: `ui/GameTileDelegate`, `ui/CoverArt`, `ui/Notify`, `ui/HeroArtWidget` and `ui/HeroBackdrop`.
 
-Five things the stylesheet cannot reach read the tokens directly instead:
-`ui/GameTileDelegate` and `ui/CoverArt`, which paint with `QPainter`,
-`ui/Notify`'s toasts, `ui/HeroArtWidget`'s banner, which is clipped to
-`radius_panel` by hand because a stylesheet cannot round a pixmap inside a
-`QLabel`, and `ui/HeroBackdrop`, the game settings card, which paints the
-game's hero (or its cover, blurred) across its top and fades it into
-`surface`. They repaint on `theme::Notifier::Changed`.
-
-Two conventions keep colors out of the widgets themselves:
-
-- **Style properties, not per-widget stylesheets.** A label says what it *is*
-  (`setProperty("role", "muted")`, or `"status"` for a lifecycle color) and
-  `base.qss` says what that looks like. `theme::SetStyleProperty` re-polishes
-  the widget, which Qt does not do on its own when a property changes after
-  the widget has been polished.
-- **`ui/Icons`** draws the top bar's glyphs (menu, gear, minimize, maximize,
-  restore, close) as vector paths in the theme's text color, rather than
-  `QStyle::standardIcon` — those are the platform style's dated titlebar
-  buttons and take their color from the platform.
+Widgets don't set colors themselves. They set a style property (`setProperty("role", "muted")`) and `base.qss` styles it; `theme::SetStyleProperty` re-polishes after a change. `ui/Icons` draws icons as vector paths in the theme's text color.
 
 ## Layers
 
-Four directories, depending only downward:
-
 ```
 client/   talks to mirad, draws nothing
-ui/       presentation shared by more than one view or dialog
-views/    the two top-level library windows
-dialogs/  the modal editors
+ui/       widgets shared by several views or dialogs
+views/    the library windows and the pages shown in them
+dialogs/  modal editors
 ```
 
-### `client/`
+Each layer only depends on the ones above it in this list.
 
-| file | what it owns |
+| `client/` file | Role |
 |---|---|
-| `Transport` | one socket round trip: timeouts, the `{"error": {...}}` envelope |
-| `JsonMapping` | JSON ↔ the structs in `Types.h`; no I/O, so this is what to read when a field looks wrong |
-| `Async` | the worker-thread hop, and the liveness rule that makes it safe |
-| `MiradClient` | one method per endpoint, and nothing else |
-| `EventStream` | the long-lived `GET /v1/events` connection |
-| `Types.h` | the plain data the UI is allowed to depend on |
+| `Transport` | One socket round trip: timeouts and the error envelope. |
+| `JsonMapping` | JSON to and from the structs in `Types.h`. |
+| `Async` | Runs a call on a worker thread and delivers the result on the main thread. |
+| `MiradClient` | One method per endpoint. |
+| `EventStream` | The `GET /v1/events` connection, reconnecting with `Last-Event-ID`. |
+| `Types.h` | Plain data the UI depends on. |
 
-**Threading.** Every `MiradClient` call runs on a throwaway thread and
-delivers its result back on the main thread. The delivery goes through
-`async::Deliver`, which posts to `qApp` and tests a `QPointer` on the main
-thread — *not* to the calling widget.
+`async::Deliver` posts results to `qApp` and checks a `QPointer` to the requesting widget on the main thread. Posting to the widget itself would read a possibly deleted object on the worker thread.
 
-This is not a stylistic choice. `QMetaObject::invokeMethod` dereferences its
-context argument on the **calling** thread, because it has to read that
-object's thread affinity, so passing a `QObject*` that the main thread may
-already have deleted is a use-after-free before the queued call is ever
-posted. That crashed `mira-gui` reproducibly whenever a window went away
-with a request or an event in flight. `qApp` outlives every window, and the
-`QPointer` is tested on the same thread that destroys widgets, so it cannot
-go stale between the check and the call.
+`LibraryWindow` fetches the whole library once and filters it on the client, which keeps search instant and makes "Playing now" and "Never played" possible. Events then patch the view directly. There is no polling.
 
-**Filtering is client-side.** `LibraryWindow` fetches the whole library once
-and filters in `ApplyFilter`. That is what makes the search box feel
-instant, and it is the only way "Playing now" and "Never played" can be
-filters at all — neither is a server-side query.
+Only `game.added` and `game.updated` carry a game record, so views check the event type before parsing one. `game.state` carries only the state and launch details, so an exit triggers a re-fetch. A game handed to Steam or a launcher reports `tracked` in the launch reply and `game.launched`, and isn't marked running unless it is tracked.
 
-**No reconciliation poll.** Live updates arrive as events and patch the view
-directly from each event's own payload. There is deliberately no periodic
-re-fetch: an occasional missed event is cheaper than a timer that wakes up
-forever on the off chance one was dropped. See "Idle cost" in
-`architecture.md`.
+## Settings
 
-## Settings live in two different files
+- **`settings.toml`** holds backend settings. `ui/SettingsPanel` is generated from `GET /v1/config/schema`: sections, order, labels, dividers and runner pickers (`is_runner_ref`) all come from the schema, so a new backend setting needs no frontend change.
+- **`frontend.toml`** holds GUI state and preferences (`FrontendPrefs` in `client/Types.h`), read and written as the `frontend` key of `/v1/config`. The backend never validates it.
 
-This matters more than it looks:
-
-- **`settings.toml`** holds backend settings. Every key is declared in
-  `src/config/Schema.cpp`, and `ui/SettingsPanel` is generated entirely from
-  `GET /v1/config/schema` — almost no setting name is hardcoded in the
-  frontend. Adding a backend setting requires no frontend change, and where
-  it shows (section, order, label, divider, per-game or not) is decided in
-  the schema too.
-- **`frontend.toml`** holds the frontend's own state and preferences:
-  window size, tile size, which filter and sort were selected,
-  the left sidebar's splitter width, and whether to scan the library on
-  startup. The backend stores it verbatim and never validates it, reachable
-  as the opaque `frontend` key of `GET`/`PATCH /v1/config` (see
-  `FrontendPrefs`).
-
-  | key | what it does |
-  |---|---|
-  | `window_width`, `window_height` | remembered window size |
-  | `sidebar_width` | remembered splitter width for the left sidebar |
-  | `tile_width` | cover tile size (clamped to the zoom slider's range) |
-  | `library_filter` | which filter was selected |
-  | `sort_by`, `sort_descending` | grid order — see `ui/LibrarySort` |
-  | `scan_on_startup` | whether opening the frontend runs `POST /v1/library/scan` |
-  | `theme` | a theme name, or `auto` to follow the desktop — see "Theming" |
-  | `tile_spacing`, `grid_margin` | grid layout, in pixels; `-1` means "leave it to the theme" |
-  | `tile_radius`, `panel_radius`, `control_radius` | corner rounding, same `-1` rule |
-  | `drag_select` | whether dragging across the grid selects tiles (default on) |
-
-  `scan_on_startup`, `theme`, `drag_select` and
-  the five shape keys get rows in the settings screen, on an Interface tab
-  ahead of the schema-driven ones.
-  The rest are implicit UI state: they are saved by using the window, not by
-  filling in a form.
-
-A window size is not something mirad should have an opinion about, so it
-never goes in `settings.toml`, where the schema would have to answer for it.
-Equally, the settings screen never shows the `frontend` table: it renders
-schema keys, and nothing in there is one.
-
-`FrontendPrefs` fields are all optional. The file may be absent, partial or
-hand-edited, and an unset field means "use the built-in default", not zero.
-Values are applied through the widget that owns them (the tile size goes
-through the zoom slider, so its range clamps a hand-edited value) rather
-than assigned raw.
-
-The one deliberate exception to "no hardcoded setting names" is
-`dialogs/SettingsCategories`: it groups schema keys into sections and names
-`default_runner.windows` as wanting a runner picker, because the schema has
-no way to say "this string is a runner reference". A key added later with no
-entry there still lands somewhere sensible via a dotted-prefix guess, and
-never disappears.
-
-## API coverage
-
-Everything `api.md` marks implemented has a path through the UI:
-
-| endpoint | where |
+| Key | Meaning |
 |---|---|
-| `GET /v1/health` | the Online/Offline badge |
-| `GET /v1/games[?status=]` | both library views |
-| `GET`/`PATCH /v1/games/{id}` | `GameDetailDialog`, `ui/GameEditForm` |
-| `DELETE /v1/games/{id}` | `DeleteGameDialog`, including `delete_files`/`delete_prefix` |
-| `GET`/`PATCH /v1/games/{id}/config` | `OverridesEditor` |
-| `POST /v1/games/{id}/launch`, `/stop` | Play/Stop, tile double-click, context menu |
-| `GET /v1/games/{id}/artwork` | `ui/ArtworkStore` — grid tiles and `ui/GameEditForm`'s hero/cover box |
-| `GET /v1/games/{id}/artwork?type=hero` | `ui/GameEditForm`'s banner, in place of the cover when a game has one |
-| `GET /v1/games/{id}/metadata` | `ui/HoverCard` (ProtonDB tier, developer, genres) on hover; `GameDetailPageDialog` (context menu → *More details…*) for screenshots, trailers, requirements, DLC, content descriptors, achievements; also `art_candidates.cover`/`.hero` for `ui/ArtPickerPanel` |
-| `POST /v1/games/{id}/metadata/refresh` | the tile context menu's *Refresh metadata && cover art*, and *Library → Fetch missing cover art* |
-| `POST /v1/games/{id}/artwork?type=` | the game card's *Change hero* / *Change cover* (`ui/ArtPickerPanel`), on *Use this hero/cover* |
-| `POST /v1/games/{id}/artwork/candidates` | `ui/ArtPickerPanel`: SteamGridDB's candidates, a page at a time as the grid scrolls |
-| `POST /v1/games/{id}/artwork/thumbs`, `GET .../artwork/thumb` | `ui/ArtPickerPanel`'s grid previews, a screenful at a time |
-| `GET /v1/games/{id}/metadata/matches`, `POST .../metadata/match` | `ui/ArtPickerPanel`'s *Art from* menu: which game the art comes from, with a search for another name |
-| `POST /v1/games/{id}/run` | *Run in prefix…* (`RunInPrefixDialog`) |
-| `POST /v1/games/{id}/finish-install` | *Mark as installed* |
-| `GET /v1/games/{id}/installer`, `POST .../install` | *Install…* (`InstallGameDialog`), for a `needs_install` or `broken` game |
-| `GET /v1/games/{id}/install/progress` | `ui/DownloadTracker`, for the tile's and the downloads panel's "Installing… 1.2 GB" while `game.install.*` says one runs |
-| `GET`/`POST /v1/library/artwork` | `SourcePage`'s Not installed covers, through `ui/ArtworkStore::TitleCover` |
-| `POST /v1/games/{id}/relocate`, `/v1/library/relocate` | *Move to Mira's folders…* (tile and batch menus), *Move games into Mira's folders…* (sidebar) |
-| `POST /v1/library/scan` | on startup, and *View → Refresh library* |
-| `GET /v1/library`, `POST /v1/library/install\|update` | `SourcePage`'s Not installed tiles, and Update on its library tiles |
-| `/v1/{epic,gog,itch,amazon,humble}/*` | `SourcePage` for each store |
-| `/v1/launchers/*` | `SourcePage` for Battle.net, Ubisoft Connect, the EA app |
-| `GET`/`PATCH /v1/config`, `/reset` | `SettingsDialog`; `RunnersPage`'s *Make default* and *Pick automatically instead* (`default_runner.windows`) |
-| `GET /v1/config/schema` | generates `SettingsDialog` and `OverridesEditor` |
-| `GET /v1/runners` | runner pickers, and `RunnersPage`'s Installed card |
-| `GET /v1/runners/catalog` | `RunnersPage`'s Get more card |
-| `POST /v1/runners/download` | `RunnersPage`'s Install; progress through `ui/DownloadTracker` |
-| `GET /v1/runners/sources` | `RunnersPage`'s source picker on Get more |
-| `GET /v1/runners/updates`, `POST /v1/runners/update` | `RunnersPage`'s *Update to …* on installed builds, then an offer to remove the old build |
-| `GET /v1/runners/tools`, `POST /v1/runners/tools/{id}/setup` | `RunnersPage`'s banner when umu-launcher or winetricks is missing |
-| `POST /v1/steam/scan` | *Library → Import Steam library* |
-| `POST /v1/lutris/import` | *Library → Import Lutris games* |
-| `GET /v1/events` | `EventStream` |
+| `window_width`, `window_height` | Window size. |
+| `sidebar_width` | Sidebar width. |
+| `tile_width` | Tile size, clamped to the zoom slider's range. |
+| `library_filter`, `sort_by`, `sort_descending` | Selected filter and sort. |
+| `scan_on_startup` | Run a library scan when the GUI opens. |
+| `theme` | Theme name or `auto`. |
+| `game_settings_in_sidebar` | Edit a game in the side panel instead of a dialog. |
+| `drag_select` | Drag across the grid to select. |
+| `tile_spacing`, `grid_margin`, `tile_radius`, `panel_radius`, `control_radius` | Shape overrides in pixels, `-1` for the theme's value. |
+| `shortcut_overrides` | Changed shortcuts by id. |
+| `hidden_sources`, `source_order` | Which sources the sidebar shows, and in what order. |
+| `source_imported_at` | When each source last imported. |
+| `sidebar_recent_count`, `sidebar_source_counts` | How many recently played games to list, and whether source rows show counts. |
 
-Events handled: `game.added` (and its `open_config`), `game.updated`,
-`game.removed`, `game.state`, `game.launched`,
-`game.metadata_ready`/`.metadata_failed`, `game.install.*`,
-`runners.download.started`/`.finished`/`.failed`, the store/launcher setup,
-`library.install.*` and `humble.download.*` events (downloads panel and
-source pages), and `library.artwork_*` on a source page.
+Every field is optional; a missing one means the default. Values go through the widget that owns them, so a hand-edited value is still clamped.
 
-**Dispatch on the event type, always.** Only `game.added` and `game.updated`
-carry a game record, and the library views check for exactly those two
-rather than treating whatever is left over as a game. They did not, once:
-a `runners.download.started` payload is a JSON object, so it parsed into a
-game with every field empty and the library grew a blank tile on every
-runner download. `ParseGameSummary` now also requires a non-empty string
-`id`, as a second line of defence — a `tricks.*` payload does carry one, and
-would have blanked a real row rather than adding a fake one.
+## Notifications
 
-Two notes on shapes that are easy to get wrong:
+`ui/Notify` handles every message. Failures (`Failed`, `FailedWithHint`, `FailedWithAction`, `Warn`) are persistent desktop notifications; confirmations (`Notice`) use the desktop's default timeout. Only questions (`Confirm`, `ConfirmUnsaved`) and answers to a button (`Info`) are popups. Pages with their own status line, such as `RunnersPage` and `ArtPickerPanel`, report errors there.
 
-- `game.state` carries only `id`/`state` and a few launch-specific fields —
-  not `play_seconds` or `last_played_at`. An `exited` is a signal to
-  re-fetch, not something to patch a row from.
-- **A Steam-launched game never emits `game.state` at all.** Under the
-  default `steam.launch_mode: "steam"`, mirad hands the game to
-  `steam://rungameid/<appid>` and never spawns it, so `POST .../launch`
-  answers `{"status": "launched_via_steam"}` and publishes `game.launched`
-  instead. Marking such a game as running pins it under "Playing now"
-  forever, because nothing will ever say it stopped — hence
-  `LaunchResult::tracked`, and hence `game.launched` clearing the id rather
-  than being ignored.
-- `GET /v1/runners` used to report the same build once per search path it
-  was found under, which a symlinked Steam directory makes the normal case.
-  The frontend collapsed those itself for a while; it no longer does, and
-  should not — `runner::DeduplicateBuilds` handles it in the daemon, where
-  every other API client gets the fix too. See `docs/api.md`.
+Success that already shows on screen gets no message. A notice only goes out when nothing in the window would change, such as "No new Steam games found."
 
-## Telling the user things
+Notifications use `org.freedesktop.Notifications` (`ui/SystemNotifier`) with a `desktop-entry` hint of `mira`. `FailedWithAction` adds a button that raises the window and runs the action. Without a notification service, failures become popups and notices become cards in the window's corner.
 
-`ui/Notify` owns every message, so two screens cannot disagree about what a
-failure looks like. Anything that isn't a question is a desktop
-notification, in one of two kinds:
-
-| kind | when | how |
-|---|---|---|
-| **persistent** | something went wrong — `notify::Failed`, `FailedWithHint`, `FailedWithAction`, `Warn` | critical urgency, `expire_timeout` 0: stays until dismissed |
-| **transient** | a small confirmation of something with no visible result of its own — `notify::Notice` | normal urgency, `expire_timeout` -1: the desktop's own default |
-
-Only two things are still popups: a question the caller can't proceed
-without (`Confirm`, `ConfirmUnsaved`), and content that *is* the answer to a
-button (`Info`). A dialog that already has
-a status line of its own (`RunnersPage`, `ArtPickerPanel`, the log
-viewer's text pane) reports its errors there instead of notifying over
-itself.
-
-**Success whose result is already on screen gets nothing.** A scan or import
-that adds games, a batch delete, a cover arriving, a metadata refresh — the
-grid changing is the feedback. A notice only goes out when nothing in Mira's
-window would change otherwise ("No new Steam games found.", "Added to the
-application menu."). Notifications that just narrate work starting
-("Fetching metadata…") don't exist at all.
-
-The route is `org.freedesktop.Notifications` over the session bus
-(`ui/SystemNotifier`) — the cross-desktop standard KDE, GNOME, XFCE,
-Cinnamon, dunst, mako and swaync all implement, so nothing here is specific
-to one desktop. A `desktop-entry` hint of `mira` lets the shell show Mira's
-own name and icon and list it in per-application notification settings
-(where the user controls how long things stay up — Mira has no setting of
-its own for that). `FailedWithAction` adds a button (and a click on the
-notification itself) routed back through the `ActionInvoked` signal, raising
-Mira's window first.
-
-With no notification service on the bus at all (a bare window manager), a
-failure falls back to a modal popup and a `Warn`/`Notice` to a card stacked
-bottom-right of the window — only so the message isn't lost. Cards dismiss
-on click; a transient one also after six seconds.
-
-Every popup and card sets `Qt::PlainText`. mirad's error messages quote
-paths and command fragments, and rich text would silently eat anything that
-looked like a tag. Failures show mirad's own message verbatim under a
-sentence naming what failed — the daemon explains its refusals better than a
-rewrite would.
+Messages are plain text, since `mirad`'s errors quote paths and commands. Failures show `mirad`'s message under a sentence naming what failed.
 
 ## Cover art
 
-Real artwork comes from `GET /v1/games/{id}/artwork`, which serves whatever
-image the metadata fetcher cached (Steam's CDN for a Steam-owned game,
-SteamGridDB otherwise — see `docs/api.md`). `ui/ArtworkStore` owns the whole
-story and hands out a pixmap that is never empty:
+`ui/ArtworkStore` fetches art from `GET /v1/games/{id}/artwork` and always returns a pixmap:
 
-- **404 is the normal answer**, not an error. Most games have no artwork
-  cached, and one message per game on a fresh library would be unusable.
-  `ui/CoverArt` generates the placeholder for those, from a hue derived from
-  the game's **id** — stable across restarts, renames and machines, so a
-  tile can be learned by sight.
-- **Ask once per game.** An id that has answered either way is not asked
-  again until `game.metadata_ready` or an explicit refresh invalidates it.
-  Without that rule an empty library becomes a request loop, because every
-  repaint asks for a cover.
-- **Four requests in flight, maximum.** Each one is a thread and a socket
-  (`client/Async.h`), and artwork is per game, so a 500-game library would
-  otherwise open 500 of each the moment the window appears.
-- **Keep the original, scale on demand.** The zoom slider changes the tile
-  size continuously; re-decoding a JPEG per step would be visible and
-  re-fetching it absurd. A rename drops the rendered copies (the
-  placeholder's initials changed) but not the fetched image.
+- A 404 is normal. `ui/CoverArt` draws a placeholder with a hue from the game's id, so it stays the same across restarts.
+- Each game is asked once, until `game.metadata_ready` or a refresh.
+- At most four requests are in flight.
+- The original image is kept and scaled on demand for the zoom slider.
 
-The grid and `ui/GameEditForm`'s hero/cover box share one store, so a cover
-is fetched, decoded and cached once for both.
+Without `steamgriddb.api_key`, non-Steam games may have no source. `mirad` then fails the fetch with `no_steamgriddb_key`, and the GUI says so once per session: a popup offering Settings when the user asked, a notice after a background scan.
 
-**No key, no art, and now it says so.** A non-Steam game has no free cover
-source other than SteamGridDB, so with `steamgriddb.api_key` unset mirad
-fails the fetch with `no_steamgriddb_key` instead of quietly succeeding at
-nothing (`docs/api.md`). The frontend matches on that **code**, never on the
-message, and raises it once per session however many games report it: a
-popup offering to open Settings when the user asked for the fetch, a toast
-when a background scan did. Every other metadata failure is reported only
-for a game the user asked about.
+Metadata is only fetched when a game is first added. A tile's *Refresh metadata && cover art* and *Fetch missing cover art* ask again.
 
-**Re-fetching.** mirad fetches metadata only when a game is *first*
-detected, so a game whose fetch failed — or any non-Steam game from before
-`steamgriddb.api_key` was set — keeps its placeholder until something asks
-again. Two ways to ask: a tile's right-click *Refresh metadata && cover
-art*, and *Library → Fetch missing cover art*, which does it for every game
-the store has no image for. The bulk path raises one toast for the batch
-rather than one per game.
+`ui/ArtPickerPanel` is the game card's *Change hero* / *Change cover*. It shows a slot's candidates as a grid of previews with style filters, loading SteamGridDB pages as the grid scrolls. `mirad` downloads the previews (`POST .../artwork/thumbs`) only for what is on screen plus one screen ahead, and deletes them when the GUI quits. Clicking a preview shows it on the card; *Use* applies it. The *Art from* menu picks which SteamGridDB game the art comes from.
 
-There is no `has_artwork` on a game summary, so "does this game have
-artwork" can only be answered by asking for it. That is the reason for the
-ask-once and in-flight rules above; a flag on `GET /v1/games` would remove
-the need for both.
+## API use
 
-**`ArtPickerPanel`** is the game card's *Change hero* / *Change cover*: it
-takes the place of the card's fields, and the footer becomes *Cancel* / *Use
-this hero*. It shows a slot's candidates as a grid of previews, with a chip
-per style to filter by. The cached `art_candidates` show first; SteamGridDB's
-own pages (`POST .../artwork/candidates`) then replace its entries, in
-SteamGridDB's order, and more pages load as the grid scrolls near the end. So
-`steamgriddb.nsfw` applies the next time the picker opens, with no metadata
-refetch. The frontend has no HTTP client for the open
-internet, so mirad fetches the previews (`POST .../artwork/thumbs`, up to 64
-ids) and the panel reads each one back once `game.artwork_thumbs_ready` names
-it. Only what is on screen, plus a screen ahead, is asked for; scrolling or
-filtering asks for more. Previews stay cached while the card is open, so
-switching slots is instant; mirad's copies are deleted when the GUI quits
-(`MiradClient::ClearArtThumbsBlocking` in `closeEvent`). Art SteamGridDB marks
-adult gets an *NSFW* badge.
+| Endpoints | Where |
+|---|---|
+| `GET /v1/health` | Online/Offline badge |
+| `GET /v1/games`, `GET`/`PATCH /v1/games/{id}` | Library views, `ui/GameEditForm` |
+| `DELETE /v1/games/{id}` | `DeleteGameDialog` |
+| `GET`/`PATCH /v1/games/{id}/config` | `OverridesEditor` |
+| `POST /v1/games/{id}/launch`, `/stop` | Play/Stop, double-click, context menu |
+| `POST /v1/games/manual` | `AddManualGameDialog` |
+| `POST /v1/games/{id}/run` | `RunInPrefixDialog` |
+| `GET /v1/games/{id}/installer`, `POST .../install`, `GET .../install/progress`, `POST .../finish-install` | `InstallGameDialog`, *Mark as installed*, `DownloadTracker` |
+| `POST /v1/games/{id}/tricks` | `WinetricksDialog` |
+| `GET /v1/games/{id}/log` | `LogViewerDialog` |
+| `POST /v1/games/{id}/relocate`, `/v1/library/relocate` | *Move to Mira's folders…* |
+| Metadata and artwork endpoints | `ArtworkStore`, `HoverCard`, `GameDetailPageDialog`, `ArtPickerPanel` |
+| `POST /v1/library/scan` | Startup and *Refresh library* |
+| `/v1/library`, `/v1/library/install`, `/update`, `/artwork` | `SourcePage` |
+| `/v1/{epic,gog,itch,amazon,humble}/*`, `/v1/launchers/*`, `/v1/sources/*` | `SourcePage`, `ItchCollectionsDialog` |
+| `POST /v1/steam/scan`, `/v1/lutris/import` | Steam and Lutris pages |
+| `/v1/desktop-entries/*` | `DesktopEntryImportDialog`, Settings |
+| `/v1/config`, `/v1/config/schema`, `/reset` | `SettingsPanel`, `OverridesEditor`, `RunnersPage` |
+| `/v1/runners/*` | `RunnersPage`, runner pickers |
+| `GET /v1/gamemode/status` | Settings |
+| `GET /v1/events` | `EventStream` |
 
-Clicking a preview only shows it: a hero behind the card (`HeroBackdrop`), a
-cover in the header's `CoverChip`. *Use* applies it (`POST
-.../artwork?type=`) and closes the picker; the preview stays up until the new
-art arrives, or reverts with a notice if the select fails.
-`LibraryWindow::HandleGameEvent` reacts to `game.artwork_selected` as it
-always has, so the grid tile follows too. A game with no candidates says so,
-with *Look again on SteamGridDB* (a metadata refresh). The *Art from* menu,
-shown when a `steamgriddb.api_key` is set, switches which SteamGridDB game the
-candidates come from.
+## Running against a dev daemon
 
-## Tests
-
-`mira_gui_tests` (`frontend/tests/`) is its own executable, not more files
-in the root's `tests/`. That target links `mira_core`, and a frontend test
-able to reach backend code could pass against an implementation the real
-`mira-gui` never talks to. This one links only Qt6::Core and the
-header-only third-party deps the client itself uses.
-
-It covers the layers with no event loop and no socket in them: the JSON
-mapping, the SSE payload parsers, the library sort order, and the pure
-client-side rules (runner dedupe, dotted-key expansion, the display-string
-round trip).
-Widgets are exercised against a real daemon instead — run one on its own
-socket and point the frontend at it:
+Run a separate daemon on its own socket and point the GUI at it:
 
 ```sh
 XDG_CONFIG_HOME=~/.mira-dev mirad --socket ~/.mira-dev/mirad.sock &
-MIRA_SOCKET=~/.mira-dev/mirad.sock build/frontend/mira-gui
+MIRA_SOCKET=~/.mira-dev/mirad.sock build/dev/frontend/mira-gui
 ```
 
-`$MIRA_SOCKET` is the same override `mirad --socket` takes. Without it a
-daemon started without that `XDG_CONFIG_HOME` binds the default socket path
-and silently takes over the one a sandboxed daemon was already serving,
-since `XDG_CONFIG_HOME` separates config but never the socket. The window
-footer shows the socket actually in use, so which daemon you are talking to
-is visible rather than assumed.
-
-## Not built yet
-
-Nothing outstanding right now: winetricks (`WinetricksDialog`), runner
-delete (`RunnersPage`), the wider game detail page
-(`GameDetailPageDialog`), the per-game log viewer (`LogViewerDialog`), a
-GameMode status indicator (Settings, Launching category), manual single-game
-add (`AddManualGameDialog`), the desktop-entries import picker
-(`DesktopEntryImportDialog` — this is now how a Flatpak app gets added, since
-the Flatpak runner itself was removed backend-side) and the `delete_metadata`
-remove-game option are all in.
+`XDG_CONFIG_HOME` only separates config, not the socket, so without `--socket` the dev daemon would take over the default one. The window footer shows which socket is in use.

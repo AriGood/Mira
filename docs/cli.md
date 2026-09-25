@@ -1,382 +1,183 @@
-# `mira` — command-line client
+# `mira` command-line client
 
-`mira` is a **pure REST client over the same Unix socket the frontend
-uses** — identical endpoints, identical JSON, no direct access to
-`settings.toml`/`games.toml`, no shortcut `mirad` doesn't also expose. See
-`docs/architecture.md` for why that's a deliberate constraint rather than
-an oversight: this CLI is the first consumer of the frontend's API, so a
-missing field or an awkward endpoint shows up here first, while it's still
-cheap to fix.
-
-Every command below talks to `mirad` over `$XDG_RUNTIME_DIR/mira/mirad.sock`
-(or whatever `socket_path` is set to); nothing works without a running
-daemon except `mira daemon` itself, which starts one.
+`mira` is a REST client over the same Unix socket and API the GUI uses (see [`api.md`](api.md)). It never reads `settings.toml` or `games.toml` itself. Every command except `daemon` and `setup` needs a running `mirad`.
 
 ```sh
 mirad &
 mira status
 ```
 
----
+## Daemon and install
 
-## `mira status`
-Checks whether `mirad` is reachable — `GET /v1/health`. Prints "mirad is
-running" or an error naming the socket path it tried and suggesting how to
-start the daemon (`systemctl --user status mirad` or just running `mirad`).
+### `mira status`
+`GET /v1/health`. Says whether `mirad` is reachable, or which socket it tried.
 
-## `mira daemon [args...]`
-Execs `mirad` (found next to this binary, or on `PATH`) with any given
-arguments, replacing the `mira` process. Not an API call — nothing is
-listening yet. Equivalent to just running `mirad` directly; exists mainly
-so `mira daemon` is discoverable from the one tool a new user
-already knows to reach for.
+### `mira daemon [args...]`
+Execs `mirad` (next to `mira` or on `PATH`) with the given arguments.
 
-## `mira setup [--enable-service] [--remove|--uninstall]`
-Local, no API call. Run from the AppImage (`./Mira-x86_64.AppImage setup`).
-Writes a `~/.local/bin/mira` wrapper (plus `mirad`/`mira-run` links) that
-runs the binaries bundled in the AppImage, a desktop entry with an
-"Uninstall Mira" action, the icon, and a systemd user unit.
-`--enable-service` also enables the unit. `--remove` undoes it all;
-`--uninstall` also asks for confirmation and deletes the AppImage. Games,
-settings and prefixes are never touched.
+### `mira setup [--enable-service] [--remove|--uninstall]`
+Run from the AppImage (`./Mira-x86_64.AppImage setup`). Writes a `~/.local/bin/mira` wrapper with `mirad` and `mira-run` links, a desktop entry with an "Uninstall Mira" action, the icon and a systemd user unit. `--enable-service` also enables the unit. `--remove` undoes all of it, and `--uninstall` also deletes the AppImage after asking. Games, settings and prefixes are never touched.
 
-## `mira scan`
-Triggers `POST /v1/library/scan` — walks every enabled library root right
-now rather than waiting for `mirad`'s own inotify watcher to notice.
-Prints the summary: `added: N  missing: N  restored: N`. Useful right
-after changing `library_roots`: the watcher starts watching a new root at
-once, but only this picks up what was already in it.
+### `mira watch`
+Tails `GET /v1/events` and prints each event as it arrives.
 
-## `mira list [--status S] [--tag T]`
-`GET /v1/games`, optionally filtered to one status
-(`setting_up | ready | broken | missing | needs_install`) and/or one tag.
-One line per game:
+## Library
+
+### `mira scan`
+`POST /v1/library/scan`. Scans every library root now and prints `added: N  missing: N  restored: N`. The watcher only reacts to changes, so run this after adding a root that already has games in it.
+
+### `mira list [--status S] [--tag T]`
+`GET /v1/games`, optionally filtered by status (`setting_up`, `ready`, `broken`, `missing`, `needs_install`) or tag.
+
 ```
 celeste                  ready      [unreviewed] Celeste
-hollow-knight             setting_up             Hollow Knight  (windows)
+hollow-knight            setting_up              Hollow Knight  (windows)
 ```
-`[unreviewed]` marks a game nobody has corrected since auto-setup — see
-`docs/api.md` on `confidence`/`reviewed`. Games tagged `hidden` are left
-out unless you pass `--tag hidden` explicitly — see `docs/api.md`'s Games
-section for the whole tags/hidden story.
 
-## `mira show <id> [--effective]`
-Without `--effective`: the full stored record for one game
-(`GET /v1/games/{id}`) — status, exe path, candidates the detector
-considered, everything. With `--effective`: `GET /v1/games/{id}/config`,
-every global setting as it resolves *for this specific game* (its own
-overrides, then `settings.toml`, then the built-in default), each tagged
-with which layer supplied it. Both print formatted JSON.
+`[unreviewed]` marks a game nobody has corrected since it was detected. Games tagged `hidden` are left out unless you pass `--tag hidden`.
 
-## `mira set <id> [flags...]`
-Corrects a game's configuration. Two independent kinds of flag, sent as two
-separate requests (only the ones you use fire):
+### `mira show <id> [--effective]`
+`GET /v1/games/{id}` as JSON. With `--effective`, `GET /v1/games/{id}/config` instead: every setting as it resolves for this game, with the layer that supplied it.
 
-| Flag | Goes to |
+### `mira set <id> [flags...]`
+Changes a game. Game fields and setting overrides go to separate endpoints:
+
+| Flag | Endpoint |
 |---|---|
-| `--name`, `--exe`, `--args`, `--runner kind:name`, `--data-dir`, `--env KEY=VALUE` (repeatable), `--tag NAME`/`--untag NAME` (repeatable) | `PATCH /v1/games/{id}` — the game's own fields |
-| `--override dotted.key=value` (repeatable), `--unset dotted.key` (repeatable) | `PATCH /v1/games/{id}/config` — this game's overrides of a global setting |
+| `--name`, `--exe`, `--args`, `--runner kind:name`, `--data-dir`, `--env KEY=VALUE`, `--tag NAME`, `--untag NAME` | `PATCH /v1/games/{id}` |
+| `--override dotted.key=value`, `--unset dotted.key` | `PATCH /v1/games/{id}/config` |
+
+`--env`, `--tag`, `--untag`, `--override` and `--unset` can repeat.
 
 ```sh
 mira set celeste --exe Celeste.exe --runner wine:system
 mira set celeste --override scan.max_depth=8
-mira set celeste --unset scan.max_depth        # back to inherited
-mira set celeste --tag hidden                  # leaves it out of `mira list` by default
-mira set celeste --untag hidden
+mira set celeste --unset scan.max_depth
+mira set celeste --tag hidden
 ```
-`--tag`/`--untag` edit the *current* tag set (fetching it first, since the
-API itself replaces the array wholesale — see `docs/api.md`) rather than
-requiring you to retype every tag the game already has.
-`--override`'s value is parsed as JSON first (so `8`, `true`, `"a string"`
-all work as typed), falling back to a bare string if it doesn't parse —
-`--override detect.name_match_bonus=4.5` and `--override runner_ref=foo`
-both do the right thing without quoting. Setting any game-field flag marks
-the game reviewed; overrides don't (they're a separate concern — see
-`docs/api.md`'s note on why the two endpoints are split).
 
-## `mira launch <id>` / `mira stop <id>`
-`POST /v1/games/{id}/launch` / `/stop`. For most games this is a normal
-tracked launch (crash detection, playtime). For a Steam-sourced game under
-the default `steam.launch_mode`, `launch` instead fires
-`steam://rungameid/<appid>` and returns immediately — see `docs/api.md`'s
-`/launch` entry for the full explanation of why that one case isn't
-tracked.
+`--tag` and `--untag` edit the current tags rather than replacing them. Override values are parsed as JSON and fall back to a plain string. Changing a game field marks the game reviewed; overrides don't.
 
-## `mira run <id> --exe PATH [--args ARGS]`
-`POST /v1/games/{id}/run` — runs an arbitrary exe inside this game's own
-prefix, tracked like a normal launch. Provisions a prefix first if it
-doesn't have one yet. This is how a `needs_install` game's installer
-actually gets run:
+### `mira add <install_path> <exe_path> [--name N] [--platform windows|native] [--installer]`
+`POST /v1/games/manual`. Adds a game from anywhere on disk. With `--installer` it is stored `needs_install`.
+
+### `mira remove <id> [--delete-files] [--delete-prefix] [--delete-metadata] [--purge]`
+`DELETE /v1/games/{id}`. Without flags only the library entry is removed. `--purge` does all three deletes. Files are only deleted when they are inside a library root or `prefix_root`.
+
+### `mira relocate <id>` / `mira library relocate`
+`POST /v1/games/{id}/relocate` / `POST /v1/library/relocate`. Moves a game's files and prefix into Mira's layout, named per `prefix_naming`.
+
+## Playing
+
+### `mira launch <id>` / `mira stop <id>`
+`POST /v1/games/{id}/launch` / `stop`. A Steam game under the default `steam.launch_mode` is started through `steam://rungameid/<appid>` and isn't tracked. A game left broken by a missing runner is provisioned again first.
+
+### `mira run <id> --exe PATH [--args ARGS]`
+`POST /v1/games/{id}/run`. Runs any executable in the game's prefix, creating the prefix first if needed. This is the manual way to run an installer:
+
 ```sh
-mira run my-game --exe UplayInstaller.exe   # run the installer
-mira set my-game --exe MyGame.exe            # point at what it produced
-mira finish-install my-game                  # mark it ready
+mira run my-game --exe UplayInstaller.exe
+mira set my-game --exe MyGame.exe
+mira finish-install my-game
 ```
 
-## `mira finish-install <id>`
-`POST /v1/games/{id}/finish-install` — the last step of the sequence
-above: flips a `needs_install`/`broken` game to `ready` once `exe_path` has
-been corrected. Fails if `exe_path` is empty, still the installer, or
-doesn't exist.
+### `mira install <id> [--interactive] [--installer PATH]`
+`POST /v1/games/{id}/install`. Runs a `needs_install` game's installer and marks it ready once the game executable is found. Inno Setup and NSIS run silently, anything else (or `--interactive`) is shown. `--installer` picks the installer by hand and also works for a `broken` game. `--info` shows the installer's path, size, format and silent arguments; `--progress` shows install progress.
 
-## `mira install <id> [--interactive] [--installer PATH]`
-`POST /v1/games/{id}/install` — runs a `needs_install` game's installer
-and marks it ready once the game exe is found. Inno Setup/NSIS run
-silently; anything else (or `--interactive`) opens so you can click
-through it. `--installer` picks the installer by hand (also works for a
-`broken` game).
-- `mira install <id> --info [--installer PATH]` — `GET .../installer`:
-  path, size, format, and the silent arguments.
-- `mira install <id> --progress` — `GET .../install/progress`.
+### `mira finish-install <id>`
+`POST /v1/games/{id}/finish-install`. Marks a `needs_install` or `broken` game ready once `exe_path` points at the installed game.
 
-## `mira relocate <id>` / `mira library relocate`
-`POST /v1/games/{id}/relocate` / `POST /v1/library/relocate` — move a
-game's files and prefix into Mira's layout (named per `prefix_naming`).
-Only ever runs when asked.
+### `mira tricks <id> <verb>`
+`POST /v1/games/{id}/tricks`. Runs a winetricks verb in the game's prefix in the background. Watch for `tricks.finished` or `tricks.failed`.
 
-## `mira remove <id> [--delete-files] [--delete-prefix]`
-`DELETE /v1/games/{id}`, with the matching query params if either flag is
-given. Without flags, only the `games.toml` entry is forgotten — files are
-only ever deleted if you ask for that explicitly, and only if they're
-really inside a configured `library_roots`/`prefix_root`.
+### `mira gamemode status`
+`GET /v1/gamemode/status`. Whether GameMode is installed and whether its daemon is reachable.
 
-## `mira steam scan`
-`POST /v1/steam/scan` — detects installed Steam apps and adds/updates them
-as ordinary games (`GET /v1/games`, `mira list`, `mira show` all work on
-one with no special-casing). Prints `added: N  updated: N`. Idempotent:
-rerunning it never duplicates an already-detected app.
+## Stores
 
-## `mira library [source]`
-`GET /v1/library` — what the account *owns* on each storefront, as opposed
-to what Mira tracks (`mira list`). Entitlements aren't stored in
-`games.toml`; they're read through live from each source. One line per
-title, marked `[installed]` when Mira already tracks it:
+### `mira library [source]`
+`GET /v1/library`. What each account owns, marked `[installed]` when Mira tracks it:
+
 ```
 epic     e8bbb84be35640cda646233152ff3428  [installed]  Brotato
 epic     d26da9e047e4440a80781f13a8b7c062               Botanicula
 ```
-`mira library epic` / `mira library steam` / `mira library gog` / `mira
-library itch` narrows it to one source. A source that isn't set up
-contributes nothing rather than erroring, so an empty listing means
-"nothing owned, or nothing configured" — each source's own `mira <source>
-status` tells the two apart. Steam needs `steam.web_api_key` +
-`steam.steamid64` to report anything here at all, since Steam's on-disk
-files only describe games that are already installed. Humble Bundle isn't
-part of this listing at all — see `mira humble library`.
 
-## `mira library install <source> <ref>` / `mira library update <source> <ref>`
-`POST /v1/library/install` — installs a title the account owns but Mira
-doesn't track yet. `<ref>` is the id `mira library` prints (Legendary's
-app_name, Steam's appid, GOG's/itch's numeric game id). Returns
-immediately; the download runs detached, so watch `mira watch` for
-`library.install.finished`. For Epic/GOG/itch this drives the source's own
-install tool and then imports and provisions the result; for Steam it
-hands off to the Steam client (`steam://install/<appid>`) and the game
-appears on the next `mira steam scan`. `update` works for
-Epic/GOG/itch — Steam updates its own games.
+A source that isn't set up lists nothing. Steam needs `steam.web_api_key` and `steam.steamid64` to list games that aren't installed.
 
-## `mira epic setup|status|login|logout|import`
-Epic Games Store support, via [Legendary](https://github.com/derrod/legendary).
-- `setup` — downloads Legendary's latest release binary into
-  `~/.config/mira/tools/legendary`. Re-run it to update. Needed once before
-  anything else here works.
-- `status` — whether Legendary is installed (and from where) and whether
-  it's authenticated, in one call. Safe before setup.
-- `login` — prints Epic's login URL, then reads back either the
-  `authorizationCode` or the whole JSON blob that page shows and pastes it
-  through to `legendary auth`. The interactive part lives here rather than
-  in `mirad`, which is headless and has no browser.
-- `logout` — `legendary auth --delete`.
-- `import` — adds already-installed Epic titles as ordinary games, tagged
-  `epic`. Prints `added: N  updated: N`. Titles that aren't installed stay
-  out of `games.toml` — see `mira library`.
+### `mira library install <source> <ref>` / `mira library update <source> <ref>`
+`POST /v1/library/install` / `update`. `<ref>` is the id `mira library` prints. The download runs in the background; watch for `library.install.finished`. Steam installs are handed to the Steam client and show up on the next `mira steam scan`. Steam updates its own games.
 
-Installing is deliberately not an `epic` subcommand: it's source-generic,
-so it lives under `mira library install epic <app_name>`.
+### `mira steam scan`
+`POST /v1/steam/scan`. Adds or updates installed Steam games and prints `added: N  updated: N`.
 
-## `mira gog setup|status|login|logout|import`
-GOG support, via [gogdl](https://github.com/Heroic-Games-Launcher/heroic-gogdl)
-(Heroic's own downloader — needs a system `python3`, unlike Legendary's
-self-contained binary). Same verb shape as `mira epic`, with one real
-difference: gogdl has no "list installed" command of its own, so `import`
-doesn't scan the whole system — it re-identifies whatever's already under
-`gog.install_root` (default `~/Games/GOG`), which is what `mira library
-install gog <id>` itself installs into. A GOG install living somewhere else
-isn't picked up.
-- `setup` — downloads gogdl's latest release into
-  `~/.config/mira/tools/gog/gogdl`.
-- `status` — whether gogdl is installed and whether Mira has a stored,
-  unexpired token (refreshed transparently if not).
-- `login` — prints GOG's login URL, reads back the `code` query param from
-  the redirect it shows.
-- `logout` — removes Mira's own stored token.
-- `import` — see above.
+### `mira lutris import`
+`POST /v1/lutris/import`. Imports games from Lutris's database.
 
-Installing is source-generic: `mira library install gog <id>`.
+### `mira epic setup|status|login|logout|import`
+Epic Games Store through [Legendary](https://github.com/derrod/legendary).
 
-## `mira itch setup|status|login|logout|import|collections`
-itch.io support, via [butlerd](https://itch.io/docs/butler/launcher-integration.html)
-— itch's own launcher-integration daemon, the one source here with a tool
-built specifically for third-party launchers. `mirad` keeps one `butler
-daemon` connection open for its whole run rather than spawning a fresh one
-per call; a change to `itch.butler_bin` only takes effect on `mirad`'s next
-restart.
-- `setup` — downloads butler's latest release into
-  `~/.config/mira/tools/itch/` (a zip — butler ships with shared libraries
-  that have to stay alongside the binary, not a bare file).
-- `status` — whether butler is installed and whether an API key is stored.
-- `login` — prompts for an API key from
-  [itch.io/user/settings/api-keys](https://itch.io/user/settings/api-keys)
-  (no login URL/code flow — itch keys don't expire).
-- `logout` — removes Mira's own stored key.
-- `import` — adds already-installed itch titles (butlerd's own `Fetch.
-  Caves`) as ordinary games, tagged `itch`.
-- `collections [list | add <link> | remove <id>]` — the collections whose
-  games show in `mira library itch`: your own, plus any added by link
-  (`https://itch.io/c/<id>/...`). Free games from them can be installed; paid
-  ones only once you own them.
+- `setup` downloads Legendary into `~/.config/mira/tools/legendary`. Run it again to update.
+- `status` shows whether Legendary is installed and logged in.
+- `login` prints Epic's login URL, then reads back the `authorizationCode` or the whole JSON the page shows.
+- `logout` logs out.
+- `import` adds installed Epic games, tagged `epic`.
 
-Installing is source-generic: `mira library install itch <id>`.
+### `mira gog setup|status|login|logout|import`
+GOG through [gogdl](https://github.com/Heroic-Games-Launcher/heroic-gogdl), which needs `python3`. Same verbs as `epic`. `login` reads back the `code` from the redirect URL. `import` only looks under `gog.install_root` (default `~/Games/GOG`).
 
-## `mira humble setup|status|login|library|download`
-Humble Bundle support, via [humble-cli](https://github.com/smbl64/humble-cli)
-(unofficial). Deliberately its own command family, not folded into `mira
-library` — Humble Bundle has no "installed" concept at all, just purchased
-bundles of downloadable files, so there's no install/update lifecycle to
-plug in there.
-- `setup` — downloads humble-cli's latest release.
-- `status` — whether humble-cli is installed and authenticated.
-- `login <session-key>` — the `_simpleauth_sess` cookie value from a
-  logged-in humblebundle.com browser session (documented in humble-cli's
-  own README) — no login URL to visit.
-- `library` — lists purchased bundles: key, claimed status, name.
-- `download <bundle-key> [item-numbers]` — downloads items from one bundle
-  (optionally narrowed, humble-cli's own "1,3,5-7" syntax) into
-  `<humble.download_root>/<bundle_key>/`. Returns immediately; watch `mira
-  watch` for `humble.download.finished`. Not auto-added as a game — a
-  downloaded item is an arbitrary archive/installer, not a provisioned
-  prefix; add it manually once it's landed (`mira add`, same as any other
-  manually-acquired game).
+### `mira itch setup|status|login|logout|import|collections`
+itch.io through [butler](https://itch.io/docs/butler/). `mirad` keeps one `butler daemon` connection open, so a change to `itch.butler_bin` needs a restart.
 
-## `mira amazon setup|status|login|logout|import`
-Amazon Games / Prime Gaming, via [nile](https://github.com/imLinguin/nile).
-- `setup` — downloads nile's latest release.
-- `status` — whether nile is installed and logged in.
-- `login` — prints an Amazon login URL, then asks for the amazon.com URL
-  the browser ends on.
-- `import` — adds games nile has installed.
+- `login` asks for an API key from [itch.io/user/settings/api-keys](https://itch.io/user/settings/api-keys).
+- `collections [list | add <link> | remove <id>]` manages the collections whose games show in `mira library itch`: your own plus any added by link. Free games from them can be installed.
 
-Install with `mira library install amazon <product id>`.
+### `mira amazon setup|status|login|logout|import`
+Amazon Games through [nile](https://github.com/imLinguin/nile). `login` prints a login URL, then asks for the amazon.com URL the browser ends on. Install with `mira library install amazon <product id>`.
 
-## `mira launcher list|install|import|open`
-Battle.net (`battlenet`), Ubisoft Connect (`ubisoft`) and the EA app (`ea`),
-each installed into its own prefix. See [the API](api.md#store-launchers).
-- `list` — each launcher and whether it's installed.
-- `install <id>` — sets up the prefix and installs the launcher, then
-  imports its games. Battle.net's installer is shown to click through.
-- `import <id>` — imports games installed through the launcher since.
-- `open <id> [--launch REF | --install REF]` — opens the launcher, or asks
-  it to launch or install a game by store id.
+### `mira humble setup|status|login|library|download`
+Humble Bundle through [humble-cli](https://github.com/smbl64/humble-cli). Humble has no installs, only downloads, so it isn't part of `mira library`.
 
-Imported games launch with `mira launch` like any other.
+- `login <session-key>` takes the `_simpleauth_sess` cookie from a logged-in browser.
+- `library` lists purchased bundles.
+- `download <bundle-key> [items]` downloads items (humble-cli's `1,3,5-7` syntax) into `<humble.download_root>/<bundle_key>/` in the background. Add the result with `mira add`.
 
-## `mira metadata <id> [--refresh | --matches [QUERY] | --wrong | --match N | --match-id ID]`
-`GET /v1/games/{id}/metadata` — prints the cached cover-art/store-info JSON
-(description, genres, release date, developers/publishers, price, Steam
-review summary, ProtonDB tier — see `docs/api.md`'s Metadata section for
-which fields come from where). `--refresh` instead calls `POST
-.../metadata/refresh` and returns immediately; watch `mira watch` for
-`game.metadata_ready`/`.metadata_failed`. Cover art itself has no CLI
-command — it's a binary image, only reachable via `GET
-/v1/games/{id}/artwork` directly.
+### `mira launcher list|install|import|open`
+Battle.net (`battlenet`), Ubisoft Connect (`ubisoft`) and the EA app (`ea`), each in its own prefix.
 
-`--matches` lists SteamGridDB's matches for the game's name, starred where
-the art comes from. `--wrong` says the art is for the wrong game and moves
-to the next match. `--match N` picks the Nth from that list (`0` goes back
-to the top match); `--match-id` takes a SteamGridDB id directly.
+- `install <id>` sets up the prefix, installs the launcher and imports its games.
+- `import <id>` imports games installed through the launcher since.
+- `open <id> [--launch REF | --install REF]` opens the launcher, or asks it to launch or install a game.
 
-## `mira runners`
-`GET /v1/runners` — every installed Proton/Wine build, one per line:
-```
-proton:GE-Proton11-7                    /home/x/.steam/steam/compatibilitytools.d/GE-Proton11-7-x86_64
-```
+### `mira desktop-entries list` / `import <id>...`
+`GET /v1/desktop-entries/candidates` / `POST /v1/desktop-entries/import`. Lists installed `.desktop` entries and adds the chosen ones as games.
 
-## `mira runners sources [proton|wine]`
-`GET /v1/runners/sources` — where builds download from (GE-Proton,
-Proton-CachyOS, UMU-Proton, Proton-EM, Proton-Sarek, Kron4ek's Wine
-staging-tkg/staging/vanilla, Wine-GE, Lutris Wine), preferred first.
+## Metadata
 
-## `mira runners catalog [--kind proton|wine] [--source ID]`
-`GET /v1/runners/catalog` — what's *available to download* from one source,
-marking what's installed. Hits the GitHub API (cached 10 minutes).
-Defaults to `--kind proton` and that kind's first source.
+### `mira metadata <id> [--refresh | --matches [QUERY] | --wrong | --match N | --match-id ID]`
+`GET /v1/games/{id}/metadata`. Prints the cached store info. `--refresh` fetches it again in the background. `--matches` lists SteamGridDB matches for the name, starred where the art comes from. `--wrong` moves to the next match, `--match N` picks one from the list (`0` is the top match) and `--match-id` takes a SteamGridDB id.
 
-## `mira runners download --kind proton|wine --tag TAG [--source ID]`
-`POST /v1/runners/download` — downloads and installs a build named in the
-catalog above (checksum-verified first when the release has one). Runs
-detached; the command returns immediately and says to watch `mira watch`
-for `runners.download.finished`/`.failed`.
+## Runners
 
-## `mira runners updates` / `mira runners update <kind:name>`
-`GET /v1/runners/updates` lists installed builds with a newer release in
-their source. `POST /v1/runners/update` installs it and moves the old
-build's games (and the default, if it was that build) onto it; the old
-build stays until removed.
+| Command | Endpoint | What it does |
+|---|---|---|
+| `mira runners` | `GET /v1/runners` | Installed Proton and Wine builds. |
+| `mira runners sources [proton\|wine]` | `GET /v1/runners/sources` | Where builds download from, preferred first. |
+| `mira runners catalog [--kind K] [--source ID]` | `GET /v1/runners/catalog` | Releases from one source, marking installed ones. Defaults to Proton and its first source. |
+| `mira runners download --kind K --tag TAG [--source ID]` | `POST /v1/runners/download` | Downloads and installs a release in the background. |
+| `mira runners updates` | `GET /v1/runners/updates` | Installed builds with a newer release. |
+| `mira runners update <kind:name>` | `POST /v1/runners/update` | Installs the newer release and moves games and the default onto it. The old build stays. |
+| `mira runners remove <kind:name>` | `DELETE /v1/runners/{kind}:{name}` | Removes a build. Only builds inside the search paths can be removed. |
+| `mira runners tools [install umu\|winetricks]` | `GET /v1/runners/tools` | Shows or installs umu-launcher and winetricks. |
+| `mira runners schema <kind>` | `GET /v1/runners/{kind}/schema` | What `runner_config` accepts for that kind. |
 
-## `mira runners tools [install umu|winetricks]`
-`GET /v1/runners/tools` — whether umu-launcher (needed for any Proton
-build) and winetricks are installed, and where. `install` fetches Mira's
-own copy into `~/.config/mira/tools`.
+## Settings
 
-## `mira runners schema <kind>`
-`GET /v1/runners/{kind}/schema` — what `game.runner_config` accepts for
-that kind (e.g. `gameid` for `proton`). `[]` for a kind with no fields.
+### `mira config get|set|list|reset`
 
-## `mira runners remove <kind:name>`
-`DELETE /v1/runners/{kind}:{name}` — the other half of `download`:
-uninstalls a build. Refuses anything not really inside
-`runner_search_paths`/`wine_search_paths` — the system wine, or a
-hand-edited path, can't be removed this way.
+- `get <key>` reads one setting by dotted key.
+- `set <key> <value>` sets one, parsing the value as JSON with a string fallback.
+- `list` prints every setting's key, type, scope and description.
+- `reset [key]` resets one setting or all of them.
 
-## `mira config get|set|list|reset`
-- `get <key>` — one value from `GET /v1/config` (dotted key, e.g.
-  `scan.debounce_ms`).
-- `set <key> <value>` — `PATCH /v1/config` with that one key. Value is
-  parsed as JSON first, same fallback-to-string rule as `--override` above.
-- `list` — every setting from `GET /v1/config/schema`: key, type, scope
-  (`global` or `per_game`), one-line doc. This is the whole settings reference; there's no need to
-  cross-reference `docs/api.md`'s schema section by hand.
-- `reset [key]` — `POST /v1/config/reset`, one key or everything.
-
-`get`/`set` work on frontend settings too, unvalidated: `mira config set
-frontend.theme dark` / `mira config get frontend.theme` reach into the
-opaque `frontend` table `GET`/`PATCH /v1/config` already carry (see
-`docs/api.md`'s Settings section) and land in `frontend.toml`, not
-`settings.toml` — arbitrary nesting works the same way `--override` does
-(`frontend.window.width 1200`). `list` won't show these keys, since it only
-enumerates the schema-registered ones — the frontend's settings shape is
-its own, not backend-validated.
-
-## `mira watch`
-Tails `GET /v1/events` (SSE) forever, printing each event as it arrives.
-Its entire implementation is a streaming `Get` that splits the response on
-blank lines — read `CmdWatch` in `src/cli/main.cpp` before implementing the
-frontend's equivalent; it's the whole pattern in about fifteen lines,
-including surviving an indefinitely long gap between events (the client's
-read timeout is set to a year, since `mirad` sends nothing at all while
-idle — see `docs/architecture.md` on why that's deliberate, not an
-oversight).
-
----
-
-## Not yet implemented
-
-`mira` has no `runners refresh` or per-runner schema command, because
-`GET /v1/runners/{kind}/schema` and `POST /v1/runners/refresh` don't exist
-yet either (`docs/api.md` marks them **planned** — the latter isn't needed
-today since `GET /v1/runners` already rediscovers on every call). There's
-also no equivalent of the old-plan `resetup` — a game stuck at
-`setting_up` is retried automatically on the next scan, and a
-`needs_install` game uses `mira install` (or `mira run` + `mira
-finish-install`) instead (see above), which cover the same need more precisely than a single
-"re-run everything from scratch" command would.
+Keys under `frontend.` go to `frontend.toml` unvalidated, for example `mira config set frontend.theme dark`. `list` doesn't show them.
