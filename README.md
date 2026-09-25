@@ -58,14 +58,15 @@ systemctl --user enable --now mirad.service
 ### Building an AppImage
 
 ```sh
-cmake --build build/dev --target appimage
+cmake --preset release
+cmake --build build/release --target appimage
 ```
 
-Produces `build/dev/Mira-x86_64.AppImage`, bundling `mirad`, `mira`, and
+Produces `build/release/Mira-x86_64.AppImage`, bundling `mirad`, `mira`, and
 `mira-gui` — the non-Arch install path the AUR `PKGBUILD` doesn't cover.
 Needs Qt6 (same as `run-gui` above) and `curl` on `PATH`; the packaging
 tools themselves (`linuxdeploy`, `linuxdeploy-plugin-qt`) are downloaded
-into `build/dev/appimage-tools/` on first use and cached there — nothing
+into `build/release/appimage-tools/` on first use and cached there — nothing
 is installed system-wide. See `cmake/AppImage.cmake` for the two real
 environment-specific workarounds it applies (a filtered Qt plugins
 directory, and `NO_STRIP=1`) and why they're there.
