@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(mira LANGUAGES CXX VERSION 0.9.0)
+project(mira LANGUAGES CXX VERSION 0.10.0)
 
 # Dependencies are header-only and vendored in third_party/, so a build needs
 # nothing fetched at configure time, and the only external dependency is the
@@ -10,7 +10,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 if(NOT CMAKE_BUILD_TYPE)
-  set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "" FORCE)
+  set(CMAKE_BUILD_TYPE Release CACHE STRING "" FORCE)
 endif()
 
 option(MIRA_ASAN "Build with AddressSanitizer + UBSan" OFF)
@@ -62,6 +62,7 @@ target_link_libraries(mira_core PUBLIC mira_third_party Threads::Threads)
 
 add_executable(mirad src/mirad_main.cpp)
 target_link_libraries(mirad PRIVATE mira_core mira_flags)
+target_compile_definitions(mirad PRIVATE MIRA_VERSION="${PROJECT_VERSION}")
 
 add_executable(mira src/cli/main.cpp)
 target_link_libraries(mira PRIVATE mira_core mira_flags)
