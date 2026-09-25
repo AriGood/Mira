@@ -118,8 +118,6 @@ protected:
   void mousePressEvent(QMouseEvent* event) override {
     if (event->button() == Qt::LeftButton && drag_select_enabled_) {
       drag_origin_ = event->pos() + Offset();
-      QListWidgetItem* pressed = itemAt(event->pos());
-      press_rect_ = pressed != nullptr ? visualItemRect(pressed).translated(Offset()) : QRect();
       drag_modifiers_ = event->modifiers();
       tracking_drag_ = true;
     }
@@ -188,13 +186,10 @@ private:
   void UpdateDrag() {
     const QPoint current = drag_pos_ + Offset();
     if (rubber_band_ == nullptr) {
-      // A press on a tile becomes a drag only once the cursor leaves that
-      // tile, so a click that wobbles a few pixels stays a click.
-      constexpr int kDragThreshold = 6;
-      const bool started = press_rect_.isValid()
-                               ? !press_rect_.contains(current)
-                               : (current - drag_origin_).manhattanLength() >= kDragThreshold;
-      if (!started) return;
+      // A click that wobbles a few pixels stays a click. Waiting for the
+      // cursor to leave the pressed tile instead made a drag started on a
+      // cover look dead until it crossed the whole tile.
+      if ((current - drag_origin_).manhattanLength() < QApplication::startDragDistance()) return;
       // A fresh drag replaces the selection unless it started with a
       // modifier held; either way, what's selected now is the floor a
       // shrinking rect won't clear again.
@@ -260,7 +255,6 @@ private:
   bool drag_select_enabled_ = true;
   bool tracking_drag_ = false;
   QPoint drag_origin_;  // content coordinates
-  QRect press_rect_;    // content coordinates; invalid for a press on empty space
   QPoint drag_pos_;     // viewport coordinates, last seen
   Qt::KeyboardModifiers drag_modifiers_;  // at the press
   QRubberBand* rubber_band_ = nullptr;
@@ -721,7 +715,8 @@ void LibraryWindow::LoadPrefs() {
       }
       UpdateFilterSortSummary();
     }
-    if (prefs.library_filter) {
+    // Not Hidden: opening on hidden games reads as the library being gone.
+    if (prefs.library_filter && *prefs.library_filter != "hidden") {
       const int row = FilterRow(QString::fromStdString(*prefs.library_filter));
       if (row >= 0) filters_->setCurrentRow(row);
     }
@@ -2906,13 +2901,14 @@ void LibraryWindow::RefreshRecentlyPlayed() {
     if (item->widget() != nullptr) item->widget()->deleteLater();
     delete item;
   }
-  // Every running game, then up to recent_count_ others by last played.
+  // Every running game, then up to recent_count_ others by last played. A
+  // hidden game shows only while it runs, so it can still be stopped.
   std::vector<const mira_gui::GameSummary*> running;
   std::vector<const mira_gui::GameSummary*> played;
   for (const mira_gui::GameSummary& game : games_) {
     if (running_ids_.contains(game.id)) {
       running.push_back(&game);
-    } else if (game.last_played_at) {
+    } else if (game.last_played_at && !HasTag(game, "hidden")) {
       played.push_back(&game);
     }
   }

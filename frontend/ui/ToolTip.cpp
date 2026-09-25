@@ -5,14 +5,12 @@
 #include <QApplication>
 #include <QCursor>
 #include <QHelpEvent>
-#include <QLabel>
 #include <QMenu>
+#include <QPainter>
 #include <QPointer>
-#include <QVBoxLayout>
-
-#include <algorithm>
 
 #include "HoverCard.h"
+#include "Theme.h"
 
 namespace mira_gui::tooltip {
 namespace {
@@ -26,31 +24,35 @@ public:
     setAttribute(Qt::WA_TranslucentBackground);
     setAttribute(Qt::WA_ShowWithoutActivating);
     setAttribute(Qt::WA_TransparentForMouseEvents);
-    auto* layout = new QVBoxLayout(this);
-    layout->setContentsMargins(card::kPaddingX, card::kPaddingY - 3, card::kPaddingX, card::kPaddingY - 3);
-    label_ = new QLabel(this);
-    label_->setWordWrap(true);
-    layout->addWidget(label_);
   }
 
+  // Drawn, not a QLabel: a word-wrapped QLabel's heightForWidth can run a
+  // line or more past what it paints, leaving empty bands in the card.
   void ShowText(const QString& text, const QRect& anchor, bool beside) {
-    label_->setText(text);
-    label_->ensurePolished();
-    const QFontMetrics metrics(label_->font());
-    int natural = 0;
-    for (const QString& line : text.split('\n')) natural = std::max(natural, metrics.horizontalAdvance(line));
-    const int width = std::min(natural + 2, kMaxWidth);
-    label_->setFixedSize(width, label_->heightForWidth(width));
-    adjustSize();
+    text_ = text;
+    ensurePolished();
+    const QRect text_rect =
+        fontMetrics().boundingRect(QRect(0, 0, kMaxWidth, 100000), Qt::TextWordWrap, text_);
+    text_size_ = text_rect.size();
+    setFixedSize(text_size_.width() + 2 * card::kPaddingX, text_size_.height() + 2 * kPaddingY);
     move(card::Place(anchor, size(), beside));
+    update();
     show();
   }
 
 protected:
-  void paintEvent(QPaintEvent*) override { card::Paint(this); }
+  void paintEvent(QPaintEvent*) override {
+    card::Paint(this);
+    QPainter painter(this);
+    painter.setPen(theme::Current().text);
+    painter.drawText(QRect(QPoint(card::kPaddingX, kPaddingY), text_size_), Qt::TextWordWrap, text_);
+  }
 
 private:
-  QLabel* label_ = nullptr;
+  // A line of text needs less than a card's worth of padding.
+  static constexpr int kPaddingY = card::kPaddingY - 3;
+  QString text_;
+  QSize text_size_;
 };
 
 // QAction::toolTip() falls back to the action's text; only a tooltip that
