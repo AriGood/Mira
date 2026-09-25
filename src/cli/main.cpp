@@ -973,14 +973,55 @@ int CmdItchImport() {
   return 0;
 }
 
+int CmdItchCollections(int argc, char** argv) {
+  auto client = Connect();
+  const std::string_view action = argc > 0 ? argv[0] : "list";
+  if (action == "add" && argc > 1) {
+    auto res = client.Post("/v1/itch/collections", json{{"link", argv[1]}}.dump(), "application/json");
+    if (!Ok(res)) {
+      PrintError(res);
+      return 1;
+    }
+    const json added = json::parse(res->body);
+    std::printf("added %s (%lld games)\n", added.value("title", std::string()).c_str(),
+                added.value("games_count", 0LL));
+    return 0;
+  }
+  if (action == "remove" && argc > 1) {
+    auto res = client.Delete(std::format("/v1/itch/collections/{}", argv[1]));
+    if (!Ok(res)) {
+      PrintError(res);
+      return 1;
+    }
+    std::puts("removed");
+    return 0;
+  }
+  if (action != "list") {
+    std::fprintf(stderr, "usage: mira itch collections [list | add <link> | remove <id>]\n");
+    return 2;
+  }
+  auto res = client.Get("/v1/itch/collections");
+  if (!Ok(res)) {
+    PrintError(res);
+    return 1;
+  }
+  for (const json& collection : json::parse(res->body)) {
+    std::printf("%-10lld %-5s %4lld games  %s\n", collection.value("id", 0LL),
+                collection.value("own", false) ? "own" : "added", collection.value("games_count", 0LL),
+                collection.value("title", std::string()).c_str());
+  }
+  return 0;
+}
+
 int CmdItch(int argc, char** argv) {
   if (argc > 0 && std::string_view(argv[0]) == "setup") return CmdItchSetup();
   if (argc > 0 && std::string_view(argv[0]) == "status") return CmdItchStatus();
   if (argc > 0 && std::string_view(argv[0]) == "login") return CmdItchLogin();
   if (argc > 0 && std::string_view(argv[0]) == "logout") return CmdItchLogout();
   if (argc > 0 && std::string_view(argv[0]) == "import") return CmdItchImport();
+  if (argc > 0 && std::string_view(argv[0]) == "collections") return CmdItchCollections(argc - 1, argv + 1);
   std::fprintf(stderr,
-              "usage: mira itch setup|status|login|logout|import\n"
+              "usage: mira itch setup|status|login|logout|import|collections\n"
               "       (installing is source-generic: mira library install itch <id>)\n");
   return 2;
 }

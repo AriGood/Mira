@@ -37,6 +37,7 @@
 #include "gog/GogInstaller.h"
 #include "humble/Humble.h"
 #include "itch/Itch.h"
+#include "library/SourceRemoval.h"
 #include "itch/ItchImporter.h"
 #include "itch/ItchInstaller.h"
 #include "launchers/Launchers.h"
@@ -275,6 +276,14 @@ WrapperStatus ReadWrapperStatus(int fd, int timeout_s) {
   return result;
 }
 
+json CollectionJson(const itch::ItchCollection& collection) {
+  return {{"id", collection.id},
+          {"title", collection.title},
+          {"games_count", collection.games_count},
+          {"own", collection.own},
+          {"url", std::format("https://itch.io/c/{}", collection.id)}};
+}
+
 // Same check GET /v1/games/{id}/artwork's default "cover" slot uses to
 // decide between serving a file and 404ing — reused here so "missing
 // artwork" means the same thing to both endpoints.
@@ -325,24 +334,7 @@ void SyncDesktopEntries(config::Config& config, store::GameStore& games) {
 // symlinked target is resolved with weakly_canonical before the containment
 // check, so a symlink can't be used to delete outside a root either.
 Result<void> DeleteUnderRoot(const std::string& target, const std::vector<std::filesystem::path>& roots) {
-  if (target.empty()) return Err("nothing_to_delete", "this game has no such path recorded");
-  std::error_code ec;
-  const std::filesystem::path resolved = std::filesystem::weakly_canonical(target, ec);
-  if (ec) return Err("path_error", ec.message());
-
-  const bool contained = std::ranges::any_of(roots, [&](const std::filesystem::path& root) {
-    const std::filesystem::path canon_root = std::filesystem::weakly_canonical(root, ec);
-    if (ec) return false;
-    const auto [root_end, nothing] = std::mismatch(canon_root.begin(), canon_root.end(), resolved.begin());
-    return root_end == canon_root.end();
-  });
-  if (!contained) {
-    return Err("path_outside_root", std::format("\"{}\" is not inside a configured root — refusing to delete", target));
-  }
-
-  std::filesystem::remove_all(resolved, ec);
-  if (ec) return Err("delete_failed", ec.message());
-  return {};
+  return library::DeleteInside(target, roots);
 }
 
 }  // namespace
@@ -1154,6 +1146,51 @@ void Server::RegisterRoutes() {
     SendJson(res, {{"added", summary->added}, {"updated", summary->updated}});
   });
 
+  // --- sources --------------------------------------------------------------
+
+  http_->Get(R"(/v1/sources/([a-z]+)/removal)", [this](const Request& req, Response& res) {
+    auto plan = library::PlanRemoval(config_, games_, req.matches[1].str());
+    if (!plan) return SendError(res, 404, plan.error().code, plan.error().message);
+    json games = json::array();
+    for (const library::RemovalGame& game : plan->games) {
+      games.push_back({{"id", game.id}, {"name", game.name}, {"deletes", game.deletes}});
+    }
+    SendJson(res, {{"source", plan->source},
+                   {"games", games},
+                   {"launcher_dir", plan->launcher_dir},
+                   {"kept", plan->kept},
+                   {"signs_out", plan->signs_out}});
+  });
+
+  http_->Post(R"(/v1/sources/([a-z]+)/remove)", [this](const Request& req, Response& res) {
+    auto removed = library::RemoveSource(config_, games_, events_, req.matches[1].str());
+    if (!removed) return SendError(res, 404, removed.error().code, removed.error().message);
+    SyncDesktopEntries(config_, games_);
+    SendJson(res, {{"removed", removed->removed}, {"problems", removed->problems}});
+  });
+
+  http_->Get("/v1/itch/collections", [this](const Request&, Response& res) {
+    auto collections = itch::ListCollections(config_);
+    if (!collections) return SendError(res, 400, collections.error().code, collections.error().message);
+    json out = json::array();
+    for (const itch::ItchCollection& collection : *collections) out.push_back(CollectionJson(collection));
+    SendJson(res, std::move(out));
+  });
+
+  http_->Post("/v1/itch/collections", [this](const Request& req, Response& res) {
+    const json body = json::parse(req.body, nullptr, false);
+    if (!body.is_object() || !body.contains("link") || !body["link"].is_string()) {
+      return SendError(res, 400, "invalid_body", R"(expected {"link": "https://itch.io/c/<id>/..."})");
+    }
+    auto added = itch::AddCollection(config_, body["link"].get<std::string>());
+    if (!added) return SendError(res, 400, added.error().code, added.error().message);
+    SendJson(res, CollectionJson(*added), 201);
+  });
+
+  http_->Delete(R"(/v1/itch/collections/(\d+))", [this](const Request& req, Response& res) {
+    SendResult(res, itch::RemoveCollection(config_, std::stoll(req.matches[1].str())));
+  });
+
   // --- humble -------------------------------------------------------------
   //
   // Wraps humble-cli (unofficial). Deliberately outside the
@@ -1273,7 +1310,8 @@ void Server::RegisterRoutes() {
                      {"title", entry.title},
                      {"installed", entry.installed},
                      {"game_id", entry.game_id},
-                     {"play_seconds", entry.play_seconds}});
+                     {"play_seconds", entry.play_seconds},
+                     {"owned", entry.owned}});
     }
     SendJson(res, std::move(out));
   });

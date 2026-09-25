@@ -28,9 +28,11 @@ QString RunningText(const DownloadTracker::Entry& entry) {
     case Kind::Game:
       return entry.bytes > 0 ? "Installing… " + QLocale().formattedDataSize(entry.bytes) + " written"
                              : QString("Installing…");
-    case Kind::Title:
-      if (entry.update) return "Updating…";
-      return entry.source == "steam" ? "Handing to Steam…" : "Installing…";
+    case Kind::Title: {
+      if (entry.source == "steam" && !entry.update) return "Handing to Steam…";
+      const QString verb = entry.update ? "Updating…" : "Installing…";
+      return entry.progress >= 0 ? QString("%1 %2%").arg(verb).arg(qRound(entry.progress * 100)) : verb;
+    }
     case Kind::Launcher: return "Installing…";
     default: return "Downloading…";
   }
@@ -184,9 +186,14 @@ QWidget* DownloadsPanel::BuildRow(int index) {
   text->addWidget(status);
 
   if (entry.state == State::Running) {
-    // No total from mirad for any of these, so it can only say "busy".
+    // Busy unless the source reports how far along it is.
     auto* bar = new QProgressBar(row);
-    bar->setRange(0, 0);
+    if (entry.progress >= 0) {
+      bar->setRange(0, 100);
+      bar->setValue(qRound(entry.progress * 100));
+    } else {
+      bar->setRange(0, 0);
+    }
     bar->setTextVisible(false);
     bar->setFixedHeight(4);
     text->addWidget(bar);

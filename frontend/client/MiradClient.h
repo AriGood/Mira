@@ -106,6 +106,9 @@ public:
   // enough to just wait for, and the short timeout below means an
   // unreachable daemon cannot turn quitting into a hang.
   static PatchConfigResult SaveFrontendPrefsBlocking(const FrontendPrefs& prefs);
+  // For the window's size before it's first shown, so the compositor places
+  // it at its real size.
+  static FrontendPrefsResult GetFrontendPrefsBlocking();
 
   // GET /v1/games/{id}/artwork. Binary, not JSON, and a 404 is the ordinary
   // answer for a game nothing has been fetched for yet — see ArtworkResult.
@@ -301,6 +304,17 @@ public:
   static void QueueTitleArtworkAsync(QObject* context, const std::string& source,
                                      std::vector<StoreTitle> titles,
                                      std::function<void(StoreActionResult)> callback);
+  // GET /v1/sources/{id}/removal and POST /v1/sources/{id}/remove.
+  static void GetRemovalPlanAsync(QObject* context, const std::string& source,
+                                  std::function<void(RemovalPlanResult)> callback);
+  static void RemoveSourceAsync(QObject* context, const std::string& source,
+                                std::function<void(RemoveSourceResult)> callback);
+  // GET/POST /v1/itch/collections, DELETE /v1/itch/collections/{id}.
+  static void GetItchCollectionsAsync(QObject* context, std::function<void(ItchCollectionsResult)> callback);
+  static void AddItchCollectionAsync(QObject* context, const std::string& link,
+                                     std::function<void(StoreActionResult)> callback);
+  static void RemoveItchCollectionAsync(QObject* context, std::int64_t id,
+                                        std::function<void(StoreActionResult)> callback);
   static void GetHumbleLibraryAsync(QObject* context,
                                     std::function<void(HumbleLibraryResult)> callback);
   static void DownloadHumbleBundleAsync(QObject* context, const std::string& bundle_key,

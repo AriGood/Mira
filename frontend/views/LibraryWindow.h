@@ -10,6 +10,7 @@
 #include <QString>
 
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <set>
 #include <string>
@@ -18,9 +19,11 @@
 #include "../client/EventStream.h"
 #include "../client/Types.h"
 #include "../ui/ArtworkStore.h"
+#include "../dialogs/ManageSourcesDialog.h"
 #include "../ui/Shortcuts.h"
 
 class QLabel;
+class QMenu;
 class QLineEdit;
 class QGridLayout;
 class QListWidget;
@@ -135,7 +138,9 @@ private:
   void ShowHoverCardFor(const mira_gui::GameSummary& game, const QRect& anchor,
                         const QString& hint = QString());
   void ShowContextMenu(const QPoint& pos);
-  void ShowGameMenu(const std::string& id, const QPoint& global_pos);
+  // `extra` adds entries after Play (e.g. a store's Update).
+  void ShowGameMenu(const std::string& id, const QPoint& global_pos,
+                    const std::function<void(QMenu&)>& extra = nullptr);
   void ShowSidebarMenu(const QPoint& global_pos);
   void ShowSourceMenu(const mira_gui::SourceInfo& source, const QPoint& global_pos);
   // More than one tile selected — a reduced set of actions applied to all
@@ -180,6 +185,13 @@ private:
   void OpenManageSources();
   void RefreshRecentlyPlayed();
   void SetSourceHidden(const QString& id, bool hidden);
+  std::vector<QString> SourceOrder() const;
+  std::vector<ManageSourcesDialog::Entry> SourceEntries() const;
+  void MoveSourceBy(const QString& id, int delta);
+  void NoteImported(const QString& id);
+  // Moves `id` to just before the visible row `before` (end if -1).
+  void MoveSource(const QString& id, int before);
+  int SourceDropRow(int y) const;
   void OpenRunners();
   void OpenAbout();
   void OpenGameDetailPage(const std::string& id);
@@ -280,6 +292,13 @@ private:
   QList<QLabel*> source_counts_;
   QSet<QString> hidden_sources_;    // unticked "In sidebar"
   QSet<QString> disabled_sources_;  // <id>.enabled = false
+  std::vector<QString> source_order_;  // saved order; see SourceOrder()
+  QHash<QString, QString> source_account_;      // signed-in account, where a store says
+  QHash<QString, qint64> source_imported_at_;   // last import, unix seconds
+  QWidget* source_nav_container_ = nullptr;  // accepts source row drops
+  QWidget* source_drop_line_ = nullptr;
+  QPushButton* source_drag_row_ = nullptr;
+  QPoint source_drag_start_;
   QLabel* recent_heading_ = nullptr;
   QVBoxLayout* recent_layout_ = nullptr;
   static constexpr int kDefaultRecentCount = 3;

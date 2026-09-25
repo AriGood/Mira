@@ -449,6 +449,14 @@ Schema::Schema() {
                 "\"Hollow Knight\") or \"id\" (the GOG product id).",
          .constraint = OneOf({"title", "id"})});
 
+  s.Add({.key = "itch.collections",
+         .label = "Itch Collections",
+         .type = Type::StringArray,
+         .default_value = json::array(),
+         .doc = "itch.io collections added by link (ids or https://itch.io/c/<id>/... links), on top of "
+                "your own. Their games show on the itch page; a paid one you don't own can't be "
+                "installed."});
+
   s.Add({.key = "itch.install_root",
          .label = "Itch Install Dir",
          .type = Type::String,
@@ -747,6 +755,15 @@ Schema::Schema() {
 
   // --- Store launchers ------------------------------------------------------
   s.Section("Store Launchers");
+
+  for (const auto& [id, name] : {std::pair{"battlenet", "Battle.net"}, std::pair{"ubisoft", "Ubisoft Connect"},
+                                 std::pair{"ea", "EA app"}}) {
+    s.Add({.key = std::format("{}.enabled", id),
+           .label = std::format("Enable {}", name),
+           .type = Type::Bool,
+           .default_value = true,
+           .doc = std::format("Show {} in the sidebar and import its games. Removing it turns this off.", name)});
+  }
 
   s.Add({.key = "launchers.auto_import",
          .label = "Import Launcher Games on Scan",

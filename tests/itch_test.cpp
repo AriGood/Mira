@@ -152,3 +152,11 @@ TEST_CASE("Login stores the key once butlerd accepts it, and Status reflects it"
   REQUIRE(itch::Login(fixture.config, "good-key"));
   CHECK(itch::Status(fixture.config).authenticated);
 }
+
+TEST_CASE("ParseCollectionLink reads the id from each link form") {
+  CHECK(itch::ParseCollectionLink("https://itch.io/c/8213205/ex03s-collection") == 8213205);
+  CHECK(itch::ParseCollectionLink("itch.io/c/8213205") == 8213205);
+  CHECK(itch::ParseCollectionLink(" 8213205 ") == 8213205);
+  CHECK_FALSE(itch::ParseCollectionLink("https://noelcody.itch.io/moss-moss"));
+  CHECK_FALSE(itch::ParseCollectionLink(""));
+}

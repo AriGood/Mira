@@ -69,6 +69,13 @@ bool DownloadTracker::HandleEvent(const std::string& type, const std::string& da
   }
   StoreEvent store;
   if (!MiradClient::ParseStoreEvent(type, data, &store)) return false;
+  if (store.state == "progress") {
+    Entry& entry = Upsert(Kind::Title, QString::fromStdString(store.source), QString::fromStdString(store.ref));
+    entry.state = State::Running;
+    entry.progress = store.progress;
+    emit Changed(entry.key);
+    return true;
+  }
   if (!ToState(store.state, &state)) return true;
   const QString source = QString::fromStdString(store.source);
   const QString ref = QString::fromStdString(store.ref);
@@ -82,6 +89,7 @@ bool DownloadTracker::HandleEvent(const std::string& type, const std::string& da
   entry.state = state;
   entry.update = store.update;
   entry.error = QString::fromStdString(store.error);
+  if (state == State::Running) entry.progress = -1;
   const QString key = entry.key;
   if (kind == Kind::Title && NameFor(entry) == ref) ResolveNames(source);
   emit Changed(key);

@@ -17,6 +17,11 @@
 #include <QMouseEvent>
 #include <QWheelEvent>
 #include <QCloseEvent>
+#include <QDrag>
+#include <QMimeData>
+#include <QApplication>
+#include <QDropEvent>
+#include <QDateTime>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QEventLoop>
@@ -434,7 +439,20 @@ QLabel* AddTrailingLabel(QPushButton* row) {
 
 LibraryWindow::LibraryWindow(QWidget* parent) : QMainWindow(parent) {
   setWindowTitle("Mira");
-  resize(1180, 720);
+  // Sized and centered before the first show: resizing once shown grows the
+  // window from its top-left corner, off center.
+  QSize size(1180, 720);
+  const mira_gui::FrontendPrefsResult saved = mira_gui::MiradClient::GetFrontendPrefsBlocking();
+  if (saved.ok && saved.prefs.window_width && saved.prefs.window_height) {
+    size = QSize(*saved.prefs.window_width, *saved.prefs.window_height);
+  }
+  if (const QScreen* screen = QGuiApplication::primaryScreen()) {
+    const QRect available = screen->availableGeometry();
+    size = size.boundedTo(available.size());
+    setGeometry(QStyle::alignedRect(Qt::LeftToRight, Qt::AlignCenter, size, available));
+  } else {
+    resize(size);
+  }
   // Custom top bar takes over move/resize/minimize/maximize/close — no OS
   // decoration left.
   setWindowFlags(Qt::Window | Qt::FramelessWindowHint);
@@ -677,9 +695,6 @@ void LibraryWindow::LoadPrefs() {
     if (!result.ok) return;  // non-fatal: the built-in defaults are already applied
     const mira_gui::FrontendPrefs& prefs = result.prefs;
 
-    if (prefs.window_width && prefs.window_height) {
-      resize(*prefs.window_width, *prefs.window_height);
-    }
     if (prefs.tile_width) {
       // Through the slider so its range clamp and SetTileWidth's cache
       // invalidation both apply.
@@ -730,6 +745,14 @@ void LibraryWindow::LoadPrefs() {
     if (prefs.hidden_sources) {
       hidden_sources_.clear();
       for (const std::string& id : *prefs.hidden_sources) hidden_sources_.insert(QString::fromStdString(id));
+    }
+    if (prefs.source_imported_at) {
+      source_imported_at_.clear();
+      for (const auto& [id, at] : *prefs.source_imported_at) source_imported_at_[QString::fromStdString(id)] = at;
+    }
+    if (prefs.source_order) {
+      source_order_.clear();
+      for (const std::string& id : *prefs.source_order) source_order_.push_back(QString::fromStdString(id));
     }
     recent_count_ = prefs.sidebar_recent_count.value_or(kDefaultRecentCount);
     show_source_counts_ = prefs.sidebar_source_counts.value_or(true);
@@ -815,6 +838,69 @@ void LibraryWindow::changeEvent(QEvent* event) {
 }
 
 bool LibraryWindow::eventFilter(QObject* watched, QEvent* event) {
+  constexpr const char* kSourceMime = "application/x-mira-source";
+  if (auto* nav = qobject_cast<QPushButton*>(watched); nav != nullptr && source_navs_.contains(nav)) {
+    auto* mouse = static_cast<QMouseEvent*>(event);
+    if (event->type() == QEvent::MouseButtonPress && mouse->button() == Qt::LeftButton) {
+      source_drag_row_ = nav;
+      source_drag_start_ = mouse->position().toPoint();
+    } else if (event->type() == QEvent::MouseMove && source_drag_row_ == nav &&
+               (mouse->buttons() & Qt::LeftButton) &&
+               (mouse->position().toPoint() - source_drag_start_).manhattanLength() >=
+                   QApplication::startDragDistance()) {
+      const qsizetype index = source_navs_.indexOf(nav);
+      auto* mime = new QMimeData();
+      mime->setData(kSourceMime, mira_gui::AllSources()[index].id.toUtf8());
+      auto* drag = new QDrag(nav);
+      drag->setMimeData(mime);
+      drag->setPixmap(nav->grab());
+      drag->setHotSpot(source_drag_start_);
+      source_drag_row_ = nullptr;
+      nav->setDown(false);
+      drag->exec(Qt::MoveAction);
+      return true;
+    }
+  }
+  if (watched == source_nav_container_) {
+    const auto* drop = static_cast<QDropEvent*>(event);
+    switch (event->type()) {
+      case QEvent::DragEnter:
+      case QEvent::DragMove: {
+        if (!drop->mimeData()->hasFormat(kSourceMime)) return false;
+        event->accept();
+        const int row = SourceDropRow(drop->position().toPoint().y());
+        QWidget* anchor = nullptr;
+        for (QPushButton* nav : source_navs_) {
+          if (nav->isVisible() && source_nav_layout_->indexOf(nav) == row) anchor = nav;
+        }
+        int y = 0;
+        if (anchor != nullptr) {
+          y = anchor->geometry().top() - 2;
+        } else {
+          for (QPushButton* nav : source_navs_) {
+            if (nav->isVisible()) y = std::max(y, nav->geometry().bottom());
+          }
+        }
+        source_drop_line_->setGeometry(0, y, source_nav_container_->width(), 2);
+        source_drop_line_->show();
+        source_drop_line_->raise();
+        return true;
+      }
+      case QEvent::DragLeave:
+        source_drop_line_->hide();
+        return true;
+      case QEvent::Drop: {
+        source_drop_line_->hide();
+        if (!drop->mimeData()->hasFormat(kSourceMime)) return false;
+        const QString id = QString::fromUtf8(drop->mimeData()->data(kSourceMime));
+        MoveSource(id, SourceDropRow(drop->position().toPoint().y()));
+        event->accept();
+        return true;
+      }
+      default:
+        break;
+    }
+  }
   // Only the top bar's own empty background reaches here — a click on a
   // child control goes to that child instead.
   if (watched == top_bar_) {
@@ -1383,6 +1469,14 @@ QWidget* LibraryWindow::BuildSidebar() {
 
   source_nav_layout_ = new QVBoxLayout();
   source_nav_layout_->setSpacing(2);
+  // Rows drag to reorder; see eventFilter.
+  source_nav_container_ = nav_content;
+  nav_content->setAcceptDrops(true);
+  nav_content->installEventFilter(this);
+  source_drop_line_ = new QWidget(nav_content);
+  source_drop_line_->setFixedHeight(2);
+  source_drop_line_->setStyleSheet(QString("background: %1;").arg(mira_gui::theme::Current().accent.name()));
+  source_drop_line_->hide();
   for (const mira_gui::SourceInfo& source : mira_gui::AllSources()) {
     auto* nav = new QPushButton(source.name, nav_content);
     nav->setFlat(true);
@@ -1393,6 +1487,7 @@ QWidget* LibraryWindow::BuildSidebar() {
     nav->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(nav, &QWidget::customContextMenuRequested, this,
             [this, nav, source](const QPoint& pos) { ShowSourceMenu(source, nav->mapToGlobal(pos)); });
+    nav->installEventFilter(this);
     source_nav_layout_->addWidget(nav);
     source_navs_.append(nav);
   }
@@ -1491,6 +1586,14 @@ QWidget* LibraryWindow::BuildGrid() {
     const std::string id = item->data(mira_gui::GameTileDelegate::IdRole).toString().toStdString();
     const std::string status =
         item->data(mira_gui::GameTileDelegate::StatusRole).toString().toStdString();
+    // A game that still needs installing installs instead.
+    if (status == "needs_install" && InstallText(id).isEmpty()) {
+      const mira_gui::GameSummary* game = FindGame(id);
+      if (game != nullptr) {
+        mira_gui::actions::Install(this, id, game->install_path, QString::fromStdString(game->name));
+      }
+      return;
+    }
     // Same rule as the context menu's Play entry and the Enter shortcut: a
     // game that isn't ready has nothing to launch, and /launch would just
     // 409. Stop needs no such guard — running_ids_ already reflects reality.
@@ -1690,6 +1793,8 @@ bool LibraryWindow::MatchesFilter(const mira_gui::GameSummary& game) const {
 }
 
 bool LibraryWindow::MatchesFilterKey(const mira_gui::GameSummary& game, const QString& key) const {
+  // Store launchers (Battle.net, ...) live on their source pages, not here.
+  if (game.source == "launcher") return false;
   if (key == "hidden") return HasTag(game, "hidden");
   // Every other filter excludes a hidden game — "not displayed by default"
   // means not in "All games" either, not just off the initial screen.
@@ -1866,7 +1971,8 @@ void LibraryWindow::ShowContextMenu(const QPoint& pos) {
                grid_->viewport()->mapToGlobal(pos));
 }
 
-void LibraryWindow::ShowGameMenu(const std::string& id, const QPoint& global_pos) {
+void LibraryWindow::ShowGameMenu(const std::string& id, const QPoint& global_pos,
+                                 const std::function<void(QMenu&)>& extra) {
   const mira_gui::GameSummary* current_game = FindGame(id);
   if (current_game == nullptr) return;
   const QString name = QString::fromStdString(current_game->name);
@@ -1876,6 +1982,7 @@ void LibraryWindow::ShowGameMenu(const std::string& id, const QPoint& global_pos
   QMenu menu(this);
   QAction* play = menu.addAction(running ? "Stop" : "Play");
   play->setEnabled(running || status == "ready");
+  if (extra) extra(menu);
   QAction* details = menu.addAction("Game settings…");
   QAction* folder = menu.addAction("Open install folder");
   QAction* more_details = menu.addAction("More details…");
@@ -2441,12 +2548,24 @@ void LibraryWindow::OpenSource(const mira_gui::SourceInfo& source) {
   source_page_->SetGames(games_, running_ids_);
   source_page_->setProperty("source_id", source.id);
   connect(source_page_, &mira_gui::SourcePage::BackRequested, this, &LibraryWindow::CloseSource);
-  connect(source_page_, &mira_gui::SourcePage::LibraryChanged, this, &LibraryWindow::RefreshGames);
+  connect(source_page_, &mira_gui::SourcePage::LibraryChanged, this, [this, id = source.id] {
+    NoteImported(id);
+    RefreshGames();
+  });
   connect(source_page_, &mira_gui::SourcePage::OpenSettingsRequested, this,
           [this](const QString& key) { OpenSettings(key); });
   connect(source_page_, &mira_gui::SourcePage::OpenGameRequested, this,
           [this](const QString& id) { OpenGameDialog(id.toStdString()); });
   // Same rule as the grid's double-click: only a ready game has anything to launch.
+  connect(source_page_, &mira_gui::SourcePage::GameMenuRequested, this,
+          [this](const QString& id, const QPoint& pos, const QString& update_ref) {
+            mira_gui::SourcePage* page = source_page_;
+            ShowGameMenu(id.toStdString(), pos, [page, update_ref](QMenu& menu) {
+              if (update_ref.isEmpty() || page == nullptr) return;
+              QObject::connect(menu.addAction("Update"), &QAction::triggered, page,
+                               [page, update_ref] { page->UpdateTitle(update_ref); });
+            });
+          });
   connect(source_page_, &mira_gui::SourcePage::PlayRequested, this, [this](const QString& id) {
     const mira_gui::GameSummary* game = FindGame(id.toStdString());
     if (game == nullptr) return;
@@ -2579,6 +2698,7 @@ void LibraryWindow::RefreshSourceNavs() {
     mira_gui::MiradClient::GetStoreStatusAsync(
         this, id.toStdString(), [this, id](mira_gui::StoreStatusResult status) {
           source_ready_[id] = status.ok && status.authenticated;
+          source_account_[id] = QString::fromStdString(status.account);
           UpdateSourceNavs();
         });
   }
@@ -2604,24 +2724,108 @@ void LibraryWindow::UpdateSourceNavs() {
     source_navs_[i]->setVisible(ready && !hidden_sources_.contains(id) && !disabled_sources_.contains(id));
     source_counts_[i]->setText(show_source_counts_ ? QString::number(games) : QString());
   }
+  int row = 0;
+  for (const QString& id : SourceOrder()) {
+    for (int i = 0; i < static_cast<int>(sources.size()); ++i) {
+      if (sources[i].id != id) continue;
+      source_nav_layout_->removeWidget(source_navs_[i]);
+      source_nav_layout_->insertWidget(row++, source_navs_[i]);
+    }
+  }
   UpdateLibraryNavActive();
 }
 
-void LibraryWindow::OpenManageSources() {
+std::vector<ManageSourcesDialog::Entry> LibraryWindow::SourceEntries() const {
   std::map<std::string, int> counts;
   for (const mira_gui::GameSummary& game : games_) ++counts[game.source];
   std::vector<ManageSourcesDialog::Entry> entries;
-  for (const mira_gui::SourceInfo& source : mira_gui::AllSources()) {
-    const auto count = counts.find(source.id.toStdString());
+  for (const QString& id : SourceOrder()) {
+    const auto source = std::ranges::find(mira_gui::AllSources(), id, &mira_gui::SourceInfo::id);
+    const auto count = counts.find(id.toStdString());
     const int games = count == counts.end() ? 0 : count->second;
-    entries.push_back({.source = source,
-                       .ready = games > 0 || source_ready_.value(source.id, false),
+    entries.push_back({.source = *source,
+                       .ready = games > 0 || source_ready_.value(id, false),
+                       .enabled = !disabled_sources_.contains(id),
                        .games = games,
-                       .in_sidebar = !hidden_sources_.contains(source.id)});
+                       .in_sidebar = !hidden_sources_.contains(id),
+                       .account = source_account_.value(id).toStdString(),
+                       .imported_at = source_imported_at_.value(id, 0)});
   }
-  ManageSourcesDialog dialog(entries, this);
+  return entries;
+}
+
+void LibraryWindow::NoteImported(const QString& id) {
+  source_imported_at_[id] = QDateTime::currentSecsSinceEpoch();
+  mira_gui::FrontendPrefs prefs;
+  std::map<std::string, std::int64_t> imported;
+  for (auto it = source_imported_at_.cbegin(); it != source_imported_at_.cend(); ++it) {
+    imported[it.key().toStdString()] = it.value();
+  }
+  prefs.source_imported_at = std::move(imported);
+  mira_gui::MiradClient::SaveFrontendPrefsAsync(this, prefs, [](mira_gui::PatchConfigResult) {});
+}
+
+void LibraryWindow::MoveSourceBy(const QString& id, int delta) {
+  // Among sources of the same kind, as the dialog groups them.
+  const auto kind_of = [](const QString& source_id) {
+    return std::ranges::find(mira_gui::AllSources(), source_id, &mira_gui::SourceInfo::id)->kind;
+  };
+  std::vector<QString> order = SourceOrder();
+  const auto at = std::ranges::find(order, id);
+  if (at == order.end()) return;
+  auto neighbour = at;
+  do {
+    if (delta < 0 && neighbour == order.begin()) return;
+    neighbour += delta < 0 ? -1 : 1;
+    if (neighbour == order.end()) return;
+  } while (kind_of(*neighbour) != kind_of(id));
+  std::iter_swap(at, neighbour);
+  source_order_ = order;
+  UpdateSourceNavs();
+  mira_gui::FrontendPrefs prefs;
+  std::vector<std::string> ids;
+  for (const QString& source : order) ids.push_back(source.toStdString());
+  prefs.source_order = std::move(ids);
+  mira_gui::MiradClient::SaveFrontendPrefsAsync(this, prefs, [](mira_gui::PatchConfigResult) {});
+}
+
+void LibraryWindow::OpenManageSources() {
+  ManageSourcesDialog dialog(this);
+  dialog.SetEntries(SourceEntries());
+  const auto refresh = [this, &dialog] { dialog.SetEntries(SourceEntries()); };
   connect(&dialog, &ManageSourcesDialog::SidebarToggled, this,
           [this](const QString& id, bool shown) { SetSourceHidden(id, !shown); });
+  connect(&dialog, &ManageSourcesDialog::EnabledToggled, this, [this, refresh](const QString& id, bool on) {
+    if (on) {
+      disabled_sources_.remove(id);
+    } else {
+      disabled_sources_.insert(id);
+    }
+    UpdateSourceNavs();
+    refresh();
+    const mira_gui::ConfigEdit edit{(id + ".enabled").toStdString(), "a boolean", on ? "true" : "false"};
+    mira_gui::MiradClient::PatchConfigAsync(this, {edit}, [this](mira_gui::PatchConfigResult result) {
+      if (!result.ok) mira_gui::notify::Failed(this, "Could not change that source.", QString::fromStdString(result.error));
+      RefreshSourceNavs();
+    });
+  });
+  connect(&dialog, &ManageSourcesDialog::MoveRequested, this, [this, refresh](const QString& id, int delta) {
+    MoveSourceBy(id, delta);
+    refresh();
+  });
+  connect(&dialog, &ManageSourcesDialog::Imported, this, [this](const QString& id) {
+    NoteImported(id);
+    RefreshGames();
+  });
+  connect(&dialog, &ManageSourcesDialog::Removed, this, [this, refresh](const QString& id) {
+    disabled_sources_.insert(id);
+    source_ready_[id] = false;
+    std::erase_if(games_, [&id](const mira_gui::GameSummary& game) { return QString::fromStdString(game.source) == id; });
+    UpdateSourceNavs();
+    refresh();
+    RefreshGames();
+    RefreshSourceNavs();
+  });
   QString open_id;
   connect(&dialog, &ManageSourcesDialog::OpenRequested, this, [&open_id](const QString& id) { open_id = id; });
   dialog.exec();
@@ -2629,6 +2833,55 @@ void LibraryWindow::OpenManageSources() {
   for (const mira_gui::SourceInfo& source : mira_gui::AllSources()) {
     if (source.id == open_id) OpenSource(source);
   }
+}
+
+std::vector<QString> LibraryWindow::SourceOrder() const {
+  std::vector<QString> order;
+  for (const QString& id : source_order_) {
+    const bool known = std::ranges::any_of(mira_gui::AllSources(),
+                                           [&id](const mira_gui::SourceInfo& source) { return source.id == id; });
+    if (known && std::ranges::find(order, id) == order.end()) order.push_back(id);
+  }
+  for (const mira_gui::SourceInfo& source : mira_gui::AllSources()) {
+    if (std::ranges::find(order, source.id) == order.end()) order.push_back(source.id);
+  }
+  return order;
+}
+
+int LibraryWindow::SourceDropRow(int y) const {
+  // The layout row of the first visible source whose middle is below `y`.
+  int best = -1;
+  int best_top = 0;
+  for (QPushButton* nav : source_navs_) {
+    if (!nav->isVisible() || y >= nav->geometry().center().y()) continue;
+    if (best == -1 || nav->geometry().top() < best_top) {
+      best = source_nav_layout_->indexOf(nav);
+      best_top = nav->geometry().top();
+    }
+  }
+  return best;
+}
+
+void LibraryWindow::MoveSource(const QString& id, int before) {
+  std::vector<QString> order = SourceOrder();
+  QString before_id;
+  if (before >= 0) {
+    if (auto* nav = qobject_cast<QPushButton*>(source_nav_layout_->itemAt(before)->widget())) {
+      before_id = mira_gui::AllSources()[source_navs_.indexOf(nav)].id;
+    }
+  }
+  if (before_id == id) return;
+  std::erase(order, id);
+  const auto at = before_id.isEmpty() ? order.end() : std::ranges::find(order, before_id);
+  order.insert(at, id);
+  source_order_ = order;
+  UpdateSourceNavs();
+
+  mira_gui::FrontendPrefs prefs;
+  std::vector<std::string> ids;
+  for (const QString& source : order) ids.push_back(source.toStdString());
+  prefs.source_order = std::move(ids);
+  mira_gui::MiradClient::SaveFrontendPrefsAsync(this, prefs, [](mira_gui::PatchConfigResult) {});
 }
 
 void LibraryWindow::SetSourceHidden(const QString& id, bool hidden) {
@@ -2695,6 +2948,19 @@ void LibraryWindow::RefreshRecentlyPlayed() {
 void LibraryWindow::ShowSourceMenu(const mira_gui::SourceInfo& source, const QPoint& global_pos) {
   QMenu menu(this);
   QAction* open = menu.addAction("Open " + source.name);
+  // Neighbours among the visible rows, in their shown order.
+  std::vector<QPushButton*> shown;
+  for (int row = 0; row < source_nav_layout_->count(); ++row) {
+    auto* nav = qobject_cast<QPushButton*>(source_nav_layout_->itemAt(row)->widget());
+    if (nav != nullptr && nav->isVisible()) shown.push_back(nav);
+  }
+  QPushButton* self = source_navs_[std::ranges::find(mira_gui::AllSources(), source.id, &mira_gui::SourceInfo::id) -
+                                   mira_gui::AllSources().begin()];
+  const auto position = std::ranges::find(shown, self);
+  QAction* up = menu.addAction("Move up");
+  up->setEnabled(position != shown.end() && position != shown.begin());
+  QAction* down = menu.addAction("Move down");
+  down->setEnabled(position != shown.end() && position + 1 != shown.end());
   QAction* hide = menu.addAction("Hide from sidebar");
   menu.addSeparator();
   QAction* manage = menu.addAction("Manage sources…");
@@ -2702,6 +2968,10 @@ void LibraryWindow::ShowSourceMenu(const mira_gui::SourceInfo& source, const QPo
   QAction* chosen = menu.exec(global_pos);
   if (chosen == open) {
     OpenSource(source);
+  } else if (chosen == up) {
+    MoveSource(source.id, source_nav_layout_->indexOf(*(position - 1)));
+  } else if (chosen == down) {
+    MoveSource(source.id, position + 2 == shown.end() ? -1 : source_nav_layout_->indexOf(*(position + 2)));
   } else if (chosen == hide) {
     SetSourceHidden(source.id, true);
   } else if (chosen == manage) {

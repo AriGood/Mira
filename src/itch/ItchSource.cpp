@@ -41,13 +41,14 @@ Result<std::vector<library::CatalogEntry>> ItchSource::Catalog(const config::Con
   if (!profile_id) return std::unexpected(profile_id.error());
 
   std::unordered_set<std::int64_t> seen;
-  const auto add_entry = [&](std::int64_t game_id, const std::string& title) {
+  const auto add_entry = [&](std::int64_t game_id, const std::string& title, bool owned) {
     if (game_id == 0 || seen.contains(game_id)) return;
     seen.insert(game_id);
     library::CatalogEntry entry;
     entry.source = "itch";
     entry.ref = std::to_string(game_id);
     entry.title = title.empty() ? entry.ref : title;
+    entry.owned = owned;
     library::MarkTracked(games, entry);
     entries.push_back(std::move(entry));
   };
@@ -60,7 +61,7 @@ Result<std::vector<library::CatalogEntry>> ItchSource::Catalog(const config::Con
     // DownloadKey.game is optional per butlerd's own spec -- gameId is the
     // one field that's always there.
     const json& game = key.value("game", json::object());
-    add_entry(key.value("gameId", game.value("id", std::int64_t{0})), game.value("title", std::string()));
+    add_entry(key.value("gameId", game.value("id", std::int64_t{0})), game.value("title", std::string()), true);
   }
 
   // Bundle ownership is a separate model entirely (confirmed against
@@ -80,25 +81,24 @@ Result<std::vector<library::CatalogEntry>> ItchSource::Catalog(const config::Con
     if (!bundle_games) continue;  // one broken bundle shouldn't hide the rest
     for (const json& bundle_game : *bundle_games) {
       const json& game = bundle_game.value("game", json::object());
-      add_entry(bundle_game.value("gameId", game.value("id", std::int64_t{0})), game.value("title", std::string()));
+      add_entry(bundle_game.value("gameId", game.value("id", std::int64_t{0})), game.value("title", std::string()),
+                true);
     }
   }
 
-  // Free games saved to a collection have no download key. Paid games in a
-  // collection aren't owned, so only free ones count. Best effort.
-  if (const Result<std::vector<json>> collections =
-        FetchAllPages(config, "Fetch.ProfileCollections", {{"profileId", *profile_id}, {"fresh", true}})) {
-    for (const json& collection : *collections) {
-      const std::int64_t collection_id = collection.value("id", std::int64_t{0});
-      if (collection_id == 0) continue;
+  // Your own collections and the ones added by link. A free game (butlerd
+  // omits minPrice for those) can be downloaded without a key; a paid one is
+  // listed but not owned. Best effort.
+  if (const Result<std::vector<ItchCollection>> collections = ListCollections(config)) {
+    for (const ItchCollection& collection : *collections) {
       const Result<std::vector<json>> collection_games =
-        FetchAllPages(config, "Fetch.CollectionGames",
-                      {{"profileId", *profile_id}, {"collectionId", collection_id}, {"fresh", true}});
+        FetchAllPages(config, "Fetch.Collection.Games",
+                      {{"profileId", *profile_id}, {"collectionId", collection.id}, {"fresh", true}});
       if (!collection_games) continue;
       for (const json& collection_game : *collection_games) {
         const json& game = collection_game.value("game", json::object());
-        if (game.value("minPrice", std::int64_t{1}) != 0) continue;
-        add_entry(collection_game.value("gameId", game.value("id", std::int64_t{0})), game.value("title", std::string()));
+        add_entry(collection_game.value("gameId", game.value("id", std::int64_t{0})),
+                  game.value("title", std::string()), game.value("minPrice", std::int64_t{0}) == 0);
       }
     }
   }

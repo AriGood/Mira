@@ -29,6 +29,7 @@ struct CatalogEntry {
   bool installed = false;   // already tracked by Mira (GET /v1/games has it)
   std::string game_id;      // the tracked game's id, if installed
   std::int64_t play_seconds = 0;  // as the source reports it; 0 if it doesn't
+  bool owned = true;  // false: listed (e.g. from an itch collection) but not installable
 };
 
 // Every entry `source` can report, or every source's at once when `source`

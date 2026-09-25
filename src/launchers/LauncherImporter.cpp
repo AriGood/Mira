@@ -204,7 +204,7 @@ Result<ImportSummary> Import(config::Config& config, store::GameStore& games, ap
 ImportSummary ImportAll(config::Config& config, store::GameStore& games, api::EventBus& events) {
   ImportSummary total;
   for (const Launcher& launcher : All()) {
-    if (!Installed(games, launcher)) continue;
+    if (!Installed(games, launcher) || !config.GetBool(launcher.id + ".enabled")) continue;
     const auto summary = Import(config, games, events, launcher);
     if (!summary) continue;
     total.added += summary->added;

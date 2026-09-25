@@ -16,6 +16,7 @@
 #include <QVBoxLayout>
 
 #include "../client/MiradClient.h"
+#include "../dialogs/ItchCollectionsDialog.h"
 #include "../ui/ArtworkStore.h"
 #include "../ui/CoverArt.h"
 #include "../ui/DownloadTracker.h"
@@ -398,6 +399,16 @@ QWidget* SourcePage::BuildOwnedSection() {
   owned_refresh_ = new QPushButton("Refresh", owned_section_);
   owned_refresh_->setIcon(icons::For(icons::Glyph::Refresh));
   connect(owned_refresh_, &QPushButton::clicked, this, &SourcePage::RefreshOwned);
+  if (id_ == "itch") {
+    auto* collections = new QPushButton("Manage collections…", owned_section_);
+    collections->setToolTip("Show the games from itch.io collections here, yours or any added by link.");
+    connect(collections, &QPushButton::clicked, this, [this] {
+      ItchCollectionsDialog dialog(this);
+      dialog.exec();
+      if (dialog.Changed()) RefreshOwned();
+    });
+    header->addWidget(collections);
+  }
   header->addWidget(owned_refresh_);
   layout->addLayout(header);
 
@@ -445,6 +456,10 @@ QWidget* SourcePage::BuildOwnedSection() {
       ShowError(owned_note_, "Could not start the download.", r.error);
     });
   };
+  // Double-click does what the tile's button does, while it's clickable.
+  connect(owned_grid_, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem* item) {
+    if (item->data(GameTileDelegate::ActionEnabledRole).toBool() && owned_grid_->on_action) owned_grid_->on_action(item);
+  });
   layout->addWidget(owned_grid_);
   return owned_section_;
 }
@@ -691,6 +706,7 @@ void SourcePage::RefreshOwned() {
 void SourcePage::ShowOwned(const StoreLibraryResult& result) {
   owned_refresh_->setEnabled(true);
   owned_.clear();
+  not_owned_.clear();
   if (steam_settings_ != nullptr) steam_settings_->setVisible(false);
   if (!result.ok) {
     ShowError(owned_note_, "Could not list your games.", result.error);
@@ -702,6 +718,7 @@ void SourcePage::ShowOwned(const StoreLibraryResult& result) {
     downloads_->NoteTitle(source_.id, QString::fromStdString(title.ref), QString::fromStdString(title.title));
     if (!title.installed) {
       owned_.emplace_back(QString::fromStdString(title.ref), QString::fromStdString(title.title));
+      if (!title.owned) not_owned_.insert(QString::fromStdString(title.ref));
       uninstalled.push_back(title);
     }
   }
@@ -765,6 +782,13 @@ void SourcePage::RebuildOwnedTiles() {
     const DownloadTracker::Entry* running = downloads_->Find(source_.id + ":" + ref);
     if (running != nullptr && running->state == DownloadTracker::State::Running) {
       state = id_ == "humble" ? "Downloading…" : running->update ? "Updating…" : "Installing…";
+      if (running->progress >= 0) state = QString("%1 %2%").arg(state.chopped(1)).arg(qRound(running->progress * 100));
+    }
+    if (not_owned_.contains(ref)) {
+      item->setData(GameTileDelegate::ActionRole, QString("Not owned"));
+      item->setData(GameTileDelegate::ActionEnabledRole, false);
+      item->setToolTip(title + "\nA paid game from a collection. Buy it on itch.io to install it here.");
+      continue;
     }
     item->setData(GameTileDelegate::ActionRole, state.isEmpty() ? idle : state);
     item->setData(GameTileDelegate::ActionEnabledRole, state.isEmpty());
@@ -825,17 +849,13 @@ void SourcePage::ShowLibraryMenu(const QPoint& pos) {
   QListWidgetItem* item = library_grid_->itemAt(pos);
   if (item == nullptr) return;
   const QString id = item->data(GameTileDelegate::IdRole).toString();
-  QMenu menu(this);
-  menu.addAction("Play", this, [this, id] { emit PlayRequested(id); });
-  menu.addAction("Game settings…", this, [this, id] { emit OpenGameRequested(id); });
-  // A store game's id is "<source>-<ref>".
+  // A store game's id is "<source>-<ref>"; those can also be updated.
   const QString prefix = source_.id + "-";
-  if (IsStore() && id_ != "humble" && id.startsWith(prefix)) {
-    const QString ref = id.mid(prefix.size());
-    menu.addAction("Update", this, [this, ref] { StartInstall(ref, /*update=*/true); });
-  }
-  menu.exec(library_grid_->viewport()->mapToGlobal(pos));
+  const QString update_ref = IsStore() && id_ != "humble" && id.startsWith(prefix) ? id.mid(prefix.size()) : QString();
+  emit GameMenuRequested(id, library_grid_->viewport()->mapToGlobal(pos), update_ref);
 }
+
+void SourcePage::UpdateTitle(const QString& ref) { StartInstall(ref, /*update=*/true); }
 
 void SourcePage::HandleEvent(const std::string& type, const std::string& data) {
   if (StoreEvent art; MiradClient::ParseTitleArtworkEvent(type, data, &art)) {

@@ -335,6 +335,20 @@ FrontendPrefsResult GetFrontendPrefsSync() {
     }
     result.prefs.hidden_sources = std::move(hidden);
   }
+  if (table.contains("source_imported_at") && table["source_imported_at"].is_object()) {
+    std::map<std::string, std::int64_t> imported;
+    for (const auto& [id, at] : table["source_imported_at"].items()) {
+      if (at.is_number_integer()) imported[id] = at.get<std::int64_t>();
+    }
+    result.prefs.source_imported_at = std::move(imported);
+  }
+  if (table.contains("source_order") && table["source_order"].is_array()) {
+    std::vector<std::string> order;
+    for (const json& id : table["source_order"]) {
+      if (id.is_string()) order.push_back(id.get<std::string>());
+    }
+    result.prefs.source_order = std::move(order);
+  }
   return result;
 }
 
@@ -364,6 +378,12 @@ PatchConfigResult SaveFrontendPrefsSync(const FrontendPrefs& prefs) {
     table["shortcuts"] = shortcuts;
   }
   if (prefs.hidden_sources) table["hidden_sources"] = *prefs.hidden_sources;
+  if (prefs.source_order) table["source_order"] = *prefs.source_order;
+  if (prefs.source_imported_at) {
+    json imported = json::object();
+    for (const auto& [id, at] : *prefs.source_imported_at) imported[id] = at;
+    table["source_imported_at"] = imported;
+  }
   if (prefs.sidebar_recent_count) table["sidebar_recent_count"] = *prefs.sidebar_recent_count;
   if (prefs.sidebar_source_counts) table["sidebar_source_counts"] = *prefs.sidebar_source_counts;
 
@@ -842,7 +862,8 @@ StoreLibraryResult GetStoreLibrarySync(const std::string& source) {
     if (!entry.is_object()) continue;
     result.titles.push_back({.ref = entry.value("ref", std::string()),
                              .title = entry.value("title", std::string()),
-                             .installed = entry.value("installed", false)});
+                             .installed = entry.value("installed", false),
+                             .owned = entry.value("owned", true)});
   }
   return result;
 }
@@ -948,6 +969,75 @@ StoreActionResult QueueTitleArtworkSync(const std::string& source, const std::ve
   json list = json::array();
   for (const StoreTitle& title : titles) list.push_back({{"ref", title.ref}, {"title", title.title}});
   const transport::Reply reply = transport::PostJson("/v1/library/artwork", {{"source", source}, {"titles", list}});
+  return {reply.ok, reply.error};
+}
+
+RemovalPlanResult GetRemovalPlanSync(const std::string& source) {
+  RemovalPlanResult result;
+  const transport::Reply reply = transport::Get("/v1/sources/" + source + "/removal");
+  if (!reply.ok) {
+    result.error = reply.error;
+    return result;
+  }
+  result.ok = true;
+  for (const json& game : reply.body.value("games", json::array())) {
+    result.games.push_back({.id = game.value("id", std::string()),
+                            .name = game.value("name", std::string()),
+                            .deletes = game.value("deletes", std::string())});
+  }
+  result.launcher_dir = reply.body.value("launcher_dir", std::string());
+  for (const json& path : reply.body.value("kept", json::array())) {
+    if (path.is_string()) result.kept.push_back(path.get<std::string>());
+  }
+  result.signs_out = reply.body.value("signs_out", false);
+  return result;
+}
+
+RemoveSourceResult RemoveSourceSync(const std::string& source) {
+  RemoveSourceResult result;
+  // Uninstalling can take a while (legendary, butler, nile).
+  const transport::Reply reply = transport::Post("/v1/sources/" + source + "/remove", {.read_timeout = std::chrono::minutes(10)});
+  if (!reply.ok) {
+    result.error = reply.error;
+    return result;
+  }
+  result.ok = true;
+  result.removed = reply.body.value("removed", 0);
+  for (const json& problem : reply.body.value("problems", json::array())) {
+    if (problem.is_string()) result.problems.push_back(problem.get<std::string>());
+  }
+  return result;
+}
+
+ItchCollectionsResult GetItchCollectionsSync() {
+  ItchCollectionsResult result;
+  const transport::Reply reply = transport::Get("/v1/itch/collections");
+  if (!reply.ok) {
+    result.error = reply.error;
+    return result;
+  }
+  if (!reply.body.is_array()) {
+    result.error = transport::UnexpectedResponse("GET /v1/itch/collections");
+    return result;
+  }
+  result.ok = true;
+  for (const json& entry : reply.body) {
+    if (!entry.is_object()) continue;
+    result.collections.push_back({.id = entry.value("id", std::int64_t{0}),
+                                  .title = entry.value("title", std::string()),
+                                  .games_count = entry.value("games_count", std::int64_t{0}),
+                                  .own = entry.value("own", false)});
+  }
+  return result;
+}
+
+StoreActionResult AddItchCollectionSync(const std::string& link) {
+  const transport::Reply reply = transport::PostJson("/v1/itch/collections", {{"link", link}});
+  return {reply.ok, reply.error};
+}
+
+StoreActionResult RemoveItchCollectionSync(std::int64_t id) {
+  const transport::Reply reply = transport::Delete("/v1/itch/collections/" + std::to_string(id));
   return {reply.ok, reply.error};
 }
 
@@ -1154,6 +1244,8 @@ void MiradClient::SaveFrontendPrefsAsync(QObject* context, const FrontendPrefs& 
 PatchConfigResult MiradClient::SaveFrontendPrefsBlocking(const FrontendPrefs& prefs) {
   return SaveFrontendPrefsSync(prefs);
 }
+
+FrontendPrefsResult MiradClient::GetFrontendPrefsBlocking() { return GetFrontendPrefsSync(); }
 
 void MiradClient::GetArtworkAsync(QObject* context, const std::string& id,
                                   std::function<void(ArtworkResult)> callback) {
@@ -1412,6 +1504,31 @@ void MiradClient::QueueTitleArtworkAsync(QObject* context, const std::string& so
              std::move(callback));
 }
 
+void MiradClient::GetRemovalPlanAsync(QObject* context, const std::string& source,
+                                      std::function<void(RemovalPlanResult)> callback) {
+  async::Run(context, [source] { return GetRemovalPlanSync(source); }, std::move(callback));
+}
+
+void MiradClient::RemoveSourceAsync(QObject* context, const std::string& source,
+                                    std::function<void(RemoveSourceResult)> callback) {
+  async::Run(context, [source] { return RemoveSourceSync(source); }, std::move(callback));
+}
+
+void MiradClient::GetItchCollectionsAsync(QObject* context,
+                                          std::function<void(ItchCollectionsResult)> callback) {
+  async::Run(context, [] { return GetItchCollectionsSync(); }, std::move(callback));
+}
+
+void MiradClient::AddItchCollectionAsync(QObject* context, const std::string& link,
+                                         std::function<void(StoreActionResult)> callback) {
+  async::Run(context, [link] { return AddItchCollectionSync(link); }, std::move(callback));
+}
+
+void MiradClient::RemoveItchCollectionAsync(QObject* context, std::int64_t id,
+                                            std::function<void(StoreActionResult)> callback) {
+  async::Run(context, [id] { return RemoveItchCollectionSync(id); }, std::move(callback));
+}
+
 bool MiradClient::ParseTitleArtworkEvent(const std::string& event_type, const std::string& data,
                                          StoreEvent* out) {
   constexpr std::string_view kPrefix = "library.artwork_";
@@ -1547,6 +1664,7 @@ bool MiradClient::ParseStoreEvent(const std::string& event_type, const std::stri
     out->source = entry.value("source", std::string());
     out->ref = entry.value("ref", std::string());
     out->update = entry.value("update", false);
+    if (out->state == "progress") out->progress = entry.value("progress", 0.0);
   } else if (out->kind == "download") {
     out->ref = entry.value("bundle_key", std::string());
   } else if (event_type.starts_with(kLauncher)) {

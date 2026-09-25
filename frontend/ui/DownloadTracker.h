@@ -37,6 +37,7 @@ public:
     bool update = false;
     State state = State::Running;
     qint64 bytes = 0;  // Game only
+    double progress = -1;  // 0..1 when the source reports it (itch installs)
     QString error;
     QDateTime changed;
   };

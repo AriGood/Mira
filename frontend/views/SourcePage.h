@@ -1,7 +1,9 @@
 #pragma once
 
 #include <QColor>
+#include <QPoint>
 #include <QHash>
+#include <QSet>
 #include <QString>
 #include <QWidget>
 
@@ -54,6 +56,8 @@ public:
   // The whole library; the page shows the games whose source is this one.
   void SetGames(const std::vector<GameSummary>& games, const std::set<std::string>& running);
   void UpdateCover(const QString& id);
+  // Starts an update of an installed store title.
+  void UpdateTitle(const QString& ref);
 
 signals:
   void BackRequested();
@@ -62,6 +66,9 @@ signals:
   void OpenSettingsRequested(QString focus_key);
   void PlayRequested(QString id);
   void OpenGameRequested(QString id);
+  // Right-click on an installed game: the library's own game menu, plus
+  // Update when `update_ref` is set.
+  void GameMenuRequested(QString id, QPoint global_pos, QString update_ref);
 
 private:
   bool IsStore() const { return source_.kind == SourceInfo::Kind::Store; }
@@ -136,6 +143,7 @@ private:
 
   // What the account owns and isn't installed, by ref, with its title.
   std::vector<std::pair<QString, QString>> owned_;
+  QSet<QString> not_owned_;  // refs listed from a collection but not bought
   // Refs asked to install/update/download and not yet started by mirad, and
   // the ones done this session. What's running comes from downloads_.
   QHash<QString, QString> owned_state_;  // ref -> "Installing…", "Downloaded", ...
