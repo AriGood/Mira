@@ -49,6 +49,7 @@ class DownloadTracker;
 class DownloadsPanel;
 class GameEditForm;
 class GameTileDelegate;
+class HeroBackdrop;
 class HoverCard;
 class SettingsPanel;
 class SourcePage;
@@ -332,6 +333,7 @@ private:
   // raised on top, toggled in OpenGameDialog/CloseGameEdit.
   QStackedLayout* root_stack_ = nullptr;
   mira_gui::GameEditForm* game_edit_form_ = nullptr;
+  mira_gui::HeroBackdrop* game_edit_backdrop_ = nullptr;  // the card itself
   bool game_settings_in_sidebar_ = true;
   // Built once at startup, not per-open like settings_page_/game_edit_card_
   // — it has no per-session state to go stale, so it just stays synced via

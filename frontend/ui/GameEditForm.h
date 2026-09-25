@@ -15,10 +15,10 @@ class OverridesEditor;
 }
 
 class QComboBox;
-class QFormLayout;
 class QLabel;
 class QLineEdit;
 class QPlainTextEdit;
+class QPushButton;
 class QStackedWidget;
 class QWidget;
 
@@ -38,6 +38,12 @@ public:
   // Same store the grid's own tiles use. Without one this form's own copy
   // still works and shows placeholders.
   void SetArtworkStore(ArtworkStore* store);
+  // Off when the host already shows the art (LibraryWindow's hero card).
+  void SetArtColumnVisible(bool visible);
+  // Off when the host puts its own button in its footer, calling OpenAdvanced.
+  void SetAdvancedButtonVisible(bool visible);
+  // Swaps the fields for the per-game overrides; their own Back returns.
+  void OpenAdvanced();
 
   void Save();
 
@@ -67,7 +73,6 @@ private:
   void OnExeComboActivated(int index);
   void OnRunnerComboActivated(int index);
   void BrowseExecutable();
-  void OpenAdvanced();
   void ResetScroll();
   mira_gui::GamePatch CurrentPatch() const;
 
@@ -75,7 +80,9 @@ private:
   std::string install_path_;
   mira_gui::GamePatch original_patch_;
 
-  QFormLayout* form_ = nullptr;
+  QWidget* art_column_ = nullptr;
+  QPushButton* advanced_button_ = nullptr;
+  QWidget* status_box_ = nullptr;
   HeroArtWidget* hero_art_ = nullptr;
   QLabel* status_label_;
   QLabel* install_path_label_;

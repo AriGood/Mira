@@ -58,6 +58,8 @@ qt_add_executable(mira-gui
   ui/GameActions.h
   ui/HeroArtWidget.cpp
   ui/HeroArtWidget.h
+  ui/HeroBackdrop.cpp
+  ui/HeroBackdrop.h
   ui/HoverCard.cpp
   ui/HoverCard.h
   ui/GamePresentation.h

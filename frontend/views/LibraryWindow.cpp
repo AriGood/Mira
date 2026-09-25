@@ -25,6 +25,7 @@
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QEventLoop>
+#include <QGraphicsDropShadowEffect>
 #include <QGridLayout>
 #include <QGuiApplication>
 #include <QPushButton>
@@ -68,6 +69,7 @@
 #include "../ui/GameEditForm.h"
 #include "../ui/GamePresentation.h"
 #include "../ui/GameTileDelegate.h"
+#include "../ui/HeroBackdrop.h"
 #include "../ui/HoverCard.h"
 #include "../ui/Icons.h"
 #include "../ui/KeyBindings.h"
@@ -1642,6 +1644,7 @@ void LibraryWindow::UpdateTileCover(const QString& id) {
     // same nudge — it has no way to notice the store changed under it. A
     // no-op if it isn't currently showing this game (or isn't open at all).
     if (game_edit_form_ != nullptr) game_edit_form_->RefreshCover();
+    if (game_edit_backdrop_ != nullptr) game_edit_backdrop_->RefreshCover(id.toStdString());
     return;
   }
 }
@@ -2231,6 +2234,7 @@ void LibraryWindow::CloseGameEdit() {
     game_edit_card_->deleteLater();
     game_edit_card_ = nullptr;
     game_edit_form_ = nullptr;
+    game_edit_backdrop_ = nullptr;
   }
   RefreshGames();
 }
@@ -2453,8 +2457,14 @@ QWidget* LibraryWindow::BuildGameEditOverlay() {
 }
 
 QWidget* LibraryWindow::BuildGameEditCard(const std::string& id) {
-  auto* card = new QWidget();
-  card->setObjectName("game_edit_card");
+  const mira_gui::theme::Tokens& tokens = mira_gui::theme::Current();
+  const mira_gui::GameSummary* game = FindGame(id);
+
+  // The hero fills the card's top and fades into it; everything below sits
+  // over it.
+  game_edit_backdrop_ = new mira_gui::HeroBackdrop(artwork_);
+  QWidget* card = game_edit_backdrop_;
+  if (game != nullptr) game_edit_backdrop_->ShowGame(*game);
   // ~70% of the window, not a hardcoded constant -- recomputed per open
   // since the window can resize between edits.
   card->setFixedSize(qRound(width() * 0.7), qRound(height() * 0.7));
@@ -2463,40 +2473,97 @@ QWidget* LibraryWindow::BuildGameEditCard(const std::string& id) {
   layout->setContentsMargins(0, 0, 0, 0);
   layout->setSpacing(0);
 
-  // Header: name + status, static (the scrollable form below has its own
-  // editable Name field) -- just enough identity to confirm which game this
-  // is, plus the close affordance an overlay needs beyond the scrim click.
-  auto* header = new QWidget(card);
-  auto* header_layout = new QHBoxLayout(header);
-  header_layout->setContentsMargins(18, 14, 10, 14);
-  const mira_gui::GameSummary* game = FindGame(id);
-  auto* title = new QLabel(game != nullptr ? QString::fromStdString(game->name) : "Game settings",
-                           header);
-  title->setProperty("role", "heading");
-  header_layout->addWidget(title, /*stretch=*/1);
-  auto* close = new QToolButton(header);
-  close->setAutoRaise(true);
+  auto* actions = new QHBoxLayout();
+  actions->setSpacing(8);
+  auto hero_action = [card](const QString& text) {
+    auto* button = new QPushButton(text, card);
+    button->setObjectName("hero_action");
+    return button;
+  };
+  QPushButton* choose_hero = hero_action("Change hero");
+  connect(choose_hero, &QPushButton::clicked, this, [this, id] { OpenArtworkPicker(id, "hero"); });
+  QPushButton* choose_cover = hero_action("Change cover");
+  connect(choose_cover, &QPushButton::clicked, this, [this, id] { OpenArtworkPicker(id, "cover"); });
+  QPushButton* close = hero_action(QString());
   close->setIcon(mira_gui::icons::For(mira_gui::icons::Glyph::Close));
   close->setToolTip("Close");
-  connect(close, &QToolButton::clicked, this, &LibraryWindow::RequestCloseGameEdit);
-  header_layout->addWidget(close);
-  layout->addWidget(header);
+  connect(close, &QPushButton::clicked, this, &LibraryWindow::RequestCloseGameEdit);
+  for (QPushButton* button : {choose_hero, choose_cover, close}) actions->addWidget(button);
 
-  auto* divider = new QWidget(card);
-  divider->setFixedHeight(1);
-  divider->setStyleSheet(QString("background: %1;").arg(mira_gui::theme::Current().border.name()));
-  layout->addWidget(divider);
+  // Name and status over the art, level with the buttons. Static: the form
+  // below has its own Name field. The shadow, in the surface's color, keeps
+  // it off the art's detail.
+  auto* header = new QHBoxLayout();
+  header->setContentsMargins(24, 16, 14, 16);
+  header->setSpacing(16);
+  auto* identity = new QVBoxLayout();
+  identity->setSpacing(4);
+  auto* title = new QLabel(game != nullptr ? QString::fromStdString(game->name) : "Game settings", card);
+  title->setObjectName("game_edit_title");
+  title->setWordWrap(true);
+  auto* shadow = new QGraphicsDropShadowEffect(title);
+  shadow->setColor(tokens.surface);
+  shadow->setBlurRadius(18);
+  shadow->setOffset(0, 1);
+  title->setGraphicsEffect(shadow);
+  identity->addWidget(title);
+  if (game != nullptr) {
+    const bool running = running_ids_.contains(game->id);
+    const QColor status_color = mira_gui::StatusColor(running ? "running" : game->status);
+    QString source = mira_gui::StatusLabel(game->source);
+    for (const mira_gui::SourceInfo& info : mira_gui::AllSources()) {
+      if (info.id.toStdString() == game->source) source = info.name;
+    }
+    QStringList facts;
+    if (!source.isEmpty()) facts << source;
+    if (!game->platform.empty()) facts << mira_gui::StatusLabel(game->platform);
+    if (game->play_seconds > 0) facts << mira_gui::FormatPlaytime(game->play_seconds) + " played";
+    auto* status = new QLabel(
+        QString("<span style='color:%1; font-weight:600;'>%2</span>&nbsp;&nbsp;%3")
+            .arg(status_color.name(), running ? "Playing" : mira_gui::StatusLabel(game->status),
+                 facts.join(" · ").toHtmlEscaped()),
+        card);
+    status->setTextFormat(Qt::RichText);
+    identity->addWidget(status);
+  }
+  header->addLayout(identity, /*stretch=*/1);
+  header->addLayout(actions);
+  header->setAlignment(actions, Qt::AlignTop);
+  layout->addLayout(header);
 
-  auto* scroll = new QScrollArea(card);
+  // Translucent, so the art still shows through at its top edge.
+  auto* panel = new QWidget(card);
+  panel->setObjectName("game_edit_panel");
+  panel->setAttribute(Qt::WA_StyledBackground);
+  QColor panel_color = tokens.window;
+  panel_color.setAlphaF(0.82);
+  panel->setStyleSheet(QString("QWidget#game_edit_panel { background: rgba(%1, %2, %3, %4); border: 1px solid "
+                               "%5; border-radius: %6px; }")
+                           .arg(panel_color.red())
+                           .arg(panel_color.green())
+                           .arg(panel_color.blue())
+                           .arg(panel_color.alpha())
+                           .arg(tokens.border.name())
+                           .arg(tokens.radius_panel));
+  auto* panel_layout = new QVBoxLayout(panel);
+  panel_layout->setContentsMargins(0, 0, 0, 0);
+  auto* panel_row = new QHBoxLayout();
+  panel_row->setContentsMargins(20, 0, 20, 0);
+  panel_row->addWidget(panel);
+  layout->addLayout(panel_row, /*stretch=*/1);
+
+  auto* scroll = new QScrollArea(panel);
   scroll->setWidgetResizable(true);
   scroll->setFrameShape(QFrame::NoFrame);
-  // GameEditForm has no margins of its own; pad it here, 16px to match
-  // GameDetailDialog.
+  scroll->setStyleSheet("QScrollArea, QScrollArea > QWidget > QWidget { background: transparent; }");
+  scroll->viewport()->setAutoFillBackground(false);
+  panel_layout->addWidget(scroll);
   auto* form_container = new QWidget();
   auto* form_container_layout = new QVBoxLayout(form_container);
-  form_container_layout->setContentsMargins(16, 16, 16, 16);
+  form_container_layout->setContentsMargins(18, 18, 18, 18);
   game_edit_form_ = new mira_gui::GameEditForm(id, form_container);
   game_edit_form_->SetArtworkStore(artwork_);
+  game_edit_form_->SetArtColumnVisible(false);
   form_container_layout->addWidget(game_edit_form_);
   connect(game_edit_form_, &mira_gui::GameEditForm::ArtworkPickRequested, this,
           [this, id](const QString& slot) { OpenArtworkPicker(id, slot.toStdString()); });
@@ -2516,17 +2583,23 @@ QWidget* LibraryWindow::BuildGameEditCard(const std::string& id) {
             CloseGameEdit();
           });
   scroll->setWidget(form_container);
-  layout->addWidget(scroll, /*stretch=*/1);
 
   auto* footer = new QWidget(card);
   auto* footer_layout = new QHBoxLayout(footer);
-  footer_layout->setContentsMargins(14, 12, 14, 14);
+  footer_layout->setContentsMargins(20, 12, 20, 16);
   auto* back = new QPushButton("← Back", footer);
   connect(back, &QPushButton::clicked, this, &LibraryWindow::RequestCloseGameEdit);
   auto* save = new QPushButton("Save", footer);
+  save->setDefault(true);
   connect(save, &QPushButton::clicked, game_edit_form_, &mira_gui::GameEditForm::Save);
+  // In the footer rather than at the bottom of the scrolling form.
+  game_edit_form_->SetAdvancedButtonVisible(false);
+  auto* advanced = new QPushButton("Advanced settings…", footer);
+  advanced->setToolTip("Per-game overrides of the global settings.");
+  connect(advanced, &QPushButton::clicked, game_edit_form_, &mira_gui::GameEditForm::OpenAdvanced);
   footer_layout->addWidget(back);
   footer_layout->addStretch(1);
+  footer_layout->addWidget(advanced);
   footer_layout->addWidget(save);
   layout->addWidget(footer);
 
@@ -3209,6 +3282,7 @@ void LibraryWindow::HandleGameEvent(const std::string& type, const std::string& 
       artwork_->Invalidate(event.id);
     } else if (event.slot == "hero") {
       if (game_edit_form_ != nullptr) game_edit_form_->RefreshBanner(event.id);
+      if (game_edit_backdrop_ != nullptr) game_edit_backdrop_->RefreshHero(event.id);
     }
     return;
   }

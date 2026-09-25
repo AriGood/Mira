@@ -154,11 +154,13 @@ one library rather than part of a theme's identity, which is why they live in
 `frontend.toml`. `-1` is how the file spells "leave it to the theme": the keys
 have to stay writable to be cleared again, and a merge patch cannot drop one.
 
-Four things the stylesheet cannot reach read the tokens directly instead:
+Five things the stylesheet cannot reach read the tokens directly instead:
 `ui/GameTileDelegate` and `ui/CoverArt`, which paint with `QPainter`,
-`ui/Notify`'s toasts, and `ui/HeroArtWidget`'s banner, which is clipped to
+`ui/Notify`'s toasts, `ui/HeroArtWidget`'s banner, which is clipped to
 `radius_panel` by hand because a stylesheet cannot round a pixmap inside a
-`QLabel`. They repaint on `theme::Notifier::Changed`.
+`QLabel`, and `ui/HeroBackdrop`, the game settings card, which paints the
+game's hero (or its cover, blurred) across its top and fades it into
+`surface`. They repaint on `theme::Notifier::Changed`.
 
 Two conventions keep colors out of the widgets themselves:
 

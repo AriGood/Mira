@@ -584,11 +584,23 @@ QScrollArea {
 }
 
 /* --- Game-edit overlay ---------------------------------------------------
- * The scrim itself is painted inline (its alpha isn't a plain theme color),
- * this just covers the centered card sitting on top of it. */
+ * The scrim and the card (ui/HeroBackdrop) are painted in code; these are
+ * what sits over the card's hero art. */
 
-QWidget#game_edit_card {
-  background: @surface;
-  border: 1px solid @border;
-  border-radius: @radius_panel;
+QLabel#game_edit_title {
+  font-size: 22px;
+  font-weight: 700;
+}
+
+/* Dark glass whatever the theme: they sit on the art, not the surface. */
+QPushButton#hero_action {
+  background: rgba(20, 22, 27, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  color: #e6e8ec;
+  border-radius: 8px;
+  padding: 5px 12px;
+}
+
+QPushButton#hero_action:hover {
+  background: rgba(20, 22, 27, 0.8);
 }
