@@ -388,9 +388,23 @@ sees new arrivals; this endpoint also picks up what was already there.
 Every installed build of every runner kind, freshly discovered on each
 call (no caching, no refresh endpoint needed as a result):
 ```json
-[{ "kind": "proton", "name": "GE-Proton11-7", "path": "/home/x/.steam/steam/compatibilitytools.d/GE-Proton11-7-x86_64",
-   "version": "1789520217", "reference": "proton:GE-Proton11-7" }]
+[{ "kind": "proton", "name": "GE-Proton11-7", "label": "GE-Proton11-7",
+   "path": "/home/x/.steam/steam/compatibilitytools.d/GE-Proton11-7-x86_64",
+   "version": "1789520217", "reference": "proton:GE-Proton11-7",
+   "source": "proton_ge", "removable": true }]
 ```
+`label` is a readable name ("Wine 11.18 staging-tkg" for
+`wine-11.18-staging-tkg-amd64`). `source` is the download source the build
+came from (see `/v1/runners/sources`), empty if unknown. `removable` is
+false for builds outside `runner_search_paths`/`wine_search_paths`: the
+distro's, Steam's or the system's, which Mira neither removes nor updates.
+
+Besides the search paths, discovery looks where Steam, the distro, Heroic,
+Bottles and Lutris keep builds (`/usr/share/steam/compatibilitytools.d`,
+Steam's `steamapps/common`, `~/.config/heroic/tools/*`,
+`~/.local/share/bottles/runners`, `/opt/*` such as `/opt/wine-cachyos`),
+unless `runner_scan_common_dirs` is off. Proton builds only appear when
+`umu-run` is available (see `/v1/runners/tools`).
 `reference` is what a game's `runner_ref` field and `default_runner.*`
 settings use. `native` never appears here — it has no concept of "builds".
 `steam` (see below) never appears here either — its "build" is whatever
@@ -404,25 +418,72 @@ under both — `runner::DeduplicateBuilds` collapses those by resolved path
 and then by `reference`, since two entries sharing a `reference` are the
 same runner by the definition above and no client could pick between them.
 
-### `GET /v1/runners/catalog?kind=proton|wine` — implemented
-What's *available to install*, not what's installed (that's `/v1/runners`
-above) — lists releases from the source configured in
-`runner_sources.proton_ge.*`/`runner_sources.wine_ge.*`, newest first, live
-against the GitHub API (so this one has real network latency, unlike
-everything else in this file):
+### `GET /v1/runners/sources?kind=proton|wine` — implemented
+Where builds download from, preferred first:
 ```json
-[{ "tag": "GE-Proton11-7", "asset_name": "GE-Proton11-7-x86_64.tar.gz",
-   "size_bytes": 563784602, "published_at": "2026-09-16T02:28:16Z", "has_checksum": true }]
+[{ "id": "proton_ge", "kind": "proton", "label": "GE-Proton" }]
 ```
+Proton: `proton_ge`, `proton_cachyos`, `proton_umu`, `proton_em`,
+`proton_sarek`. Wine: `wine_staging_tkg`, `wine_staging`, `wine_vanilla`
+(Kron4ek's builds), `wine_ge`, `wine_lutris` (both archived upstream).
+GE-Proton and Wine-GE read their repo and asset pattern from
+`runner_sources.proton_ge.*`/`runner_sources.wine_ge.*`.
+
+### `GET /v1/runners/catalog?kind=proton|wine&source=` — implemented
+What's *available to install* from one source (the kind's first when
+`source` is left out), newest first, from the GitHub API. Listings are
+cached for 10 minutes, since GitHub allows 60 unauthenticated requests an
+hour:
+```json
+[{ "tag": "GE-Proton11-7", "name": "GE-Proton11-7", "label": "GE-Proton11-7", "source": "proton_ge",
+   "asset_name": "GE-Proton11-7.tar.gz", "size_bytes": 563784602,
+   "published_at": "2026-09-16T02:28:16Z", "has_checksum": true, "installed": true }]
+```
+`name` identifies the release in download events: the tag for Proton, the
+archive name for Wine (Kron4ek's tags are bare versions shared by every
+variant).
 
 ### `POST /v1/runners/download` — implemented
-Body: `{"kind": "proton"|"wine", "tag": "..."}` (a tag from the catalog
-above). Downloads and installs it into `runner_search_paths[0]` /
+Body: `{"kind": "proton"|"wine", "tag": "...", "source": "..."}` (a tag
+from the catalog above; `source` optional as there). Downloads and installs it into `runner_search_paths[0]` /
 `wine_search_paths[0]`, verifying its checksum first if the release
 shipped one — a mismatch discards the download rather than installing it.
+Checksums come from a `.sha512sum` or `.sha256sum` beside the archive, or
+a release-wide `sha256sums.txt`.
 Runs detached (a build can be 500+ MB; no job queue yet, see
 `docs/architecture.md`) and returns `202` immediately. Progress is on the
-event stream: `runners.download.started` / `.finished` / `.failed`.
+event stream: `runners.download.started` / `.finished` / `.failed`, each
+`{"kind", "tag", "name", "label", "source"}`.
+
+### `GET /v1/runners/updates` — implemented
+Removable builds whose source has a newer release that isn't installed:
+```json
+[{ "reference": "wine:wine-11.17-staging-tkg-amd64", "source": "wine_staging_tkg",
+   "tag": "11.18", "name": "wine-11.18-staging-tkg-amd64", "label": "Wine 11.18 staging-tkg" }]
+```
+
+### `POST /v1/runners/update` — implemented
+Body `{"reference": "kind:name"}`, one from `/v1/runners/updates`. Installs
+the newer release like `/v1/runners/download` (`202`, same events), then
+moves every game whose `runner_ref` is the old build, and
+`default_runner.windows` if it names it, onto the new one. The old build
+stays installed. `runners.updated` `{"kind", "from", "to", "games"}` says
+what moved, just before `runners.download.finished` (which then carries
+`"replaced": "<old reference>"`). `409 no_update` when there's nothing
+newer.
+
+### `GET /v1/runners/tools` — implemented
+The helpers runners need, and whether they're installed:
+```json
+[{ "id": "umu", "label": "umu-launcher", "installed": true, "path": "/usr/bin/umu-run", "doc": "..." },
+ { "id": "winetricks", "label": "winetricks", "installed": false, "path": "", "doc": "..." }]
+```
+A copy on `PATH` wins; otherwise Mira's own under `~/.config/mira/tools`.
+
+### `POST /v1/runners/tools/{umu|winetricks}/setup` — implemented
+Installs the latest umu-launcher zipapp (needs only python3) or winetricks
+script into `~/.config/mira/tools`. `202`; `umu.setup.*` /
+`winetricks.setup.*` `started` / `finished` / `failed` report it.
 
 ### `DELETE /v1/runners/{kind}:{name}` — implemented
 Uninstalls a build fetched via `/v1/runners/download` — the other half of
@@ -1219,6 +1280,9 @@ Published today:
   counterpart to `game.state` for that same case.
 - `runners.download.started` / `.finished` / `.failed` — see
   `POST /v1/runners/download` above.
+- `runners.updated` — see `POST /v1/runners/update` above.
+- `umu.setup.*` / `winetricks.setup.*` — see
+  `POST /v1/runners/tools/{id}/setup` above.
 - `library.install.started` / `.finished` / `.failed` —
   `{"source": ..., "ref": ..., "update": false}`, see
   `POST /v1/library/install` above. `update: true` is the only thing

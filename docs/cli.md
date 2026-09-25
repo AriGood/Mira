@@ -301,16 +301,32 @@ to the top match); `--match-id` takes a SteamGridDB id directly.
 proton:GE-Proton11-7                    /home/x/.steam/steam/compatibilitytools.d/GE-Proton11-7-x86_64
 ```
 
-## `mira runners catalog [--kind proton|wine]`
-`GET /v1/runners/catalog` — what's *available to download*, not what's
-installed. Hits the GitHub API live, so this is the one command here with
-real network latency. Defaults to `--kind proton`.
+## `mira runners sources [proton|wine]`
+`GET /v1/runners/sources` — where builds download from (GE-Proton,
+Proton-CachyOS, UMU-Proton, Proton-EM, Proton-Sarek, Kron4ek's Wine
+staging-tkg/staging/vanilla, Wine-GE, Lutris Wine), preferred first.
 
-## `mira runners download --kind proton|wine --tag TAG`
+## `mira runners catalog [--kind proton|wine] [--source ID]`
+`GET /v1/runners/catalog` — what's *available to download* from one source,
+marking what's installed. Hits the GitHub API (cached 10 minutes).
+Defaults to `--kind proton` and that kind's first source.
+
+## `mira runners download --kind proton|wine --tag TAG [--source ID]`
 `POST /v1/runners/download` — downloads and installs a build named in the
-catalog above (checksum-verified against the release's own `.sha512sum`
-first). Runs detached; the command returns immediately and says to watch
-`mira watch` for `runners.download.finished`/`.failed`.
+catalog above (checksum-verified first when the release has one). Runs
+detached; the command returns immediately and says to watch `mira watch`
+for `runners.download.finished`/`.failed`.
+
+## `mira runners updates` / `mira runners update <kind:name>`
+`GET /v1/runners/updates` lists installed builds with a newer release in
+their source. `POST /v1/runners/update` installs it and moves the old
+build's games (and the default, if it was that build) onto it; the old
+build stays until removed.
+
+## `mira runners tools [install umu|winetricks]`
+`GET /v1/runners/tools` — whether umu-launcher (needed for any Proton
+build) and winetricks are installed, and where. `install` fetches Mira's
+own copy into `~/.config/mira/tools`.
 
 ## `mira runners schema <kind>`
 `GET /v1/runners/{kind}/schema` — what `game.runner_config` accepts for

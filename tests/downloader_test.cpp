@@ -6,6 +6,7 @@
 #include "config/Config.h"
 #include "runner/Downloader.h"
 #include "runner/Exec.h"
+#include "support/TestEnv.h"
 
 using namespace mira;
 namespace fs = std::filesystem;
@@ -119,4 +120,25 @@ TEST_CASE("InstallToolBinary reports a clear error when the archive doesn't cont
   const Result<fs::path> installed = runner::InstallToolBinary(config, "itch", asset, "butler");
   REQUIRE_FALSE(installed);
   CHECK(installed.error().code == "binary_not_found");
+}
+
+TEST_CASE("Installed builds map to their download source, and release names read cleanly") {
+  test::TestEnv env("runner-families");
+  const config::Config& config = env.config;
+
+  const auto family = [&](const char* kind, const char* name, const char* folder) {
+    const auto found = runner::FamilyOfBuild(config, kind, name, folder);
+    return found ? found->id : std::string();
+  };
+  CHECK(family("wine", "wine-11.18-staging-tkg-amd64", "wine-11.18-staging-tkg-amd64") == "wine_staging_tkg");
+  CHECK(family("wine", "wine-11.18-staging-amd64", "wine-11.18-staging-amd64") == "wine_staging");
+  CHECK(family("wine", "wine-11.18-amd64", "wine-11.18-amd64") == "wine_vanilla");
+  CHECK(family("wine", "lutris-GE-Proton8-26-x86_64", "lutris-GE-Proton8-26-x86_64") == "wine_ge");
+  CHECK(family("proton", "cachyos-11.0-20260703-slr", "Proton-CachyOS Latest") == "proton_cachyos");
+  CHECK(family("wine", "system", "usr").empty());
+
+  const runner::ReleaseAsset wine_ge{.tag = "GE-Proton8-26", .asset_name = "wine-lutris-GE-Proton8-26-x86_64.tar.xz"};
+  CHECK(runner::IsInstalledAs("wine", "lutris-GE-Proton8-26-x86_64", "lutris-GE-Proton8-26-x86_64", wine_ge));
+  CHECK(runner::BuildLabel("wine", runner::ReleaseName("wine", wine_ge)) == "Wine-GE 8-26");
+  CHECK(runner::BuildLabel("wine", "wine-11.18-staging-tkg-amd64") == "Wine 11.18 staging-tkg");
 }

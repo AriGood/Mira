@@ -308,6 +308,9 @@ Everything `api.md` marks implemented has a path through the UI:
 | `GET /v1/runners` | runner pickers, and `RunnersPage`'s Installed card |
 | `GET /v1/runners/catalog` | `RunnersPage`'s Get more card |
 | `POST /v1/runners/download` | `RunnersPage`'s Install; progress through `ui/DownloadTracker` |
+| `GET /v1/runners/sources` | `RunnersPage`'s source picker on Get more |
+| `GET /v1/runners/updates`, `POST /v1/runners/update` | `RunnersPage`'s *Update to …* on installed builds, then an offer to remove the old build |
+| `GET /v1/runners/tools`, `POST /v1/runners/tools/{id}/setup` | `RunnersPage`'s banner when umu-launcher or winetricks is missing |
 | `POST /v1/steam/scan` | *Library → Import Steam library* |
 | `POST /v1/lutris/import` | *Library → Import Lutris games* |
 | `GET /v1/events` | `EventStream` |

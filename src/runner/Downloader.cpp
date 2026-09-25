@@ -1,11 +1,18 @@
 #include "runner/Downloader.h"
 
+#include <algorithm>
+#include <chrono>
 #include <filesystem>
+#include <cstring>
 #include <format>
+#include <fstream>
+#include <map>
+#include <mutex>
 #include <optional>
 
 #include <json.hpp>
 
+#include "config/RunnerSources.h"
 #include "core/Log.h"
 #include "core/Strings.h"
 #include "runner/Exec.h"
@@ -18,16 +25,13 @@ using nlohmann::json;
 struct Source {
   std::string repo;
   std::string asset_pattern;
+  std::vector<std::string> exclude;
 };
 
 Result<Source> SourceFor(const config::Config& config, const std::string& kind) {
-  if (kind == "proton") {
-    return Source{.repo = config.GetString("runner_sources.proton_ge.repo"),
-                 .asset_pattern = config.GetString("runner_sources.proton_ge.asset_pattern")};
-  }
-  if (kind == "wine") {
-    return Source{.repo = config.GetString("runner_sources.wine_ge.repo"),
-                 .asset_pattern = config.GetString("runner_sources.wine_ge.asset_pattern")};
+  if (kind == "proton" || kind == "wine") {
+    const RunnerFamily family = Families(config, kind).front();
+    return Source{.repo = family.repo, .asset_pattern = family.asset_pattern, .exclude = family.exclude};
   }
   // Not a runner kind — Legendary is the Epic Games Store CLI client
   // (see src/epic/Legendary.h) — but it shares the same "list a GitHub
@@ -35,23 +39,32 @@ Result<Source> SourceFor(const config::Config& config, const std::string& kind) 
   // rather than duplicating the GitHub API call.
   if (kind == "legendary") {
     return Source{.repo = config.GetString("runner_sources.legendary.repo"),
-                 .asset_pattern = config.GetString("runner_sources.legendary.asset_pattern")};
+                 .asset_pattern = config.GetString("runner_sources.legendary.asset_pattern"),
+                  .exclude = {}};
   }
   if (kind == "gog") {
     return Source{.repo = config.GetString("runner_sources.gog.repo"),
-                 .asset_pattern = config.GetString("runner_sources.gog.asset_pattern")};
+                 .asset_pattern = config.GetString("runner_sources.gog.asset_pattern"),
+                  .exclude = {}};
   }
   if (kind == "itch") {
     return Source{.repo = config.GetString("runner_sources.itch.repo"),
-                 .asset_pattern = config.GetString("runner_sources.itch.asset_pattern")};
+                 .asset_pattern = config.GetString("runner_sources.itch.asset_pattern"),
+                  .exclude = {}};
   }
   if (kind == "amazon") {
     return Source{.repo = config.GetString("runner_sources.amazon.repo"),
-                 .asset_pattern = config.GetString("runner_sources.amazon.asset_pattern")};
+                 .asset_pattern = config.GetString("runner_sources.amazon.asset_pattern"),
+                  .exclude = {}};
   }
   if (kind == "humble") {
     return Source{.repo = config.GetString("runner_sources.humble.repo"),
-                 .asset_pattern = config.GetString("runner_sources.humble.asset_pattern")};
+                 .asset_pattern = config.GetString("runner_sources.humble.asset_pattern"),
+                  .exclude = {}};
+  }
+  if (kind == "umu") {
+    return Source{.repo = std::string(config::runner_sources::kUmuLauncherRepo),
+                  .asset_pattern = std::string(config::runner_sources::kUmuLauncherAssetPattern), .exclude = {}};
   }
   return Err("unknown_runner_kind", std::format("no downloadable source for kind \"{}\"", kind));
 }
@@ -61,17 +74,76 @@ std::filesystem::path InstallDirFor(const config::Config& config, const std::str
   return paths.empty() ? fs::path() : paths.front();
 }
 
-// A release's matching checksum asset, if it shipped one — same stem as
-// the tarball, ".sha512sum" instead of its archive extension.
-std::string FindChecksumUrl(const json& assets, const std::string& tarball_name) {
-  const std::string stem = fs::path(tarball_name).stem().string();  // strips one extension (.gz/.xz)
+std::string ArchiveStem(const std::string& asset_name) {
+  for (const char* ext : {".tar.gz", ".tar.xz", ".tgz", ".zip"}) {
+    if (asset_name.ends_with(ext)) return asset_name.substr(0, asset_name.size() - std::strlen(ext));
+  }
+  return asset_name;
+}
+
+// A release's checksum for `tarball_name`: "<stem>.sha512sum" or
+// "<stem>.sha256sum" beside it, or one sha256sums.txt for the whole release
+// (Kron4ek).
+void FindChecksum(const json& assets, const std::string& tarball_name, ReleaseAsset& out) {
+  const std::string stem = ArchiveStem(tarball_name);
+  std::string list;
   for (const auto& asset : assets) {
     const std::string name = asset.value("name", std::string());
-    if (name.ends_with(".sha512sum") && name.starts_with(fs::path(stem).stem().string())) {
-      return asset.value("browser_download_url", std::string());
+    const std::string url = asset.value("browser_download_url", std::string());
+    if (name == stem + ".sha512sum") {
+      out.checksum_url = url;
+      out.checksum_is_list = false;
+      out.checksum_is_sha256 = false;
+      return;
+    }
+    if (name == stem + ".sha256sum") {
+      out.checksum_url = url;
+      out.checksum_is_sha256 = true;
+    }
+    if (name == "sha256sums.txt") list = url;
+  }
+  if (!out.checksum_url.empty() || list.empty()) return;
+  out.checksum_url = list;
+  out.checksum_is_list = true;
+  out.checksum_is_sha256 = true;
+}
+
+bool Excluded(const std::vector<std::string>& exclude, const std::string& text) {
+  return std::ranges::any_of(exclude, [&](const std::string& word) { return text.contains(word); });
+}
+
+// Lists `repo`'s releases, keeping the first asset per release that matches.
+Result<std::vector<ReleaseAsset>> FetchReleases(const std::string& repo, const std::string& pattern,
+                                                const std::vector<std::string>& exclude) {
+  Command command;
+  command.argv = {"curl", "-sSL", std::format("https://api.github.com/repos/{}/releases?per_page=10", repo)};
+  const Result<ExecResult> result = RunAndWait(command);
+  if (!result) return std::unexpected(result.error());
+
+  const json parsed = json::parse(result->output, nullptr, false);
+  if (parsed.is_discarded() || !parsed.is_array()) {
+    return Err("github_api_error", std::format("couldn't list releases for {}: {}", repo, result->output));
+  }
+
+  std::vector<ReleaseAsset> releases;
+  for (const auto& release : parsed) {
+    const json& assets = release.value("assets", json::array());
+    for (const auto& asset : assets) {
+      const std::string name = asset.value("name", std::string());
+      if (!strings::GlobMatch(pattern, name) || Excluded(exclude, name)) continue;
+
+      ReleaseAsset entry;
+      entry.tag = release.value("tag_name", std::string());
+      entry.asset_name = name;
+      entry.download_url = asset.value("browser_download_url", std::string());
+      entry.size_bytes = asset.value("size", std::int64_t{0});
+      entry.published_at = release.value("published_at", std::string());
+      FindChecksum(assets, name, entry);
+      releases.push_back(std::move(entry));
+      break;  // one matching asset per release is expected
     }
   }
-  return {};
+  return releases;
 }
 
 // Downloads `asset` to `target` and verifies it against
@@ -96,7 +168,8 @@ Result<void> DownloadVerified(const ReleaseAsset& asset, const fs::path& target)
     return {};
   }
 
-  const fs::path checksum_file = target.parent_path() / (asset.asset_name + ".sha512sum");
+  const fs::path checksum_file =
+      target.parent_path() / (asset.asset_name + (asset.checksum_is_sha256 ? ".sha256sum" : ".sha512sum"));
   Command fetch_checksum;
   fetch_checksum.argv = {"curl", "-sSL", "-o", checksum_file.string(), asset.checksum_url};
   if (Result<ExecResult> result = RunAndWait(fetch_checksum); !result || result->exit_code != 0) {
@@ -105,8 +178,24 @@ Result<void> DownloadVerified(const ReleaseAsset& asset, const fs::path& target)
     return Err("checksum_fetch_failed", "couldn't fetch the checksum file to verify the download");
   }
 
+  if (asset.checksum_is_sha256) {
+    // Keep only this asset's line, so other files a list names aren't checked.
+    std::ifstream in(checksum_file);
+    std::string line, mine;
+    while (std::getline(in, line)) {
+      if (line.ends_with(" " + asset.asset_name) || line.ends_with("*" + asset.asset_name)) mine = line;
+    }
+    in.close();
+    if (mine.empty()) {
+      fs::remove(target, ec);
+      fs::remove(checksum_file, ec);
+      return Err("checksum_missing", std::format("the checksum file doesn't list {}", asset.asset_name));
+    }
+    std::ofstream(checksum_file, std::ios::trunc) << mine << "\n";
+  }
+
   Command verify;
-  verify.argv = {"sha512sum", "-c", checksum_file.filename().string()};
+  verify.argv = {asset.checksum_is_sha256 ? "sha256sum" : "sha512sum", "-c", checksum_file.filename().string()};
   verify.cwd = target.parent_path();
   const Result<ExecResult> verified = RunAndWait(verify);
   fs::remove(checksum_file, ec);
@@ -132,7 +221,8 @@ std::optional<fs::path> FindFileNamed(const fs::path& dir, const std::string& na
 
 bool IsZip(const std::string& asset_name) { return asset_name.ends_with(".zip"); }
 bool IsTarball(const std::string& asset_name) {
-  return asset_name.ends_with(".tar.gz") || asset_name.ends_with(".tar.xz") || asset_name.ends_with(".tgz");
+  return asset_name.ends_with(".tar") || asset_name.ends_with(".tar.gz") || asset_name.ends_with(".tar.xz") ||
+         asset_name.ends_with(".tgz");
 }
 
 Result<void> Chmod(const fs::path& path) {
@@ -148,37 +238,119 @@ Result<void> Chmod(const fs::path& path) {
 }  // namespace
 
 Result<std::vector<ReleaseAsset>> ListReleases(const config::Config& config, const std::string& kind) {
+  if (kind == "proton" || kind == "wine") return ListFamilyReleases(Families(config, kind).front());
   const Result<Source> source = SourceFor(config, kind);
   if (!source) return std::unexpected(source.error());
+  return FetchReleases(source->repo, source->asset_pattern, source->exclude);
+}
 
-  Command command;
-  command.argv = {"curl", "-sSL", std::format("https://api.github.com/repos/{}/releases?per_page=10", source->repo)};
-  const Result<ExecResult> result = RunAndWait(command);
-  if (!result) return std::unexpected(result.error());
+std::vector<RunnerFamily> Families(const config::Config& config, const std::string& kind) {
+  namespace rs = config::runner_sources;
+  std::vector<RunnerFamily> all = {
+      {.id = "proton_ge", .kind = "proton", .label = "GE-Proton",
+       .repo = config.GetString("runner_sources.proton_ge.repo"),
+       .asset_pattern = config.GetString("runner_sources.proton_ge.asset_pattern"),
+       .build_pattern = "GE-Proton*", .exclude = {}},
+      {.id = "proton_cachyos", .kind = "proton", .label = "Proton-CachyOS",
+       .repo = std::string(rs::kProtonCachyOSRepo), .asset_pattern = std::string(rs::kProtonCachyOSAssetPattern),
+       .build_pattern = "cachyos-*-slr", .exclude = {}},
+      {.id = "proton_umu", .kind = "proton", .label = "UMU-Proton",
+       .repo = std::string(rs::kUmuProtonRepo), .asset_pattern = "UMU-Proton-*.tar.gz",
+       .build_pattern = "UMU-Proton-*", .exclude = {}},
+      {.id = "proton_em", .kind = "proton", .label = "Proton-EM",
+       .repo = std::string(rs::kProtonEMRepo), .asset_pattern = "proton-EM-*.tar.xz",
+       .build_pattern = "proton-EM-*", .exclude = {}},
+      {.id = "proton_sarek", .kind = "proton", .label = "Proton-Sarek (older GPUs)",
+       .repo = std::string(rs::kProtonSarekRepo), .asset_pattern = "Proton-Sarek*.tar.gz",
+       .build_pattern = "Proton-Sarek*", .exclude = {"async"}},
+      {.id = "wine_staging_tkg", .kind = "wine", .label = "Wine staging-tkg (Kron4ek)",
+       .repo = std::string(rs::kKron4ekRepo), .asset_pattern = "wine-*-staging-tkg-amd64.tar.xz",
+       .build_pattern = "wine-*-staging-tkg-amd64", .exclude = {}},
+      {.id = "wine_staging", .kind = "wine", .label = "Wine staging (Kron4ek)",
+       .repo = std::string(rs::kKron4ekRepo), .asset_pattern = "wine-*-staging-amd64.tar.xz",
+       .build_pattern = "wine-*-staging-amd64", .exclude = {"tkg"}},
+      {.id = "wine_vanilla", .kind = "wine", .label = "Wine (Kron4ek)",
+       .repo = std::string(rs::kKron4ekRepo), .asset_pattern = "wine-*-amd64.tar.xz",
+       .build_pattern = "wine-*-amd64", .exclude = {"staging"}},
+      {.id = "wine_ge", .kind = "wine", .label = "Wine-GE (archived)",
+       .repo = config.GetString("runner_sources.wine_ge.repo"),
+       .asset_pattern = config.GetString("runner_sources.wine_ge.asset_pattern"),
+       .build_pattern = "lutris-GE-Proton*", .exclude = {}},
+      {.id = "wine_lutris", .kind = "wine", .label = "Lutris Wine (archived)",
+       .repo = std::string(rs::kLutrisWineRepo), .asset_pattern = "wine-lutris-*-x86_64.tar.xz",
+       .build_pattern = "lutris-*-x86_64", .exclude = {"GE-Proton"}},
+  };
+  if (kind.empty()) return all;
+  std::erase_if(all, [&](const RunnerFamily& family) { return family.kind != kind; });
+  return all;
+}
 
-  const json parsed = json::parse(result->output, nullptr, false);
-  if (parsed.is_discarded() || !parsed.is_array()) {
-    return Err("github_api_error", std::format("couldn't list releases for {}: {}", source->repo, result->output));
+std::optional<RunnerFamily> FindFamily(const config::Config& config, const std::string& id) {
+  for (RunnerFamily& family : Families(config, "")) {
+    if (family.id == id) return std::move(family);
   }
+  return std::nullopt;
+}
 
-  std::vector<ReleaseAsset> releases;
-  for (const auto& release : parsed) {
-    const json& assets = release.value("assets", json::array());
-    for (const auto& asset : assets) {
-      const std::string name = asset.value("name", std::string());
-      if (!strings::GlobMatch(source->asset_pattern, name)) continue;
+std::optional<RunnerFamily> FamilyOfBuild(const config::Config& config, const std::string& kind,
+                                          const std::string& name, const std::string& folder) {
+  const auto matches = [](const RunnerFamily& family, const std::string& text) {
+    return strings::GlobMatch(family.build_pattern, text) && !Excluded(family.exclude, text);
+  };
+  for (RunnerFamily& family : Families(config, kind)) {
+    if (matches(family, folder) || (kind == "proton" && matches(family, name))) return std::move(family);
+  }
+  return std::nullopt;
+}
 
-      ReleaseAsset entry;
-      entry.tag = release.value("tag_name", std::string());
-      entry.asset_name = name;
-      entry.download_url = asset.value("browser_download_url", std::string());
-      entry.size_bytes = asset.value("size", std::int64_t{0});
-      entry.published_at = release.value("published_at", std::string());
-      entry.checksum_url = FindChecksumUrl(assets, name);
-      releases.push_back(std::move(entry));
-      break;  // one matching asset per release is expected
+bool IsInstalledAs(const std::string& kind, const std::string& name, const std::string& folder,
+                   const ReleaseAsset& asset) {
+  const std::string stem = ArchiveStem(asset.asset_name);
+  // Wine-GE's "wine-lutris-GE-…" unpacks to "lutris-GE-…"; Proton builds
+  // name themselves after the release tag in their version file.
+  return folder == stem || "wine-" + folder == stem || (kind == "proton" && name == asset.tag);
+}
+
+std::string ReleaseName(const std::string& kind, const ReleaseAsset& asset) {
+  return kind == "wine" ? ArchiveStem(asset.asset_name) : asset.tag;
+}
+
+std::string BuildLabel(const std::string& kind, const std::string& name) {
+  if (kind != "wine") return name;
+  std::string text = name.starts_with("wine-lutris-") ? name.substr(5) : name;
+  for (const char* suffix : {"-x86_64", "-amd64"}) {
+    if (text.ends_with(suffix)) text.resize(text.size() - std::strlen(suffix));
+  }
+  if (text.starts_with("lutris-GE-Proton")) return "Wine-GE " + text.substr(16);
+  if (text.starts_with("lutris-")) return "Lutris Wine " + text.substr(7);
+  if (text.starts_with("wine-")) {
+    // "wine-11.18-staging-tkg" reads "Wine 11.18 staging-tkg".
+    std::string rest = text.substr(5);
+    if (const auto dash = rest.find('-'); dash != std::string::npos) rest[dash] = ' ';
+    return "Wine " + rest;
+  }
+  return name;
+}
+
+Result<std::vector<ReleaseAsset>> ListFamilyReleases(const RunnerFamily& family) {
+  using Clock = std::chrono::steady_clock;
+  struct Cached {
+    Clock::time_point at;
+    std::vector<ReleaseAsset> releases;
+  };
+  static std::mutex mutex;
+  static std::map<std::string, Cached> cache;
+  const std::string key = family.repo + "|" + family.asset_pattern;
+  {
+    std::lock_guard lock(mutex);
+    if (auto it = cache.find(key); it != cache.end() && Clock::now() - it->second.at < std::chrono::minutes(10)) {
+      return it->second.releases;
     }
   }
+  auto releases = FetchReleases(family.repo, family.asset_pattern, family.exclude);
+  if (!releases) return releases;
+  std::lock_guard lock(mutex);
+  cache[key] = {Clock::now(), *releases};
   return releases;
 }
 

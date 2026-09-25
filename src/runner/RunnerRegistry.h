@@ -22,6 +22,11 @@ namespace mira::runner {
 // discovery goes through it.
 std::vector<model::RunnerBuild> DeduplicateBuilds(std::vector<model::RunnerBuild> builds);
 
+// What "<kind>:auto" picks from `builds` (non-empty): a distro-packaged build
+// first, then the preferred download source (GE-Proton, Wine staging-tkg),
+// then the newest.
+const model::RunnerBuild& PickAuto(const config::Config& config, const std::vector<model::RunnerBuild>& builds);
+
 // Owns every IRunner and resolves a "kind:name" reference (name may be
 // "auto"/"latest" for the newest discovered build) to a concrete runner +
 // build. The one place a game's runner_ref gets turned into actual work.

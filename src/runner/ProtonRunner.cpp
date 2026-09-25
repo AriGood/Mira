@@ -7,6 +7,7 @@
 #include <fstream>
 
 #include "config/Config.h"
+#include "core/Paths.h"
 #include "core/Strings.h"
 #include "runner/Exec.h"
 
@@ -32,16 +33,42 @@ void ApplyGameId(Command& command, const model::Game& game) {
   }
 }
 
+// Scanned on top of runner_search_paths (unless runner_scan_common_dirs is
+// off), so builds from the distro, Steam, Heroic or ProtonPlus show up even
+// with an old saved config.
+constexpr const char* kKnownProtonDirs[] = {
+    "~/.steam/root/compatibilitytools.d",
+    "~/.local/share/Steam/compatibilitytools.d",
+    "~/.local/share/Steam/steamapps/common",
+    "/usr/share/steam/compatibilitytools.d",
+    "/usr/local/share/steam/compatibilitytools.d",
+    "~/.config/heroic/tools/proton",
+};
+
 }  // namespace
+
+fs::path BundledUmuRun() { return paths::UserDir() / "tools" / "umu" / "umu" / "umu-run"; }
+
+std::string UmuRunPath() {
+  if (auto found = FindOnPath("umu-run")) return *found;
+  std::error_code ec;
+  const fs::path bundled = BundledUmuRun();
+  return fs::exists(bundled, ec) ? bundled.string() : std::string();
+}
 
 std::vector<model::RunnerBuild> ProtonRunner::Discover(const config::Config& config) const {
   std::vector<model::RunnerBuild> builds;
   // A Proton build is useless without the launcher that runs it.
-  if (!FindOnPath("umu-run")) return builds;
+  if (UmuRunPath().empty()) return builds;
 
   std::error_code ec;
 
-  for (const fs::path& search_dir : config.GetPathArray("runner_search_paths")) {
+  std::vector<fs::path> search_dirs = config.GetPathArray("runner_search_paths");
+  if (config.GetBool("runner_scan_common_dirs")) {
+    for (const char* dir : kKnownProtonDirs) search_dirs.push_back(paths::Expand(dir));
+  }
+
+  for (const fs::path& search_dir : search_dirs) {
     if (!fs::is_directory(search_dir, ec)) continue;
     for (const auto& entry : fs::directory_iterator(search_dir, fs::directory_options::skip_permission_denied, ec)) {
       if (!entry.is_directory(ec)) continue;
@@ -83,7 +110,7 @@ Result<void> ProtonRunner::Provision(const model::Game& game,
   // "" as the exe is umu's documented way to initialise a prefix with no
   // game to run (see `man umu`, Example 4).
   Command command;
-  command.argv = {"umu-run", ""};
+  command.argv = {UmuRunPath(), ""};
   command.env["WINEPREFIX"] = game.data_dir;
   command.env["PROTONPATH"] = build->path;
   ApplyGameId(command, game);
@@ -112,7 +139,7 @@ Result<Command> ProtonRunner::BuildCommand(const model::Game& game,
   const fs::path exe = install_path / game.exe_path;
 
   Command command;
-  command.argv = {"umu-run", exe.string()};
+  command.argv = {UmuRunPath(), exe.string()};
   for (const std::string& arg : strings::Split(game.args, ' ')) {
     if (!arg.empty()) command.argv.push_back(arg);
   }

@@ -156,17 +156,36 @@ public:
   // GET /v1/runners.
   static void ListRunnersAsync(QObject* context, std::function<void(RunnersResult)> callback);
 
-  // GET /v1/runners/catalog?kind=proton|wine — what is available to
-  // install. Unlike everything else here this goes out to the GitHub API,
-  // so it has real network latency and its own longer timeout.
-  static void GetRunnerCatalogAsync(QObject* context, const std::string& kind,
+  // GET /v1/runners/catalog?kind=proton|wine&source= — what is available
+  // to install from one source (empty: the kind's preferred one). Unlike
+  // everything else here this goes out to the GitHub API, so it has real
+  // network latency and its own longer timeout.
+  static void GetRunnerCatalogAsync(QObject* context, const std::string& kind, const std::string& source,
                                     std::function<void(RunnerCatalogResult)> callback);
+
+  // GET /v1/runners/sources?kind=.
+  static void ListRunnerSourcesAsync(QObject* context, const std::string& kind,
+                                     std::function<void(RunnerSourcesResult)> callback);
+
+  // GET /v1/runners/updates. Also reaches GitHub, cached by mirad.
+  static void GetRunnerUpdatesAsync(QObject* context, std::function<void(RunnerUpdatesResult)> callback);
+
+  // POST /v1/runners/update. Starts like a download; games on the old build
+  // move to the new one when it finishes.
+  static void UpdateRunnerAsync(QObject* context, const std::string& reference,
+                                std::function<void(RunnerDownloadResult)> callback);
+
+  // GET /v1/runners/tools and POST /v1/runners/tools/{id}/setup (reported as
+  // <id>.setup.* events).
+  static void ListRunnerToolsAsync(QObject* context, std::function<void(RunnerToolsResult)> callback);
+  static void SetupRunnerToolAsync(QObject* context, const std::string& id,
+                                   std::function<void(RunnerDownloadResult)> callback);
 
   // POST /v1/runners/download. Returns 202 as soon as the download starts;
   // the outcome arrives as a runners.download.finished/.failed event, since
   // a build can be 500+ MB.
   static void DownloadRunnerAsync(QObject* context, const std::string& kind,
-                                  const std::string& tag,
+                                  const std::string& tag, const std::string& source,
                                   std::function<void(RunnerDownloadResult)> callback);
 
   // POST /v1/steam/scan. Idempotent: updates Steam-owned fields without
