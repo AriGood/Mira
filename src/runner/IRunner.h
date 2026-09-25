@@ -16,10 +16,8 @@ class Config;
 
 namespace mira::runner {
 
-// One way to run a game: native exec, or Proton via umu today. Every
-// umu/Proton-specific detail lives inside ProtonRunner — this interface knows
-// none of it, so a future custom Proton runner is a new file, not a
-// redesign (see docs/architecture.md, Replaceability).
+// One way to run a game: native, Proton, Wine or Steam. Every umu/Proton
+// detail lives inside ProtonRunner; this interface knows none of it.
 class IRunner {
 public:
   virtual ~IRunner() = default;
@@ -45,10 +43,8 @@ public:
                                        const std::optional<model::RunnerBuild>& build) const = 0;
 
   // Declares what game.runner_config accepts for this kind, so a frontend
-  // can render it generically instead of hardcoding per-runner knowledge
-  // (see docs/architecture.md, Replaceability) — a custom runner with
-  // entirely different knobs needs zero frontend changes. Empty for a
-  // runner with no runner_config fields at all, which is most of them.
+  // can render it generically. Empty for a runner with no runner_config
+  // fields, which is most of them.
   virtual nlohmann::json SettingsSchema() const { return nlohmann::json::array(); }
 };
 

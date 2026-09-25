@@ -83,12 +83,7 @@ void SendResult(Response& res, const Result<void>& result) {
   }
 }
 
-// model::ToJson(game) plus whether it's actually running right now --
-// ProcessSupervisor already tracks this live (IsRunning), it just never
-// used to be exposed anywhere. Letting a client read this on every
-// GET /v1/games refresh is what makes "is this running" self-correcting
-// after a reconnect, instead of a value only ever pieced together from a
-// stream of events with nothing authoritative to re-sync against.
+// model::ToJson plus whether the game is running, so a client can resync after a reconnect.
 json GameJson(const model::Game& game, const proc::ProcessSupervisor& supervisor) {
   json body = model::ToJson(game);
   body["running"] = supervisor.IsRunning(game.id);
@@ -112,19 +107,14 @@ model::Game ParseGamePatch(const model::Game& base, const json& patch) {
   if (patch.contains("runner_config") && patch["runner_config"].is_object()) {
     game.runner_config.merge_patch(patch["runner_config"]);
   }
-  // Replaced wholesale, not merged -- a plain list has no natural per-entry
-  // merge semantics the way the env map's null-removes-a-key convention
-  // does, so the client sends the full set it wants ({"tags": []} clears).
+  // Replaced, not merged; {"tags": []} clears them.
   if (patch.contains("tags") && patch["tags"].is_array()) {
     game.tags.clear();
     for (const auto& tag : patch["tags"]) {
       if (tag.is_string()) game.tags.push_back(tag.get<std::string>());
     }
   }
-  // "env": null clears every entry; "env": {"K": null} removes just K
-  // (same null-removes convention as ApplyOverridesPatch below) — merge-only
-  // with no way to shrink the map left no way to actually unset a variable
-  // once set, or reset it to empty without deleting and recreating the game.
+  // "env": null clears every entry; {"K": null} removes just K.
   if (patch.contains("env") && patch["env"].is_null()) {
     game.env.clear();
   } else if (patch.contains("env") && patch["env"].is_object()) {
@@ -140,11 +130,7 @@ model::Game ParseGamePatch(const model::Game& base, const json& patch) {
   return game;
 }
 
-// Applies a per-game config-override patch: flat {"dotted.key": value, ...},
-// a null value removing that override. This is the only place overrides are
-// read or written — /v1/games/{id} PATCH deals with the game's own fields
-// (name, exe_path, ...) exclusively, never global-setting overrides, so the
-// two are never mixed in one request body.
+// Applies a flat {"dotted.key": value} overrides patch; null removes an override.
 void ApplyOverridesPatch(model::Game& game, const json& patch) {
   for (const auto& [key, value] : patch.items()) {
     if (value.is_null()) {
@@ -155,9 +141,7 @@ void ApplyOverridesPatch(model::Game& game, const json& patch) {
   }
 }
 
-// Validated before ApplyOverridesPatch so a bad key or value rejects the
-// whole patch before anything is written, matching config::Config::Patch's
-// all-or-nothing behaviour.
+// Checked first so a bad key rejects the whole patch, like Config::Patch.
 std::optional<std::string> ValidateOverridesPatch(const json& patch) {
   for (const auto& [key, value] : patch.items()) {
     if (value.is_null()) continue;  // removal; nothing to validate
@@ -171,10 +155,7 @@ std::optional<std::string> ValidateOverridesPatch(const json& patch) {
   return std::nullopt;
 }
 
-// Wraps the launch command in each configured wrapper, in order: the first
-// entry ends up outermost, so ["gamemoderun", "gamescope -W 1920 -H 1080"]
-// runs `gamemoderun gamescope -W 1920 -H 1080 <game>`. Each entry is split on
-// spaces, like game.args (see NativeRunner.cpp) -- no shell quoting support.
+// The first wrapper ends up outermost. Entries are split on spaces, with no quoting.
 void ApplyCommandWrappers(Command& command, const std::vector<std::string>& wrappers) {
   for (auto it = wrappers.rbegin(); it != wrappers.rend(); ++it) {
     if (it->empty()) continue;
@@ -183,9 +164,7 @@ void ApplyCommandWrappers(Command& command, const std::vector<std::string>& wrap
   }
 }
 
-// Checked before a launch actually spawns anything, so a wrapper that isn't
-// installed is a clear 400 naming it, instead of the whole launch silently
-// failing with exit code 127 from inside the outermost wrapper.
+// Fails with the missing wrapper's name instead of an exit code 127 from inside it.
 Result<void> CheckCommandWrappers(const std::vector<std::string>& wrappers) {
   for (const std::string& entry : wrappers) {
     if (entry.empty()) continue;
@@ -199,9 +178,7 @@ Result<void> CheckCommandWrappers(const std::vector<std::string>& wrappers) {
   return {};
 }
 
-// launch.env, applied under whatever BuildCommand already set (game.env
-// merged in by the runner always wins, same "global default, per-game
-// override" contract command_wrappers already has).
+// Applied under the runner's env, so the game's own env still wins.
 void ApplyLaunchEnv(Command& command, const std::vector<std::string>& entries) {
   for (const std::string& entry : entries) {
     const auto eq = entry.find('=');
@@ -211,10 +188,7 @@ void ApplyLaunchEnv(Command& command, const std::vector<std::string>& entries) {
   }
 }
 
-// Runs launch.pre_script synchronously and blocks the request -- the Steam
-// URL-handoff branch and the no-mira-run fallback both still need this; the
-// normal wrapped path runs it inside mira-run instead, which is what lets
-// it survive mirad dying mid-launch.
+// Used by the Steam handoff and the no-mira-run fallback; otherwise mira-run runs the script.
 Result<void> RunPreScriptInline(const std::string& pre_script) {
   if (pre_script.empty()) return {};
   Command script;
@@ -228,8 +202,7 @@ Result<void> RunPreScriptInline(const std::string& pre_script) {
   return {};
 }
 
-// mirad's own binary directory, via /proc/self/exe. Empty on failure;
-// runner::ResolveSiblingBinary falls back to $PATH in that case.
+// Empty on failure; ResolveSiblingBinary then falls back to PATH.
 std::filesystem::path OwnBinaryDir() {
   std::error_code ec;
   const auto exe = std::filesystem::read_symlink("/proc/self/exe", ec);
@@ -243,10 +216,7 @@ struct WrapperStatus {
   std::string detail;           // session path (ok) or the pre script's captured output (pre_failed)
 };
 
-// Blocks on mira-run's status pipe until it writes something and closes it,
-// or `timeout_s` passes. Distinct from launch.pre_timeout_s expiring
-// (mira-run's own budget for the script, reported as "pre_timeout" below);
-// this is a hard ceiling on mira-run answering at all.
+// Blocks until mira-run writes its status and closes the pipe, or `timeout_s` passes.
 WrapperStatus ReadWrapperStatus(int fd, int timeout_s) {
   WrapperStatus result;
   std::string buffer;
@@ -269,8 +239,7 @@ WrapperStatus ReadWrapperStatus(int fd, int timeout_s) {
   }
   result.code = buffer.substr(0, newline);
   result.detail = buffer.substr(newline + 1);
-  // For "ok" this is the session path, itself followed by mira-run's own
-  // trailing newline -- strip it, or the path never matches the real file.
+  // Strip mira-run's trailing newline from the session path.
   while (!result.detail.empty() && (result.detail.back() == '\n' || result.detail.back() == '\r')) {
     result.detail.pop_back();
   }
@@ -286,9 +255,7 @@ json CollectionJson(const itch::ItchCollection& collection) {
           {"url", std::format("https://itch.io/c/{}", collection.id)}};
 }
 
-// Same check GET /v1/games/{id}/artwork's default "cover" slot uses to
-// decide between serving a file and 404ing — reused here so "missing
-// artwork" means the same thing to both endpoints.
+// Same check as GET /v1/games/{id}/artwork's default slot.
 bool HasCachedArtwork(const config::Config& config, const std::string& id) {
   const std::filesystem::path metadata_file = metadata::MetadataFile(config, id);
   std::ifstream meta_in(metadata_file);
@@ -338,11 +305,7 @@ void SyncDesktopEntries(config::Config& config, store::GameStore& games) {
   }
 }
 
-// Deletes `target` only if it's non-empty and really resolves inside one of
-// `roots` — never wherever a game's install_path/data_dir field happens to
-// say, in case a hand-edited games.toml points somewhere it shouldn't. A
-// symlinked target is resolved with weakly_canonical before the containment
-// check, so a symlink can't be used to delete outside a root either.
+// Deletes `target` only if it resolves (symlinks included) inside one of `roots`.
 Result<void> DeleteUnderRoot(const std::string& target, const std::vector<std::filesystem::path>& roots) {
   return library::DeleteInside(target, roots);
 }
@@ -436,10 +399,8 @@ Server::~Server() {
   if (external_watch_.joinable()) external_watch_.join();
 }
 
-// A game started outside Mira (from the Steam client, or inside a running
-// launcher) is picked up here, so it still shows as playing and its
-// playtime counts. The index caches what it has read, so a tick is one
-// /proc listing plus reads of processes that just started.
+// Picks up games started outside Mira (the Steam client, a running launcher) so
+// they show as playing and count playtime.
 void Server::WatchExternalGames() {
   constexpr auto kTick = std::chrono::milliseconds(500);
   constexpr int kTicksPerScan = 6;
@@ -537,10 +498,6 @@ void Server::RegisterRoutes() {
     SendJson(res, {{"status", "ok"}});
   });
 
-  // For the frontend to warn about a launch.gamemode = true that won't
-  // actually do anything -- "installed" and "daemon_running" are reported
-  // separately since they're different problems (not installed at all, vs
-  // installed but the daemon isn't up right now).
   http_->Get("/v1/gamemode/status", [](const Request&, Response& res) {
     SendJson(res, {{"installed", gamemode::IsInstalled()}, {"daemon_running", gamemode::IsDaemonRunning()}});
   });
@@ -602,11 +559,7 @@ void Server::RegisterRoutes() {
 
   // --- games ----------------------------------------------------------------
 
-  // "hidden" isn't a separate field — it's a tag (see model::Game::tags),
-  // and the one tag this endpoint treats specially: a hidden game is left
-  // out of the default/untagged list, same as it'd be hidden in a launcher
-  // UI, without a whole extra field+schema entry for one boolean. Pass
-  // ?tag=hidden explicitly to list exactly the hidden ones.
+  // Games tagged "hidden" are left out unless a tag is asked for.
   http_->Get("/v1/games", [this](const Request& req, Response& res) {
     std::vector<model::Game> all = games_.All();
     json out = json::array();
@@ -633,13 +586,7 @@ void Server::RegisterRoutes() {
     SendJson(res, GameJson(*game, supervisor_));
   });
 
-  // The tail of the log mira-run writes for this game (src/wrapper/main.cpp):
-  // the game's own stdout/stderr, plus mira-run's own annotated pre/post
-  // script output and exit summary — one file that explains a session, not
-  // just a status badge. A game that's never been launched through the
-  // wrapper (or was launched via the no-mira-run fallback) simply has no
-  // log file yet — reported as an empty list, not a 404 or 500, since "no
-  // log" is a completely ordinary state.
+  // The tail of mira-run's log for this game. No log yet is an empty list.
   http_->Get(R"(/v1/games/([^/]+)/log)", [this](const Request& req, Response& res) {
     auto game = games_.Find(req.matches[1]);
     if (!game) return SendError(res, 404, "game_not_found", "no such game");
@@ -653,9 +600,7 @@ void Server::RegisterRoutes() {
     std::ifstream in(log_file, std::ios::binary);
     if (!in) return SendJson(res, {{"lines", json::array()}});
 
-    // Bounded read from the end, not the whole file -- launch.log_max_mb
-    // can be configured up to 1GB, and this endpoint only ever needs a
-    // handful of recent lines.
+    // Only the end of the file is read; logs can be up to launch.log_max_mb.
     constexpr std::streamoff kMaxTailBytes = 4 * 1024 * 1024;
     in.seekg(0, std::ios::end);
     const std::streamoff size = in.tellg();
@@ -682,14 +627,6 @@ void Server::RegisterRoutes() {
     SendJson(res, GameJson(*result, supervisor_));
   });
 
-  // Everything about how this game's *global settings* are overridden lives
-  // under /config, mirroring GET/PATCH /v1/config itself: GET resolves every
-  // key through default -> settings.toml -> this game's overrides, tagged
-  // with which layer supplied it; PATCH sets or (with a null value) removes
-  // overrides, flat {"dotted.key": value}. Deliberately not part of the
-  // plain PATCH /v1/games/{id} above — a game's own fields (name, exe_path,
-  // ...) and its overrides of unrelated global settings are different
-  // concerns and don't belong in the same request body.
   http_->Get(R"(/v1/games/([^/]+)/config)", [this](const Request& req, Response& res) {
     auto game = games_.Find(req.matches[1]);
     if (!game) return SendError(res, 404, "game_not_found", "no such game");
@@ -709,11 +646,7 @@ void Server::RegisterRoutes() {
     auto result =
         games_.Update(id, [&](model::Game& game) { ApplyOverridesPatch(game, patch); });
     if (!result) return SendError(res, 404, result.error().code, result.error().message);
-    // A per-game override can flip desktop_entries.enabled off for just this
-    // game — every other mutation path syncs already (PATCH /v1/config,
-    // PATCH /v1/games/{id}, DELETE /v1/games/{id}, ...); this one didn't,
-    // so a game's own .desktop entry never got removed until something else
-    // happened to trigger a sync.
+    // An override can turn desktop_entries.enabled off for this game.
     SyncDesktopEntries(config_, games_);
     SendJson(res, GameJson(*result, supervisor_));
   });
@@ -730,15 +663,8 @@ void Server::RegisterRoutes() {
     const bool delete_metadata =
         purge || (req.has_param("delete_metadata") && req.get_param_value("delete_metadata") == "true");
 
-    // Opt-in, and deliberately narrow: only ever deletes a path this game's
-    // own record points at, and only if that path is really inside a
-    // configured root — never wherever install_path/data_dir happen to say,
-    // in case a hand-edited games.toml points somewhere it shouldn't.
     if (delete_files && game->source == "epic" && !game->source_ref.empty()) {
-      // Legendary owns this install's manifest bookkeeping — uninstalling
-      // through it instead of a plain directory delete keeps that manifest
-      // in sync, so a later `legendary list-installed` doesn't still think
-      // this title is here (and broken).
+      // Uninstall through Legendary so its manifest stays in sync.
       if (auto uninstalled = epic::RunLegendary(config_, {"uninstall", game->source_ref, "-y"}); !uninstalled) {
         return SendError(res, 400, uninstalled.error().code, uninstalled.error().message);
       }
@@ -753,10 +679,7 @@ void Server::RegisterRoutes() {
       }
     }
     if (delete_metadata) {
-      // Metadata/artwork live under Mira's own ~/.config/mira tree, keyed
-      // by game id — not a user-configured root, so no containment check
-      // is needed the way library_roots/prefix_root's is. Best effort: a
-      // cache file that was never written or already gone isn't an error.
+      // Metadata lives in Mira's own folder, keyed by id, so no root check is needed.
       std::error_code ec;
       std::filesystem::remove(metadata::MetadataFile(config_, game->id), ec);
       if (ec) log::Warn("could not remove metadata for {}: {}", game->id, ec.message());
@@ -773,12 +696,6 @@ void Server::RegisterRoutes() {
 
   // --- library ------------------------------------------------------------
 
-  // Manages library_roots (already a plain config array — see GET/PATCH
-  // /v1/config) is deliberately not duplicated here; this is the one library
-  // endpoint that does real work beyond reading/writing settings. It runs
-  // synchronously rather than returning a job id: there is no worker/job
-  // queue yet (see docs/architecture.md), and a scan of a normal-sized
-  // library completes well within an HTTP request.
   http_->Post("/v1/library/scan", [this](const Request&, Response& res) {
     library::Scanner scanner(config_, games_, events_);
     const library::ScanSummary summary = scanner.ScanAll();
@@ -787,11 +704,6 @@ void Server::RegisterRoutes() {
                    {"restored", summary.restored}});
   });
 
-  // Runs library::Relocate across every tracked game, moving each into
-  // Mira's canonical layout (see the per-game /relocate route's own
-  // comment) — what "changed prefix_root/prefix_naming, now migrate what's
-  // already on disk" actually means: neither setting alone moves anything.
-  // Explicit-trigger only, same as the per-game route.
   http_->Post("/v1/library/relocate", [this](const Request&, Response& res) {
     int moved = 0;
     int failed = 0;
@@ -821,9 +733,6 @@ void Server::RegisterRoutes() {
 
   // --- steam ------------------------------------------------------------
 
-  // Detected apps land in the same GameStore as everything else (see
-  // SteamScanner's class comment) — no separate GET endpoint needed, they
-  // just show up in GET /v1/games with runner_ref "steam:<appid>".
   http_->Post("/v1/steam/scan", [this](const Request&, Response& res) {
     steam::SteamScanner scanner(config_, games_, events_);
     auto summary = scanner.Scan();
@@ -835,9 +744,6 @@ void Server::RegisterRoutes() {
 
   // --- lutris -----------------------------------------------------------
 
-  // Imported games land in the same GameStore as everything else (see
-  // LutrisImporter's class comment) — no separate GET endpoint needed, they
-  // just show up in GET /v1/games.
   http_->Post("/v1/lutris/import", [this](const Request&, Response& res) {
     lutris::LutrisImporter importer(config_, games_, events_);
     auto summary = importer.Import();
@@ -848,14 +754,6 @@ void Server::RegisterRoutes() {
   });
 
   // --- epic -------------------------------------------------------------
-  //
-  // Wraps Legendary, a native-Linux Epic Games Store CLI client, for
-  // everything protocol-shaped (auth, catalog, install/update). Mira never
-  // runs Legendary's own `legendary launch` — an installed Epic game is
-  // launched through Mira's own Wine/Proton runners like any other Windows
-  // game (see docs/architecture.md). Nothing here assumes legendary is
-  // already on the system — GET .../legendary/status is always safe to
-  // call first, and POST .../legendary/install is how Mira gets it there.
 
   http_->Get("/v1/epic/legendary/status", [this](const Request&, Response& res) {
     const epic::LegendaryStatus status = epic::DetectLegendary(config_);
@@ -865,12 +763,7 @@ void Server::RegisterRoutes() {
                   {"version", status.version}});
   });
 
-  // Downloads and installs Legendary's latest matching GitHub release —
-  // detached, same "don't block the request thread on a slow download"
-  // pattern as POST /v1/runners/download above; epic.legendary.install.*
-  // on the event stream is how a caller finds out it's done. Re-running
-  // this later re-fetches the latest release, which is also how staying
-  // up to date works — no separate update endpoint.
+  // Re-running this fetches the latest release, which is also how updates work.
   http_->Post("/v1/epic/legendary/install", [this](const Request&, Response& res) {
     auto releases = runner::ListReleases(config_, "legendary");
     if (!releases) return SendError(res, 502, releases.error().code, releases.error().message);
@@ -891,8 +784,6 @@ void Server::RegisterRoutes() {
     SendJson(res, {{"status", "downloading"}, {"tag", asset.tag}}, 202);
   });
 
-  // The one call to know the whole picture: is legendary installed, and are
-  // we authenticated. Never errors — both are just fields on the result.
   http_->Get("/v1/epic/status", [this](const Request&, Response& res) {
     const epic::EpicAuthStatus status = epic::Status(config_);
     SendJson(res, {{"legendary", {{"installed", status.legendary.installed},
@@ -904,8 +795,6 @@ void Server::RegisterRoutes() {
                   {"login_url", epic::kLoginUrl}});
   });
 
-  // The user pastes back the code shown at epic::kLoginUrl, visited in
-  // their own browser -- mirad itself never opens one (see Legendary.h).
   http_->Post("/v1/epic/auth", [this](const Request& req, Response& res) {
     json body = json::parse(req.body, nullptr, false);
     if (body.is_discarded() || !body.contains("code") || !body["code"].is_string()) {
@@ -925,8 +814,6 @@ void Server::RegisterRoutes() {
     SendJson(res, {{"status", "logged_out"}});
   });
 
-  // Imported games land in the same GameStore as everything else — no
-  // separate GET endpoint needed, they just show up in GET /v1/games.
   http_->Post("/v1/epic/import", [this](const Request&, Response& res) {
     epic::EpicImporter importer(config_, games_, events_);
     auto summary = importer.Import();
@@ -937,16 +824,6 @@ void Server::RegisterRoutes() {
   });
 
   // --- gog ----------------------------------------------------------------
-  //
-  // Wraps gogdl (Heroic's GOG downloader) for auth and install/update.
-  // Unlike Legendary, gogdl has no catalog/status subcommand of its own —
-  // GET /v1/gog/status only ever reports whether gogdl itself is
-  // installed and whether Mira has a stored, unexpired token; catalog
-  // listing (GET /v1/library?source=gog) talks to GOG's own embed.gog.com
-  // API directly (see src/gog/GogSource.cpp). Mira never runs GOG Galaxy —
-  // an installed GOG game launches through Mira's own Wine/Proton runners
-  // like any other Windows game, or natively when GOG shipped a Linux
-  // build.
 
   http_->Get("/v1/gog/status", [this](const Request&, Response& res) {
     const gog::GogAuthStatus status = gog::Status(config_);
@@ -978,9 +855,6 @@ void Server::RegisterRoutes() {
     SendJson(res, {{"status", "downloading"}, {"tag", asset.tag}}, 202);
   });
 
-  // The user pastes back the "code" query param from the GOG login-success
-  // redirect URL — mirad itself never opens a browser (same posture as
-  // /v1/epic/auth).
   http_->Post("/v1/gog/auth", [this](const Request& req, Response& res) {
     json body = json::parse(req.body, nullptr, false);
     if (body.is_discarded() || !body.contains("code") || !body["code"].is_string()) {
@@ -1000,10 +874,7 @@ void Server::RegisterRoutes() {
     SendJson(res, {{"status", "logged_out"}});
   });
 
-  // Unlike epic/steam/itch, this doesn't scan for already-installed
-  // titles system-wide — gogdl has no such concept (see gog/Gog.h's class
-  // comment). It re-identifies whatever's already under gog.install_root,
-  // which is what GogInstaller itself installs into.
+  // Only looks under gog.install_root; gogdl can't list installed games.
   http_->Post("/v1/gog/import", [this](const Request&, Response& res) {
     gog::GogImporter importer(config_, games_, events_);
     auto summary = importer.Import();
@@ -1014,10 +885,6 @@ void Server::RegisterRoutes() {
   });
 
   // --- amazon -------------------------------------------------------------
-  //
-  // Wraps nile (Heroic's Amazon Games client) for login, library and
-  // downloads; installing goes through /v1/library/install like the other
-  // stores. Installed games run through Mira's own runners.
 
   http_->Get("/v1/amazon/status", [this](const Request&, Response& res) {
     const amazon::AmazonAuthStatus status = amazon::Status(config_);
@@ -1047,8 +914,6 @@ void Server::RegisterRoutes() {
     SendJson(res, {{"status", "downloading"}, {"tag", asset.tag}}, 202);
   });
 
-  // Two steps: this returns the Amazon login URL; /v1/amazon/auth takes the
-  // amazon.com URL the browser ends on after logging in.
   http_->Post("/v1/amazon/login", [this](const Request&, Response& res) {
     const auto url = amazon::BeginLogin(config_);
     if (!url) return SendError(res, 409, url.error().code, url.error().message);
@@ -1083,9 +948,6 @@ void Server::RegisterRoutes() {
   });
 
   // --- store launchers --------------------------------------------------
-  //
-  // Battle.net, Ubisoft Connect and the EA app, each installed into its own
-  // prefix. Their games are imported as Mira games and launched through them.
 
   http_->Get("/v1/launchers", [this](const Request&, Response& res) {
     json list = json::array();
@@ -1138,8 +1000,6 @@ void Server::RegisterRoutes() {
     SendJson(res, {{"added", summary->added}, {"updated", summary->updated}});
   });
 
-  // Opens the launcher, optionally asking it to launch or install a game by
-  // its store id (Battle.net product code, Ubisoft id, EA offer ids).
   http_->Post(R"(/v1/launchers/([^/]+)/open)", [this](const Request& req, Response& res) {
     const launchers::Launcher* launcher = launchers::Find(req.matches[1].str());
     if (!launcher) return SendError(res, 404, "launcher_not_found", "no such launcher");
@@ -1165,11 +1025,6 @@ void Server::RegisterRoutes() {
   });
 
   // --- itch -----------------------------------------------------------
-  //
-  // Wraps butlerd (itch.io's own launcher-integration daemon) for auth,
-  // catalog, and install/update. Mira never runs the itch app — an
-  // installed title launches through Mira's own Wine/Proton runners, or
-  // natively for the many itch.io titles that ship a Linux build.
 
   http_->Get("/v1/itch/status", [this](const Request&, Response& res) {
     const itch::ItchAuthStatus status = itch::Status(config_);
@@ -1201,9 +1056,6 @@ void Server::RegisterRoutes() {
     SendJson(res, {{"status", "downloading"}, {"tag", asset.tag}}, 202);
   });
 
-  // The user's itch.io API key (itch.io/user/settings/api-keys) — unlike
-  // Epic/GOG this isn't a pasted redirect code, so there's no login URL to
-  // print (see CmdItchLogin in the CLI).
   http_->Post("/v1/itch/auth", [this](const Request& req, Response& res) {
     json body = json::parse(req.body, nullptr, false);
     if (body.is_discarded() || !body.contains("api_key") || !body["api_key"].is_string()) {
@@ -1277,13 +1129,6 @@ void Server::RegisterRoutes() {
   });
 
   // --- humble -------------------------------------------------------------
-  //
-  // Wraps humble-cli (unofficial). Deliberately outside the
-  // library::ILibrarySource registry — Humble Bundle has no
-  // install/update/uninstall state of its own to report on, just
-  // purchased bundles of downloadable files (see src/humble/Humble.h's
-  // class comment). A downloaded item is never auto-imported as a
-  // model::Game.
 
   http_->Get("/v1/humble/status", [this](const Request&, Response& res) {
     const humble::HumbleAuthStatus status = humble::Status(config_);
@@ -1315,8 +1160,6 @@ void Server::RegisterRoutes() {
     SendJson(res, {{"status", "downloading"}, {"tag", asset.tag}}, 202);
   });
 
-  // The _simpleauth_sess cookie value from a logged-in browser session —
-  // no login URL/code flow exists for Humble Bundle the way Epic/GOG have.
   http_->Post("/v1/humble/auth", [this](const Request& req, Response& res) {
     json body = json::parse(req.body, nullptr, false);
     if (body.is_discarded() || !body.contains("session_key") || !body["session_key"].is_string()) {
@@ -1338,9 +1181,6 @@ void Server::RegisterRoutes() {
     SendJson(res, std::move(out));
   });
 
-  // Detached, same "don't block the request thread on a slow download"
-  // pattern as everything else here — humble.download.started/finished/
-  // failed on the event stream is how a caller finds out it's done.
   http_->Post("/v1/humble/download", [this](const Request& req, Response& res) {
     json body = json::parse(req.body, nullptr, false);
     if (body.is_discarded() || !body.contains("bundle_key") || !body["bundle_key"].is_string()) {
@@ -1378,11 +1218,6 @@ void Server::RegisterRoutes() {
   });
 
   // --- library (what the account owns, across sources) ------------------
-  //
-  // Distinct from GET /v1/games, which is what Mira *tracks*. An
-  // entitlement isn't a tracked game (see library/Catalog.h): these are
-  // read through live from each source rather than persisted, and a title
-  // becomes a model::Game only once it's installed.
 
   http_->Get("/v1/library", [this](const Request& req, Response& res) {
     const std::string source = req.has_param("source") ? req.get_param_value("source") : "";
@@ -1401,13 +1236,8 @@ void Server::RegisterRoutes() {
     SendJson(res, std::move(out));
   });
 
-  // Installs/updates run detached, same reasoning as POST
-  // /v1/runners/download above — a game download is easily minutes long.
-  // library.install.started/finished/failed on the event stream is how a
-  // caller finds out it's done; "update": true on the payload is the only
-  // difference between the two verbs, rather than a parallel event
-  // namespace. Keyed by {source, ref} rather than a game id: the whole
-  // point is installing something Mira doesn't track yet.
+  // Keyed by {source, ref}, since the title isn't tracked yet. "update" in the
+  // event payload tells an update from an install.
   auto library_install_or_update = [this](const Request& req, Response& res, bool is_update) {
     json body = json::parse(req.body, nullptr, false);
     if (body.is_discarded() || !body.contains("source") || !body["source"].is_string() ||
@@ -1440,9 +1270,6 @@ void Server::RegisterRoutes() {
 
     SendJson(res, {{"status", is_update ? "updating" : "installing"}, {"ref", ref}}, 202);
   };
-  // Cover art for titles not installed yet, cached under the id each gets
-  // once installed ("<source>-<ref>"), so an install starts with its cover.
-  // GET only reads the cache; POST queues fetches for what isn't cached.
   http_->Get("/v1/library/artwork", [this](const Request& req, Response& res) {
     const std::string source = req.has_param("source") ? req.get_param_value("source") : "";
     const std::string ref = req.has_param("ref") ? req.get_param_value("ref") : "";
@@ -1488,7 +1315,7 @@ void Server::RegisterRoutes() {
     library_install_or_update(req, res, true);
   });
 
-  // --- desktop entries (importing someone else's, not writing ours) -----
+  // --- desktop entries --------------------------------------------------
 
   http_->Get("/v1/desktop-entries/candidates", [this](const Request&, Response& res) {
     desktop::DesktopEntryScanner scanner(config_, games_, events_);
@@ -1521,12 +1348,6 @@ void Server::RegisterRoutes() {
 
   // --- manual add -----------------------------------------------------------
 
-  // The primitive every other "add a game" path (a library scan,
-  // SteamScanner, LutrisImporter, DesktopEntryScanner) only ever exercises
-  // as a side effect of discovering something Mira already knew to look
-  // for. This is the one place a game record can be created directly, for
-  // a path outside every configured library root -- e.g. pointing Mira at
-  // an installer or a folder it wouldn't otherwise scan.
   http_->Post("/v1/games/manual", [this](const Request& req, Response& res) {
     json body = json::parse(req.body, nullptr, false);
     if (body.is_discarded() || !body.contains("install_path") || !body["install_path"].is_string() ||
@@ -1560,9 +1381,7 @@ void Server::RegisterRoutes() {
     if (!existing) game.created_at = game.updated_at;
 
     if (is_installer) {
-      // Matches AutoSetup's own installer flagging -- running it isn't
-      // running the game, and no prefix is provisioned yet for something
-      // that can't be launched.
+      // An installer isn't the game, so it isn't provisioned or launchable yet.
       game.status = model::GameStatus::NeedsInstall;
       game.last_error = "This is an installer, not the game itself — run it first, then point Mira at the "
                         "installed game.";
@@ -1619,9 +1438,8 @@ void Server::RegisterRoutes() {
     const std::string pre_script = resolver.GetString("launch.pre_script");
     const std::string post_script = resolver.GetString("launch.post_script");
 
-    // A store launcher game (Battle.net, Ubisoft, EA) is started by its
-    // launcher, which keeps running after the game exits; the game's own
-    // processes are what's tracked.
+    // A launcher game is started by its launcher, which keeps running after the
+    // game exits; the game's own processes are tracked.
     if (launchers::ForGame(*game)) {
       if (supervisor_.IsRunning(game->id)) {
         return SendError(res, 409, "already_running", std::format("\"{}\" is already running", game->id));
@@ -1646,13 +1464,8 @@ void Server::RegisterRoutes() {
       return SendJson(res, {{"status", "launched_via_launcher"}, {"tracked", true}});
     }
 
-    // A Steam-sourced game defaults to asking the Steam client to launch it
-    // (steam://rungameid/<appid>) rather than Mira execing it directly: full
-    // achievements/overlay support, and Steam's own accounting is what
-    // GET /v1/games/{id} reads back for it (see steam.launch_mode's doc).
-    // Mira didn't spawn this process, so it can't waitpid() it — that's what
-    // steam.track_process (a /proc scan, see ProcessSupervisor) is for. Not
-    // wrapped by mira-run either way: there's no process here for it to own.
+    // Steam games default to a steam://rungameid handoff for overlay and achievements.
+    // Mira can't waitpid() that process; steam.track_process finds it in /proc instead.
     if (game->runner_ref.starts_with("steam:")) {
       if (resolver.GetString("steam.launch_mode") == "steam") {
         if (auto ran = RunPreScriptInline(pre_script); !ran) {
@@ -1666,8 +1479,6 @@ void Server::RegisterRoutes() {
         }
         [[maybe_unused]] auto _ =
             games_.Update(game->id, [](model::Game& g) { g.last_played_at = model::NowSeconds(); });
-        // Whether game.state events are coming for this launch — on the
-        // event too, for a client that launched from elsewhere (the CLI).
         const bool track = resolver.GetBool("steam.track_process");
         events_.Publish("game.launched",
                         {{"id", game->id}, {"via", "steam"}, {"tracked", track}});
@@ -1700,12 +1511,8 @@ void Server::RegisterRoutes() {
     ApplyLaunchEnv(*command, resolver.GetStringArray("launch.env"));
     ApplyCommandWrappers(*command, wrappers);
 
-    // mira-run owns the whole session end to end (pre/post script, the
-    // session record) so it survives mirad dying mid-launch — see
-    // proc/Session.h, docs/architecture.md. The wrapper is never a hard
-    // dependency: if it can't be found or spawned, mirad falls back to
-    // exactly today's behavior (pre_script run inline, no session record)
-    // rather than failing the launch.
+    // mira-run owns the session so it survives mirad dying. Without it the game is
+    // launched directly, with no session record.
     const auto mira_run = runner::ResolveSiblingBinary(OwnBinaryDir(), "mira-run");
     if (!mira_run) {
       log::Warn("mira-run not found; launching {} directly with no session recording", game->id);
@@ -1748,13 +1555,8 @@ void Server::RegisterRoutes() {
 
     const WrapperStatus status = ReadWrapperStatus(status_fd, pre_timeout_s + 10);
     ::close(status_fd);
-    // Always WNOHANG, never a blocking wait: on every other outcome
-    // mira-run has already exited by now, so this reaps it immediately with
-    // no delay -- but on read_timed_out it may still be genuinely hung, and
-    // this HTTP worker thread must never block on that indefinitely. A
-    // WNOHANG that doesn't reap here just leaves it for LaunchWrapped's own
-    // watcher (success) or an unreaped zombie mirad doesn't yet clean up
-    // (the timeout case -- rare enough not to chase further right now).
+    // WNOHANG: on a read timeout mira-run may still be hung, and this thread must not
+    // block on it.
     int wait_status = 0;
     ::waitpid(*wrapper_pid, &wait_status, WNOHANG);
 
@@ -1781,9 +1583,7 @@ void Server::RegisterRoutes() {
 
   http_->Post(R"(/v1/games/([^/]+)/stop)", [this](const Request& req, Response& res) {
     if (auto stopped = supervisor_.Stop(req.matches[1]); !stopped) {
-      // A client that still shows it running (it missed the exit, e.g. across
-      // a mirad restart) gets told it's stopped instead of an error it can't
-      // get out of.
+      // A client that missed the exit gets told it's stopped instead of an error.
       if (stopped.error().code == "not_running") {
         if (const auto game = games_.Find(req.matches[1])) {
           json event = GameJson(*game, supervisor_);
@@ -1797,13 +1597,6 @@ void Server::RegisterRoutes() {
     SendJson(res, {{"status", "stopping"}});
   });
 
-  // Runs an arbitrary exe inside this game's own prefix — normal
-  // ProcessSupervisor tracking, same as /launch, but the exe/args come from
-  // the request instead of the stored game. This is what actually runs a
-  // needs_install game's installer (provisioning on demand, since Scanner
-  // never provisions one), and it's the general "run something in this
-  // prefix" escape hatch (winetricks-equivalent work, one-off tools) short
-  // of a full custom-tricks implementation, which stays out of scope.
   http_->Post(R"(/v1/games/([^/]+)/run)", [this](const Request& req, Response& res) {
     auto game = games_.Find(req.matches[1]);
     if (!game) return SendError(res, 404, "game_not_found", "no such game");
@@ -1815,9 +1608,7 @@ void Server::RegisterRoutes() {
     const std::string exe_path = body["exe_path"];
     const std::string args = body.value("args", std::string());
 
-    // A needs_install/setting_up game (or one whose prefix vanished) has no
-    // usable prefix yet — provision one now rather than requiring a
-    // separate call first.
+    // A game with no usable prefix yet gets one now.
     std::error_code ec;
     const bool needs_provisioning = game->platform == model::Platform::Windows &&
         (game->runner_ref.empty() || !std::filesystem::exists(std::filesystem::path(game->data_dir) / "drive_c", ec));
@@ -1870,11 +1661,7 @@ void Server::RegisterRoutes() {
     SendJson(res, {{"status", "running"}});
   });
 
-  // The escape hatch out of needs_install: run the installer via /run
-  // above, PATCH exe_path to whatever it actually installed, then call
-  // this to make the game launchable through the normal /launch path.
-  // Describes a game's installer, or the file at ?path= (absolute, or
-  // relative to install_path) when choosing one by hand.
+  // Describes a game's installer, or the file at ?path=.
   http_->Get(R"(/v1/games/([^/]+)/installer)", [this](const Request& req, Response& res) {
     auto game = games_.Find(req.matches[1]);
     if (!game) return SendError(res, 404, "game_not_found", "no such game");
@@ -1901,10 +1688,6 @@ void Server::RegisterRoutes() {
                    {"bytes_written", progress->bytes_written}});
   });
 
-  // Runs a game's installer: silent for Inno/NSIS, otherwise (or with
-  // "interactive": true) shown to click through. "installer" picks the
-  // file by hand. Detached; poll .../install/progress or watch
-  // game.install.finished/failed.
   http_->Post(R"(/v1/games/([^/]+)/install)", [this](const Request& req, Response& res) {
     const auto game = games_.Find(req.matches[1]);
     if (!game) return SendError(res, 404, "game_not_found", "no such game");
@@ -1973,12 +1756,6 @@ void Server::RegisterRoutes() {
     SendJson(res, GameJson(*result, supervisor_));
   });
 
-  // Moves this game's install_path/data_dir -- to the given target(s), or,
-  // with no body (or a body omitting a field), into Mira's own canonical
-  // layout for whichever field is omitted (see library::Relocate). The
-  // escape hatch for a Lutris import or any game whose files sit outside
-  // where prefix_root/prefix_naming now say they should — neither setting
-  // moves anything by itself; this is the only thing that does.
   http_->Post(R"(/v1/games/([^/]+)/relocate)", [this](const Request& req, Response& res) {
     auto game = games_.Find(req.matches[1]);
     if (!game) return SendError(res, 404, "game_not_found", "no such game");
@@ -2011,12 +1788,6 @@ void Server::RegisterRoutes() {
     SendJson(res, GameJson(*saved, supervisor_));
   });
 
-  // Runs one winetricks verb against this game's own prefix — see
-  // runner/Winetricks.h for why this shells out to the real tool rather than
-  // reimplementing it. Runs in the background (a verb can mean downloading
-  // and installing a redistributable, real minutes, not a request-scale
-  // wait) and returns 202 immediately; tricks.finished/.failed on the event
-  // stream say when it's done.
   http_->Post(R"(/v1/games/([^/]+)/tricks)", [this](const Request& req, Response& res) {
     auto game = games_.Find(req.matches[1]);
     if (!game) return SendError(res, 404, "game_not_found", "no such game");
@@ -2045,11 +1816,6 @@ void Server::RegisterRoutes() {
 
   // --- metadata ---------------------------------------------------------
 
-  // Cached cover art + store info (see metadata/MetadataFetcher.h) — fetched
-  // automatically off a scan, never blocking one; these two endpoints only
-  // ever read what's already on disk. 404 either means "never fetched" or
-  // "fetched, but this source had nothing" — the caller can always retry via
-  // the refresh endpoint below to find out which.
   http_->Get(R"(/v1/games/([^/]+)/metadata)", [this](const Request& req, Response& res) {
     if (!games_.Find(req.matches[1])) return SendError(res, 404, "game_not_found", "no such game");
     const std::filesystem::path file = metadata::MetadataFile(config_, req.matches[1]);
@@ -2062,19 +1828,12 @@ void Server::RegisterRoutes() {
 
   http_->Get(R"(/v1/games/([^/]+)/artwork)", [this](const Request& req, Response& res) {
     if (!games_.Find(req.matches[1])) return SendError(res, 404, "game_not_found", "no such game");
-    // ?type= picks a non-default art slot; "cover" (stored as "artwork" for
-    // wire compatibility) is the default. See MetadataFetcher for the full
-    // set of slots each source writes.
+    // The "cover" slot is stored as "artwork".
     SendCachedArtwork(config_, req.matches[1], req.has_param("type") ? req.get_param_value("type") : "cover", res);
   });
 
-  // Lets a caller pick a different cached SteamGridDB candidate for a slot
-  // (see art_candidates in GET .../metadata) instead of the auto-picked
-  // top result -- looked up by the id from that list, never a raw URL, so
-  // this can't be used to make the daemon fetch an arbitrary address.
-  // Runs on artwork_selects_ rather than the request thread, same reasoning
-  // as metadata_fetches_ below: a curl round trip must never block an API
-  // thread.
+  // Takes a candidate id, never a URL, so the daemon can't be made to fetch an
+  // arbitrary address.
   http_->Post(R"(/v1/games/([^/]+)/artwork)", [this](const Request& req, Response& res) {
     const std::string id = req.matches[1];
     if (!games_.Find(id)) return SendError(res, 404, "game_not_found", "no such game");
@@ -2096,8 +1855,6 @@ void Server::RegisterRoutes() {
     SendJson(res, {{"status", "selecting"}}, 202);
   });
 
-  // A page of SteamGridDB's art for a picker, asked for now rather than read
-  // from what a metadata fetch cached. Off the request thread: it's a curl.
   http_->Post(R"(/v1/games/([^/]+)/artwork/candidates)", [this](const Request& req, Response& res) {
     const std::string id = req.matches[1];
     if (!games_.Find(id)) return SendError(res, 404, "game_not_found", "no such game");
@@ -2123,8 +1880,7 @@ void Server::RegisterRoutes() {
     SendJson(res, {{"status", "fetching"}}, 202);
   });
 
-  // Previews for a picker, one batch per call: whatever is cached already
-  // comes back at once, the rest is fetched in the background.
+  // Cached previews are ready at once; the rest are fetched in the background.
   http_->Post(R"(/v1/games/([^/]+)/artwork/thumbs)", [this](const Request& req, Response& res) {
     const std::string id = req.matches[1];
     if (!games_.Find(id)) return SendError(res, 404, "game_not_found", "no such game");
@@ -2169,31 +1925,21 @@ void Server::RegisterRoutes() {
     res.set_content(buffer.str(), SniffImageType(buffer.str()));
   });
 
-  // Every game's previews at once, for a GUI that's quitting.
   http_->Delete("/v1/artwork/thumbs", [this](const Request&, Response& res) {
     metadata::ClearCandidateThumbs(config_);
     res.status = 204;
   });
 
-  // Re-runs the fetch for one game on demand — a new SteamGridDB key was
-  // just set, or the first automatic attempt failed transiently. Runs in the
-  // background via metadata_fetches_ (force=true bypasses metadata.enabled:
-  // an explicit refresh request should work even with automatic fetching
-  // turned off), same as runner downloads: a slow or unreachable source must
-  // never block the request.
+  // force=true: an explicit refresh works even with metadata.enabled off.
   http_->Post(R"(/v1/games/([^/]+)/metadata/refresh)", [this](const Request& req, Response& res) {
     auto game = games_.Find(req.matches[1]);
     if (!game) return SendError(res, 404, "game_not_found", "no such game");
-    // ?announce=1 marks this as user-initiated, so FetchQueue reports its
-    // outcome as a notification — a bulk refresh (many games at once)
-    // leaves it off and reports its own summary instead.
+    // Only user-initiated refreshes report failure as a notification.
     const bool announce = req.get_param_value("announce") == "1";
     metadata_fetches_.Enqueue(config_, events_, *game, /*force=*/true, announce);
     SendJson(res, {{"status", "fetching"}}, 202);
   });
 
-  // SteamGridDB's matches for this game's name (or ?q=), so a wrong top
-  // match can be swapped for another with POST .../metadata/match.
   http_->Get(R"(/v1/games/([^/]+)/metadata/matches)", [this](const Request& req, Response& res) {
     auto game = games_.Find(req.matches[1]);
     if (!game) return SendError(res, 404, "game_not_found", "no such game");
@@ -2204,8 +1950,6 @@ void Server::RegisterRoutes() {
     SendJson(res, {{"query", query}, {"chosen", chosen}, {"matches", *matches}});
   });
 
-  // "This art is for the wrong game": move to SteamGridDB's next match for
-  // the game's name and refetch. 409 no_more_matches past the last one.
   http_->Post(R"(/v1/games/([^/]+)/metadata/wrong-match)", [this](const Request& req, Response& res) {
     auto game = games_.Find(req.matches[1]);
     if (!game) return SendError(res, 404, "game_not_found", "no such game");
@@ -2228,8 +1972,6 @@ void Server::RegisterRoutes() {
     SendJson(res, {{"status", "fetching"}, {"match", match}}, 202);
   });
 
-  // Body {steamgriddb_id}: take art from that SteamGridDB game from now on
-  // (0 goes back to the top match), and refetch.
   http_->Post(R"(/v1/games/([^/]+)/metadata/match)", [this](const Request& req, Response& res) {
     const json body = json::parse(req.body, nullptr, false);
     if (body.is_discarded() || !body.contains("steamgriddb_id") || !body["steamgriddb_id"].is_number_integer() ||
@@ -2244,10 +1986,6 @@ void Server::RegisterRoutes() {
     SendJson(res, {{"status", "fetching"}, {"steamgriddb_id", id}}, 202);
   });
 
-  // Bulk version of the above: enqueues a fetch for every game with no
-  // cached cover art yet, in one request — a caller wanting to backfill the
-  // whole library used to have to loop over it and fire one POST
-  // .../metadata/refresh per game itself.
   http_->Post("/v1/games/metadata/refresh-missing", [this](const Request&, Response& res) {
     std::size_t count = 0;
     for (const model::Game& game : games_.All()) {
@@ -2277,7 +2015,6 @@ void Server::RegisterRoutes() {
     SendJson(res, std::move(out));
   });
 
-  // Where builds of a kind can be downloaded from, preferred first.
   http_->Get("/v1/runners/sources", [this](const Request& req, Response& res) {
     const std::string kind = req.has_param("kind") ? req.get_param_value("kind") : "";
     json out = json::array();
@@ -2287,8 +2024,6 @@ void Server::RegisterRoutes() {
     SendJson(res, std::move(out));
   });
 
-  // What's available to install from one source (?source=, default the
-  // kind's first), not what's installed (GET /v1/runners). Hits GitHub.
   http_->Get("/v1/runners/catalog", [this](const Request& req, Response& res) {
     const std::string kind = req.has_param("kind") ? req.get_param_value("kind") : "proton";
     auto family = FamilyFor(config_, kind, req.has_param("source") ? req.get_param_value("source") : "");
@@ -2308,8 +2043,6 @@ void Server::RegisterRoutes() {
     SendJson(res, std::move(out));
   });
 
-  // Downloads and installs a build from the catalog above, in the
-  // background; runners.download.finished/failed says how it went.
   http_->Post("/v1/runners/download", [this](const Request& req, Response& res) {
     json body = json::parse(req.body, nullptr, false);
     if (body.is_discarded() || !body.contains("kind") || !body.contains("tag")) {
@@ -2331,8 +2064,7 @@ void Server::RegisterRoutes() {
     SendJson(res, {{"status", "downloading"}, {"tag", tag}, {"name", runner::ReleaseName(kind, *match)}}, 202);
   });
 
-  // Installed builds that have a newer release in their source. Only builds
-  // Mira may remove count; a distro package is updated by its package manager.
+  // Only removable builds; the distro updates its own packages.
   http_->Get("/v1/runners/updates", [this](const Request&, Response& res) {
     const runner::RunnerRegistry registry(config_);
     json out = json::array();
@@ -2345,9 +2077,6 @@ void Server::RegisterRoutes() {
     SendJson(res, std::move(out));
   });
 
-  // Body {reference}: installs the newest release of that build's source and
-  // moves every game (and the default) using the old build onto it. The old
-  // build stays installed; runners.updated says which games moved.
   http_->Post("/v1/runners/update", [this](const Request& req, Response& res) {
     const json body = json::parse(req.body, nullptr, false);
     if (body.is_discarded() || !body.contains("reference") || !body["reference"].is_string()) {
@@ -2366,8 +2095,6 @@ void Server::RegisterRoutes() {
     SendError(res, 409, "no_update", std::format("no newer release for \"{}\"", reference));
   });
 
-  // Helpers runners need: umu-launcher (every Proton build runs through it)
-  // and winetricks. Installable here when the distro didn't provide them.
   http_->Get("/v1/runners/tools", [](const Request&, Response& res) {
     const std::string umu = runner::UmuRunPath();
     const std::string winetricks = runner::WinetricksPath();
@@ -2379,8 +2106,6 @@ void Server::RegisterRoutes() {
                   }));
   });
 
-  // Installs (or updates) a tool from GET /v1/runners/tools in the
-  // background; <id>.setup.started/finished/failed say how it went.
   http_->Post(R"(/v1/runners/tools/(umu|winetricks)/setup)", [this](const Request& req, Response& res) {
     const std::string id = req.matches[1];
     std::optional<runner::ReleaseAsset> asset;
@@ -2409,11 +2134,6 @@ void Server::RegisterRoutes() {
     SendJson(res, {{"status", "installing"}}, 202);
   });
 
-  // What game.runner_config accepts for one kind — see IRunner::SettingsSchema
-  // for why this exists (a frontend renders runner_config generically instead
-  // of hardcoding per-runner knowledge; a custom runner with different knobs
-  // needs no frontend change). Empty array for a kind with no fields, which
-  // is every kind but proton today.
   http_->Get(R"(/v1/runners/([^/]+)/schema)", [this](const Request& req, Response& res) {
     const runner::RunnerRegistry registry(config_);
     const runner::IRunner* found = registry.FindByKind(req.matches[1]);
@@ -2421,12 +2141,7 @@ void Server::RegisterRoutes() {
     SendJson(res, found->SettingsSchema());
   });
 
-  // Removes an installed build's directory (the other half of
-  // GET /v1/runners/catalog + POST /v1/runners/download). Only deletes a
-  // path that resolves to this exact build and sits inside a configured
-  // search path — same containment check as DELETE /v1/games/{id} — so
-  // "wine:system" (the real system wine, found on PATH) is rejected, not
-  // deleted. A kind with no separate builds (native, steam) 400s.
+  // Only builds inside a search path can be removed, so the system wine can't be.
   http_->Delete(R"(/v1/runners/([^:]+):(.+))", [this](const Request& req, Response& res) {
     const std::string kind = req.matches[1];
     const std::string name = req.matches[2];
@@ -2457,8 +2172,7 @@ void Server::RegisterRoutes() {
     }
 
     res.set_header("Cache-Control", "no-cache");
-    // The 20s wait cadence exists only to detect a vanished client on this one
-    // open connection; it is not a daemon-idle wakeup (see EventBus::WaitNext).
+    // The 20s wait only checks whether this client went away.
     res.set_chunked_content_provider(
         "text/event-stream",
         [this, after_id](size_t, httplib::DataSink& sink) mutable -> bool {

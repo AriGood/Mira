@@ -187,9 +187,8 @@ ScanSummary Scanner::ScanRoot(const fs::path& root) {
     // With auto_setup off, a game is still detected and stored (so it shows
     // up for the frontend to configure) but never auto-provisioned.
     // Only Windows games reach here still SettingUp (AutoSetup marks native
-    // ready immediately, broken if nothing was found). Provisioning blocks —
-    // umu/Proton's first-run init is a real few-second cost — but there's no
-    // job queue yet to move it off this thread; see docs/architecture.md.
+    // ready immediately, broken if nothing was found). Provisioning blocks
+    // this thread for the few seconds umu/Proton's first-run init takes.
     if (config_.GetBool("auto_setup")) {
       TryProvision(game, runners, games_, events_);
       QueueAutoInstall(game, config_, games_, events_);

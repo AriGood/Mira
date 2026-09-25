@@ -30,9 +30,8 @@ std::vector<fs::path> SplitPathList(const std::string& value) {
 
 // Every applications/ dir a real .desktop file could live under, per the
 // freedesktop base-dir spec, plus the two Flatpak export dirs -- Flatpak's
-// own exports aren't reliably already inside XDG_DATA_DIRS depending on how
-// the session was started (confirmed live: real Flatpak apps on this
-// machine live under /var/lib/flatpak/exports/share/applications).
+// own exports aren't always in XDG_DATA_DIRS, depending on how the session
+// was started.
 std::vector<fs::path> SearchDirs(const config::Config& config) {
   std::vector<fs::path> dirs;
   dirs.push_back(EnvOr("XDG_DATA_HOME", paths::Home() / ".local" / "share") / "applications");
@@ -126,8 +125,7 @@ bool IsFieldCodeOrForwardBracket(const std::string& token) {
 }
 
 // Minimal desktop-entry-spec-aware tokenizer: splits on whitespace, honoring
-// one level of double-quoting (the one real quoted case confirmed live: a
-// leading "/path/to/binary" token). Drops field codes and Flatpak-style
+// one level of double-quoting. Drops field codes and Flatpak-style
 // @@...@@ forwarding brackets.
 std::vector<std::string> TokenizeExec(const std::string& exec) {
   std::vector<std::string> tokens;

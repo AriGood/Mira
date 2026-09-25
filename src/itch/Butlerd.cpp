@@ -284,8 +284,8 @@ Result<void> EnsureConnectedLocked(const config::Config& config, Connection& con
   if (!stdout_fd) return std::unexpected(stdout_fd.error());
 
   // butlerd mixes its own JSON log lines in with the one
-  // butlerd/listen-notification line we actually need (confirmed live) --
-  // read until we see it or run out of time.
+  // butlerd/listen-notification line we need; read until we see it or run
+  // out of time.
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
   std::string secret;
   std::string address;

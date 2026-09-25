@@ -155,10 +155,9 @@ std::set<pid_t> MatchExternal(const ProcessIndex& index, const ExternalMatch& ma
 
 // Every pid whose WINEPREFIX/STEAM_COMPAT_DATA_PATH points at data_dir.
 //
-// The process group alone isn't enough: on Proton/Wine, setsid()/setpgid()
-// during startup leaves the group with just umu-run by the time a game is
-// on screen. Measured against a real launch: signalling the group reached
-// 1 of 16 processes.
+// The process group alone isn't enough, on Proton/Wine, setsid()/setpgid()
+// during startup leaves the group with just umu-run by the time a game is on screen
+
 std::set<pid_t> FindPrefixProcesses(const std::string& data_dir) {
   std::set<pid_t> found;
   if (data_dir.empty()) return found;

@@ -83,10 +83,7 @@ Result<void> InstallLegendaryBinary(const config::Config& config, const runner::
                                           : std::format("curl exited {}: {}", result->exit_code, result->output));
   }
 
-  // Legendary's releases don't ship a separate checksum asset the way
-  // Proton-GE/Wine-GE do (runner::ReleaseAsset::checksum_url is always empty
-  // here) — installed unverified, same fallback Downloader.cpp uses when a
-  // release happens to have none.
+  // Legendary's releases ship no checksum, so it's installed unverified.
   log::Warn("no checksum available for legendary {} — installing unverified", asset.tag);
 
   fs::permissions(target,
@@ -144,7 +141,7 @@ EpicAuthStatus Status(const config::Config& config) {
   if (parsed.is_discarded() || !parsed.is_object()) return status;
 
   // legendary always includes this key -- logged out isn't its absence, it's
-  // this literal placeholder string (confirmed against a real install).
+  // this literal placeholder string.
   const std::string account = parsed.value("account", std::string());
   if (!account.empty() && account != "<not logged in>") {
     status.authenticated = true;
@@ -165,9 +162,8 @@ Result<void> Login(const config::Config& config, const std::string& pasted) {
   if (code.empty()) return Err("invalid_code", "no code entered");
   // legendary's own exit code is not trustworthy here: `auth --code` with an
   // invalid or expired code still exits 0, only reporting the failure as an
-  // "[cli] ERROR: Login attempt failed" line in its output (confirmed against
-  // a real install) -- so success is verified the same way a caller would,
-  // by checking status afterward, not by trusting this call's exit code.
+  // "[cli] ERROR: Login attempt failed" line in its output, so success is
+  // checked through status afterwards.
   if (auto output = RunLegendary(config, {"auth", "--code", code}); !output) {
     return std::unexpected(output.error());
   }

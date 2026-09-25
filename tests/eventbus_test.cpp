@@ -47,7 +47,7 @@ TEST_CASE("WaitNext unblocks immediately when stop is set") {
 TEST_CASE("many publishers and many subscribers race safely") {
   // Not a correctness oracle for ordering (only the ring buffer's own mutex
   // guarantees that) — this exists to give TSan a genuinely concurrent
-  // workload against Publish/WaitNext/Since/LatestId together.
+  // workload against Publish/WaitNext/Since together.
   api::EventBus bus;
   std::atomic<bool> stop{false};
   std::atomic<int> delivered{0};

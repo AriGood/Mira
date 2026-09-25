@@ -9,7 +9,7 @@
 #include "core/Result.h"
 
 // Minimal JSON-RPC 2.0 client for butlerd (itch.io's own
-// launcher-integration daemon). Confirmed live: `butler daemon --json
+// launcher-integration daemon). `butler daemon --json
 // --dbpath ...` prints a mix of its own JSON log lines and one
 // butlerd/listen-notification line to stdout, then serves JSON-RPC 2.0
 // over that TCP address, one message per line.

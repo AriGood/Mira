@@ -15,9 +15,7 @@ using nlohmann::json;
 
 // Loops a paginated Fetch.* call (cursor -> nextCursor) until it stops
 // returning one, accumulating every "items" array along the way -- some
-// bundles run into the hundreds of games, so a single page isn't enough
-// (confirmed live: without this, most of an account's bundle-owned games
-// were simply missing).
+// bundles run into the hundreds of games, so a single page isn't enough.
 Result<std::vector<json>> FetchAllPages(const config::Config& config, const std::string& method, json params) {
   std::vector<json> items;
   while (true) {

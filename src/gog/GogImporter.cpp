@@ -72,8 +72,8 @@ Result<model::Game> GogImporter::ImportPath(const std::string& id, const std::fi
 
   // gogdl's own `import <path>` output only confirms the install and
   // names/points at it -- everything Mira itself owns (id, source, tags,
-  // prefix) is set here regardless of what that call returns. Confirmed
-  // live: {"appName": "...", "title": "...", "tasks": [{"category":
+  // prefix) is set here regardless of what that call returns. Output:
+  // {"appName": "...", "title": "...", "tasks": [{"category":
   // "game", "type": "FileTask", "isPrimary": true, "path": "Game.exe"},
   // ...]} -- the primary "game" FileTask's path is the real launch target,
   // no heuristic detection needed the way EpicImporter/ItchImporter use.

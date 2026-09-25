@@ -229,8 +229,7 @@ TEST_CASE("Scanner retries provisioning for games left setting_up or broken by a
   REQUIRE(env.config.Set("auto_setup", false).has_value());
   library::Scanner scanner(env.config, env.games, env.events);
 
-  // First scan: auto_setup off, so the game is detected but left setting_up
-  // (regression fixture for the "gets stuck in setting up" bug report).
+  // First scan: auto_setup off, so the game is detected but left setting_up.
   scanner.ScanAll();
   auto celeste = env.games.Find("celeste");
   REQUIRE(celeste.has_value());
