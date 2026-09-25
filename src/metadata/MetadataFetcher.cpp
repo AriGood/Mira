@@ -1,11 +1,17 @@
 #include "metadata/MetadataFetcher.h"
 
+#include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cstdint>
 #include <filesystem>
 #include <format>
 #include <fstream>
+#include <map>
+#include <mutex>
 #include <optional>
+#include <set>
+#include <sstream>
 #include <string_view>
 
 #include <json.hpp>
@@ -117,14 +123,18 @@ bool FetchArtworkInto(const config::Config& config, const std::string& url, cons
     return false;
   }
   const fs::path dest = dir / (std::string(slot) + ext);
+  // Beside it until complete: a failed download must not take the slot's
+  // current image with it.
+  const fs::path part = dir / (std::string(slot) + ext + ".part");
 
   Command command;
   command.argv = {"curl", "-sSL",         "-f", "--max-time", std::string(kMaxTime),
-                  "-o",   dest.string(), url};
+                  "-o",   part.string(), url};
   const Result<runner::ExecResult> result = runner::RunAndWait(command);
-  if (!result || result->exit_code != 0) {
+  if (result && result->exit_code == 0) fs::rename(part, dest, ec);
+  if (!result || result->exit_code != 0 || ec) {
     log::Warn("couldn't download artwork for {} from {}", game_id, url);
-    fs::remove(dest, ec);
+    fs::remove(part, ec);
     // The directory was created for a file that never arrived; leaving it
     // behind makes an empty artwork/<id>/ look like a cache entry. Harmless
     // if another slot already landed a file here -- remove() only clears an
@@ -142,14 +152,68 @@ bool FetchArtworkInto(const config::Config& config, const std::string& url, cons
 // Fetches every SteamGridDB candidate for one art slot (grids/heroes/logos/
 // icons -> cover/hero/logo/icon) and stores the full list in
 // info["art_candidates"][slot] so a caller can offer a choice. Downloads the
-// first (SteamGridDB's own top-ranked result) as the slot's default only if
+// first that isn't adult art (SteamGridDB ranks them) as the slot's default only if
 // the slot doesn't already have one -- a Steam-owned game already got its
 // cover/hero from Steam's own CDN (FetchSteamOwned), and SteamGridDB here is
 // an alternate to switch to, not a replacement to switch to automatically.
+// One page (50 results) of a SteamGridDB game's art for one endpoint.
+json FetchGriddbPage(const config::Config& config, const std::string& auth_header, std::string_view endpoint,
+                     std::int64_t griddb_id, int page) {
+  // SteamGridDB leaves adult art out unless asked for it.
+  const std::string_view nsfw = config.GetBool("steamgriddb.nsfw") ? "any" : "false";
+  // "Grids" include Steam's wide 920x430 capsules; a cover is the tall kind.
+  const std::string_view dimensions = endpoint == "grids" ? "&dimensions=600x900,342x482,660x930" : "";
+  return CurlJson({"curl", "-sSL", "-H", auth_header,
+                   std::format("https://www.steamgriddb.com/api/v2/{}/game/{}?nsfw={}&page={}{}", endpoint, griddb_id,
+                               nsfw, page, dimensions)});
+}
+
+// A SteamGridDB result as an art_candidates entry; null without a url.
+json GriddbCandidate(const json& item) {
+  const std::string url = Value(item, "url", std::string());
+  if (url.empty()) return nullptr;
+  return {
+      {"id", Value(item, "id", std::int64_t{0})},
+      {"url", url},
+      {"thumb", Value(item, "thumb", std::string())},
+      {"width", Value(item, "width", 0)},
+      {"height", Value(item, "height", 0)},
+      {"style", Value(item, "style", std::string())},
+      {"nsfw", Value(item, "nsfw", false)},
+      {"source", "steamgriddb"},
+  };
+}
+
+// Every read-modify-write of a game's metadata file after its fetch.
+std::mutex& MetadataFileMutex() {
+  static std::mutex mutex;
+  return mutex;
+}
+
+// Written beside it and renamed over it: a reader (GET .../metadata) must
+// never see the file half-written.
+Result<void> WriteMetadataFile(const fs::path& file, const json& info) {
+  static std::atomic<unsigned> next{0};
+  const fs::path part = file.string() + std::format(".part{}", next++);
+  {
+    std::ofstream out(part, std::ios::trunc);
+    if (!out) return Err("metadata_write_failed", "couldn't open " + part.string() + " for writing");
+    out << info.dump(2);
+    if (!out.flush()) return Err("metadata_write_failed", "couldn't write " + part.string());
+  }
+  std::error_code ec;
+  fs::rename(part, file, ec);
+  if (ec) {
+    fs::remove(part, ec);
+    return Err("metadata_write_failed", "couldn't replace " + file.string());
+  }
+  return {};
+}
+
 void FetchGriddbSlot(const config::Config& config, const std::string& auth_header, std::int64_t griddb_id,
                      const std::string& game_id, std::string_view endpoint, std::string_view slot, json& info) {
-  const json response = CurlJson({"curl", "-sSL", "-H", auth_header,
-                                  std::format("https://www.steamgriddb.com/api/v2/{}/game/{}", endpoint, griddb_id)});
+  // Only the first page: the art picker asks for more as it scrolls.
+  const json response = FetchGriddbPage(config, auth_header, endpoint, griddb_id, 0);
   if (response.is_discarded() || !Value(response, "success", false)) return;
   const json data = Value(response, "data", json::array());
   if (data.empty()) return;
@@ -162,17 +226,9 @@ void FetchGriddbSlot(const config::Config& config, const std::string& auth_heade
                         : json::array();
   bool found_any = false;
   for (const auto& item : data) {
-    const std::string url = Value(item, "url", std::string());
-    if (url.empty()) continue;
-    candidates.push_back({
-        {"id", Value(item, "id", std::int64_t{0})},
-        {"url", url},
-        {"thumb", Value(item, "thumb", std::string())},
-        {"width", Value(item, "width", 0)},
-        {"height", Value(item, "height", 0)},
-        {"style", Value(item, "style", std::string())},
-        {"source", "steamgriddb"},
-    });
+    json candidate = GriddbCandidate(item);
+    if (candidate.is_null()) continue;
+    candidates.push_back(std::move(candidate));
     found_any = true;
   }
   if (!found_any) return;
@@ -183,9 +239,12 @@ void FetchGriddbSlot(const config::Config& config, const std::string& auth_heade
   // was seeded above either then, so candidates[0] is SteamGridDB's own.
   if (info.contains(key)) return;
 
+  // The top result that isn't adult art: that is only ever picked by hand.
+  const auto best = std::ranges::find_if(candidates, [](const json& candidate) { return !Value(candidate, "nsfw", false); });
+  if (best == candidates.end()) return;
   // No credentials on the image download itself -- see FetchArtworkInto.
-  const std::string best_url = Value(candidates[0], "url", std::string());
-  const std::int64_t best_id = Value(candidates[0], "id", std::int64_t{0});
+  const std::string best_url = Value(*best, "url", std::string());
+  const std::int64_t best_id = Value(*best, "id", std::int64_t{0});
   FetchArtworkInto(config, best_url, game_id, "steamgriddb", slot, info, best_id);
 }
 
@@ -742,10 +801,7 @@ Result<void> Fetch(const config::Config& config, const model::Game& game) {
   fs::create_directories(metadata_file.parent_path(), ec);
   if (ec) return Err("metadata_dir_failed", ec.message());
 
-  std::ofstream out(metadata_file, std::ios::trunc);
-  if (!out) return Err("metadata_write_failed", "couldn't open " + metadata_file.string() + " for writing");
-  out << info.dump(2);
-  return {};
+  return WriteMetadataFile(metadata_file, info);
 }
 
 Result<void> FetchCover(const config::Config& config, const model::Game& game) {
@@ -772,14 +828,14 @@ Result<void> FetchCover(const config::Config& config, const model::Game& game) {
   std::error_code ec;
   fs::create_directories(metadata_file.parent_path(), ec);
   if (ec) return Err("metadata_dir_failed", ec.message());
-  std::ofstream out(metadata_file, std::ios::trunc);
-  if (!out) return Err("metadata_write_failed", "couldn't open " + metadata_file.string() + " for writing");
-  out << info.dump(2);
-  return {};
+  return WriteMetadataFile(metadata_file, info);
 }
 
 Result<void> SelectArtwork(const config::Config& config, const std::string& game_id, const std::string& slot,
                            std::int64_t candidate_id) {
+  // Read, download, write back: two at once for one game (a new hero, then a
+  // new cover) would each write over the other's change.
+  const std::lock_guard lock(MetadataFileMutex());
   const fs::path metadata_file = MetadataFile(config, game_id);
   std::ifstream in(metadata_file);
   if (!in) return Err("metadata_not_found", "no metadata cached for this game yet");
@@ -812,10 +868,164 @@ Result<void> SelectArtwork(const config::Config& config, const std::string& game
     return Err("download_failed", "couldn't download the selected image");
   }
 
-  std::ofstream out(metadata_file, std::ios::trunc);
-  if (!out) return Err("metadata_write_failed", "couldn't open " + metadata_file.string() + " for writing");
-  out << info.dump(2);
-  return {};
+  return WriteMetadataFile(metadata_file, info);
+}
+
+Result<json> FetchCandidatePage(const config::Config& config, const std::string& game_id, const std::string& slot,
+                                int page) {
+  const std::string_view endpoint = slot == "cover"  ? "grids"
+                                    : slot == "hero" ? "heroes"
+                                    : slot == "logo" ? "logos"
+                                    : slot == "icon" ? "icons"
+                                                     : "";
+  if (endpoint.empty()) return Err("invalid_type", "unknown art slot");
+  const std::string api_key = config.GetString("steamgriddb.api_key");
+  if (api_key.empty()) return Err("no_steamgriddb_key", "set steamgriddb.api_key to browse SteamGridDB's art");
+
+  const fs::path metadata_file = MetadataFile(config, game_id);
+  std::int64_t griddb_id = 0;
+  {
+    std::ifstream in(metadata_file);
+    const json info = in ? json::parse(in, nullptr, false) : json();
+    if (info.is_object()) griddb_id = Value(info, "steamgriddb_id", std::int64_t{0});
+  }
+  if (griddb_id == 0) return Err("no_steamgriddb_match", "this game has no SteamGridDB match yet");
+
+  const json response =
+      FetchGriddbPage(config, std::format("Authorization: Bearer {}", api_key), endpoint, griddb_id, page);
+  if (response.is_discarded() || !Value(response, "success", false)) {
+    return Err("steamgriddb_unreachable", "couldn't reach SteamGridDB");
+  }
+  json candidates = json::array();
+  for (const auto& item : Value(response, "data", json::array())) {
+    json candidate = GriddbCandidate(item);
+    if (!candidate.is_null()) candidates.push_back(std::move(candidate));
+  }
+
+  // Added to the cached list, so selecting one and fetching its preview can
+  // look it up by id like any other.
+  {
+    const std::lock_guard lock(MetadataFileMutex());
+    std::ifstream in(metadata_file);
+    json info = in ? json::parse(in, nullptr, false) : json();
+    in.close();
+    if (info.is_object()) {
+      json& cached = info["art_candidates"][slot];
+      if (!cached.is_array()) cached = json::array();
+      for (const json& candidate : candidates) {
+        const std::int64_t id = candidate["id"].get<std::int64_t>();
+        const bool known = std::ranges::any_of(
+            cached, [id](const json& entry) { return Value(entry, "id", std::int64_t{0}) == id; });
+        if (!known) cached.push_back(candidate);
+      }
+      [[maybe_unused]] auto written = WriteMetadataFile(metadata_file, info);
+    }
+  }
+  return json{{"page", page}, {"total", Value(response, "total", 0)}, {"candidates", candidates}};
+}
+
+namespace {
+
+// The slot goes into a file name, so only a plain word is accepted.
+bool IsSlotName(const std::string& slot) {
+  return !slot.empty() && std::ranges::all_of(slot, [](unsigned char c) { return std::islower(c) != 0; });
+}
+
+fs::path ThumbCacheDir(const config::Config& config) { return config.File().parent_path() / "cache" / "thumbs"; }
+
+fs::path ThumbPath(const config::Config& config, const std::string& game_id, const std::string& slot,
+                   std::int64_t candidate_id) {
+  return ThumbCacheDir(config) / game_id / std::format("{}_{}", slot, candidate_id);
+}
+
+}  // namespace
+
+void ClearCandidateThumbs(const config::Config& config) {
+  std::error_code ec;
+  fs::remove_all(ThumbCacheDir(config), ec);
+}
+
+std::filesystem::path CandidateThumbFile(const config::Config& config, const std::string& game_id,
+                                         const std::string& slot, std::int64_t candidate_id) {
+  if (!IsSlotName(slot)) return {};
+  const fs::path file = ThumbPath(config, game_id, slot, candidate_id);
+  std::error_code ec;
+  return fs::file_size(file, ec) > 0 && !ec ? file : fs::path();
+}
+
+Result<ThumbBatch> FetchCandidateThumbs(const config::Config& config, const std::string& game_id,
+                                        const std::string& slot, const std::vector<std::int64_t>& candidate_ids) {
+  if (!IsSlotName(slot)) return Err("invalid_type", "unknown art slot");
+  std::ifstream in(MetadataFile(config, game_id));
+  if (!in) return Err("metadata_not_found", "no metadata cached for this game yet");
+  const json info = json::parse(in, nullptr, false);
+  if (info.is_discarded()) return Err("metadata_not_found", "cached metadata is corrupt");
+  const json candidates = info.contains("art_candidates") && info["art_candidates"].contains(slot)
+                              ? info["art_candidates"][slot]
+                              : json::array();
+
+  const fs::path dir = ThumbCacheDir(config) / game_id;
+  std::error_code ec;
+  fs::create_directories(dir, ec);
+  if (ec) return Err("artwork_dir_failed", ec.message());
+
+  // Per batch, so two batches naming the same candidate never share a file.
+  static std::atomic<unsigned> next_batch{0};
+  const std::string suffix = std::format(".part{}", next_batch++);
+
+  ThumbBatch batch;
+  std::map<std::string, std::int64_t> pending;  // part file -> candidate id
+  // One curl for the whole batch, fetching in parallel. -w reports each
+  // transfer's own exit code, since the process's only says whether any failed.
+  Command command;
+  command.argv = {"curl", "-sSL", "-f", "--max-time", std::string(kMaxTime), "--parallel", "--parallel-max", "8",
+                  "-w", "%{exitcode} %{filename_effective}\n"};
+  std::set<std::int64_t> seen;
+  for (const std::int64_t id : candidate_ids) {
+    if (!seen.insert(id).second) continue;
+    if (!CandidateThumbFile(config, game_id, slot, id).empty()) {
+      batch.ready.push_back(id);
+      continue;
+    }
+    std::string url;
+    for (const auto& candidate : candidates) {
+      if (Value(candidate, "id", std::int64_t{0}) != id) continue;
+      url = Value(candidate, "thumb", std::string());
+      if (url.empty()) url = Value(candidate, "url", std::string());
+      break;
+    }
+    if (url.empty()) {
+      batch.failed.push_back(id);
+      continue;
+    }
+    const std::string part = ThumbPath(config, game_id, slot, id).string() + suffix;
+    pending[part] = id;
+    command.argv.insert(command.argv.end(), {"-o", part, url});
+  }
+  if (pending.empty()) return batch;
+
+  std::map<std::string, int> exit_codes;
+  if (const Result<runner::ExecResult> ran = runner::RunAndWait(command); ran) {
+    std::istringstream lines(ran->output);
+    for (std::string line; std::getline(lines, line);) {
+      const std::size_t space = line.find(' ');
+      if (space == std::string::npos) continue;
+      const std::string file = line.substr(space + 1);
+      if (pending.contains(file)) exit_codes[file] = std::atoi(line.substr(0, space).c_str());
+    }
+  }
+  for (const auto& [part, id] : pending) {
+    const auto code = exit_codes.find(part);
+    const bool ok = code != exit_codes.end() && code->second == 0 && fs::file_size(part, ec) > 0 && !ec;
+    if (ok) fs::rename(part, ThumbPath(config, game_id, slot, id), ec);
+    if (!ok || ec) {
+      fs::remove(part, ec);
+      batch.failed.push_back(id);
+    } else {
+      batch.ready.push_back(id);
+    }
+  }
+  return batch;
 }
 
 }  // namespace mira::metadata

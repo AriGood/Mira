@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <charconv>
 #include <chrono>
 #include <filesystem>
 #include <format>
@@ -296,6 +297,14 @@ bool HasCachedArtwork(const config::Config& config, const std::string& id) {
   const std::filesystem::path file =
       metadata::ArtworkDir(config, id) / info["artwork"].value("file", std::string());
   return std::ifstream(file, std::ios::binary).good();
+}
+
+// A preview is saved without an extension, so its type comes from its bytes.
+std::string SniffImageType(std::string_view bytes) {
+  if (bytes.starts_with("\x89PNG")) return "image/png";
+  if (bytes.starts_with("GIF8")) return "image/gif";
+  if (bytes.size() >= 12 && bytes.starts_with("RIFF") && bytes.substr(8, 4) == "WEBP") return "image/webp";
+  return "image/jpeg";
 }
 
 // Serves one cached art slot for `id`, or 404s.
@@ -2004,6 +2013,85 @@ void Server::RegisterRoutes() {
       }
     });
     SendJson(res, {{"status", "selecting"}}, 202);
+  });
+
+  // A page of SteamGridDB's art for a picker, asked for now rather than read
+  // from what a metadata fetch cached. Off the request thread: it's a curl.
+  http_->Post(R"(/v1/games/([^/]+)/artwork/candidates)", [this](const Request& req, Response& res) {
+    const std::string id = req.matches[1];
+    if (!games_.Find(id)) return SendError(res, 404, "game_not_found", "no such game");
+    if (!req.has_param("type")) return SendError(res, 400, "missing_type", "?type= is required");
+    const std::string slot = req.get_param_value("type");
+    int page = 0;
+    const std::string raw = req.has_param("page") ? req.get_param_value("page") : "0";
+    if (std::from_chars(raw.data(), raw.data() + raw.size(), page).ec != std::errc() || page < 0) {
+      return SendError(res, 400, "invalid_page", "?page= must be 0 or more");
+    }
+    // Echoed back, so a caller can tell its answer from a replayed one.
+    const std::string request = req.has_param("request") ? req.get_param_value("request") : "";
+    artwork_thumbs_.Run([this, id, slot, page, request] {
+      json event = {{"id", id}, {"type", slot}, {"page", page}, {"request", request}};
+      if (auto fetched = metadata::FetchCandidatePage(config_, id, slot, page); fetched) {
+        event.update(*fetched);
+      } else {
+        event["code"] = fetched.error().code;
+        event["error"] = fetched.error().message;
+      }
+      events_.Publish("game.artwork_candidates_ready", event);
+    });
+    SendJson(res, {{"status", "fetching"}}, 202);
+  });
+
+  // Previews for a picker, one batch per call: whatever is cached already
+  // comes back at once, the rest is fetched in the background.
+  http_->Post(R"(/v1/games/([^/]+)/artwork/thumbs)", [this](const Request& req, Response& res) {
+    const std::string id = req.matches[1];
+    if (!games_.Find(id)) return SendError(res, 404, "game_not_found", "no such game");
+    if (!req.has_param("type")) return SendError(res, 400, "missing_type", "?type= is required");
+    const std::string slot = req.get_param_value("type");
+    const json body = json::parse(req.body, nullptr, false);
+    const json ids = body.is_object() ? body.value("candidate_ids", json()) : json();
+    if (!ids.is_array() || ids.empty() || ids.size() > 64 ||
+        !std::ranges::all_of(ids, [](const json& value) { return value.is_number_integer(); })) {
+      return SendError(res, 400, "invalid_json", "body must be {\"candidate_ids\": [<id>, ...]}, 1 to 64 ids");
+    }
+    const std::vector<std::int64_t> candidate_ids = ids.get<std::vector<std::int64_t>>();
+    artwork_thumbs_.Run([this, id, slot, candidate_ids] {
+      json event = {{"id", id}, {"type", slot}};
+      if (auto batch = metadata::FetchCandidateThumbs(config_, id, slot, candidate_ids); batch) {
+        event["ready"] = batch->ready;
+        event["failed"] = batch->failed;
+      } else {
+        event["ready"] = json::array();
+        event["failed"] = candidate_ids;
+        event["error"] = batch.error().message;
+      }
+      events_.Publish("game.artwork_thumbs_ready", event);
+    });
+    SendJson(res, {{"status", "fetching"}}, 202);
+  });
+
+  http_->Get(R"(/v1/games/([^/]+)/artwork/thumb)", [this](const Request& req, Response& res) {
+    const std::string id = req.matches[1];
+    if (!games_.Find(id)) return SendError(res, 404, "game_not_found", "no such game");
+    const std::string slot = req.has_param("type") ? req.get_param_value("type") : "cover";
+    std::int64_t candidate_id = 0;
+    const std::string raw = req.has_param("candidate_id") ? req.get_param_value("candidate_id") : "";
+    if (std::from_chars(raw.data(), raw.data() + raw.size(), candidate_id).ec != std::errc() || raw.empty()) {
+      return SendError(res, 400, "missing_candidate_id", "?candidate_id= is required");
+    }
+    const std::filesystem::path file = metadata::CandidateThumbFile(config_, id, slot, candidate_id);
+    std::ifstream in(file, std::ios::binary);
+    if (file.empty() || !in) return SendError(res, 404, "thumb_not_cached", "no preview cached for that candidate");
+    std::ostringstream buffer;
+    buffer << in.rdbuf();
+    res.set_content(buffer.str(), SniffImageType(buffer.str()));
+  });
+
+  // Every game's previews at once, for a GUI that's quitting.
+  http_->Delete("/v1/artwork/thumbs", [this](const Request&, Response& res) {
+    metadata::ClearCandidateThumbs(config_);
+    res.status = 204;
   });
 
   // Re-runs the fetch for one game on demand — a new SteamGridDB key was

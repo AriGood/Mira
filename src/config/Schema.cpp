@@ -217,6 +217,13 @@ Schema::Schema() {
                 "appearing to succeed.",
          .is_secret = true});
 
+  s.Add({.key = "steamgriddb.nsfw",
+         .label = "Include Adult Art",
+         .type = Type::Bool,
+         .default_value = false,
+         .doc = "Also list art SteamGridDB marks as adult (NSFW) in the art picker, where it's "
+                "labelled. It's never picked as a game's art on its own."});
+
   s.Add({.key = "metadata.steamgriddb_id",
          .label = "SteamGridDB Game",
          .type = Type::Int,

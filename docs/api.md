@@ -1121,8 +1121,11 @@ for Steam's own CDN art, which isn't a candidate. `404` means either "never
 fetched" or
 "fetched, found nothing" — `POST .../metadata/refresh` below disambiguates
 by trying again. `art_candidates` (SteamGridDB games only) is
-`{"hero": [{"id", "url", "thumb", "width", "height", "style"}, ...], ...}`
-per slot — every result SteamGridDB returned, not just the one auto-picked.
+`{"hero": [{"id", "url", "thumb", "width", "height", "style", "nsfw"}, ...], ...}`
+per slot — SteamGridDB's first page (50) at fetch time, plus any later pages
+`POST .../artwork/candidates` added. `nsfw` marks art SteamGridDB rates
+adult; it's only listed when `steamgriddb.nsfw` is on, and never auto-picked
+as a slot's default.
 
 ### `GET /v1/games/{id}/artwork?type=` — implemented
 The cached image itself for one art slot (`image/jpeg` or `image/png`,
@@ -1139,6 +1142,39 @@ Swaps a slot to a different cached `art_candidates` entry: body
 never fetches an address the API handed it. `202`, then
 `game.artwork_selected`/`.artwork_select_failed` on the event stream.
 `400` for a missing `?type=` or bad body; `404` if the game doesn't exist.
+
+### `POST /v1/games/{id}/artwork/candidates?type=&page=&request=` — implemented
+Asks SteamGridDB now for one page (50) of the game's art for a slot
+(`cover`, `hero`, `logo`, `icon`), using the current `steamgriddb.nsfw`, so a
+picker isn't limited to what the last metadata fetch cached. `page` starts at
+0. `202`, then `game.artwork_candidates_ready`: `{"id", "type", "page",
+"request", "total", "candidates": [...]}` in SteamGridDB's order, each shaped
+like an `art_candidates` entry and added to that cached list (so it can be
+selected and previewed by id). On failure, `code` and `error` in place of
+`total`/`candidates`: `no_steamgriddb_key`, `no_steamgriddb_match` (no
+`steamgriddb_id` cached for the game yet), `steamgriddb_unreachable`.
+`request` is echoed back unchanged, so a caller can tell its answer from a
+replayed event. `400` for a missing `?type=` or a negative `page`.
+
+### `POST /v1/games/{id}/artwork/thumbs?type=` — implemented
+Caches a preview of each listed `art_candidates` entry, for a picker: body
+`{"candidate_ids": [<id>, ...]}`, 1 to 64 ids from that slot's list. The
+preview is the candidate's `thumb` (SteamGridDB's small version), else the
+image itself (Steam, Epic and Lutris entries have no thumb). The batch is
+fetched in parallel. `202`, then one `game.artwork_thumbs_ready` event:
+`{"id", "type", "ready": [<id>, ...], "failed": [<id>, ...]}`, plus `error`
+when the whole batch failed (no metadata cached, say). An id already cached
+is ready straight away, without a download. `400` for a missing `?type=` or
+bad body; `404` if the game doesn't exist.
+
+### `GET /v1/games/{id}/artwork/thumb?type=&candidate_id=` — implemented
+One cached preview, as saved by the call above. `type` defaults to `cover`.
+`404 thumb_not_cached` until it's fetched; `400` without a `candidate_id`.
+
+### `DELETE /v1/artwork/thumbs` — implemented
+Deletes every game's cached previews. `204`. Previews are only for a picker
+that's open, so they aren't kept like art: the GUI calls this as it quits,
+and mirad clears them itself when it starts and stops.
 
 ### `POST /v1/games/{id}/metadata/refresh?announce=` — implemented
 Re-runs the fetch for one game on demand — a `steamgriddb.api_key` was just
