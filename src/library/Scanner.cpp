@@ -10,6 +10,7 @@
 #include "desktop/DesktopEntries.h"
 #include "library/AutoInstall.h"
 #include "library/AutoSetup.h"
+#include "library/ArchiveExtractor.h"
 #include "library/Detector.h"
 #include "library/WinePrefix.h"
 #include "launchers/Launchers.h"
@@ -124,6 +125,7 @@ ScanSummary Scanner::ScanRoot(const fs::path& root) {
   for (const auto& entry : fs::directory_iterator(root, fs::directory_options::skip_permission_denied, ec)) {
     if (!entry.is_directory(ec)) continue;
     const fs::path& dir = entry.path();
+    if (dir.filename().string().starts_with(kExtractingPrefix)) continue;  // an archive mid-extraction
 
     const bool excluded = std::ranges::any_of(excluded_roots, [&](const fs::path& excluded_root) {
       std::error_code eq;

@@ -34,6 +34,11 @@ Result<pid_t> SpawnDetached(const Command& command);
 // RunAndWait does. The caller owns the returned fd and must close it.
 Result<pid_t> SpawnDetachedWithStatus(const Command& command, int& status_read_fd);
 
+// Extracts `archive` into `out_dir`: tarballs with tar, which keeps symlinks
+// and permissions, and everything else (zip, rar, 7z, split volumes) with
+// 7-Zip.
+Result<void> Extract(const std::filesystem::path& archive, const std::filesystem::path& out_dir);
+
 // Absolute path to `name` if it's on $PATH, else nullopt. Used to check a
 // runner's actual dependency (umu-run, wine) is installed, rather than
 // discovering it "available" and only finding out it isn't when exec fails.

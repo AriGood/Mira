@@ -915,10 +915,9 @@ Schema::Schema() {
          .type = Type::Bool,
          .default_value = false,
          .doc = "Extract a .zip/.rar/.tar(.gz/.xz/.bz2)/.7z dropped directly into a library root, "
-                "into a same-named folder, then delete the archive — so an archived game drop "
-                "behaves like an already-extracted one. Off by default: silently deleting an "
-                "archive is a real action to opt into, not assume. Extracting a .rar or .7z needs "
-                "unrar/p7zip installed; a missing tool is reported, not silently skipped."});
+                "including split archives (.part1.rar, .7z.001), into a same-named folder, then "
+                "delete the archive. Waits until the archive is fully written. Off by default, "
+                "since it deletes the archive. Needs 7-Zip (7z or 7zz) installed."});
 
   s.Add({.key = "scan.periodic_interval_s",
          .label = "Periodic Scan Interval (s)",

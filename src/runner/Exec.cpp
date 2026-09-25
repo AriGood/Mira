@@ -4,10 +4,13 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <algorithm>
+#include <cctype>
 #include <cerrno>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <format>
 #include <vector>
 
 #include "core/Strings.h"
@@ -187,6 +190,28 @@ Result<ExecResult> RunAndWait(const Command& command) {
   if (waitpid(pid, &status, 0) < 0) return Err("exec_wait_failed", std::strerror(errno));
   result.exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
   return result;
+}
+
+Result<void> Extract(const std::filesystem::path& archive, const std::filesystem::path& out_dir) {
+  std::string name = archive.filename().string();
+  std::ranges::transform(name, name.begin(), [](unsigned char c) { return std::tolower(c); });
+  const bool tarball = name.ends_with(".tar") || name.ends_with(".tgz") || name.find(".tar.") != std::string::npos;
+
+  Command command;
+  if (tarball) {
+    command.argv = {"tar", "-xf", archive.string(), "-C", out_dir.string()};
+  } else {
+    std::optional<std::string> seven_zip = FindOnPath("7z");
+    if (!seven_zip) seven_zip = FindOnPath("7zz");
+    if (!seven_zip) return Err("extractor_missing", "install 7zip to extract archives");
+    command.argv = {*seven_zip, "x", "-y", "-bso0", "-bsp0", archive.string(), "-o" + out_dir.string()};
+  }
+  const Result<ExecResult> result = RunAndWait(command);
+  if (!result) return std::unexpected(result.error());
+  if (result->exit_code != 0) {
+    return Err("extract_failed", std::format("{} exited {}: {}", command.argv[0], result->exit_code, result->output));
+  }
+  return {};
 }
 
 }  // namespace mira::runner

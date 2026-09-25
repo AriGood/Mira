@@ -42,6 +42,17 @@ std::uintmax_t TotalSize(const fs::path& dir) {
   return total;
 }
 
+// An archive's size across all its volumes.
+std::uintmax_t ArchiveSize(const fs::path& archive) {
+  std::uintmax_t total = 0;
+  for (const fs::path& volume : VolumesOf(archive)) {
+    std::error_code ec;
+    const std::uintmax_t size = fs::file_size(volume, ec);
+    if (!ec) total += size;
+  }
+  return total;
+}
+
 // True if `path` resolves inside any of `roots`. Guards against a
 // library_roots entry pointing at (or inside) a runner_search_paths/
 // wine_search_paths dir, where a Proton/Wine build mid-download
@@ -145,7 +156,7 @@ void Watcher::ScheduleCheck(const fs::path& root, const fs::path& path, bool is_
   Pending entry;
   entry.root = root;
   entry.is_archive = is_archive;
-  entry.last_size = is_archive ? fs::file_size(path, ec) : TotalSize(path);
+  entry.last_size = is_archive ? ArchiveSize(path) : TotalSize(path);
   entry.stable_since_ms = NowMs();
   pending_[path.string()] = entry;
   RearmTimer();
@@ -233,10 +244,16 @@ void Watcher::HandleInotify() {
       if (event->mask & (IN_CREATE | IN_MOVED_TO)) {
         if (IsUnderAnyRoot(path, runner_roots)) continue;
         std::error_code ec;
+        const bool extract = config_.GetBool("scan.auto_extract_archives");
         if (fs::is_directory(path, ec)) {
-          ScheduleCheck(root_it->second, path, /*is_archive=*/false);
-        } else if (config_.GetBool("scan.auto_extract_archives") && LooksLikeArchive(path)) {
+          if (!path.filename().string().starts_with(kExtractingPrefix)) {
+            ScheduleCheck(root_it->second, path, /*is_archive=*/false);
+          }
+        } else if (extract && LooksLikeArchive(path)) {
           ScheduleCheck(root_it->second, path, /*is_archive=*/true);
+        } else if (extract && IsLaterVolume(path)) {
+          // Another part arriving restarts the wait on the first one.
+          if (auto first = FirstVolumeOf(path)) ScheduleCheck(root_it->second, *first, /*is_archive=*/true);
         }
       } else if (event->mask & (IN_DELETE | IN_MOVED_FROM)) {
         pending_.erase(path.string());  // no point finishing a debounce for a path that's gone
@@ -257,8 +274,10 @@ void Watcher::HandleDebounceTick() {
 
   for (auto& [path, entry] : pending_) {
     std::error_code ec;
-    const std::uintmax_t current_size = entry.is_archive ? fs::file_size(path, ec) : TotalSize(path);
-    if (current_size != entry.last_size) {
+    const std::uintmax_t current_size = entry.is_archive ? ArchiveSize(path) : TotalSize(path);
+    // A downloader that preallocates the file keeps its size fixed, so an
+    // archive also waits until nothing has it open for writing.
+    if (current_size != entry.last_size || (entry.is_archive && AnyOpenForWriting(VolumesOf(path)))) {
       entry.last_size = current_size;
       entry.stable_since_ms = now;
       continue;

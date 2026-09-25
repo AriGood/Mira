@@ -4,66 +4,66 @@
 #include <fstream>
 
 #include "library/ArchiveExtractor.h"
+#include "support/TestEnv.h"
 
 using namespace mira;
 namespace fs = std::filesystem;
 
-namespace {
-fs::path TempDir(const char* name) {
-  const fs::path dir = fs::temp_directory_path() / "mira-tests" / name;
-  fs::remove_all(dir);
-  fs::create_directories(dir);
-  return dir;
-}
-}  // namespace
+TEST_CASE("archive names: supported formats, split volumes and stems") {
+  for (const char* name : {"Game.zip", "Game.tar.gz", "Game.tar.xz", "Game.tar.bz2", "Game.tgz", "Game.tar",
+                           "Game.rar", "Game.7z", "GAME.ZIP", "Game.part1.rar", "Game.part01.rar", "Game.7z.001"}) {
+    CHECK_MESSAGE(library::LooksLikeArchive(name), name);
+  }
+  for (const char* name : {"Game.exe", "Game", "Game.part2.rar", "Game.r00", "Game.7z.002"}) {
+    CHECK_MESSAGE(!library::LooksLikeArchive(name), name);
+  }
+  CHECK(library::IsLaterVolume("Game.part2.rar"));
+  CHECK(library::IsLaterVolume("Game.r01"));
+  CHECK_FALSE(library::IsLaterVolume("Game.part1.rar"));
 
-TEST_CASE("LooksLikeArchive recognizes every supported extension, nothing else") {
-  CHECK(library::LooksLikeArchive("Game.zip"));
-  CHECK(library::LooksLikeArchive("Game.tar.gz"));
-  CHECK(library::LooksLikeArchive("Game.tar.xz"));
-  CHECK(library::LooksLikeArchive("Game.tar.bz2"));
-  CHECK(library::LooksLikeArchive("Game.tgz"));
-  CHECK(library::LooksLikeArchive("Game.tar"));
-  CHECK(library::LooksLikeArchive("Game.rar"));
-  CHECK(library::LooksLikeArchive("Game.7z"));
-  CHECK(library::LooksLikeArchive("GAME.ZIP"));  // case-insensitive
-
-  CHECK_FALSE(library::LooksLikeArchive("Game.exe"));
-  CHECK_FALSE(library::LooksLikeArchive("Game"));
-}
-
-TEST_CASE("StemWithoutArchiveExtension strips exactly the matched suffix, not a guessed one") {
-  CHECK(library::StemWithoutArchiveExtension("Game.zip") == "Game");
-  CHECK(library::StemWithoutArchiveExtension("Game.tar.gz") == "Game");
-  CHECK(library::StemWithoutArchiveExtension("Game.tar") == "Game");
-  // A dot inside the real name must survive: naive repeated stem() calls
-  // would wrongly eat "Edition" here too.
   CHECK(library::StemWithoutArchiveExtension("My.Game.Deluxe.Edition.zip") == "My.Game.Deluxe.Edition");
   CHECK(library::StemWithoutArchiveExtension("My.Game.tar.gz") == "My.Game");
+  CHECK(library::StemWithoutArchiveExtension("Game.part01.rar") == "Game");
+  CHECK(library::StemWithoutArchiveExtension("Game.7z.001") == "Game");
+
+  const fs::path dir = test::TempDir("archive-volumes");
+  for (const char* name : {"Game.part1.rar", "Game.part2.rar", "Game.part3.rar", "Other.part2.rar"}) test::Touch(dir / name);
+  CHECK(library::VolumesOf(dir / "Game.part1.rar").size() == 3);
+  CHECK(library::FirstVolumeOf(dir / "Game.part3.rar") == dir / "Game.part1.rar");
+  CHECK_FALSE(library::FirstVolumeOf(dir / "Other.part2.rar").has_value());
 }
 
-TEST_CASE("ExtractAndRemove extracts a real tar.gz and deletes the archive on success") {
-  const fs::path dir = TempDir("archive-extractor-tar");
-  const fs::path src = dir / "src";
-  fs::create_directories(src);
-  std::ofstream(src / "file.txt") << "hello";
+TEST_CASE("AnyOpenForWriting sees a file still being written") {
+  const fs::path file = test::TempDir("archive-writer") / "Game.zip";
+  {
+    std::ofstream out(file);
+    out << "partial" << std::flush;
+    CHECK(library::AnyOpenForWriting({file}));
+  }
+  CHECK_FALSE(library::AnyOpenForWriting({file}));
+}
 
+TEST_CASE("ExtractAndRemove only moves a fully extracted archive into place") {
+  const fs::path dir = test::TempDir("archive-extract");
+  test::Touch(dir / "src" / "Game.exe", std::string(200000, 'x'));
   const fs::path archive = dir / "Game.tar.gz";
-  REQUIRE(std::system(("tar -C " + src.string() + " -czf " + archive.string() + " file.txt").c_str()) == 0);
+  REQUIRE(std::system(("tar -C " + (dir / "src").string() + " -czf " + archive.string() + " Game.exe").c_str()) == 0);
 
-  const fs::path dest = dir / "Game";
-  auto result = library::ExtractAndRemove(archive, dest);
-  REQUIRE(result.has_value());
-  CHECK(fs::exists(dest / "file.txt"));
-  CHECK_FALSE(fs::exists(archive));  // the archive itself is gone
-}
+  // A truncated copy fails, leaves no folder behind and keeps the archive.
+  const fs::path truncated = dir / "Broken.tar.gz";
+  fs::copy_file(archive, truncated);
+  fs::resize_file(truncated, fs::file_size(archive) / 2);
+  CHECK_FALSE(library::ExtractAndRemove(truncated, dir / "Broken").has_value());
+  CHECK_FALSE(fs::exists(dir / "Broken"));
+  CHECK_FALSE(fs::exists(dir / (std::string(library::kExtractingPrefix) + "Broken")));
+  CHECK(fs::exists(truncated));
 
-TEST_CASE("ExtractAndRemove leaves a non-archive file untouched") {
-  const fs::path dir = TempDir("archive-extractor-not-archive");
-  const fs::path file = dir / "readme.txt";
-  std::ofstream(file) << "not an archive";
+  REQUIRE(library::ExtractAndRemove(archive, dir / "Game").has_value());
+  CHECK(fs::file_size(dir / "Game" / "Game.exe") == 200000);
+  CHECK_FALSE(fs::exists(archive));
 
-  auto result = library::ExtractAndRemove(file, dir / "out");
-  CHECK_FALSE(result.has_value());
-  CHECK(fs::exists(file));  // never deleted on failure
+  const fs::path text = dir / "readme.txt";
+  test::Touch(text, "not an archive");
+  CHECK_FALSE(library::ExtractAndRemove(text, dir / "out").has_value());
+  CHECK(fs::exists(text));
 }
