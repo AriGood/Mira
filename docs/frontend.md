@@ -154,11 +154,13 @@ one library rather than part of a theme's identity, which is why they live in
 `frontend.toml`. `-1` is how the file spells "leave it to the theme": the keys
 have to stay writable to be cleared again, and a merge patch cannot drop one.
 
-Four things the stylesheet cannot reach read the tokens directly instead:
+Five things the stylesheet cannot reach read the tokens directly instead:
 `ui/GameTileDelegate` and `ui/CoverArt`, which paint with `QPainter`,
-`ui/Notify`'s toasts, and `ui/HeroArtWidget`'s banner, which is clipped to
+`ui/Notify`'s toasts, `ui/HeroArtWidget`'s banner, which is clipped to
 `radius_panel` by hand because a stylesheet cannot round a pixmap inside a
-`QLabel`. They repaint on `theme::Notifier::Changed`.
+`QLabel`, and `ui/HeroBackdrop`, the game settings card, which paints the
+game's hero (or its cover, blurred) across its top and fades it into
+`surface`. They repaint on `theme::Notifier::Changed`.
 
 Two conventions keep colors out of the widgets themselves:
 
@@ -301,11 +303,11 @@ Everything `api.md` marks implemented has a path through the UI:
 | `GET /v1/library`, `POST /v1/library/install\|update` | `SourcePage`'s Not installed tiles, and Update on its library tiles |
 | `/v1/{epic,gog,itch,amazon,humble}/*` | `SourcePage` for each store |
 | `/v1/launchers/*` | `SourcePage` for Battle.net, Ubisoft Connect, the EA app |
-| `GET`/`PATCH /v1/config`, `/reset` | `SettingsDialog` |
+| `GET`/`PATCH /v1/config`, `/reset` | `SettingsDialog`; `RunnersPage`'s *Make default* and *Pick automatically instead* (`default_runner.windows`) |
 | `GET /v1/config/schema` | generates `SettingsDialog` and `OverridesEditor` |
-| `GET /v1/runners` | runner pickers, and `RunnerDialog`'s installed list |
-| `GET /v1/runners/catalog` | `RunnerDialog`'s available list |
-| `POST /v1/runners/download` | `RunnerDialog`'s Download |
+| `GET /v1/runners` | runner pickers, and `RunnersPage`'s Installed card |
+| `GET /v1/runners/catalog` | `RunnersPage`'s Get more card |
+| `POST /v1/runners/download` | `RunnersPage`'s Install; progress through `ui/DownloadTracker` |
 | `POST /v1/steam/scan` | *Library → Import Steam library* |
 | `POST /v1/lutris/import` | *Library → Import Lutris games* |
 | `GET /v1/events` | `EventStream` |
@@ -358,8 +360,8 @@ notification, in one of two kinds:
 
 Only two things are still popups: a question the caller can't proceed
 without (`Confirm`, `ConfirmUnsaved`), and content that *is* the answer to a
-button (`Info` — e.g. a runner kind's config keys). A dialog that already has
-a status line of its own (`RunnerDialog`, `ArtworkPickerDialog`, the log
+button (`Info`). A dialog that already has
+a status line of its own (`RunnersPage`, `ArtworkPickerDialog`, the log
 viewer's text pane) reports its errors there instead of notifying over
 itself.
 
@@ -488,7 +490,7 @@ is visible rather than assumed.
 ## Not built yet
 
 Nothing outstanding right now: winetricks (`WinetricksDialog`), runner
-delete/schema (`RunnerDialog`), the wider game detail page
+delete (`RunnersPage`), the wider game detail page
 (`GameDetailPageDialog`), the per-game log viewer (`LogViewerDialog`), a
 GameMode status indicator (Settings, Launching category), manual single-game
 add (`AddManualGameDialog`), the desktop-entries import picker

@@ -49,7 +49,9 @@ class DownloadTracker;
 class DownloadsPanel;
 class GameEditForm;
 class GameTileDelegate;
+class HeroBackdrop;
 class HoverCard;
+class RunnersPage;
 class SettingsPanel;
 class SourcePage;
 struct SourceInfo;
@@ -192,7 +194,9 @@ private:
   // Moves `id` to just before the visible row `before` (end if -1).
   void MoveSource(const QString& id, int before);
   int SourceDropRow(int y) const;
+  // The Runners page, in the grid's place like a source page.
   void OpenRunners();
+  void CloseRunners();
   void OpenAbout();
   void OpenGameDetailPage(const std::string& id);
   void ScanLibrary();
@@ -308,6 +312,7 @@ private:
   // Store signed in / launcher installed, by source id, as last asked.
   QHash<QString, bool> source_ready_;
   mira_gui::SourcePage* source_page_ = nullptr;
+  mira_gui::RunnersPage* runners_page_ = nullptr;
 
   QSplitter* splitter_ = nullptr;
   // The splitter's right side: grid_page_, classic_page_, or source_page_.
@@ -332,6 +337,7 @@ private:
   // raised on top, toggled in OpenGameDialog/CloseGameEdit.
   QStackedLayout* root_stack_ = nullptr;
   mira_gui::GameEditForm* game_edit_form_ = nullptr;
+  mira_gui::HeroBackdrop* game_edit_backdrop_ = nullptr;  // the card itself
   bool game_settings_in_sidebar_ = true;
   // Built once at startup, not per-open like settings_page_/game_edit_card_
   // — it has no per-session state to go stale, so it just stays synced via

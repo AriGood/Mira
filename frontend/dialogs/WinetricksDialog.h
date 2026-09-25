@@ -14,7 +14,7 @@ class QPushButton;
 namespace mira_gui {
 
 // Runs a winetricks verb inside a game's prefix. 202-then-SSE like
-// RunnerDialog's downloads; stays open after a verb finishes so another
+// runner downloads; stays open after a verb finishes so another
 // can be run without reopening.
 class WinetricksDialog : public QDialog {
   Q_OBJECT

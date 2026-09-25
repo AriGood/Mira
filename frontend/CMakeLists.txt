@@ -58,6 +58,8 @@ qt_add_executable(mira-gui
   ui/GameActions.h
   ui/HeroArtWidget.cpp
   ui/HeroArtWidget.h
+  ui/HeroBackdrop.cpp
+  ui/HeroBackdrop.h
   ui/HoverCard.cpp
   ui/HoverCard.h
   ui/GamePresentation.h
@@ -95,6 +97,8 @@ qt_add_executable(mira-gui
   # views/ — the two top-level library windows, and LibraryWindow's full-page views.
   views/LibraryWindow.cpp
   views/LibraryWindow.h
+  views/RunnersPage.cpp
+  views/RunnersPage.h
   views/SourcePage.cpp
   views/SourcePage.h
   views/MainWindow.cpp
@@ -123,8 +127,6 @@ qt_add_executable(mira-gui
   dialogs/ManageSourcesDialog.h
   dialogs/RunInPrefixDialog.cpp
   dialogs/RunInPrefixDialog.h
-  dialogs/RunnerDialog.cpp
-  dialogs/RunnerDialog.h
   dialogs/OverridesEditor.cpp
   dialogs/OverridesEditor.h
   dialogs/SettingsDialog.cpp

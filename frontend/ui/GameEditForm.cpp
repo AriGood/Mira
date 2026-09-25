@@ -8,7 +8,7 @@
 
 #include <QComboBox>
 #include <QFileDialog>
-#include <QFormLayout>
+#include <QGridLayout>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
@@ -33,7 +33,8 @@ GameEditForm::GameEditForm(std::string id, QWidget* parent) : QWidget(parent), i
   layout->setContentsMargins(0, 0, 0, 0);
   layout->setSpacing(16);
 
-  auto* art_column = new QWidget(this);
+  art_column_ = new QWidget(this);
+  QWidget* art_column = art_column_;
   art_column->setFixedWidth(220);
   auto* art_layout = new QVBoxLayout(art_column);
   art_layout->setContentsMargins(0, 0, 0, 0);
@@ -60,10 +61,13 @@ GameEditForm::GameEditForm(std::string id, QWidget* parent) : QWidget(parent), i
   fields_layout->setContentsMargins(0, 0, 0, 0);
   fields_layout->setSpacing(12);
 
-  form_ = new QFormLayout();
-  auto* form = form_;
-  form->setVerticalSpacing(10);
-  form->setHorizontalSpacing(14);
+  // Two columns with each label above its field: a label column to the left
+  // spent a third of the width on words.
+  auto* form = new QGridLayout();
+  form->setVerticalSpacing(12);
+  form->setHorizontalSpacing(20);
+  form->setColumnStretch(0, 1);
+  form->setColumnStretch(1, 1);
   // QLabel's default vertical policy is Preferred, not Fixed like
   // QLineEdit/QComboBox, so leftover QScrollArea height landed on whichever
   // one-line read-only label was still willing to grow. Pinned Fixed.
@@ -140,26 +144,32 @@ GameEditForm::GameEditForm(std::string id, QWidget* parent) : QWidget(parent), i
   env_edit_->setFixedHeight(110);
   env_edit_->setToolTip("Extra environment variables, as a JSON object of strings. Merged, not replaced.");
 
-  // addRow(QString, ...)'s own label defaults to Preferred vertical, same
-  // bug as status_label_/install_path_label_ but for every row's caption —
-  // built explicitly and pinned Fixed instead, or the whole form pads out.
-  auto add_row = [form, this](const QString& text, auto* field) {
-    auto* label = new QLabel(text, this);
+  // A caption above its field; the pair shows and hides together.
+  auto add_field = [form, this](const QString& text, QWidget* field, int row, int column, int span) {
+    auto* box = new QWidget(this);
+    auto* box_layout = new QVBoxLayout(box);
+    box_layout->setContentsMargins(0, 0, 0, 0);
+    box_layout->setSpacing(5);
+    auto* label = new QLabel(text, box);
+    label->setProperty("role", "muted");
     label->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
-    form->addRow(label, field);
+    box_layout->addWidget(label);
+    box_layout->addWidget(field);
+    form->addWidget(box, row, column, 1, span);
+    return box;
   };
-  add_row("Status:", status_label_);
-  add_row("Install path:", install_path_label_);
-  add_row("Name:", name_edit_);
-  form->addRow(source_note_label_);
-  add_row("Executable:", exe_row_widget);
-  add_row("Arguments:", args_edit_);
-  add_row("Working directory:", working_dir_edit_);
-  add_row("Tags:", tags_edit_);
-  add_row("Runner:", runner_row_widget);
-  add_row("Data directory:", data_dir_edit_);
-  add_row("Runner config:", runner_config_edit_);
-  add_row("Environment:", env_edit_);
+  status_box_ = add_field("Status", status_label_, 0, 0, 2);
+  add_field("Install path", install_path_label_, 1, 0, 2);
+  form->addWidget(source_note_label_, 2, 0, 1, 2);
+  add_field("Executable", exe_row_widget, 3, 0, 2);
+  add_field("Arguments", args_edit_, 4, 0, 1);
+  add_field("Working directory", working_dir_edit_, 4, 1, 1);
+  add_field("Runner", runner_row_widget, 5, 0, 1);
+  add_field("Data directory", data_dir_edit_, 5, 1, 1);
+  add_field("Name", name_edit_, 6, 0, 1);
+  add_field("Tags", tags_edit_, 6, 1, 1);
+  add_field("Runner config", runner_config_edit_, 7, 0, 2);
+  add_field("Environment", env_edit_, 8, 0, 2);
   fields_layout->addLayout(form);
   fields_layout->addWidget(last_error_label_);
 
@@ -170,7 +180,8 @@ GameEditForm::GameEditForm(std::string id, QWidget* parent) : QWidget(parent), i
   // After the stretch, not right below the form: pushed to the very bottom
   // of the page, next to the containing page's own Save/Cancel, rather than
   // sitting in the middle of the form fields above it.
-  auto* advanced_button = new QPushButton("Advanced settings…", this);
+  advanced_button_ = new QPushButton("Advanced settings…", this);
+  QPushButton* advanced_button = advanced_button_;
   // QPushButton defaults to Fixed horizontal — same sidebar-floor bug as
   // install_path_label_ above, this time spilling the button's own text.
   advanced_button->setSizePolicy(QSizePolicy::Ignored, advanced_button->sizePolicy().verticalPolicy());
@@ -204,6 +215,10 @@ GameEditForm::GameEditForm(std::string id, QWidget* parent) : QWidget(parent), i
 }
 
 void GameEditForm::SetArtworkStore(ArtworkStore* store) { hero_art_->SetArtworkStore(store); }
+
+void GameEditForm::SetArtColumnVisible(bool visible) { art_column_->setVisible(visible); }
+
+void GameEditForm::SetAdvancedButtonVisible(bool visible) { advanced_button_->setVisible(visible); }
 
 void GameEditForm::RefreshCover() { hero_art_->RefreshCover(); }
 void GameEditForm::RefreshBanner(const std::string& id) { hero_art_->RefreshBanner(id); }
@@ -262,7 +277,7 @@ void GameEditForm::Populate(const mira_gui::GameDetail& game) {
 
   // "Ready" is the common case and says nothing worth a line of its own —
   // only a state that needs attention earns one.
-  form_->setRowVisible(status_label_, game.status != "ready");
+  status_box_->setVisible(game.status != "ready");
   status_label_->setText(QString::fromStdString(game.status));
   theme::SetStyleProperty(status_label_, "status", QString::fromStdString(game.status));
 
@@ -280,7 +295,7 @@ void GameEditForm::Populate(const mira_gui::GameDetail& game) {
         "Imported from Lutris. The executable below came from Lutris's own config, not from "
         "scanning the install folder, so there's no list of alternates to pick from here.");
   }
-  form_->setRowVisible(source_note_label_, game.source == "steam" || game.source == "lutris");
+  source_note_label_->setVisible(game.source == "steam" || game.source == "lutris");
 
   if (game.last_error.empty()) {
     last_error_label_->hide();
