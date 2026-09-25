@@ -220,7 +220,7 @@ TEST_CASE("Scanner does not auto-provision when auto_setup is off") {
   CHECK_FALSE(fs::exists(celeste->data_dir));
 }
 
-TEST_CASE("Scanner retries provisioning on a later scan instead of leaving a known game stuck setting_up") {
+TEST_CASE("Scanner retries provisioning for games left setting_up or broken by a missing runner") {
   const fs::path lib = TempDir("scan-retry-library");
   Touch(lib / "Celeste" / "Celeste.exe");
 
@@ -238,11 +238,17 @@ TEST_CASE("Scanner retries provisioning on a later scan instead of leaving a kno
 
   // auto_setup turns on later — a later scan of the same, already-known
   // folder must retry rather than skip it forever.
+  // With no runner installed it breaks, and comes back once one resolves.
   REQUIRE(env.config.Set("auto_setup", true).has_value());
+  REQUIRE(env.config.Set("default_runner.windows", "wine:missing").has_value());
   scanner.ScanAll();
   celeste = env.games.Find("celeste");
   REQUIRE(celeste.has_value());
-  CHECK(celeste->status != model::GameStatus::SettingUp);
+  CHECK(celeste->status == model::GameStatus::Broken);
+
+  REQUIRE(env.config.Set("default_runner.windows", "native:native").has_value());
+  scanner.ScanAll();
+  CHECK(env.games.Find("celeste")->status == model::GameStatus::Ready);
 }
 
 TEST_CASE("Detector flags a large setup.exe as an installer, not the game") {

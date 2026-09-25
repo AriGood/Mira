@@ -95,6 +95,7 @@ ScanSummary Scanner::ScanAll() {
     total.added += imported.added;
     std::ranges::move(imported.added_games, std::back_inserter(total.added_games));
   }
+  if (config_.GetBool("auto_setup")) RetryBrokenProvisioning(config_, games_, events_);
   return total;
 }
 
@@ -243,6 +244,48 @@ ScanSummary Scanner::ScanRoot(const fs::path& root) {
   }
 
   return summary;
+}
+
+namespace {
+
+// Provisions a broken Windows game again if a runner now resolves for it.
+bool Reprovision(const runner::RunnerRegistry& runners, store::GameStore& games, api::EventBus& events,
+                 const model::Game& game) {
+  if (game.status != model::GameStatus::Broken || game.platform != model::Platform::Windows) return false;
+  // A broken game with no executable on disk broke for another reason.
+  std::error_code ec;
+  if (game.exe_path.empty() || !fs::is_regular_file(fs::path(game.install_path) / game.exe_path, ec)) return false;
+  if (!runners.Resolve(runners.ResolveRef(game))) return false;
+
+  const model::Game provisioned = runners.ProvisionGame(game);
+  auto result = games.Update(game.id, [&](model::Game& stored) {
+    stored.runner_ref = provisioned.runner_ref;
+    stored.status = provisioned.status;
+    stored.last_error = provisioned.last_error;
+  });
+  if (!result) return false;
+  events.Publish("game.updated", model::ToJson(*result));
+  return result->status == model::GameStatus::Ready;
+}
+
+}  // namespace
+
+int RetryBrokenProvisioning(config::Config& config, store::GameStore& games, api::EventBus& events) {
+  const runner::RunnerRegistry runners(config);
+  int fixed = 0;
+  for (const model::Game& game : games.All()) {
+    if (Reprovision(runners, games, events, game)) ++fixed;
+  }
+  if (fixed > 0) (void)desktop::DesktopEntries(config).Sync(games.All());
+  return fixed;
+}
+
+bool RetryBrokenProvisioning(config::Config& config, store::GameStore& games, api::EventBus& events,
+                             const std::string& id) {
+  const std::optional<model::Game> game = games.Find(id);
+  if (!game || !Reprovision(runner::RunnerRegistry(config), games, events, *game)) return false;
+  (void)desktop::DesktopEntries(config).Sync(games.All());
+  return true;
 }
 
 }  // namespace mira::library

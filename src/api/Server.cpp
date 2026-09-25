@@ -1601,6 +1601,11 @@ void Server::RegisterRoutes() {
   http_->Post(R"(/v1/games/([^/]+)/launch)", [this](const Request& req, Response& res) {
     auto game = games_.Find(req.matches[1]);
     if (!game) return SendError(res, 404, "game_not_found", "no such game");
+    if (game->status == model::GameStatus::Broken &&
+        library::RetryBrokenProvisioning(config_, games_, events_, game->id)) {
+      game = games_.Find(game->id);
+      if (!game) return SendError(res, 404, "game_not_found", "no such game");
+    }
     if (game->status == model::GameStatus::NeedsInstall) {
       return SendError(res, 409, "needs_install", game->last_error);
     }
@@ -2484,6 +2489,7 @@ void Server::InstallRunnerAsync(const std::string& kind, const std::string& sour
       return;
     }
     log::Info("installed {} {}", kind, asset.tag);
+    library::RetryBrokenProvisioning(config_, games_, events_);
     json finished = base;
     if (!replacing.empty()) {
       // Move what used the old build onto the new one.

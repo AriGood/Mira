@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include <string>
 #include <vector>
 
 #include "api/EventBus.h"
@@ -42,5 +43,12 @@ private:
   store::GameStore& games_;
   api::EventBus& events_;
 };
+
+// Provisions again every Windows game left broken by a missing or failing
+// runner, once a runner resolves for it. Returns how many became ready.
+int RetryBrokenProvisioning(config::Config& config, store::GameStore& games, api::EventBus& events);
+// Same for one game. Returns whether it became ready.
+bool RetryBrokenProvisioning(config::Config& config, store::GameStore& games, api::EventBus& events,
+                             const std::string& id);
 
 }  // namespace mira::library
