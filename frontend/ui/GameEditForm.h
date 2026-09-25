@@ -61,8 +61,6 @@ signals:
   void Loaded(QString name);
   void LoadFailed(QString error);
   void SaveFinished(bool ok, QString error);
-  // "cover" or "hero" — a caller opens ArtworkPickerDialog for it.
-  void ArtworkPickRequested(QString slot);
 
 private:
   void Load();

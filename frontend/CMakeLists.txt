@@ -44,6 +44,8 @@ qt_add_executable(mira-gui
   # ui/ — presentation shared by more than one view or dialog.
   ui/AboutPanel.cpp
   ui/AboutPanel.h
+  ui/ArtPickerPanel.cpp
+  ui/ArtPickerPanel.h
   ui/ArtworkStore.cpp
   ui/ArtworkStore.h
   ui/CoverArt.cpp
@@ -107,8 +109,6 @@ qt_add_executable(mira-gui
   # dialogs/
   dialogs/AddManualGameDialog.cpp
   dialogs/AddManualGameDialog.h
-  dialogs/ArtworkPickerDialog.cpp
-  dialogs/ArtworkPickerDialog.h
   dialogs/DeleteGameDialog.cpp
   dialogs/DeleteGameDialog.h
   dialogs/DesktopEntryImportDialog.cpp

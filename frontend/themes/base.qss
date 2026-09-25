@@ -605,6 +605,34 @@ QPushButton#hero_action:hover {
   background: rgba(20, 22, 27, 0.8);
 }
 
+QPushButton#hero_action:checked {
+  background: @accent_soft;
+  border-color: @accent;
+}
+
+/* --- Art picker ---------------------------------------------------------- */
+
+QWidget#picker_bar {
+  border-bottom: 1px solid @border;
+}
+
+QPushButton#chip {
+  background: transparent;
+  border: 1px solid @border;
+  border-radius: 10px;
+  padding: 3px 10px;
+  font-size: @font_size_small;
+}
+
+QPushButton#chip:hover {
+  border-color: @text_muted;
+}
+
+QPushButton#chip:checked {
+  border-color: @accent;
+  background: @accent_soft;
+}
+
 /* --- Runners page -------------------------------------------------------- */
 
 QFrame#runners_card {

@@ -412,6 +412,18 @@ ArtworkResult GetArtworkSync(const std::string& id, const std::string& slot) {
   return result;
 }
 
+ArtCandidate ParseArtCandidate(const json& item) {
+  ArtCandidate candidate;
+  if (!item.is_object()) return candidate;
+  candidate.id = item.value("id", std::int64_t{0});
+  candidate.width = item.value("width", 0);
+  candidate.height = item.value("height", 0);
+  candidate.style = item.value("style", std::string());
+  candidate.source = item.value("source", std::string("steamgriddb"));
+  candidate.nsfw = item.value("nsfw", false);
+  return candidate;
+}
+
 GameMetadataResult GetMetadataSync(const std::string& id) {
   GameMetadataResult result;
   const transport::Reply reply = transport::Get("/v1/games/" + id + "/metadata");
@@ -424,6 +436,10 @@ GameMetadataResult GetMetadataSync(const std::string& id) {
     return result;
   }
 
+  if (!reply.body.is_object()) {
+    result.error = "mirad sent metadata that isn't a JSON object";
+    return result;
+  }
   result.ok = true;
   GameMetadata& out = result.metadata;
   out.source = reply.body.value("source", std::string());
@@ -483,14 +499,7 @@ GameMetadataResult GetMetadataSync(const std::string& id) {
         !reply.body["art_candidates"].contains(slot)) {
       return list;
     }
-    for (const json& item : reply.body["art_candidates"][slot]) {
-      ArtCandidate candidate;
-      candidate.id = item.value("id", std::int64_t{0});
-      candidate.width = item.value("width", 0);
-      candidate.height = item.value("height", 0);
-      candidate.style = item.value("style", std::string());
-      list.push_back(candidate);
-    }
+    for (const json& item : reply.body["art_candidates"][slot]) list.push_back(ParseArtCandidate(item));
     return list;
   };
   out.cover_candidates = candidates("cover");
@@ -519,6 +528,31 @@ ArtworkSelectResult SelectArtworkSync(const std::string& id, const std::string& 
   const transport::Reply reply = transport::PostJson(
       "/v1/games/" + id + "/artwork?type=" + slot, json{{"candidate_id", candidate_id}});
   return {reply.ok, reply.error};
+}
+
+GameActionResult FetchArtCandidatesSync(const std::string& id, const std::string& slot, int page,
+                                        const std::string& request) {
+  const transport::Reply reply = transport::Post("/v1/games/" + id + "/artwork/candidates?type=" + slot +
+                                                 "&page=" + std::to_string(page) + "&request=" + request);
+  return {reply.ok, reply.error};
+}
+
+GameActionResult FetchArtThumbsSync(const std::string& id, const std::string& slot,
+                                    const std::vector<std::int64_t>& candidate_ids) {
+  const transport::Reply reply = transport::PostJson("/v1/games/" + id + "/artwork/thumbs?type=" + slot,
+                                                     json{{"candidate_ids", candidate_ids}});
+  return {reply.ok, reply.error};
+}
+
+ArtThumbsResult GetArtThumbsSync(const std::string& id, const std::string& slot,
+                                 const std::vector<std::int64_t>& candidate_ids) {
+  ArtThumbsResult result;
+  for (const std::int64_t candidate_id : candidate_ids) {
+    const transport::Blob blob = transport::GetBinary("/v1/games/" + id + "/artwork/thumb?type=" + slot +
+                                                      "&candidate_id=" + std::to_string(candidate_id));
+    if (blob.ok) result.images.emplace_back(candidate_id, blob.bytes);
+  }
+  return result;
 }
 
 RefreshMissingArtworkResult RefreshMissingArtworkSync() {
@@ -1245,6 +1279,10 @@ PatchConfigResult MiradClient::SaveFrontendPrefsBlocking(const FrontendPrefs& pr
   return SaveFrontendPrefsSync(prefs);
 }
 
+void MiradClient::ClearArtThumbsBlocking() {
+  transport::Delete("/v1/artwork/thumbs", {.read_timeout = std::chrono::seconds(2)});
+}
+
 FrontendPrefsResult MiradClient::GetFrontendPrefsBlocking() { return GetFrontendPrefsSync(); }
 
 void MiradClient::GetArtworkAsync(QObject* context, const std::string& id,
@@ -1272,6 +1310,27 @@ void MiradClient::SelectArtworkAsync(QObject* context, const std::string& id, co
                                      std::int64_t candidate_id,
                                      std::function<void(ArtworkSelectResult)> callback) {
   async::Run(context, [id, slot, candidate_id] { return SelectArtworkSync(id, slot, candidate_id); },
+             std::move(callback));
+}
+
+void MiradClient::FetchArtCandidatesAsync(QObject* context, const std::string& id, const std::string& slot, int page,
+                                          const std::string& request,
+                                          std::function<void(GameActionResult)> callback) {
+  async::Run(context, [id, slot, page, request] { return FetchArtCandidatesSync(id, slot, page, request); },
+             std::move(callback));
+}
+
+void MiradClient::FetchArtThumbsAsync(QObject* context, const std::string& id, const std::string& slot,
+                                      const std::vector<std::int64_t>& candidate_ids,
+                                      std::function<void(GameActionResult)> callback) {
+  async::Run(context, [id, slot, candidate_ids] { return FetchArtThumbsSync(id, slot, candidate_ids); },
+             std::move(callback));
+}
+
+void MiradClient::GetArtThumbsAsync(QObject* context, const std::string& id, const std::string& slot,
+                                    const std::vector<std::int64_t>& candidate_ids,
+                                    std::function<void(ArtThumbsResult)> callback) {
+  async::Run(context, [id, slot, candidate_ids] { return GetArtThumbsSync(id, slot, candidate_ids); },
              std::move(callback));
 }
 
@@ -1431,6 +1490,44 @@ bool MiradClient::ParseArtworkSelectEvent(const std::string& data, ArtworkSelect
   out->id = id;
   out->slot = payload.value("type", std::string());
   out->error = payload.value("error", std::string());
+  return true;
+}
+
+bool MiradClient::ParseArtCandidatesEvent(const std::string& data, ArtCandidatesEvent* out) {
+  const json payload = json::parse(data, nullptr, false);
+  if (!payload.is_object()) return false;
+  out->id = payload.value("id", std::string());
+  if (out->id.empty()) return false;
+  out->slot = payload.value("type", std::string());
+  out->page = payload.value("page", 0);
+  out->request = payload.value("request", std::string());
+  out->total = payload.value("total", 0);
+  out->code = payload.value("code", std::string());
+  out->error = payload.value("error", std::string());
+  out->candidates.clear();
+  if (payload.contains("candidates") && payload["candidates"].is_array()) {
+    for (const json& item : payload["candidates"]) out->candidates.push_back(ParseArtCandidate(item));
+  }
+  return true;
+}
+
+bool MiradClient::ParseArtThumbsEvent(const std::string& data, ArtThumbsEvent* out) {
+  const json payload = json::parse(data, nullptr, false);
+  if (!payload.is_object()) return false;
+  out->id = payload.value("id", std::string());
+  if (out->id.empty()) return false;
+  out->slot = payload.value("type", std::string());
+  out->error = payload.value("error", std::string());
+  const auto ids = [&](const char* key) {
+    std::vector<std::int64_t> list;
+    if (!payload.contains(key) || !payload[key].is_array()) return list;
+    for (const json& item : payload[key]) {
+      if (item.is_number_integer()) list.push_back(item.get<std::int64_t>());
+    }
+    return list;
+  };
+  out->ready = ids("ready");
+  out->failed = ids("failed");
   return true;
 }
 

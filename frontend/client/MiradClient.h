@@ -106,6 +106,9 @@ public:
   // enough to just wait for, and the short timeout below means an
   // unreachable daemon cannot turn quitting into a hang.
   static PatchConfigResult SaveFrontendPrefsBlocking(const FrontendPrefs& prefs);
+  // DELETE /v1/artwork/thumbs, as the GUI quits: the art picker's previews
+  // aren't worth keeping on disk. Blocking for the same reason as above.
+  static void ClearArtThumbsBlocking();
   // For the window's size before it's first shown, so the compositor places
   // it at its real size.
   static FrontendPrefsResult GetFrontendPrefsBlocking();
@@ -148,6 +151,21 @@ public:
   static void SelectArtworkAsync(QObject* context, const std::string& id, const std::string& slot,
                                  std::int64_t candidate_id,
                                  std::function<void(ArtworkSelectResult)> callback);
+
+  // POST /v1/games/{id}/artwork/candidates?type=&page=: one page of
+  // SteamGridDB's art, asked for now; game.artwork_candidates_ready follows,
+  // carrying `request` (an alphanumeric token) back.
+  static void FetchArtCandidatesAsync(QObject* context, const std::string& id, const std::string& slot, int page,
+                                      const std::string& request, std::function<void(GameActionResult)> callback);
+  // POST /v1/games/{id}/artwork/thumbs?type=: caches previews of up to 64
+  // candidates in the background; game.artwork_thumbs_ready follows.
+  static void FetchArtThumbsAsync(QObject* context, const std::string& id, const std::string& slot,
+                                  const std::vector<std::int64_t>& candidate_ids,
+                                  std::function<void(GameActionResult)> callback);
+  // GET .../artwork/thumb for each id, in one round of requests.
+  static void GetArtThumbsAsync(QObject* context, const std::string& id, const std::string& slot,
+                                const std::vector<std::int64_t>& candidate_ids,
+                                std::function<void(ArtThumbsResult)> callback);
 
   // POST /v1/games/metadata/refresh-missing. Bulk version of the above.
   static void RefreshMissingArtworkAsync(QObject* context,
@@ -369,6 +387,10 @@ public:
 
   // Parses a `game.artwork_selected`/`.artwork_select_failed` payload.
   static bool ParseArtworkSelectEvent(const std::string& data, ArtworkSelectEvent* out);
+  // Parses a `game.artwork_candidates_ready` payload.
+  static bool ParseArtCandidatesEvent(const std::string& data, ArtCandidatesEvent* out);
+  // Parses a `game.artwork_thumbs_ready` payload.
+  static bool ParseArtThumbsEvent(const std::string& data, ArtThumbsEvent* out);
 
   // Parses a `notification` payload (`{"level": "...", "message": "..."}`).
   // False if `data` is not a JSON object with a message.

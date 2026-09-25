@@ -42,17 +42,6 @@ GameEditForm::GameEditForm(std::string id, QWidget* parent) : QWidget(parent), i
 
   hero_art_ = new HeroArtWidget(art_column);
   art_layout->addWidget(hero_art_);
-
-  auto* choose_cover = new QPushButton("Choose cover art…", this);
-  connect(choose_cover, &QPushButton::clicked, this,
-          [this] { emit ArtworkPickRequested("cover"); });
-  auto* choose_hero = new QPushButton("Choose hero art…", this);
-  choose_hero->setToolTip("Browse SteamGridDB's other results for this game's wide banner art, "
-                          "if it has any cached.");
-  connect(choose_hero, &QPushButton::clicked, this,
-          [this] { emit ArtworkPickRequested("hero"); });
-  art_layout->addWidget(choose_cover);
-  art_layout->addWidget(choose_hero);
   art_layout->addStretch(1);
   layout->addWidget(art_column);
 
