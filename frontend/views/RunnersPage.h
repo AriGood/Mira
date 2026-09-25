@@ -2,12 +2,14 @@
 
 #include <QWidget>
 
+#include <map>
 #include <string>
 #include <vector>
 
 #include "../client/Types.h"
 
 class QButtonGroup;
+class QComboBox;
 class QLabel;
 class QVBoxLayout;
 
@@ -16,7 +18,8 @@ namespace mira_gui {
 class DownloadTracker;
 
 // The library window's Runners page: the Proton or Wine builds installed,
-// which one Windows games default to, and the builds available to download.
+// which one Windows games default to, updates for them, the builds available
+// to download from each source, and the tools runners need.
 // Rebuilt on every open, so it starts from mirad's current state.
 class RunnersPage : public QWidget {
   Q_OBJECT
@@ -32,8 +35,15 @@ private:
   void Refresh();
   void RefreshInstalled();
   void RefreshCatalog();
+  void RefreshSources();
+  void RefreshUpdates();
+  void RefreshTools();
   void RebuildInstalled();
   void RebuildCatalog();
+  void RebuildTools();
+  void Update(const RunnerInfo& runner, const RunnerUpdate& update);
+  void SetupTool(const RunnerTool& tool);
+  QString SourceLabel(const std::string& id) const;
   void SetDefault(const std::string& reference);
   void Remove(const RunnerInfo& runner);
   void Download(const std::string& tag);
@@ -45,11 +55,17 @@ private:
   QVBoxLayout* installed_list_ = nullptr;
   QLabel* default_note_ = nullptr;
   QVBoxLayout* catalog_list_ = nullptr;
+  QComboBox* source_ = nullptr;
+  QVBoxLayout* tools_list_ = nullptr;
   QLabel* status_ = nullptr;
 
   std::vector<GameSummary> games_;
   std::vector<RunnerInfo> runners_;  // every kind, as last listed
-  std::vector<RunnerRelease> releases_;  // CurrentKind()'s
+  std::vector<RunnerRelease> releases_;  // the chosen source's
+  std::map<std::string, std::vector<RunnerSourceInfo>> sources_;  // by kind
+  std::vector<RunnerUpdate> updates_;
+  std::vector<RunnerTool> tools_;
+  std::map<std::string, std::string> replacing_;  // new release name -> reference it updates
   bool catalog_loaded_ = false;
   std::string default_windows_;  // default_runner.windows
 };

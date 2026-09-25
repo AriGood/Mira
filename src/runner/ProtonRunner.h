@@ -1,5 +1,7 @@
 #pragma once
 
+#include <filesystem>
+
 #include "runner/IRunner.h"
 
 namespace mira::runner {
@@ -13,6 +15,11 @@ namespace mira::runner {
 // possible and loses both, so umu is used whenever it's installed. That is
 // an implementation detail of this file — nothing outside it knows umu
 // exists (see docs/architecture.md, Replaceability).
+// umu-run on PATH, else the copy Mira installed; empty if neither.
+std::string UmuRunPath();
+// Where Mira installs umu-launcher's own copy of umu-run.
+std::filesystem::path BundledUmuRun();
+
 class ProtonRunner final : public IRunner {
 public:
   std::string kind() const override { return "proton"; }

@@ -19,6 +19,24 @@ inline constexpr std::string_view kProtonGEAssetPattern = "*x86_64.tar.gz";
 inline constexpr std::string_view kWineGERepo = "GloriousEggroll/wine-ge-custom";
 inline constexpr std::string_view kWineGEAssetPattern = "*x86_64.tar.xz";
 
+// CachyOS's Proton, the generic x86_64 build (not _v3, not arm64).
+inline constexpr std::string_view kProtonCachyOSRepo = "CachyOS/proton-cachyos";
+inline constexpr std::string_view kProtonCachyOSAssetPattern = "proton-cachyos-*-slr-x86_64.tar.xz";
+
+inline constexpr std::string_view kUmuProtonRepo = "Open-Wine-Components/umu-proton";
+inline constexpr std::string_view kProtonEMRepo = "Etaash-mathamsetty/Proton";
+inline constexpr std::string_view kProtonSarekRepo = "pythonlover02/Proton-Sarek";
+inline constexpr std::string_view kLutrisWineRepo = "lutris/wine";
+
+// umu-launcher, which every Proton build runs through. The zipapp needs
+// only python3; it unpacks to umu/umu-run.
+inline constexpr std::string_view kUmuLauncherRepo = "Open-Wine-Components/umu-launcher";
+inline constexpr std::string_view kUmuLauncherAssetPattern = "umu-launcher-*-zipapp.tar";
+
+// Kron4ek's Wine builds: vanilla, staging and staging-tkg in every release,
+// checksummed by one sha256sums.txt.
+inline constexpr std::string_view kKron4ekRepo = "Kron4ek/Wine-Builds";
+
 // Legendary (a native Epic Games Store CLI client) publishes a standalone
 // Linux binary per release, not an archive — see runner::InstallLegendaryBinary
 // (src/epic/Legendary.h) rather than runner::DownloadAndInstall, which assumes

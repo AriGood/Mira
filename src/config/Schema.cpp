@@ -495,7 +495,8 @@ Schema::Schema() {
          .doc = "Runner for Windows games as \"kind:name\" (e.g. \"proton:GE-Proton11-7\", "
                 "\"wine:system\"; \"latest\" as the name picks the newest installed build), or "
                 "\"auto\" to pick the best installed runner — Proton if any build is present, "
-                "otherwise Wine.",
+                "otherwise Wine, preferring a distro-packaged build, then GE-Proton or Wine staging-tkg, "
+                "then the newest.",
          .is_runner_ref = true});
 
   s.Add({.key = "default_runner.native",
@@ -514,20 +515,27 @@ Schema::Schema() {
 
   s.Divider();
 
+  s.Add({.key = "runner_scan_common_dirs",
+         .label = "Scan Common Runner Folders",
+         .type = Type::Bool,
+         .default_value = true,
+         .doc = "Also look for Proton and Wine builds where Steam, the distro, Heroic, Bottles and "
+                "Lutris keep them, on top of the search paths below."});
+
   s.Add({.key = "runner_search_paths",
          .label = "Runner Search Paths",
          .type = Type::StringArray,
          .default_value = json::array({"~/.steam/steam/compatibilitytools.d",
                           "~/.local/share/Steam/compatibilitytools.d",
                           "~/.local/share/mira/runners"}),
-         .doc = "Directories scanned for installed Proton builds."});
+         .doc = "Directories scanned for installed Proton builds. Downloads go into the first."});
 
   s.Add({.key = "wine_search_paths",
          .label = "Wine Search Paths",
          .type = Type::StringArray,
          .default_value = json::array({"~/.local/share/lutris/runners/wine"}),
-         .doc = "Directories scanned for extra Wine builds (each a directory containing bin/wine), "
-                "alongside the system wine on PATH."});
+         .doc = "Directories scanned for Wine builds (each a directory containing bin/wine), alongside the "
+                "system wine on PATH. Downloads go into the first."});
 
   s.Divider();
 

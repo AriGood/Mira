@@ -395,6 +395,10 @@ struct RunnerInfo {
   std::string name;
   std::string version;
   std::string reference;
+  std::string path;
+  std::string label;       // readable name
+  std::string source;      // the download source it came from, if known
+  bool removable = false;  // false for distro, Steam and system builds
 };
 
 struct RunnersResult {
@@ -443,6 +447,10 @@ struct PatchGameConfigResult {
 // already installed. `tag` is what POST /v1/runners/download takes.
 struct RunnerRelease {
   std::string tag;
+  std::string name;    // what download events call it
+  std::string label;   // readable name
+  std::string source;  // GET /v1/runners/sources id
+  bool installed = false;
   std::string asset_name;
   std::int64_t size_bytes = 0;
   std::string published_at;
@@ -453,6 +461,48 @@ struct RunnerCatalogResult {
   bool ok = false;
   std::string error;
   std::vector<RunnerRelease> releases;
+};
+
+// GET /v1/runners/sources: where builds of a kind download from.
+struct RunnerSourceInfo {
+  std::string id;
+  std::string label;
+};
+
+struct RunnerSourcesResult {
+  bool ok = false;
+  std::string error;
+  std::vector<RunnerSourceInfo> sources;
+};
+
+// GET /v1/runners/updates: an installed build with a newer release.
+struct RunnerUpdate {
+  std::string reference;
+  std::string source;
+  std::string tag;
+  std::string name;  // the newer release's
+  std::string label;
+};
+
+struct RunnerUpdatesResult {
+  bool ok = false;
+  std::string error;
+  std::vector<RunnerUpdate> updates;
+};
+
+// GET /v1/runners/tools: umu-launcher and winetricks.
+struct RunnerTool {
+  std::string id;
+  std::string label;
+  std::string doc;
+  std::string path;
+  bool installed = false;
+};
+
+struct RunnerToolsResult {
+  bool ok = false;
+  std::string error;
+  std::vector<RunnerTool> tools;
 };
 
 // POST /v1/runners/download returns 202 immediately and reports progress on
@@ -466,6 +516,10 @@ struct RunnerDownloadResult {
 struct RunnerDownloadEvent {
   std::string kind;
   std::string tag;
+  std::string name;
+  std::string label;
+  std::string source;
+  std::string replaced;  // on "finished" after an update: the "kind:name" it replaced
   std::string state;  // "started" | "finished" | "failed"
   std::string error;  // only on "failed"
 };

@@ -275,13 +275,16 @@ TEST_CASE("ResolveRef expands \"auto\" to a real installed windows runner, not n
   const std::string ref = registry.ResolveRef(game);
   CHECK(ref != "native:native");
 
-  const bool has_proton =
-      std::ranges::any_of(registry.DiscoverAll(), [](const model::RunnerBuild& b) { return b.kind == "proton"; });
-  if (has_proton) {
-    CHECK(ref == "proton:latest");
-  } else {
-    CHECK(ref == "wine:latest");
-  }
+  CHECK((ref == "proton:auto" || ref == "wine:auto"));
+
+  // auto prefers a distro package, then the preferred source, then the newest.
+  const model::RunnerBuild packaged{.kind = "wine", .name = "system", .path = "/usr/bin/wine", .version = "wine-9.0"};
+  const model::RunnerBuild tkg{.kind = "wine", .name = "wine-11.17-staging-tkg-amd64",
+                               .path = "/home/u/w/wine-11.17-staging-tkg-amd64/bin/wine", .version = "wine-11.17"};
+  const model::RunnerBuild vanilla{.kind = "wine", .name = "wine-11.18-amd64",
+                                   .path = "/home/u/w/wine-11.18-amd64/bin/wine", .version = "wine-11.18"};
+  CHECK(runner::PickAuto(config, {tkg, packaged, vanilla}).name == "system");
+  CHECK(runner::PickAuto(config, {vanilla, tkg}).name == tkg.name);
 }
 
 TEST_CASE("the old proton_umu: runner_ref spelling still resolves after the rename") {

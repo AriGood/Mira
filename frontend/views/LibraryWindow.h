@@ -247,6 +247,7 @@ private:
   int FilterRow(const QString& key) const;
 
   QWidget* top_bar_ = nullptr;
+  QWidget* sidebar_header_ = nullptr;  // Mira badge + name; drags the window
   QLineEdit* search_ = nullptr;
   // One row per kFilters entry, each carrying its key in Qt::UserRole and a
   // live count via a custom row widget (see UpdateFilterCounts) — lives

@@ -12,6 +12,7 @@
 #include "core/Result.h"
 #include "metadata/FetchQueue.h"
 #include "proc/ProcessSupervisor.h"
+#include "runner/Downloader.h"
 #include "store/GameStore.h"
 
 // httplib::Server is used only by Server.cpp; forward-declared here so
@@ -53,6 +54,10 @@ public:
 private:
   void RegisterRoutes();
   void WatchExternalGames();
+  // Installs a runner build in the background, publishing runners.download.*.
+  // With `replacing` ("kind:name"), games and the default using it move over.
+  void InstallRunnerAsync(const std::string& kind, const std::string& source, const runner::ReleaseAsset& asset,
+                          const std::string& replacing);
 
   config::Config& config_;
   store::GameStore& games_;

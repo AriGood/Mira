@@ -250,6 +250,10 @@ RunnersResult GetRunnersSync() {
     runner.name = entry.value("name", std::string());
     runner.version = entry.value("version", std::string());
     runner.reference = entry.value("reference", std::string());
+    runner.path = entry.value("path", std::string());
+    runner.label = entry.value("label", runner.name);
+    runner.source = entry.value("source", std::string());
+    runner.removable = entry.value("removable", false);
     result.runners.push_back(std::move(runner));
   }
   return result;
@@ -567,12 +571,13 @@ RefreshMissingArtworkResult RefreshMissingArtworkSync() {
   return result;
 }
 
-RunnerCatalogResult GetRunnerCatalogSync(const std::string& kind) {
+RunnerCatalogResult GetRunnerCatalogSync(const std::string& kind, const std::string& source) {
   RunnerCatalogResult result;
-  // The only call in this client that leaves the machine (GitHub releases),
-  // so the default timeout is nowhere near enough.
-  const transport::Reply reply = transport::Get("/v1/runners/catalog?kind=" + kind,
-                                                {.read_timeout = std::chrono::seconds(30)});
+  // Leaves the machine (GitHub releases), so the default timeout is nowhere
+  // near enough.
+  std::string path = "/v1/runners/catalog?kind=" + kind;
+  if (!source.empty()) path += "&source=" + source;
+  const transport::Reply reply = transport::Get(path, {.read_timeout = std::chrono::seconds(30)});
   if (!reply.ok) {
     result.error = reply.error;
     return result;
@@ -586,6 +591,10 @@ RunnerCatalogResult GetRunnerCatalogSync(const std::string& kind) {
   for (const json& entry : reply.body) {
     RunnerRelease release;
     release.tag = entry.value("tag", std::string());
+    release.name = entry.value("name", release.tag);
+    release.label = entry.value("label", release.name);
+    release.source = entry.value("source", std::string());
+    release.installed = entry.value("installed", false);
     release.asset_name = entry.value("asset_name", std::string());
     release.size_bytes = entry.value("size_bytes", std::int64_t{0});
     release.published_at = entry.value("published_at", std::string());
@@ -595,9 +604,82 @@ RunnerCatalogResult GetRunnerCatalogSync(const std::string& kind) {
   return result;
 }
 
-RunnerDownloadResult DownloadRunnerSync(const std::string& kind, const std::string& tag) {
+RunnerDownloadResult DownloadRunnerSync(const std::string& kind, const std::string& tag,
+                                       const std::string& source) {
+  // Checks GitHub for the release before answering.
   const transport::Reply reply =
-      transport::PostJson("/v1/runners/download", json{{"kind", kind}, {"tag", tag}});
+      transport::PostJson("/v1/runners/download", json{{"kind", kind}, {"tag", tag}, {"source", source}},
+                          {.read_timeout = std::chrono::seconds(30)});
+  return {reply.ok, reply.error};
+}
+
+RunnerSourcesResult ListRunnerSourcesSync(const std::string& kind) {
+  RunnerSourcesResult result;
+  const transport::Reply reply = transport::Get("/v1/runners/sources?kind=" + kind);
+  if (!reply.ok) {
+    result.error = reply.error;
+    return result;
+  }
+  if (!reply.body.is_array()) {
+    result.error = transport::UnexpectedResponse("GET /v1/runners/sources");
+    return result;
+  }
+  result.ok = true;
+  for (const json& entry : reply.body) {
+    result.sources.push_back({entry.value("id", std::string()), entry.value("label", std::string())});
+  }
+  return result;
+}
+
+RunnerUpdatesResult GetRunnerUpdatesSync() {
+  RunnerUpdatesResult result;
+  const transport::Reply reply = transport::Get("/v1/runners/updates", {.read_timeout = std::chrono::seconds(60)});
+  if (!reply.ok) {
+    result.error = reply.error;
+    return result;
+  }
+  if (!reply.body.is_array()) {
+    result.error = transport::UnexpectedResponse("GET /v1/runners/updates");
+    return result;
+  }
+  result.ok = true;
+  for (const json& entry : reply.body) {
+    result.updates.push_back({entry.value("reference", std::string()), entry.value("source", std::string()),
+                              entry.value("tag", std::string()), entry.value("name", std::string()),
+                              entry.value("label", std::string())});
+  }
+  return result;
+}
+
+RunnerDownloadResult UpdateRunnerSync(const std::string& reference) {
+  const transport::Reply reply = transport::PostJson("/v1/runners/update", json{{"reference", reference}},
+                                                     {.read_timeout = std::chrono::seconds(60)});
+  return {reply.ok, reply.error};
+}
+
+RunnerToolsResult ListRunnerToolsSync() {
+  RunnerToolsResult result;
+  const transport::Reply reply = transport::Get("/v1/runners/tools");
+  if (!reply.ok) {
+    result.error = reply.error;
+    return result;
+  }
+  if (!reply.body.is_array()) {
+    result.error = transport::UnexpectedResponse("GET /v1/runners/tools");
+    return result;
+  }
+  result.ok = true;
+  for (const json& entry : reply.body) {
+    result.tools.push_back({entry.value("id", std::string()), entry.value("label", std::string()),
+                            entry.value("doc", std::string()), entry.value("path", std::string()),
+                            entry.value("installed", false)});
+  }
+  return result;
+}
+
+RunnerDownloadResult SetupRunnerToolSync(const std::string& id) {
+  const transport::Reply reply = transport::Post("/v1/runners/tools/" + id + "/setup",
+                                                 {.read_timeout = std::chrono::seconds(30)});
   return {reply.ok, reply.error};
 }
 
@@ -1339,15 +1421,38 @@ void MiradClient::RefreshMissingArtworkAsync(QObject* context,
   async::Run(context, [] { return RefreshMissingArtworkSync(); }, std::move(callback));
 }
 
-void MiradClient::GetRunnerCatalogAsync(QObject* context, const std::string& kind,
+void MiradClient::GetRunnerCatalogAsync(QObject* context, const std::string& kind, const std::string& source,
                                         std::function<void(RunnerCatalogResult)> callback) {
-  async::Run(context, [kind] { return GetRunnerCatalogSync(kind); }, std::move(callback));
+  async::Run(context, [kind, source] { return GetRunnerCatalogSync(kind, source); }, std::move(callback));
 }
 
 void MiradClient::DownloadRunnerAsync(QObject* context, const std::string& kind,
-                                      const std::string& tag,
+                                      const std::string& tag, const std::string& source,
                                       std::function<void(RunnerDownloadResult)> callback) {
-  async::Run(context, [kind, tag] { return DownloadRunnerSync(kind, tag); }, std::move(callback));
+  async::Run(context, [kind, tag, source] { return DownloadRunnerSync(kind, tag, source); }, std::move(callback));
+}
+
+void MiradClient::ListRunnerSourcesAsync(QObject* context, const std::string& kind,
+                                         std::function<void(RunnerSourcesResult)> callback) {
+  async::Run(context, [kind] { return ListRunnerSourcesSync(kind); }, std::move(callback));
+}
+
+void MiradClient::GetRunnerUpdatesAsync(QObject* context, std::function<void(RunnerUpdatesResult)> callback) {
+  async::Run(context, [] { return GetRunnerUpdatesSync(); }, std::move(callback));
+}
+
+void MiradClient::UpdateRunnerAsync(QObject* context, const std::string& reference,
+                                    std::function<void(RunnerDownloadResult)> callback) {
+  async::Run(context, [reference] { return UpdateRunnerSync(reference); }, std::move(callback));
+}
+
+void MiradClient::ListRunnerToolsAsync(QObject* context, std::function<void(RunnerToolsResult)> callback) {
+  async::Run(context, [] { return ListRunnerToolsSync(); }, std::move(callback));
+}
+
+void MiradClient::SetupRunnerToolAsync(QObject* context, const std::string& id,
+                                       std::function<void(RunnerDownloadResult)> callback) {
+  async::Run(context, [id] { return SetupRunnerToolSync(id); }, std::move(callback));
 }
 
 void MiradClient::ScanSteamAsync(QObject* context, std::function<void(SteamScanResult)> callback) {
@@ -1729,6 +1834,8 @@ bool MiradClient::ParseStoreEvent(const std::string& event_type, const std::stri
       {"itch.setup.", "itch"},
       {"humble.setup.", "humble"},
       {"amazon.setup.", "amazon"},
+      {"umu.setup.", "umu"},
+      {"winetricks.setup.", "winetricks"},
   };
   std::string_view state;
   for (const auto& [prefix, source] : kSetupPrefixes) {
@@ -1781,6 +1888,10 @@ bool MiradClient::ParseRunnerDownload(const std::string& event_type, const std::
   out->state = event_type.substr(kPrefix.size());
   out->kind = entry.value("kind", std::string());
   out->tag = entry.value("tag", std::string());
+  out->name = entry.value("name", std::string());
+  out->label = entry.value("label", out->name);
+  out->source = entry.value("source", std::string());
+  out->replaced = entry.value("replaced", std::string());
   out->error = entry.value("error", std::string());
   return true;
 }

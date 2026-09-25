@@ -3,13 +3,18 @@
 #include <filesystem>
 #include <format>
 
+#include <json.hpp>
+
 #include "core/Command.h"
+#include "core/Paths.h"
 #include "runner/Exec.h"
 #include "steam/SteamDetector.h"
 
 namespace mira::runner {
 namespace {
 namespace fs = std::filesystem;
+
+fs::path BundledWinetricks() { return paths::UserDir() / "tools" / "winetricks" / "winetricks"; }
 
 Result<fs::path> ResolveWineBinary(const RunnerRegistry& runners, const model::Game& game) {
   const std::string ref = game.runner_ref.empty() ? "native:native" : game.runner_ref;
@@ -43,6 +48,40 @@ Result<fs::path> ResolveWineBinary(const RunnerRegistry& runners, const model::G
 
 }  // namespace
 
+std::string WinetricksPath() {
+  if (auto found = FindOnPath("winetricks")) return *found;
+  std::error_code ec;
+  return fs::exists(BundledWinetricks(), ec) ? BundledWinetricks().string() : std::string();
+}
+
+// Its releases ship no script asset, so fetch the script at the latest tag.
+Result<void> InstallWinetricks() {
+  Command latest;
+  latest.argv = {"curl", "-sSL", "https://api.github.com/repos/Winetricks/winetricks/releases/latest"};
+  const Result<ExecResult> listed = RunAndWait(latest);
+  if (!listed) return std::unexpected(listed.error());
+  const nlohmann::json release = nlohmann::json::parse(listed->output, nullptr, false);
+  const std::string tag = release.is_object() ? release.value("tag_name", std::string()) : std::string();
+  if (tag.empty()) return Err("github_api_error", "couldn't find the latest winetricks release");
+
+  const fs::path target = BundledWinetricks();
+  std::error_code ec;
+  fs::create_directories(target.parent_path(), ec);
+  if (ec) return Err("install_dir_failed", ec.message());
+  Command download;
+  download.argv = {"curl", "-sSLf", "-o", target.string(),
+                   std::format("https://raw.githubusercontent.com/Winetricks/winetricks/{}/src/winetricks", tag)};
+  const Result<ExecResult> fetched = RunAndWait(download);
+  if (!fetched || fetched->exit_code != 0) {
+    fs::remove(target, ec);
+    return Err("download_failed", fetched ? fetched->output : fetched.error().message);
+  }
+  fs::permissions(target, fs::perms::owner_exec | fs::perms::group_exec | fs::perms::others_exec,
+                  fs::perm_options::add, ec);
+  if (ec) return Err("chmod_failed", ec.message());
+  return {};
+}
+
 Result<void> RunTricksVerb(const RunnerRegistry& runners, const model::Game& game, const std::string& verb) {
   if (game.data_dir.empty()) return Err("no_data_dir", "game has no prefix to run winetricks against");
   std::error_code ec;
@@ -53,13 +92,13 @@ Result<void> RunTricksVerb(const RunnerRegistry& runners, const model::Game& gam
   const Result<fs::path> wine_binary = ResolveWineBinary(runners, game);
   if (!wine_binary) return std::unexpected(wine_binary.error());
 
-  const auto winetricks = FindOnPath("winetricks");
-  if (!winetricks) {
-    return Err("winetricks_missing", "winetricks isn't installed — install it from your distro's package manager");
+  const std::string winetricks = WinetricksPath();
+  if (winetricks.empty()) {
+    return Err("winetricks_missing", "winetricks isn't installed — install it from the Runners page");
   }
 
   Command command;
-  command.argv = {*winetricks, "--unattended", verb};
+  command.argv = {winetricks, "--unattended", verb};
   command.env["WINE"] = wine_binary->string();
   command.env["WINEPREFIX"] = game.data_dir;
   const fs::path wineserver = wine_binary->parent_path() / "wineserver";

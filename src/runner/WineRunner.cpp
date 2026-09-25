@@ -4,6 +4,7 @@
 #include <format>
 
 #include "config/Config.h"
+#include "core/Paths.h"
 #include "core/Strings.h"
 #include "runner/Exec.h"
 
@@ -22,6 +23,15 @@ std::string VersionOf(const std::string& wine_binary) {
   return result ? strings::Trim(result->output) : std::string();
 }
 
+// Scanned on top of wine_search_paths unless runner_scan_common_dirs is off. /opt holds distro builds such as
+// wine-cachyos-opt's /opt/wine-cachyos.
+constexpr const char* kKnownWineDirs[] = {
+    "~/.local/share/lutris/runners/wine",
+    "~/.config/heroic/tools/wine",
+    "~/.local/share/bottles/runners",
+    "/opt",
+};
+
 }  // namespace
 
 std::vector<model::RunnerBuild> WineRunner::Discover(const config::Config& config) const {
@@ -32,8 +42,13 @@ std::vector<model::RunnerBuild> WineRunner::Discover(const config::Config& confi
                       .version = VersionOf(*system_wine)});
   }
 
+  std::vector<fs::path> search_dirs = config.GetPathArray("wine_search_paths");
+  if (config.GetBool("runner_scan_common_dirs")) {
+    for (const char* dir : kKnownWineDirs) search_dirs.push_back(paths::Expand(dir));
+  }
+
   std::error_code ec;
-  for (const fs::path& search_dir : config.GetPathArray("wine_search_paths")) {
+  for (const fs::path& search_dir : search_dirs) {
     if (!fs::is_directory(search_dir, ec)) continue;
     for (const auto& entry : fs::directory_iterator(search_dir, fs::directory_options::skip_permission_denied, ec)) {
       if (!entry.is_directory(ec)) continue;

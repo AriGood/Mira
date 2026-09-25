@@ -14,6 +14,7 @@
 #include <chrono>
 #include <cstdio>
 #include <format>
+#include <functional>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -113,13 +114,76 @@ int CmdRunnersList() {
   return 0;
 }
 
-int CmdRunnersCatalog(int argc, char** argv) {
-  std::string kind = "proton";
-  for (int i = 0; i < argc; ++i) {
-    if (std::string_view(argv[i]) == "--kind" && i + 1 < argc) kind = argv[++i];
+// Prints `path`'s JSON array, one line per entry via `line`.
+int PrintList(const std::string& path, const char* empty, const std::function<void(const json&)>& line) {
+  auto client = Connect();
+  auto res = client.Get(path);
+  if (!Ok(res)) {
+    PrintError(res);
+    return 1;
+  }
+  const json entries = json::parse(res->body);
+  if (entries.empty()) std::puts(empty);
+  for (const json& entry : entries) line(entry);
+  return 0;
+}
+
+int CmdRunnersSources(int argc, char** argv) {
+  const std::string kind = argc > 0 ? argv[0] : "";
+  return PrintList("/v1/runners/sources?kind=" + kind, "(no sources)", [](const json& s) {
+    std::printf("%-20s %-8s %s\n", s.value("id", "").c_str(), s.value("kind", "").c_str(), s.value("label", "").c_str());
+  });
+}
+
+int CmdRunnersUpdates() {
+  return PrintList("/v1/runners/updates", "(everything is up to date)", [](const json& u) {
+    std::printf("%-40s -> %s\n", u.value("reference", "").c_str(), u.value("name", "").c_str());
+  });
+}
+
+int CmdRunnersUpdate(int argc, char** argv) {
+  if (argc < 1) {
+    std::fprintf(stderr,
+                 "usage: mira runners update <kind:name>\n"
+                 "  installs the newest release from that build's source and moves its games onto it.\n");
+    return 2;
   }
   auto client = Connect();
-  auto res = client.Get(std::format("/v1/runners/catalog?kind={}", kind));
+  auto res = client.Post("/v1/runners/update", json{{"reference", argv[0]}}.dump(), "application/json");
+  if (!Ok(res)) {
+    PrintError(res);
+    return 1;
+  }
+  std::printf("updating to %s — watch `mira watch` for runners.download.finished/failed\n",
+             json::parse(res->body).value("name", "").c_str());
+  return 0;
+}
+
+int CmdRunnersTools(int argc, char** argv) {
+  if (argc >= 2 && std::string_view(argv[0]) == "install") {
+    auto client = Connect();
+    auto res = client.Post(std::format("/v1/runners/tools/{}/setup", argv[1]));
+    if (!Ok(res)) {
+      PrintError(res);
+      return 1;
+    }
+    std::printf("installing %s — watch `mira watch` for %s.setup.finished/failed\n", argv[1], argv[1]);
+    return 0;
+  }
+  return PrintList("/v1/runners/tools", "", [](const json& t) {
+    std::printf("%-12s %-14s %s\n", t.value("id", "").c_str(),
+               t.value("installed", false) ? "installed" : "not installed", t.value("path", "").c_str());
+  });
+}
+
+int CmdRunnersCatalog(int argc, char** argv) {
+  std::string kind = "proton", source;
+  for (int i = 0; i < argc; ++i) {
+    if (std::string_view(argv[i]) == "--kind" && i + 1 < argc) kind = argv[++i];
+    else if (std::string_view(argv[i]) == "--source" && i + 1 < argc) source = argv[++i];
+  }
+  auto client = Connect();
+  auto res = client.Get(std::format("/v1/runners/catalog?kind={}&source={}", kind, source));
   if (!Ok(res)) {
     PrintError(res);
     return 1;
@@ -130,26 +194,28 @@ int CmdRunnersCatalog(int argc, char** argv) {
     return 0;
   }
   for (const json& r : releases) {
-    std::printf("%-24s %-40s %8.1f MB%s\n", r.value("tag", "").c_str(), r.value("asset_name", "").c_str(),
+    std::printf("%-24s %-40s %8.1f MB%s%s\n", r.value("tag", "").c_str(), r.value("asset_name", "").c_str(),
                r.value("size_bytes", 0LL) / 1024.0 / 1024.0,
-               r.value("has_checksum", false) ? "" : "  (no checksum)");
+               r.value("has_checksum", false) ? "" : "  (no checksum)",
+               r.value("installed", false) ? "  (installed)" : "");
   }
   return 0;
 }
 
 int CmdRunnersDownload(int argc, char** argv) {
-  std::string kind, tag;
+  std::string kind, tag, source;
   for (int i = 0; i < argc; ++i) {
     const std::string_view arg = argv[i];
     if (arg == "--kind" && i + 1 < argc) kind = argv[++i];
     else if (arg == "--tag" && i + 1 < argc) tag = argv[++i];
+    else if (arg == "--source" && i + 1 < argc) source = argv[++i];
   }
   if (kind.empty() || tag.empty()) {
-    std::fprintf(stderr, "usage: mira runners download --kind proton|wine --tag TAG\n");
+    std::fprintf(stderr, "usage: mira runners download --kind proton|wine --tag TAG [--source ID]\n");
     return 2;
   }
   auto client = Connect();
-  const json body = {{"kind", kind}, {"tag", tag}};
+  const json body = {{"kind", kind}, {"tag", tag}, {"source", source}};
   auto res = client.Post("/v1/runners/download", body.dump(), "application/json");
   if (!Ok(res)) {
     PrintError(res);
@@ -201,9 +267,14 @@ int CmdRunners(int argc, char** argv) {
   if (sub == "download") return CmdRunnersDownload(argc - 1, argv + 1);
   if (sub == "schema") return CmdRunnersSchema(argc - 1, argv + 1);
   if (sub == "remove") return CmdRunnersRemove(argc - 1, argv + 1);
+  if (sub == "sources") return CmdRunnersSources(argc - 1, argv + 1);
+  if (sub == "updates") return CmdRunnersUpdates();
+  if (sub == "update") return CmdRunnersUpdate(argc - 1, argv + 1);
+  if (sub == "tools") return CmdRunnersTools(argc - 1, argv + 1);
   std::fprintf(stderr,
-              "usage: mira runners [catalog [--kind K] | download --kind K --tag TAG |\n"
-              "                     schema <kind> | remove <kind:name>]\n");
+              "usage: mira runners [sources [KIND] | catalog [--kind K] [--source ID] |\n"
+              "                     download --kind K --tag TAG [--source ID] | updates | update <kind:name> |\n"
+              "                     tools [install umu|winetricks] | schema <kind> | remove <kind:name>]\n");
   return 2;
 }
 
@@ -1694,8 +1765,11 @@ void PrintUsage() {
       "                         (run from the AppImage: Mira-x86_64.AppImage setup)\n"
       "  scan                   scan all library roots now\n"
       "  runners                list installed Proton/Wine builds\n"
-      "  runners catalog [--kind proton|wine]     list downloadable versions\n"
-      "  runners download --kind K --tag TAG      download and install one\n"
+      "  runners sources [proton|wine]            list where builds download from\n"
+      "  runners catalog [--kind K] [--source ID] list downloadable versions\n"
+      "  runners download --kind K --tag TAG [--source ID]   download and install one\n"
+      "  runners updates | update <kind:name>     list or install newer builds\n"
+      "  runners tools [install umu|winetricks]   check or install runner helpers\n"
       "  launch <id>            launch a game (or fire steam://rungameid for a\n"
       "                         Steam game, depending on steam.launch_mode)\n"
       "  stop <id>              stop a running game\n"

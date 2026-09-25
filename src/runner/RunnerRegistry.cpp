@@ -6,8 +6,10 @@
 #include <format>
 #include <set>
 #include <system_error>
+#include <tuple>
 
 #include "core/Log.h"
+#include "runner/Downloader.h"
 #include "runner/NativeRunner.h"
 #include "runner/ProtonRunner.h"
 #include "runner/SteamRunner.h"
@@ -37,6 +39,22 @@ std::int64_t ParseVersion(const std::string& version) {
     std::from_chars(first.ptr + 1, end, minor);
   }
   return major * 1000 + minor;
+}
+
+// "auto"'s order: a build the distro packages (kept current by the package
+// manager, and tuned for that system), then Mira's preferred families, then
+// the newest.
+std::tuple<bool, int, std::int64_t> AutoRank(const config::Config& config, const model::RunnerBuild& build) {
+  const bool packaged = build.path.starts_with("/usr/") || build.path.starts_with("/opt/");
+  const std::vector<RunnerFamily> families = Families(config, build.kind);
+  const std::filesystem::path dir =
+      build.kind == "wine" ? std::filesystem::path(build.path).parent_path().parent_path() : std::filesystem::path(build.path);
+  int preference = 0;
+  if (auto family = FamilyOfBuild(config, build.kind, build.name, dir.filename().string())) {
+    const auto at = std::ranges::find(families, family->id, &RunnerFamily::id);
+    preference = static_cast<int>(families.end() - at);
+  }
+  return {packaged, preference, ParseVersion(build.version)};
 }
 
 }  // namespace
@@ -72,6 +90,10 @@ std::vector<model::RunnerBuild> DeduplicateBuilds(std::vector<model::RunnerBuild
     unique.push_back(std::move(build));
   }
   return unique;
+}
+
+const model::RunnerBuild& PickAuto(const config::Config& config, const std::vector<model::RunnerBuild>& builds) {
+  return *std::ranges::max_element(builds, {}, [&](const model::RunnerBuild& build) { return AutoRank(config, build); });
 }
 
 const std::vector<model::RunnerBuild>& RunnerRegistry::BuildsFor(const std::string& kind) const {
@@ -124,7 +146,8 @@ Result<RunnerRegistry::Resolved> RunnerRegistry::Resolve(const std::string& runn
     return Err("runner_build_not_found", std::format("no {} builds are installed", kind));
   }
 
-  if (name == "auto" || name == "latest") {
+  if (name == "auto") return Resolved{runner, PickAuto(config_, builds)};
+  if (name == "latest") {
     auto newest = std::ranges::max_element(builds, {}, [](const model::RunnerBuild& build) {
       return ParseVersion(build.version);
     });
@@ -147,7 +170,7 @@ std::string RunnerRegistry::ResolveRef(const model::Game& game) const {
   // "auto" isn't itself "kind:name" — it means "the best available windows
   // runner": Proton if a build is installed (protonfixes come with it),
   // else plain Wine, else nothing usable and Resolve below says so clearly.
-  if (ref == "auto") ref = BuildsFor("proton").empty() ? "wine:latest" : "proton:latest";
+  if (ref == "auto") ref = BuildsFor("proton").empty() ? "wine:auto" : "proton:auto";
   return ref;
 }
 

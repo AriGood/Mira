@@ -1,6 +1,7 @@
 #include "RunnersPage.h"
 
 #include <QButtonGroup>
+#include <QComboBox>
 #include <QDateTime>
 #include <QFrame>
 #include <QHBoxLayout>
@@ -11,8 +12,6 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
-#include <cctype>
-#include <cstring>
 
 #include "../client/MiradClient.h"
 #include "../ui/DownloadTracker.h"
@@ -33,30 +32,6 @@ QString FormatSize(std::int64_t bytes) {
 QString FormatDate(const std::string& iso) {
   const QDateTime when = QDateTime::fromString(QString::fromStdString(iso), Qt::ISODate);
   return when.isValid() ? QLocale().toString(when.date(), "MMM d, yyyy") : QString();
-}
-
-// Wine-GE tags its releases after the Proton-GE version they track
-// ("GE-Proton8-26"), so in the Wine list the asset's own name
-// ("wine-lutris-GE-Proton8-26") is what says it's Wine.
-QString DisplayName(const std::string& kind, const RunnerRelease& release) {
-  if (kind != "wine" || release.asset_name.empty()) return QString::fromStdString(release.tag);
-  QString name = QString::fromStdString(release.asset_name);
-  for (const char* suffix : {".tar.xz", ".tar.gz", ".tgz", ".zip", "-x86_64"}) {
-    if (name.endsWith(suffix)) name.chop(static_cast<int>(strlen(suffix)));
-  }
-  return name;
-}
-
-// Whether an installed build's folder ("lutris-GE-Proton8-26-x86_64")
-// holds `tag`, without "GE-Proton8-2" matching "GE-Proton8-26".
-bool IsBuildOf(const std::string& folder, const std::string& tag) {
-  for (size_t at = folder.find(tag); at != std::string::npos; at = folder.find(tag, at + 1)) {
-    const size_t end = at + tag.size();
-    const bool starts = at == 0 || folder[at - 1] == '-';
-    const bool ends = end == folder.size() || !std::isdigit(static_cast<unsigned char>(folder[end]));
-    if (starts && ends) return true;
-  }
-  return false;
 }
 
 QLabel* Muted(const QString& text, QWidget* parent) {
@@ -133,7 +108,8 @@ RunnersPage::RunnersPage(DownloadTracker* downloads, QWidget* parent) : QWidget(
     catalog_loaded_ = false;
     releases_.clear();
     RebuildInstalled();
-    RefreshCatalog();
+    RefreshSources();
+    RebuildTools();
   });
   header->addWidget(segmented);
   layout->addLayout(header);
@@ -161,10 +137,19 @@ RunnersPage::RunnersPage(DownloadTracker* downloads, QWidget* parent) : QWidget(
   installed->layout()->addWidget(default_note_);
   columns->addWidget(installed, /*stretch=*/1);
 
-  auto* refresh = new QPushButton("Refresh", this);
+  auto* catalog_actions = new QWidget(this);
+  auto* catalog_actions_layout = new QHBoxLayout(catalog_actions);
+  catalog_actions_layout->setContentsMargins(0, 0, 0, 0);
+  catalog_actions_layout->setSpacing(8);
+  source_ = new QComboBox(catalog_actions);
+  source_->setToolTip("Where builds are downloaded from");
+  connect(source_, &QComboBox::activated, this, [this] { RefreshCatalog(); });
+  catalog_actions_layout->addWidget(source_);
+  auto* refresh = new QPushButton("Refresh", catalog_actions);
   connect(refresh, &QPushButton::clicked, this, &RunnersPage::Refresh);
+  catalog_actions_layout->addWidget(refresh);
   QVBoxLayout* catalog_body = nullptr;
-  QFrame* catalog = Card("Get more", refresh, &catalog_body, this);
+  QFrame* catalog = Card("Get more", catalog_actions, &catalog_body, this);
   catalog_list_ = new QVBoxLayout();
   catalog_list_->setSpacing(0);
   catalog_body->addLayout(catalog_list_);
@@ -174,6 +159,11 @@ RunnersPage::RunnersPage(DownloadTracker* downloads, QWidget* parent) : QWidget(
   columns->addWidget(catalog, /*stretch=*/1);
 
   layout->addLayout(columns, /*stretch=*/1);
+
+  // What runners need besides a build. Shown only while one is missing.
+  tools_list_ = new QVBoxLayout();
+  tools_list_->setSpacing(8);
+  layout->addLayout(tools_list_);
 
   connect(downloads_, &DownloadTracker::Changed, this, &RunnersPage::DownloadChanged);
   Refresh();
@@ -195,7 +185,57 @@ void RunnersPage::SetStatus(const QString& text, bool error) {
 
 void RunnersPage::Refresh() {
   RefreshInstalled();
-  RefreshCatalog();
+  RefreshSources();
+  RefreshUpdates();
+  RefreshTools();
+}
+
+void RunnersPage::RefreshSources() {
+  const std::string kind = CurrentKind();
+  const auto fill = [this] {
+    const std::string kind = CurrentKind();
+    const QString chosen = source_->currentData().toString();
+    source_->clear();
+    for (const RunnerSourceInfo& info : sources_[kind]) {
+      source_->addItem(QString::fromStdString(info.label), QString::fromStdString(info.id));
+    }
+    if (const int at = source_->findData(chosen); at >= 0) source_->setCurrentIndex(at);
+    RefreshCatalog();
+  };
+  if (sources_.contains(kind)) return fill();
+  MiradClient::ListRunnerSourcesAsync(this, kind, [this, kind, fill](RunnerSourcesResult result) {
+    if (!result.ok) {
+      SetStatus("Could not list sources: " + QString::fromStdString(result.error), true);
+      return;
+    }
+    sources_[kind] = result.sources;
+    if (kind == CurrentKind()) fill();
+  });
+}
+
+void RunnersPage::RefreshUpdates() {
+  MiradClient::GetRunnerUpdatesAsync(this, [this](RunnerUpdatesResult result) {
+    if (!result.ok) return;  // offline; the catalog says so
+    updates_ = result.updates;
+    RebuildInstalled();
+  });
+}
+
+void RunnersPage::RefreshTools() {
+  MiradClient::ListRunnerToolsAsync(this, [this](RunnerToolsResult result) {
+    if (!result.ok) return;
+    tools_ = result.tools;
+    RebuildTools();
+  });
+}
+
+QString RunnersPage::SourceLabel(const std::string& id) const {
+  for (const auto& [kind, list] : sources_) {
+    for (const RunnerSourceInfo& info : list) {
+      if (info.id == id) return QString::fromStdString(info.label);
+    }
+  }
+  return QString();
 }
 
 void RunnersPage::RefreshInstalled() {
@@ -212,7 +252,6 @@ void RunnersPage::RefreshInstalled() {
     }
     runners_ = result.runners;
     RebuildInstalled();
-    RebuildCatalog();  // which builds say Installed
   });
 }
 
@@ -222,8 +261,9 @@ void RunnersPage::RefreshCatalog() {
   // The one call that leaves the machine; say so rather than look hung.
   SetStatus("Checking for builds…");
   const std::string kind = CurrentKind();
-  MiradClient::GetRunnerCatalogAsync(this, kind, [this, kind](RunnerCatalogResult result) {
-    if (kind != CurrentKind()) return;
+  const std::string source = source_->currentData().toString().toStdString();
+  MiradClient::GetRunnerCatalogAsync(this, kind, source, [this, kind, source](RunnerCatalogResult result) {
+    if (kind != CurrentKind() || source != source_->currentData().toString().toStdString()) return;
     if (!result.ok) {
       SetStatus("Could not list builds: " + QString::fromStdString(result.error), true);
       return;
@@ -254,7 +294,7 @@ void RunnersPage::RebuildInstalled() {
     row_layout->setSpacing(6);
 
     auto* name_line = new QHBoxLayout();
-    auto* name = new QLabel(QString::fromStdString(runner.name), row);
+    auto* name = new QLabel(QString::fromStdString(runner.label), row);
     name->setStyleSheet("font-weight: 600;");
     name_line->addWidget(name, /*stretch=*/1);
     if (is_default) {
@@ -273,18 +313,36 @@ void RunnersPage::RebuildInstalled() {
     bool numeric = false;
     version.toLongLong(&numeric);
     if (!version.isEmpty() && !numeric && runner.version != runner.name) facts << version;
+    if (const QString source = SourceLabel(runner.source); !source.isEmpty()) facts << source;
+    // Not Mira's to remove or update: the distro's, Steam's or the system's.
+    if (!runner.removable) facts << "Managed outside Mira";
     row_layout->addWidget(Muted(facts.join(" · "), row));
 
     auto* actions = new QHBoxLayout();
     actions->setSpacing(8);
+    const auto update = std::ranges::find(updates_, runner.reference, &RunnerUpdate::reference);
+    if (update != updates_.end()) {
+      const DownloadTracker::Entry* entry = downloads_->Find(DownloadTracker::KeyFor(
+          DownloadTracker::Kind::Runner, QString::fromStdString(kind), QString::fromStdString(update->name)));
+      if (entry != nullptr && entry->state == DownloadTracker::State::Running) {
+        actions->addWidget(Muted("Updating to " + QString::fromStdString(update->label) + "…", row));
+      } else {
+        auto* update_button = new QPushButton("Update to " + QString::fromStdString(update->label), row);
+        update_button->setDefault(true);
+        connect(update_button, &QPushButton::clicked, this, [this, update_button, runner, u = *update] {
+          update_button->setEnabled(false);
+          Update(runner, u);
+        });
+        actions->addWidget(update_button);
+      }
+    }
     if (!is_default) {
       auto* make_default = new QPushButton("Make default", row);
       connect(make_default, &QPushButton::clicked, this,
               [this, reference = runner.reference] { SetDefault(reference); });
       actions->addWidget(make_default);
     }
-    // The system's own Wine isn't Mira's to delete.
-    if (runner.name != "system") {
+    if (runner.removable) {
       auto* remove = new QPushButton("Remove", row);
       remove->setObjectName("danger");
       connect(remove, &QPushButton::clicked, this, [this, runner] { Remove(runner); });
@@ -327,7 +385,7 @@ void RunnersPage::RebuildCatalog() {
 
     auto* text = new QVBoxLayout();
     text->setSpacing(2);
-    auto* name = new QLabel(DisplayName(kind, release), row);
+    auto* name = new QLabel(QString::fromStdString(release.label), row);
     name->setStyleSheet("font-weight: 600;");
     text->addWidget(name);
     QStringList facts;
@@ -341,11 +399,8 @@ void RunnersPage::RebuildCatalog() {
     text->addWidget(details);
     row_layout->addLayout(text, /*stretch=*/1);
 
-    const bool installed = std::ranges::any_of(runners_, [&](const RunnerInfo& runner) {
-      return runner.kind == kind && IsBuildOf(runner.name, release.tag);
-    });
-    const DownloadTracker::Entry* entry = downloads_->Find(
-        DownloadTracker::KeyFor(DownloadTracker::Kind::Runner, QString::fromStdString(kind), tag));
+    const DownloadTracker::Entry* entry = downloads_->Find(DownloadTracker::KeyFor(
+        DownloadTracker::Kind::Runner, QString::fromStdString(kind), QString::fromStdString(release.name)));
     const bool downloading = entry != nullptr && entry->state == DownloadTracker::State::Running;
     if (downloading) {
       auto* progress = new QProgressBar(row);
@@ -353,7 +408,7 @@ void RunnersPage::RebuildCatalog() {
       progress->setTextVisible(false);
       progress->setFixedSize(90, 4);
       row_layout->addWidget(progress);
-    } else if (installed) {
+    } else if (release.installed) {
       auto* label = Muted("Installed", row);
       label->setWordWrap(false);
       row_layout->addWidget(label);
@@ -372,6 +427,67 @@ void RunnersPage::RebuildCatalog() {
   if (releases_.empty()) catalog_list_->addWidget(Muted("No builds found.", this));
 }
 
+void RunnersPage::RebuildTools() {
+  ClearLayout(tools_list_);
+  const theme::Tokens& tokens = theme::Current();
+  for (const RunnerTool& tool : tools_) {
+    if (tool.installed) continue;
+    // umu only matters to Proton, winetricks to both.
+    if (tool.id == "umu" && CurrentKind() != "proton") continue;
+    auto* row = new QFrame();
+    row->setObjectName("runners_card");
+    auto* row_layout = new QHBoxLayout(row);
+    row_layout->setContentsMargins(18, 12, 18, 12);
+    row_layout->setSpacing(12);
+    auto* text = new QVBoxLayout();
+    text->setSpacing(2);
+    auto* name = new QLabel(QString::fromStdString(tool.label) + " isn't installed", row);
+    name->setStyleSheet(QString("font-weight: 600; color: %1;").arg(tokens.warning.name()));
+    text->addWidget(name);
+    text->addWidget(Muted(QString::fromStdString(tool.doc), row));
+    row_layout->addLayout(text, /*stretch=*/1);
+    const DownloadTracker::Entry* entry = downloads_->Find(
+        DownloadTracker::KeyFor(DownloadTracker::Kind::Tool, QString::fromStdString(tool.id), QString()));
+    if (entry != nullptr && entry->state == DownloadTracker::State::Running) {
+      auto* progress = new QProgressBar(row);
+      progress->setRange(0, 0);
+      progress->setTextVisible(false);
+      progress->setFixedSize(90, 4);
+      row_layout->addWidget(progress);
+    } else {
+      auto* install = new QPushButton("Install", row);
+      install->setDefault(true);
+      connect(install, &QPushButton::clicked, this, [this, install, tool] {
+        install->setEnabled(false);
+        SetupTool(tool);
+      });
+      row_layout->addWidget(install);
+    }
+    tools_list_->addWidget(row);
+  }
+}
+
+void RunnersPage::Update(const RunnerInfo& runner, const RunnerUpdate& update) {
+  replacing_[update.name] = runner.reference;
+  MiradClient::UpdateRunnerAsync(this, runner.reference, [this, name = update.name](RunnerDownloadResult result) {
+    if (!result.ok) {
+      replacing_.erase(name);
+      SetStatus("Could not start the update: " + QString::fromStdString(result.error), true);
+      RebuildInstalled();
+    }
+  });
+}
+
+void RunnersPage::SetupTool(const RunnerTool& tool) {
+  MiradClient::SetupRunnerToolAsync(this, tool.id, [this, label = tool.label](RunnerDownloadResult result) {
+    if (!result.ok) {
+      SetStatus(QString("Could not install %1: %2").arg(QString::fromStdString(label), QString::fromStdString(result.error)),
+                true);
+      RefreshTools();
+    }
+  });
+}
+
 void RunnersPage::SetDefault(const std::string& reference) {
   MiradClient::PatchConfigAsync(this, {ConfigEdit{kDefaultKey, "a string", reference}},
                                 [this](PatchConfigResult result) {
@@ -386,7 +502,7 @@ void RunnersPage::SetDefault(const std::string& reference) {
 }
 
 void RunnersPage::Remove(const RunnerInfo& runner) {
-  const QString name = QString::fromStdString(runner.name);
+  const QString name = QString::fromStdString(runner.label);
   if (!notify::Confirm(this, "Remove runner", QString("Remove %1? This deletes its files.").arg(name), "Remove",
                        /*destructive=*/true)) {
     return;
@@ -402,21 +518,60 @@ void RunnersPage::Remove(const RunnerInfo& runner) {
 
 void RunnersPage::Download(const std::string& tag) {
   const std::string kind = CurrentKind();
-  MiradClient::DownloadRunnerAsync(this, kind, tag, [this](RunnerDownloadResult result) {
+  const std::string source = source_->currentData().toString().toStdString();
+  MiradClient::DownloadRunnerAsync(this, kind, tag, source, [this](RunnerDownloadResult result) {
     // The tracker hears the rest on the event stream.
     if (!result.ok) SetStatus("Could not start the download: " + QString::fromStdString(result.error), true);
   });
 }
 
 void RunnersPage::DownloadChanged(const QString& key) {
+  if (key.startsWith("tool:")) {
+    const DownloadTracker::Entry* entry = downloads_->Find(key);
+    if (entry != nullptr && entry->state == DownloadTracker::State::Failed) {
+      SetStatus(QString("Installing %1 failed: %2").arg(entry->source, entry->error), true);
+    }
+    if (entry != nullptr && entry->state != DownloadTracker::State::Running) {
+      RefreshTools();
+      RefreshInstalled();  // Proton builds need umu to be listed
+    } else {
+      RebuildTools();
+    }
+    return;
+  }
   if (!key.startsWith("runner:")) return;
   const DownloadTracker::Entry* entry = downloads_->Find(key);
   if (entry == nullptr) return;
   if (entry->state == DownloadTracker::State::Failed) {
-    SetStatus(QString("Downloading %1 failed: %2").arg(entry->ref, entry->error), true);
+    SetStatus(QString("Downloading %1 failed: %2").arg(downloads_->NameFor(*entry), entry->error), true);
+    replacing_.erase(entry->ref.toStdString());
   }
-  // Discoverable once on disk; the list re-discovers each time.
-  if (entry->state == DownloadTracker::State::Finished) RefreshInstalled();
+  if (entry->state == DownloadTracker::State::Finished) {
+    // Discoverable once on disk; the list re-discovers each time.
+    RefreshInstalled();
+    RefreshUpdates();
+    if (!catalog_loaded_ || std::ranges::any_of(releases_, [&](const RunnerRelease& release) {
+          return QString::fromStdString(release.name) == entry->ref;
+        })) {
+      RefreshCatalog();
+    }
+    if (auto it = replacing_.find(entry->ref.toStdString()); it != replacing_.end()) {
+      const std::string old_reference = it->second;
+      replacing_.erase(it);
+      const auto old = std::ranges::find(runners_, old_reference, &RunnerInfo::reference);
+      if (old != runners_.end() &&
+          notify::Confirm(this, "Update finished",
+                          QString("Games that used %1 now use %2. Remove %1?")
+                              .arg(QString::fromStdString(old->label), downloads_->NameFor(*entry)),
+                          "Remove", /*destructive=*/true)) {
+        MiradClient::DeleteRunnerAsync(this, old->kind, old->name, [this](RunnerRemoveResult result) {
+          if (!result.ok) SetStatus("Could not remove the old build: " + QString::fromStdString(result.error), true);
+          RefreshInstalled();
+        });
+      }
+    }
+  }
+  RebuildInstalled();
   RebuildCatalog();
 }
 

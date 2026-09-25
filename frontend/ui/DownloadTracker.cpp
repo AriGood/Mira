@@ -29,6 +29,7 @@ QString ToolName(const QString& source) {
   if (source == "itch") return "butler";
   if (source == "humble") return "humble-cli";
   if (source == "amazon") return "nile";
+  if (source == "umu") return "umu-launcher";
   return source;
 }
 
@@ -61,7 +62,10 @@ bool DownloadTracker::HandleEvent(const std::string& type, const std::string& da
   }
   if (RunnerDownloadEvent runner; MiradClient::ParseRunnerDownload(type, data, &runner)) {
     if (!ToState(runner.state, &state)) return true;
-    Entry& entry = Upsert(Kind::Runner, QString::fromStdString(runner.kind), QString::fromStdString(runner.tag));
+    // Kron4ek's variants share a tag, so key by the release's name.
+    const std::string& ref = runner.name.empty() ? runner.tag : runner.name;
+    Entry& entry = Upsert(Kind::Runner, QString::fromStdString(runner.kind), QString::fromStdString(ref));
+    if (!runner.label.empty()) NoteTitle("runner:" + entry.source, entry.ref, QString::fromStdString(runner.label));
     entry.state = state;
     entry.error = QString::fromStdString(runner.error);
     emit Changed(entry.key);
@@ -164,7 +168,10 @@ QString DownloadTracker::NameFor(const Entry& entry) const {
     }
     case Kind::Launcher: return source(entry.source);
     case Kind::Tool: return ToolName(entry.source);
-    case Kind::Runner: return entry.ref;
+    case Kind::Runner: {
+      const QString label = titles_.value("runner:" + entry.source + ":" + entry.ref);
+      return label.isEmpty() ? entry.ref : label;
+    }
   }
   return entry.ref;
 }
