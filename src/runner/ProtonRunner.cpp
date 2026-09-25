@@ -2,7 +2,9 @@
 
 #include <cctype>
 
+#include <algorithm>
 #include <filesystem>
+#include <iterator>
 #include <format>
 #include <fstream>
 
@@ -139,7 +141,8 @@ Result<Command> ProtonRunner::BuildCommand(const model::Game& game,
   const fs::path exe = install_path / game.exe_path;
 
   Command command;
-  command.argv = {UmuRunPath(), exe.string()};
+  command.argv = {UmuRunPath()};
+  std::ranges::move(WindowsProgram(exe), std::back_inserter(command.argv));
   for (const std::string& arg : strings::Split(game.args, ' ')) {
     if (!arg.empty()) command.argv.push_back(arg);
   }

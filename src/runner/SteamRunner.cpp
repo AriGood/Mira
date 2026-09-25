@@ -1,6 +1,8 @@
 #include "runner/SteamRunner.h"
 
+#include <algorithm>
 #include <filesystem>
+#include <iterator>
 
 #include "core/Strings.h"
 #include "steam/SteamDetector.h"
@@ -51,7 +53,8 @@ Result<Command> SteamRunner::BuildCommand(const model::Game& game,
                 "couldn't determine which Proton build this prefix uses — run this game once "
                 "through Steam first");
     }
-    command.argv = {info->proton_path.string(), "run", exe.string()};
+    command.argv = {info->proton_path.string(), "run"};
+    std::ranges::move(WindowsProgram(exe), std::back_inserter(command.argv));
     command.env["STEAM_COMPAT_DATA_PATH"] = game.data_dir;
     command.env["STEAM_COMPAT_CLIENT_INSTALL_PATH"] = info->client_install_path.string();
   }

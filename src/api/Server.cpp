@@ -1364,7 +1364,8 @@ void Server::RegisterRoutes() {
       platform = model::PlatformFromString(body["platform"].get<std::string>());
     } else {
       const std::string ext = strings::ToLower(std::filesystem::path(exe_path).extension().string());
-      platform = ext == ".exe" ? model::Platform::Windows : model::Platform::Native;
+      const bool windows = ext == ".exe" || ext == ".msi" || ext == ".bat" || ext == ".cmd";
+      platform = windows ? model::Platform::Windows : model::Platform::Native;
     }
 
     model::Game game;

@@ -12,7 +12,7 @@
 
 namespace mira::library {
 
-enum class InstallerFormat { kUnknown, kInnoSetup, kNsis };
+enum class InstallerFormat { kUnknown, kInnoSetup, kNsis, kMsi };
 
 InstallerFormat DetectInstallerFormat(const std::filesystem::path& file);
 std::string_view ToString(InstallerFormat format);

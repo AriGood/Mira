@@ -131,10 +131,10 @@ Sends SIGTERM to the game's process group and every process in its prefix, then 
 Body `{"exe_path": "...", "args": "..."}`. Runs any executable in the game's prefix with normal tracking, provisioning the prefix first if there isn't one. This is how an installer is run by hand.
 
 ### `POST /v1/games/{id}/install`
-Body (optional) `{"interactive": bool, "installer": "path"}`. Runs a `needs_install` game's installer in its prefix. Inno Setup and NSIS run silently with `install.inno_args`/`install.nsis_args` and the game folder as the target; anything else is shown. `installer` (absolute or relative to `install_path`) picks the file and also works for a `broken` game. One installer runs at a time. Afterwards the game executable is looked for in `install_path` or in new folders under `install.detect_dirs` in `drive_c`. Events: `game.install.started`/`finished`/`failed` and `game.updated`. Errors: `409 not_needs_install`, `409 install_running`, `404 installer_missing`.
+Body (optional) `{"interactive": bool, "installer": "path"}`. Runs a `needs_install` game's installer in its prefix. Inno Setup, NSIS and MSI installers run silently with `install.inno_args`/`install.nsis_args`/`install.msi_args` and the game folder as the target; anything else is shown. `installer` (absolute or relative to `install_path`) picks the file and also works for a `broken` game. One installer runs at a time. Afterwards the game executable is looked for in `install_path` or in new folders under `install.detect_dirs` in `drive_c`. Events: `game.install.started`/`finished`/`failed` and `game.updated`. Errors: `409 not_needs_install`, `409 install_running`, `404 installer_missing`.
 
 ### `GET /v1/games/{id}/installer[?path=]`
-`{"path", "size_bytes", "format": "inno"|"nsis"|"unknown", "silent", "silent_args"}` for the game's installer, or for `path`.
+`{"path", "size_bytes", "format": "inno"|"nsis"|"msi"|"unknown", "silent", "silent_args"}` for the game's installer, or for `path`.
 
 ### `GET /v1/games/{id}/install/progress`
 `{"state": "idle"|"queued"|"running"|"finished"|"failed", "mode": "silent"|"interactive", "started_at", "finished_at", "error", "bytes_written"}`. Silent installers report no percentage, so `bytes_written` is the progress signal. Kept in memory only.

@@ -87,7 +87,7 @@ The daemon should cost nothing when idle:
 
 ## Detection and scanning
 
-`library::Detector` scores the executables in one game folder using the `detect.*` settings. Each rule in `detect.rules` is a plain function run in the listed order, and removing a rule from the list disables it. A candidate can be flagged `is_installer` by name (`detect.installer_name_patterns`) plus size. A game whose best candidate is an installer is stored `needs_install`. The default deny and installer patterns live in `src/config/KnownExePatterns.h`.
+`library::Detector` scores the executables in one game folder using the `detect.*` settings. Each rule in `detect.rules` is a plain function run in the listed order, and removing a rule from the list disables it. Windows candidates are `.exe` and `.msi` files; Wine runs an `.msi` through `msiexec` and a `.bat` or `.cmd` through `cmd`. A candidate can be flagged `is_installer` by name (`detect.installer_name_patterns`) plus size, and an `.msi` always is. A game whose best candidate is an installer is stored `needs_install`. The default deny and installer patterns live in `src/config/KnownExePatterns.h`.
 
 `library::Scanner` treats each folder directly under a library root as one game. A folder already known by `install_path` is never detected again, so a scan never overwrites a user's changes. `prefix_root` and anything that looks like a Wine prefix are skipped. Folders that disappear are marked `missing`, or removed when `library.remove_missing` is on.
 

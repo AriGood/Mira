@@ -1,5 +1,6 @@
 #pragma once
 
+#include <filesystem>
 #include <optional>
 #include <string>
 #include <vector>
@@ -15,6 +16,10 @@ class Config;
 }
 
 namespace mira::runner {
+
+// What Wine runs for a Windows file: an .msi goes through msiexec and a
+// .bat/.cmd through cmd, everything else runs as is.
+std::vector<std::string> WindowsProgram(const std::filesystem::path& file);
 
 // One way to run a game: native, Proton, Wine or Steam. Every umu/Proton
 // detail lives inside ProtonRunner; this interface knows none of it.

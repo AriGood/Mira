@@ -768,6 +768,12 @@ Schema::Schema() {
          .default_value = "/S",
          .doc = "Arguments for a silent NSIS install. /D is added."});
 
+  s.Add({.key = "install.msi_args",
+         .label = "MSI Arguments",
+         .type = Type::String,
+         .default_value = "/qn",
+         .doc = "Arguments for a silent MSI install through msiexec. TARGETDIR is added."});
+
   // --- Store launchers ------------------------------------------------------
   s.Section("Store Launchers");
 

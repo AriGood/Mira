@@ -82,7 +82,7 @@ mira finish-install my-game
 ```
 
 ### `mira install <id> [--interactive] [--installer PATH]`
-`POST /v1/games/{id}/install`. Runs a `needs_install` game's installer and marks it ready once the game executable is found. Inno Setup and NSIS run silently, anything else (or `--interactive`) is shown. `--installer` picks the installer by hand and also works for a `broken` game. `--info` shows the installer's path, size, format and silent arguments; `--progress` shows install progress.
+`POST /v1/games/{id}/install`. Runs a `needs_install` game's installer and marks it ready once the game executable is found. Inno Setup, NSIS and MSI installers run silently, anything else (or `--interactive`) is shown. `--installer` picks the installer by hand and also works for a `broken` game. `--info` shows the installer's path, size, format and silent arguments; `--progress` shows install progress.
 
 ### `mira finish-install <id>`
 `POST /v1/games/{id}/finish-install`. Marks a `needs_install` or `broken` game ready once `exe_path` points at the installed game.
