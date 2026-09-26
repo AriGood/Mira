@@ -371,16 +371,9 @@ Result<void> DownloadAndInstall(const config::Config& config, const std::string&
   const fs::path archive = install_dir / asset.asset_name;
   if (auto downloaded = DownloadVerified(asset, archive); !downloaded) return downloaded;
 
-  Command extract;
-  extract.argv = {"tar", "-xf", archive.string(), "-C", install_dir.string()};
-  const Result<ExecResult> extracted = RunAndWait(extract);
+  const Result<void> extracted = Extract(archive, install_dir);
   fs::remove(archive, ec);
-  if (!extracted || extracted->exit_code != 0) {
-    return Err("extract_failed",
-              !extracted ? extracted.error().message
-                        : std::format("tar exited {}: {}", extracted->exit_code, extracted->output));
-  }
-  return {};
+  return extracted;
 }
 
 Result<fs::path> InstallToolBinary(const config::Config& config, const std::string& tool_name,
@@ -395,19 +388,9 @@ Result<fs::path> InstallToolBinary(const config::Config& config, const std::stri
 
   const fs::path target = tool_dir / binary_name;
   if (IsZip(asset.asset_name) || IsTarball(asset.asset_name)) {
-    Command extract;
-    if (IsZip(asset.asset_name)) {
-      extract.argv = {"unzip", "-o", "-q", downloaded.string(), "-d", tool_dir.string()};
-    } else {
-      extract.argv = {"tar", "-xf", downloaded.string(), "-C", tool_dir.string()};
-    }
-    const Result<ExecResult> extracted = RunAndWait(extract);
+    const Result<void> extracted = Extract(downloaded, tool_dir);
     fs::remove(downloaded, ec);
-    if (!extracted || extracted->exit_code != 0) {
-      return Err("extract_failed", !extracted ? extracted.error().message
-                                              : std::format("extract exited {}: {}", extracted->exit_code,
-                                                            extracted->output));
-    }
+    if (!extracted) return std::unexpected(extracted.error());
     const auto found = FindFileNamed(tool_dir, binary_name);
     if (!found) {
       return Err("binary_not_found",

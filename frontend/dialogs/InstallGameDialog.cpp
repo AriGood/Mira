@@ -1,6 +1,5 @@
 #include "InstallGameDialog.h"
 
-#include <QCheckBox>
 #include <QDialogButtonBox>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -30,12 +29,9 @@ InstallGameDialog::InstallGameDialog(std::string game_id, const std::string& ins
   info_->setTextInteractionFlags(Qt::TextSelectableByMouse);
   layout->addWidget(info_);
 
-  interactive_ = new QCheckBox("Show the installer window", this);
-  interactive_->setToolTip("Click through the installer yourself instead of letting Mira answer it.");
-  layout->addWidget(interactive_);
-
   auto* choose_row = new QHBoxLayout();
-  auto* choose = new QPushButton("Choose a different installer…", this);
+  auto* choose = new QPushButton("Change…", this);
+  choose->setToolTip("Pick a different installer file");
   connect(choose, &QPushButton::clicked, this, [this] {
     const QString picked = QFileDialog::getOpenFileName(
         this, "Installer", QString::fromStdString(install_path_),
@@ -53,18 +49,23 @@ InstallGameDialog::InstallGameDialog(std::string game_id, const std::string& ins
   layout->addWidget(error_);
 
   auto* buttons = new QDialogButtonBox(QDialogButtonBox::Cancel, this);
-  install_ = buttons->addButton("Install", QDialogButtonBox::AcceptRole);
-  install_->setEnabled(false);
-  install_->setDefault(true);
+  shown_ = buttons->addButton("Show the installer", QDialogButtonBox::AcceptRole);
+  shown_->setToolTip("Open the installer's window and click through it yourself");
+  quiet_ = buttons->addButton("Install quietly", QDialogButtonBox::AcceptRole);
+  quiet_->setToolTip("Run the installer in the background without its window");
+  shown_->setEnabled(false);
+  quiet_->setVisible(false);
   connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
-  connect(install_, &QPushButton::clicked, this, &InstallGameDialog::Install);
+  connect(shown_, &QPushButton::clicked, this, [this] { Install(/*interactive=*/true); });
+  connect(quiet_, &QPushButton::clicked, this, [this] { Install(/*interactive=*/false); });
   layout->addWidget(buttons);
 
   LoadInfo(std::string());
 }
 
 void InstallGameDialog::LoadInfo(const std::string& path) {
-  install_->setEnabled(false);
+  shown_->setEnabled(false);
+  quiet_->setVisible(false);
   error_->setVisible(false);
   MiradClient::GetInstallerInfoAsync(this, game_id_, path, [this, path](InstallerInfoResult info) {
     if (!info.ok) {
@@ -77,31 +78,34 @@ void InstallGameDialog::LoadInfo(const std::string& path) {
     const QString size = QLocale().formattedDataSize(info.size_bytes);
     QString how;
     if (info.format == "inno") {
-      how = "An Inno Setup installer: Mira runs it without its window.";
+      how = "An Inno Setup installer. Mira can run it quietly in the background, or show it.";
     } else if (info.format == "nsis") {
-      how = "An NSIS installer: Mira runs it without its window.";
+      how = "An NSIS installer. Mira can run it quietly in the background, or show it.";
+    } else if (info.format == "msi") {
+      how = "A Windows Installer package. Mira can run it quietly in the background, or show it.";
     } else {
-      how = "Mira can't answer this installer by itself, so its window opens for you to click "
-            "through.";
+      how = "Mira can't run this installer quietly, so its window opens for you to click through.";
     }
     info_->setText(QString("<b>%1</b> (%2)<br>%3").arg(file.toHtmlEscaped(), size, how));
-    interactive_->setChecked(!info.silent);
-    interactive_->setEnabled(info.silent);
-    install_->setEnabled(true);
+    quiet_->setVisible(info.silent);
+    (info.silent ? quiet_ : shown_)->setDefault(true);
+    shown_->setEnabled(true);
     adjustSize();  // the text above just grew
   });
 }
 
-void InstallGameDialog::Install() {
-  install_->setEnabled(false);
+void InstallGameDialog::Install(bool interactive) {
+  shown_->setEnabled(false);
+  quiet_->setEnabled(false);
   error_->setVisible(false);
-  MiradClient::InstallGameAsync(this, game_id_, interactive_->isChecked(), installer_,
+  MiradClient::InstallGameAsync(this, game_id_, interactive, installer_,
                                 [this](GameActionResult result) {
                                   if (result.ok) {
                                     accept();
                                     return;
                                   }
-                                  install_->setEnabled(true);
+                                  shown_->setEnabled(true);
+                                  quiet_->setEnabled(true);
                                   error_->setText("Could not start the install: " +
                                                   QString::fromStdString(result.error));
                                   error_->setVisible(true);

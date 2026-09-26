@@ -9,10 +9,8 @@ namespace mira::core {
 // Scans `text` from the end for the last line that parses as complete
 // JSON on its own, skipping over any subprocess log noise around it (a
 // tool's own log lines never parse as JSON, however many stray
-// '{'/'['/']'/'}' characters they contain -- see epic::Legendary.cpp's
-// original comment for the live-tested reasoning this came from: legendary
-// tags its own log lines "[Core] ...", "[cli] ...", whose own '[' fooled a
-// naive "find the first bracket" scan). Shared by every source that mixes
+// '{'/'['/']'/'}' characters they contain; legendary's "[Core] ..." and
+// "[cli] ..." lines fool a naive "find the first bracket" scan). Shared by every source that mixes
 // its --json payload with its own stderr/stdout log noise (Legendary,
 // gogdl, and likely butler too).
 //

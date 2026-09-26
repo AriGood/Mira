@@ -61,8 +61,8 @@ Result<void> Logout(const config::Config& config);
 Result<std::int64_t> CurrentProfileId(const config::Config& config);
 
 // Install.Queue needs a registered "install location" id when installing
-// a title for the first time (confirmed live: "installLocationId must be
-// set"). Idempotent -- safe to call before every install.
+// a title for the first time ("installLocationId must be set"). Idempotent,
+// so it's safe to call before every install.
 Result<void> EnsureInstallLocation(const config::Config& config);
 
 // A collection link's id: "https://itch.io/c/<id>/<slug>", the same

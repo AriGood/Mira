@@ -9,10 +9,8 @@
 
 namespace mira::itch {
 
-// Installs/updates one itch.io title via butlerd's own
-// Install.Queue -> Install.PlanUpload -> Install.Perform sequence (see
-// Butlerd.h's class comment and the itch.io launcher-integration docs),
-// then re-runs ItchImporter to pick up the resulting cave as a tracked
+// Installs/updates one itch.io title via butlerd's Install.Queue ->
+// Install.Perform sequence, then re-runs ItchImporter to pick up the resulting cave as a tracked
 // model::Game and provision a Wine/Proton prefix for it if the upload
 // isn't a native Linux build.
 class ItchInstaller {

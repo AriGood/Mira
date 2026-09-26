@@ -39,6 +39,8 @@ std::string SilentArgsFor(const config::Config& config, InstallerFormat format) 
     }
     case InstallerFormat::kNsis:
       return config.GetString("install.nsis_args");
+    case InstallerFormat::kMsi:
+      return config.GetString("install.msi_args");
     case InstallerFormat::kUnknown:
       return "";
   }
@@ -47,9 +49,12 @@ std::string SilentArgsFor(const config::Config& config, InstallerFormat format) 
 
 }  // namespace
 
-// Sniffs both ends: the marker can sit anywhere in a large installer. No MSI.
+// An .msi by its extension; an .exe by sniffing both ends, since the marker
+// can sit anywhere in a large installer.
 InstallerFormat DetectInstallerFormat(const fs::path& file) {
-  if (strings::ToLower(file.extension().string()) != ".exe") return InstallerFormat::kUnknown;
+  const std::string ext = strings::ToLower(file.extension().string());
+  if (ext == ".msi") return InstallerFormat::kMsi;
+  if (ext != ".exe") return InstallerFormat::kUnknown;
 
   std::error_code ec;
   const std::uintmax_t size = fs::file_size(file, ec);
@@ -155,7 +160,10 @@ Result<model::Game> RunInstaller(config::Config& config, const model::Game& game
     // Point the installer at install_path via Wine's Z: drive.
     std::string target = "Z:" + fs::absolute(game.install_path).string();
     std::ranges::replace(target, '/', '\\');
-    run.argv.push_back((format == InstallerFormat::kInnoSetup ? "/DIR=" : "/D=") + target);
+    const char* flag = format == InstallerFormat::kInnoSetup ? "/DIR="
+                       : format == InstallerFormat::kMsi   ? "TARGETDIR="
+                                                           : "/D=";
+    run.argv.push_back(flag + target);
     if (timeout_s > 0) {
       run.argv.insert(run.argv.begin(), {"timeout", "--kill-after=10s", std::format("{}s", timeout_s)});
     }
@@ -211,6 +219,8 @@ std::string_view ToString(InstallerFormat format) {
       return "inno";
     case InstallerFormat::kNsis:
       return "nsis";
+    case InstallerFormat::kMsi:
+      return "msi";
     case InstallerFormat::kUnknown:
       return "unknown";
   }

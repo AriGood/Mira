@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include <string>
 #include <vector>
 
 #include "api/EventBus.h"
@@ -27,9 +28,8 @@ struct ScanSummary {
 // single already-identified game folder.
 //
 // A directory already known to GameStore (by install_path) is never
-// re-detected: once a game exists, only PATCH or the (planned) `resetup`
-// endpoint touches its configuration. Scan only adds new games and
-// reconciles missing/restored ones.
+// re-detected, so a scan never overwrites a user's changes. Scan only adds
+// new games, reconciles missing/restored ones and retries provisioning.
 class Scanner {
 public:
   Scanner(config::Config& config, store::GameStore& games, api::EventBus& events);
@@ -42,5 +42,12 @@ private:
   store::GameStore& games_;
   api::EventBus& events_;
 };
+
+// Provisions again every Windows game left broken by a missing or failing
+// runner, once a runner resolves for it. Returns how many became ready.
+int RetryBrokenProvisioning(config::Config& config, store::GameStore& games, api::EventBus& events);
+// Same for one game. Returns whether it became ready.
+bool RetryBrokenProvisioning(config::Config& config, store::GameStore& games, api::EventBus& events,
+                             const std::string& id);
 
 }  // namespace mira::library

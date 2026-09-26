@@ -12,9 +12,7 @@ namespace mira::runner {
 // umu-run is the *mechanism*, not the identity: Proton outside Steam needs
 // the Steam Linux Runtime container and a pile of STEAM_COMPAT_* env that
 // umu supplies, plus protonfixes for free. Running `proton run` directly is
-// possible and loses both, so umu is used whenever it's installed. That is
-// an implementation detail of this file — nothing outside it knows umu
-// exists (see docs/architecture.md, Replaceability).
+// possible and loses both, so Proton always runs through umu.
 // umu-run on PATH, else the copy Mira installed; empty if neither.
 std::string UmuRunPath();
 // Where Mira installs umu-launcher's own copy of umu-run.

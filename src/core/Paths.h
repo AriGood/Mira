@@ -20,7 +20,6 @@ std::filesystem::path Home();
 
 std::filesystem::path SettingsFile();  // <UserDir>/settings.toml
 std::filesystem::path GamesFile();     // <UserDir>/games.toml
-std::filesystem::path DefaultSocket(); // <RuntimeDir>/mirad.sock
 
 // Expands a leading "~" and any $VAR references, so config files can be
 // written the way a user would naturally type a path.

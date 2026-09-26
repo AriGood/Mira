@@ -646,8 +646,7 @@ void FetchEpicOwned(const config::Config& config, const std::string& app_name, c
   }
 }
 
-// Lutris caches its own per-game art on disk, confirmed against a real
-// install and joined by slug: <lutris_data_dir>/coverart/<slug>.jpg,
+// Lutris caches its own per-game art on disk, keyed by slug: <lutris_data_dir>/coverart/<slug>.jpg,
 // <lutris_data_dir>/banners/<slug>.jpg, and (under XDG_DATA_HOME directly,
 // not the lutris subdir) icons/hicolor/128x128/apps/lutris_<slug>.png.
 // Lutris's has_custom_* pga.db columns mean "user overrode Lutris's own

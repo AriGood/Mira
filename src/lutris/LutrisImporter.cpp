@@ -30,9 +30,7 @@ fs::path EnvOr(const char* name, const fs::path& fallback) {
 
 // Lutris's own settings.py: CONFIG_DIR = get_user_config_dir()/lutris, but
 // falls back to DATA_DIR when that doesn't exist — which is where the
-// per-game YAML actually lives on a system that never had ~/.config/lutris
-// (confirmed against a real install: no ~/.config/lutris at all, configs
-// under ~/.local/share/lutris/games/).
+// per-game YAML actually lives on a system that never had ~/.config/lutris.
 struct LutrisRow {
   int id = 0;
   std::string name;
@@ -174,9 +172,7 @@ std::optional<LutrisGameConfig> ReadGameConfig(const fs::path& yaml_path, bool r
 
 // Lutris's own settings.py: CONFIG_DIR = get_user_config_dir()/lutris, but
 // falls back to DATA_DIR when that doesn't exist — which is where the
-// per-game YAML actually lives on a system that never had ~/.config/lutris
-// (confirmed against a real install: no ~/.config/lutris at all, configs
-// under ~/.local/share/lutris/games/).
+// per-game YAML actually lives on a system that never had ~/.config/lutris.
 std::optional<fs::path> FindLutrisDataDir(const config::Config& config) {
   std::vector<fs::path> candidates;
   if (const fs::path configured = config.GetPath("lutris.data_dir"); !configured.empty()) {
@@ -216,7 +212,7 @@ Result<LutrisImportSummary> LutrisImporter::Import() {
   for (const LutrisRow& row : *rows) {
     // "wine" is a Windows game; "linux" is Lutris's own native-Linux runner
     // (a .sh script or an AppImage, pointed at directly, no prefix at all).
-    // Anything else is a different, unhandled case for now (a "steam" row is
+    // Anything else is skipped (a "steam" row is
     // already covered by SteamScanner, a "flatpak" row's app already has its
     // own real .desktop entry, covered by desktop::DesktopEntryScanner) —
     // note it, don't guess at it.

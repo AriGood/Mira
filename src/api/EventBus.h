@@ -54,8 +54,6 @@ public:
   // buffer; the frontend is expected to re-fetch state wholesale in that case.
   std::vector<model::Event> Since(std::int64_t after_id) const;
 
-  std::int64_t LatestId() const;
-
 private:
   mutable std::mutex mutex_;
   std::condition_variable cv_;

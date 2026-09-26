@@ -1,7 +1,9 @@
 #include "runner/WineRunner.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <format>
+#include <iterator>
 
 #include "config/Config.h"
 #include "core/Paths.h"
@@ -9,6 +11,14 @@
 #include "runner/Exec.h"
 
 namespace mira::runner {
+
+std::vector<std::string> WindowsProgram(const std::filesystem::path& file) {
+  const std::string ext = strings::ToLower(file.extension().string());
+  if (ext == ".msi") return {"msiexec", "/i", file.string()};
+  if (ext == ".bat" || ext == ".cmd") return {"cmd", "/c", file.string()};
+  return {file.string()};
+}
+
 namespace {
 namespace fs = std::filesystem;
 
@@ -103,7 +113,8 @@ Result<Command> WineRunner::BuildCommand(const model::Game& game,
   const fs::path exe = install_path / game.exe_path;
 
   Command command;
-  command.argv = {build->path, exe.string()};
+  command.argv = {build->path};
+  std::ranges::move(WindowsProgram(exe), std::back_inserter(command.argv));
   for (const std::string& arg : strings::Split(game.args, ' ')) {
     if (!arg.empty()) command.argv.push_back(arg);
   }

@@ -33,7 +33,7 @@ Result<void> ItchInstaller::Run(const std::string& game_id) {
   if (!profile_id) return std::unexpected(profile_id.error());
   if (auto location = EnsureInstallLocation(config_); !location) return std::unexpected(location.error());
 
-  // Two-call sequence confirmed against butlerd's own spec: Install.Queue
+  // Per butlerd's spec, Install.Queue
   // picks an upload and returns {id, stagingFolder}; Install.Perform
   // fetches it using exactly those two values back.
   const Result<json> queued = Call(config_, "Install.Queue",

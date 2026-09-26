@@ -50,9 +50,4 @@ std::vector<model::Event> EventBus::Since(std::int64_t after_id) const {
   return out;
 }
 
-std::int64_t EventBus::LatestId() const {
-  std::lock_guard lock(mutex_);
-  return events_.empty() ? 0 : events_.back().id;
-}
-
 }  // namespace mira::api

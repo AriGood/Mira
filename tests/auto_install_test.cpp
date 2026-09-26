@@ -4,6 +4,7 @@
 #include <fstream>
 
 #include "library/AutoInstall.h"
+#include "runner/IRunner.h"
 
 using namespace mira;
 namespace fs = std::filesystem;
@@ -48,8 +49,16 @@ TEST_CASE("DetectInstallerFormat reports unknown for a non-installer exe") {
   CHECK(library::DetectInstallerFormat(file) == library::InstallerFormat::kUnknown);
 }
 
-TEST_CASE("DetectInstallerFormat reports unknown for a non-.exe file regardless of content") {
-  const fs::path file = TempFile("setup.msi");
-  Write(file, "Inno Setup", "", 0);
-  CHECK(library::DetectInstallerFormat(file) == library::InstallerFormat::kUnknown);
+TEST_CASE("MSI installers are detected by extension and run through msiexec") {
+  const fs::path msi = TempFile("setup.msi");
+  Write(msi, "Inno Setup", "", 0);
+  CHECK(library::DetectInstallerFormat(msi) == library::InstallerFormat::kMsi);
+
+  const fs::path text = TempFile("readme.txt");
+  Write(text, "Inno Setup", "", 0);
+  CHECK(library::DetectInstallerFormat(text) == library::InstallerFormat::kUnknown);
+
+  CHECK(runner::WindowsProgram("/g/setup.msi") == std::vector<std::string>{"msiexec", "/i", "/g/setup.msi"});
+  CHECK(runner::WindowsProgram("/g/start.BAT") == std::vector<std::string>{"cmd", "/c", "/g/start.BAT"});
+  CHECK(runner::WindowsProgram("/g/game.exe") == std::vector<std::string>{"/g/game.exe"});
 }

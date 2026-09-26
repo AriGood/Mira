@@ -1,102 +1,60 @@
 # API reference
 
-REST over HTTP/1.1, served on a Unix domain socket — never TCP, never a
-network-reachable port. Default socket: `$XDG_RUNTIME_DIR/mira/mirad.sock`
-(overridable via the `socket_path` setting or `mirad --socket <path>`).
+REST over HTTP/1.1 on a Unix socket, never TCP. The default socket is `$XDG_RUNTIME_DIR/mira/mirad.sock`; the `socket_path` setting or `mirad --socket <path>` changes it. Routes are registered in `Server::RegisterRoutes` in `src/api/Server.cpp`, and the code wins if this file disagrees.
 
-This document mirrors `Server::RegisterRoutes()` in `src/api/Server.cpp` — if
-the two disagree, the code is correct and this file is stale. See
-`docs/architecture.md` for *why* this API is the only contract between the
-backend and every client, the frontend included.
-
-All request/response bodies are JSON. All errors use one envelope:
+Bodies are JSON. Errors share one envelope:
 
 ```json
 { "error": { "code": "invalid_setting", "message": "scan.debounce_ms: must be between 0 and 600000" } }
 ```
 
-`code` is stable and machine-readable; `message` is what a UI should show a
-human. Endpoints marked **(planned)** don't exist yet and return 404 — see
-`docs/architecture.md`'s "Planned, not yet built".
+`code` is stable and meant for code; `message` is meant for people.
 
 ```sh
-mirad &
-mira status                 # or: curl --unix-socket "$XDG_RUNTIME_DIR/mira/mirad.sock" http://localhost/v1/health
+curl --unix-socket "$XDG_RUNTIME_DIR/mira/mirad.sock" http://localhost/v1/health
 ```
 
----
+Long-running work (downloads, installs, winetricks) answers `202` straight away and reports progress on the [event stream](#events).
 
 ## Health
 
-### `GET /v1/health` — implemented
-Liveness check; returns `{"status": "ok"}` if the daemon can respond at all.
-
----
+### `GET /v1/health`
+`{"status": "ok"}`.
 
 ## Settings
 
-Backed by `settings.toml`. Every key is declared once in
-`src/config/Schema.cpp`; `/v1/config/schema` reflects that registry directly,
-which is what lets a frontend build a complete settings screen with zero
-hardcoded knowledge of what settings exist.
+Stored in `settings.toml`. Every key is declared once in `src/config/Schema.cpp`.
 
-### `GET /v1/config` — implemented
-Every backend setting at its current value, plus the opaque `frontend` table
-the backend stores but never interprets (see `docs/architecture.md`).
+### `GET /v1/config`
+Every setting at its current value, plus the `frontend` table from `frontend.toml`, which the backend stores without interpreting.
 
-### `GET /v1/config/schema` — implemented
-Every setting, in display order: its `key` (the name on disk), `label` (the
-name a settings screen shows), type, default, one-line doc string,
-`category` (the settings-screen section, e.g. "Library", "Runners"), `group`
-(an integer; a settings screen draws a divider where it changes within one
-category), and `scope`: `global`, or `per_game` when a game can also
-override it via `PATCH /v1/games/{id}/config`. All of it is declared in
-`src/config/Schema.cpp`, which says how to add a setting at the top of
-`Schema::Schema()`.
-
-A setting with a describable shape also carries it: `one_of` (an enum's
-array) or `minimum`/`maximum`. `is_secret` and `is_runner_ref` are booleans,
-present only when true — a settings screen should mask a secret's value and
-offer a runner picker (`GET /v1/runners`) for a runner_ref instead of a
-plain text box. All four are absent, not empty/false, when they don't apply.
+### `GET /v1/config/schema`
+Every setting in display order:
 
 ```json
 [{ "key": "scan.debounce_ms", "label": "Debounce Time (ms)", "type": "an integer",
    "default": 3000, "scope": "global", "category": "Scanning", "group": 0,
-   "doc": "How long a new folder must stop changing before it is scanned. ...",
+   "doc": "How long a new folder must stop changing before it is scanned.",
    "minimum": 0, "maximum": 600000 }]
 ```
 
-### `PATCH /v1/config` — implemented
-Sets any subset of settings (nested, matching `GET /v1/config`'s shape) plus
-optionally a `frontend` key. Validated against the schema before anything is
-written — a bad value anywhere in the patch means nothing in it is applied.
+`category` is the settings section and `group` changes where a divider goes. `scope` is `per_game` when a game can override the setting. Optional fields, present only when they apply: `one_of` (enum values), `minimum`/`maximum`, `is_secret` (mask the value) and `is_runner_ref` (offer a runner picker).
 
-### `POST /v1/config/reset[?key=<dotted.key>]` — implemented
-Resets one key to its schema default, or everything if `key` is omitted.
+### `PATCH /v1/config`
+Sets any subset of settings, nested like `GET /v1/config`, plus an optional `frontend` key. The whole patch is validated first; one bad value means nothing is applied.
 
----
+### `POST /v1/config/reset[?key=<dotted.key>]`
+Resets one key, or everything when `key` is left out.
 
 ## Games
 
-Backed by `games.toml`. A game's `id` is a human-readable slug
-(`"celeste"`, `"celeste-2"` on collision), not an opaque integer.
+Stored in `games.toml`. A game's `id` is a readable slug such as `celeste`, or `celeste-2` on a clash.
 
-### `GET /v1/games[?status=<status>][?tag=<tag>]` — implemented
-Lists games, optionally filtered to one `status`
-(`setting_up | ready | broken | missing | needs_install`) and/or one tag
-(a game must have that exact tag in its `tags` array). `"hidden"` is the
-one tag this endpoint treats specially, and the only "hidden games"
-concept there is — no separate field: a game tagged `hidden` is left out
-of the list whenever `?tag=` isn't given, so `?tag=hidden` is how you list
-exactly the hidden ones (and `?tag=hidden&status=ready` etc. compose
-normally). `scan.tag_by_root` (default on) auto-tags every newly-detected
-game with the name of the library root folder it was found in, so
-multiple `library_roots` stay filterable without tagging anything by
-hand — see `PATCH` below for setting tags by hand too.
+### `GET /v1/games[?status=][&tag=]`
+Lists games, optionally filtered by `status` (`setting_up`, `ready`, `broken`, `missing`, `needs_install`) and by tag. Games tagged `hidden` are left out unless `tag` is given, so `?tag=hidden` lists only those. With `scan.tag_by_root` on, detected games are tagged with the name of their library root.
 
-### `GET /v1/games/{id}` — implemented
-The full stored record for one game:
+### `GET /v1/games/{id}`
+
 ```json
 {
   "id": "celeste", "install_path": "/home/x/Games/Celeste", "name": "Celeste",
@@ -107,733 +65,308 @@ The full stored record for one game:
   "env": {}, "candidates": [], "tags": []
 }
 ```
-`confidence`/`reviewed` are how auto-setup stays safe without blocking on a
-human: the backend always commits to its best guess, and the frontend can
-sort "nobody has double-checked this" to the top rather than gating on it.
-`candidates` lists every executable the detector considered, so the frontend
-can offer "use this one instead" without a re-scan. `runner_config` is
-opaque here — owned by whichever runner `runner_ref` names, never by core.
-`source` is `"scan"` (a library root, `exe_path` picked from `candidates`),
-`"steam"`, or `"lutris"` — which of the three ever writes this game's own
-fields on a rescan/re-import, and, for `"steam"` specifically, a hint that
-`exe_path` isn't what launches it: the default `steam.launch_mode` hands
-launching off to the Steam client instead of ever reading it.
 
-### `PATCH /v1/games/{id}` — implemented
-Corrects the game's own fields: any of `name`, `exe_path`, `args`,
-`working_dir`, `runner_ref`, `data_dir` (where its prefix/data lives — see
-`docs/architecture.md` on why it isn't called `prefix_path`),
-`runner_config` (merged, not replaced), `env` (merged), `tags` (replaced
-wholesale — a plain list has no natural per-entry merge the way `env`'s
-null-removes-a-key convention does, so send the full set you want; `[]`
-clears it). Setting any of these marks the game `reviewed: true` — a
-correction *is* the review. Never touches `overrides` (see `.../config`
-below — a game's own fields and its overrides of unrelated global settings
-are different concerns and don't share a request body). Publishes
-`game.updated`. 404 if the id is unknown.
+- `confidence` and `reviewed` let a client surface games nobody has checked since detection.
+- `candidates` lists every executable the detector considered.
+- `runner_config` belongs to the runner named by `runner_ref`.
+- `data_dir` is the game's prefix.
+- `source` says where the game came from: `scan`, `manual`, `steam`, `lutris`, `epic`, `gog`, `itch`, `amazon`, a launcher id, and so on. That source owns the fields it writes on a re-import.
 
-### `POST /v1/games/manual` — implemented
-The one place a game record can be created directly, rather than as a side
-effect of a scan/Steam/Lutris/desktop-entry import discovering something
-Mira already knew to look for — for a path outside every configured
-`library_roots` entry (pointing Mira at an installer, or a folder it
-wouldn't otherwise scan). Body:
+### `PATCH /v1/games/{id}`
+Changes any of `name`, `exe_path`, `args`, `working_dir`, `runner_ref`, `data_dir`, `runner_config` (merged), `env` (merged, `null` removes a key) and `tags` (replaced). Any change marks the game `reviewed`. Overrides go through `/config` below. Publishes `game.updated`.
+
+### `POST /v1/games/manual`
+Adds a game from any path:
+
 ```json
-{ "install_path": "/abs/path/to/folder", "exe_path": "relative/or/Installer.exe",
+{ "install_path": "/abs/path/to/folder", "exe_path": "relative/Installer.exe",
   "name": "My Game", "platform": "windows", "is_installer": true }
 ```
-`install_path` and `exe_path` (relative to `install_path`, same as every
-other game record) are required. `name` defaults to `install_path`'s folder
-name, cleaned the same way a library scan cleans one. `platform` defaults
-from `exe_path`'s extension (`.exe` → `"windows"`, else `"native"`).
-`is_installer` (default `false`) creates the game `needs_install` instead of
-`ready`, with a `last_error` pointing at `POST .../run` +
-`POST .../finish-install` — the same pair an auto-detected installer already
-uses, so a manually-added one is picked up by the exact same flow. A ready
-Windows game is provisioned immediately, same as one a scan just found.
-Matched by `install_path` — a second manual add to the same path updates
-rather than duplicates. Publishes `game.added`/`game.updated`. Response is
-the full game record, same shape as `GET /v1/games/{id}`.
 
-### `DELETE /v1/games/{id}[?delete_files=true][?delete_prefix=true][?delete_metadata=true][?purge=true]` — implemented
-Forgets the game. By default never touches disk — every one of the four
-flags below is independent and opt-in.
+`install_path` and `exe_path` (relative to `install_path`) are required. `name` defaults to the cleaned folder name and `platform` to `windows` for `.exe`, else `native`. `is_installer` stores the game `needs_install`. A ready Windows game is provisioned straight away. Adding the same `install_path` again updates the game. Returns the game and publishes `game.added` or `game.updated`.
 
-- `delete_files=true` — removes `install_path` (the game's own folder).
-  This alone is how to remove the game but leave its prefix in place — it
-  never touches `data_dir` unless `delete_prefix` is also given.
-- `delete_prefix=true` — removes `data_dir` (its Wine/Proton prefix, if any).
-- `delete_metadata=true` — removes cached metadata/cover art
-  (`metadata::MetadataFile`/`ArtworkDir`), which otherwise stay orphaned on
-  disk forever, keyed by an id nothing points at anymore.
-- `purge=true` — shorthand for all three of the above together.
+### `DELETE /v1/games/{id}[?delete_files=true][&delete_prefix=true][&delete_metadata=true][&purge=true]`
+Removes the game from the library. Nothing on disk is touched unless asked:
 
-`delete_files`/`delete_prefix` are restricted to paths that actually resolve
-inside a configured `library_roots`/`prefix_root` — never wherever a
-hand-edited `games.toml` happens to say. `delete_metadata` has no such check:
-metadata/artwork live under Mira's own state directory, keyed by game id, not
-a user-configured root. Publishes `game.removed`.
+- `delete_files` removes `install_path`.
+- `delete_prefix` removes `data_dir`.
+- `delete_metadata` removes cached metadata and art.
+- `purge` does all three.
 
-### `GET /v1/games/{id}/config` — implemented
-Every schema key resolved through `default -> settings.toml -> this game's
-overrides`, tagged with which layer supplied it — mirrors `GET /v1/config`
-but scoped to one game:
+Files and prefixes are only deleted when they resolve inside a library root or `prefix_root`. For Epic games, `delete_files` runs `legendary uninstall` so Legendary's records stay correct. Publishes `game.removed`.
+
+### `GET /v1/games/{id}/config`
+Every setting as it resolves for this game, with the layer it came from:
+
 ```json
 { "launch.gamemode": { "value": true, "layer": "game", "overridable": true },
   "library_roots": { "value": ["~/Games"], "layer": "default", "overridable": false } }
 ```
-This is what lets a frontend show "Runner: GE-Proton11-7 *(default)*" next
-to a reset button, without separately tracking where each value came from.
 
-### `PATCH /v1/games/{id}/config` — implemented
-Sets or removes this game's overrides of global settings: a flat
-`{"dotted.key": value}` body, where a `null` value removes that override.
-Rejects (with nothing applied) if a key isn't overridable — only keys with
-`scope: "per_game"` in the schema are — or if a value fails schema
-validation.
+### `PATCH /v1/games/{id}/config`
+Sets or removes (`null`) this game's overrides as a flat `{"dotted.key": value}` body. Only `per_game` keys are accepted, and nothing is applied if any key fails.
 
-### `POST /v1/games/{id}/launch` — implemented
-Resolves `runner_ref` (defaulting to `native:native`) and execs the game,
-wrapped by `command_wrappers` in order (first entry outermost), with
-`launch.env` applied under whatever env the runner itself set (the game's
-own `env` always wins over both), tracked by `proc::ProcessSupervisor` for
-crash detection and playtime. 404 if unknown, 409 if `needs_install` or not
-`ready`.
+### `POST /v1/games/{id}/launch`
+Resolves `runner_ref` (or the platform's `default_runner.*`) and starts the game. `409 needs_install` or `409 not_ready` when it can't run. A Windows game left `broken` by a missing runner is provisioned again first.
 
-Each `command_wrappers` entry is split on spaces before it's prepended (like
-a game's own `args` — no shell quoting), so `"gamescope -W 1920 -H 1080"` is
-one entry that expands to three argv tokens. Every wrapper's own binary is
-checked against `$PATH` before anything is spawned — `400 wrapper_not_found`
-names the missing one, rather than the launch failing invisibly with exit
-code 127 from inside the wrapper.
+- `command_wrappers` are prepended in order, first outermost. Each entry is split on spaces, so `"gamescope -W 1920 -H 1080"` is one entry. A wrapper missing from `PATH` fails with `400 wrapper_not_found`.
+- `launch.env` applies under the runner's environment; the game's own `env` wins over both.
+- `launch.pre_script` runs through `sh -c` before the game and blocks the request. A non-zero exit fails with `409 pre_launch_failed` and the script's output.
+- `launch.post_script` runs after the game exits, however it exits. Its result is only logged.
+- `launch.gamemode` registers the game with GameMode for its lifetime.
 
-`launch.pre_script` (global default, overridable per game via `.../config`)
-runs first, via `sh -c`, and blocks the request — a non-zero exit aborts
-the launch entirely with `409 pre_launch_failed` and the script's own
-output as the error, so a script that's supposed to prepare something the
-game needs (mount a drive, set a CPU governor) actually gets to finish
-before the game starts. `launch.post_script` runs once the game process
-exits (clean, crashed, or stopped, always) — never blocking anything, and
-its own exit code is only logged, never reflected in the recorded
-playtime/crash state.
+The game runs under `mira-run`, which owns the scripts, the game's output log and the session record, so a session survives `mirad` restarting. If `mira-run` is missing, the game is started directly without a session record or log.
 
-The actual spawn goes through a small wrapper binary, `mira-run`, not mirad
-itself — it owns pre/post_script, the game process, and a session record
-(`~/.config/mira/sessions/`, rolled into `stats.toml` once mirad has seen
-it) end to end, so a session survives mirad dying or restarting mid-game;
-mirad reconciles anything it missed at its next startup. `mira-run` also
-owns the game's own stdout/stderr, tailable via
-`GET /v1/games/{id}/log`. If `mira-run` itself can't be found or spawned,
-mirad falls back to launching directly with none of the above (pre_script
-still runs inline, post_script still runs, but no session record and no
-log) rather than failing the launch — the wrapper is never a hard
-dependency. `launch.gamemode` (default off) registers the game with
-GameMode automatically via `mira-run`, around the exact same lifetime; see
-`GET /v1/gamemode/status`.
+The reply's `tracked` says whether `game.state` events will follow. It is false for a Steam game under `steam.launch_mode: "steam"` (the default), which is started through `steam steam://rungameid/<appid>`. With `steam.track_process` on, Mira still finds the game's process by its `SteamAppId`/`SteamGameId` and records playtime, but gets no exit code. `steam.launch_mode: "direct"` runs the game through Steam's Proton build and prefix with full tracking, but needs `exe_path` set by hand.
 
-The reply's `tracked` says whether `game.state` events are coming for this
-launch — see the Steam case below for the one time it isn't true.
+Launching a store launcher game (Battle.net, Ubisoft, EA) asks the launcher to start it and tracks the game's own processes.
 
-A Steam-sourced game (`runner_ref` starting `steam:`) is a special case:
-if the effective `steam.launch_mode` is `"steam"` — the default — this
-instead fires `steam steam://rungameid/<appid>` and returns immediately.
-Mira didn't spawn that process, so `proc::ProcessSupervisor::Launch`'s
-normal `waitpid()`-based tracking can't apply to it; instead, if
-`steam.track_process` is on (the default), a background watcher polls
-`/proc` for a process carrying `SteamAppId`/`SteamGameId=<appid>` in its
-environment — the same variable the Steamworks API itself reads — so
-Mira still shows the game `running` and records playtime, just without a
-real exit code/signal (not obtainable for a process Mira didn't spawn;
-Steam's own client already has that). `launch.post_script` still runs
-once it's gone. Set `steam.launch_mode` to `"direct"` (globally or per
-game) to have Mira exec it itself instead, through the same Proton build
-and prefix Steam already set up — normal tracking applies, but `exe_path`
-has to be set manually first (see `POST /v1/steam/scan` below for why
-Mira can't determine it on its own).
+### `GET /v1/games/{id}/log?lines=`
+`{"lines": [...]}`: the last `lines` (default 200) lines of the game's log, which holds its output plus `mira-run`'s own notes. Only the last 4 MB of the file is read. A game with no log returns an empty list. Each launch rotates the log to `.log.1`, unless it is over `launch.log_max_mb`.
 
-### `GET /v1/games/{id}/log?lines=` — implemented
-```json
-{ "lines": ["[mira-run] session start, game_id=celeste", "..."] }
-```
-The tail of `mira-run`'s own log for this game (default 200 lines, capped
-to the last 4MB of the file regardless of `launch.log_max_mb`): the game's
-own stdout/stderr, interleaved with `mira-run`'s own annotated lines
-(resolved argv, pre/post_script output, the exit summary) — one file that
-explains a whole session, not just a status badge. A game that's never
-been launched through the wrapper (or was launched via the no-mira-run
-fallback) simply has no log yet — an empty list, not a 404 or 500. Rotated
-one generation deep at each new launch (`.log.1`), dropped instead of kept
-if it's already over `launch.log_max_mb` (default 64).
+### `POST /v1/games/{id}/stop`
+Sends SIGTERM to the game's process group and every process in its prefix, then SIGKILL after `launch.stop_timeout_s`. Proton games leave the group early, so the prefix is what reaches them. If the game isn't running, returns `{"status": "not_running"}` and publishes `game.state` with `idle`. `mirad` also publishes `idle` for every game at startup.
 
-### `POST /v1/games/{id}/stop` — implemented
-Sends SIGTERM to the game's process group **and** every process running in
-its prefix, escalating to SIGKILL after `launch.stop_timeout_s`. If it isn't running,
-returns `{"status": "not_running"}` and publishes `game.state` with state
-`idle`, so a client that missed the exit can clear it. mirad also publishes
-`idle` for every game at startup, and event ids start from the clock, so a
-client reconnecting across a restart resumes cleanly.
+### `POST /v1/games/{id}/run`
+Body `{"exe_path": "...", "args": "..."}`. Runs any executable in the game's prefix with normal tracking, provisioning the prefix first if there isn't one. This is how an installer is run by hand.
 
-The prefix half matters on Proton/Wine: `setsid()`/`setpgid()` during startup
-leaves the process group nearly empty (measured: 1 of 16 processes reached).
-Every process still shares `WINEPREFIX`/`STEAM_COMPAT_DATA_PATH`, so that's
-the fallback handle. A native game has no prefix and is signalled by group
-alone.
+### `POST /v1/games/{id}/install`
+Body (optional) `{"interactive": bool, "installer": "path"}`. Runs a `needs_install` game's installer in its prefix. Inno Setup, NSIS and MSI installers run silently with `install.inno_args`/`install.nsis_args`/`install.msi_args` and the game folder as the target; anything else is shown. `installer` (absolute or relative to `install_path`) picks the file and also works for a `broken` game. One installer runs at a time. Afterwards the game executable is looked for in `install_path` or in new folders under `install.detect_dirs` in `drive_c`. Events: `game.install.started`/`finished`/`failed` and `game.updated`. Errors: `409 not_needs_install`, `409 install_running`, `404 installer_missing`.
 
-### `POST /v1/games/{id}/run` — implemented
-Body: `{"exe_path": "...", "args": "..."}`. Runs that exe inside this
-game's own prefix — normal ProcessSupervisor tracking, same as `/launch`,
-but the exe/args come from the request instead of the stored game.
-Provisions a prefix on demand if there isn't a usable one yet (a
-`needs_install` game never gets one from Scanner, since it never
-auto-provisions an installer). This is how a `needs_install` game's
-installer actually gets run, and doubles as the general "run something in
-this prefix" escape hatch — for a known package/DLL fix rather than an
-arbitrary exe, `/tricks` below is the better fit.
+### `GET /v1/games/{id}/installer[?path=]`
+`{"path", "size_bytes", "format": "inno"|"nsis"|"msi"|"unknown", "silent", "silent_args"}` for the game's installer, or for `path`.
 
-### `POST /v1/games/{id}/finish-install` — implemented
-The other half of the `needs_install` escape hatch: after running the
-installer via `/run` and `PATCH`ing `exe_path` to whatever it actually
-produced, this flips status to `ready`. 409 `no_executable` if `exe_path`
-is empty, still points at an installer candidate, or doesn't exist.
+### `GET /v1/games/{id}/install/progress`
+`{"state": "idle"|"queued"|"running"|"finished"|"failed", "mode": "silent"|"interactive", "started_at", "finished_at", "error", "bytes_written"}`. Silent installers report no percentage, so `bytes_written` is the progress signal. Kept in memory only.
 
-### `POST /v1/games/{id}/install` — implemented
-Body (optional): `{"interactive": bool, "installer": "path"}`. Runs a
-`needs_install` game's installer in its prefix: silent for Inno Setup and
-NSIS (`install.inno_args`/`install.nsis_args`, with `/DIR=`/`/D=` set to
-the game folder), otherwise shown for the user to click through.
-`installer` (absolute, or relative to `install_path`) picks the file by
-hand and is also allowed for a `broken` game. One installer runs at a
-time. Afterwards the game exe is detected in `install_path`, or in a new
-folder under `install.detect_dirs` in the prefix's `drive_c`. `202`
-immediately; `game.install.started` / `.finished` / `.failed` and
-`game.updated` report the outcome. 409 `not_needs_install`,
-`install_running`; 404 `installer_missing`.
+### `POST /v1/games/{id}/finish-install`
+Marks a `needs_install` or `broken` game `ready` once `exe_path` points at the installed game. `409 no_executable` if `exe_path` is empty, still an installer, or missing.
 
-### `GET /v1/games/{id}/installer[?path=]` — implemented
-`{"path", "size_bytes", "format": "inno"|"nsis"|"unknown", "silent",
-"silent_args"}` for the game's installer, or for `path` when choosing one.
+### `POST /v1/games/{id}/relocate`
+Body (optional) `{"install_path"?, "data_dir"?}`. Moves the game's files and prefix to those paths, or with no body into Mira's layout (`relocate.install_root` or the first library root, and `prefix_root`, named per `prefix_naming`). Targets must be inside a library root or `prefix_root`. Store games keep their install folder unless one is given, since their store tool tracks it. Moves across filesystems copy then delete, unless `relocate.allow_copy` is off. Publishes `game.updated`.
 
-### `GET /v1/games/{id}/install/progress` — implemented
-`{"state": "idle"|"queued"|"running"|"finished"|"failed", "mode":
-"silent"|"interactive", "started_at", "finished_at", "error",
-"bytes_written"}`. Silent installers report no percentage, so
-`bytes_written` (growth of the game folder plus new `drive_c` folders) is
-the progress signal. In memory only; `idle` after a `mirad` restart.
-
-### `POST /v1/games/{id}/relocate` — implemented
-Body (optional): `{"install_path"?, "data_dir"?}`. Moves the game's files
-and prefix to the given paths, or with no body into Mira's layout
-(`relocate.install_root` or the first library root, and `prefix_root`,
-named per `prefix_naming`). Targets must be inside a library root /
-`prefix_root`. With no `install_path`, Steam/Epic/GOG/itch games keep their
-install folder (their store tool tracks it); only the prefix moves.
-Cross-filesystem moves copy then delete unless
-`relocate.allow_copy` is off. Publishes `game.updated`.
-
-### `POST /v1/games/{id}/tricks` — implemented
-Body: `{"verb": "corefonts"}`. Runs `winetricks --unattended <verb>`
-against this game's own Wine/Proton prefix — the real `winetricks` tool
-shelled out to, not reimplemented (its value is hundreds of crowdsourced,
-constantly-updated verb definitions, not the script itself; see
-`docs/architecture.md`, Replaceability). 404s with a specific error if the
-game has no prefix yet, the prefix was never provisioned, the runner isn't
-Wine/Proton-based (native games, or a Steam game that turned out to be
-native), or `winetricks` itself isn't on `PATH`. Runs in the background
-(a verb can mean downloading and installing a real redistributable —
-minutes, not request-scale) and returns `202` immediately;
-`tricks.started` / `.finished` / `.failed` on the event stream track it.
-
----
+### `POST /v1/games/{id}/tricks`
+Body `{"verb": "corefonts"}`. Runs `winetricks --unattended <verb>` in the game's prefix. Fails if the game has no provisioned Wine or Proton prefix or winetricks isn't available (see `/v1/runners/tools`). Events: `tricks.started`/`finished`/`failed`.
 
 ## Library
 
-`library_roots` (the folders being watched) is a plain setting, managed
-through `GET`/`PATCH /v1/config` like any other — there is no separate
-roots resource, because a plain string array is all the current design
-needs; see `docs/architecture.md` if that stops being true.
+`library_roots` is an ordinary setting. Changing it through the API also updates the watcher.
 
-### `POST /v1/library/relocate` — implemented
-Runs `/v1/games/{id}/relocate` with no body for every game. Returns
-`{"moved": N, "failed": N}`.
+### `POST /v1/library/scan`
+Scans every library root now: adds new games, marks vanished ones `missing` (or removes them with `library.remove_missing`), restores ones that came back, and provisions games still waiting on a runner. Each change publishes its own event. Returns `{"added": 1, "missing": 0, "restored": 0}`. The watcher runs the same scan on its own when a root changes, but only for new arrivals.
 
-Any `PATCH /v1/config` or reset that touches `library_roots` also makes the
-watcher re-read it; a mirad restart is no longer needed.
+### `POST /v1/library/relocate`
+Relocates every game into Mira's layout. Returns `{"moved": N, "failed": N}`.
 
-### `POST /v1/library/scan` — implemented
-Walks every enabled library root immediately: detects new game folders,
-auto-configures and stores them (publishing `game.added` for each); marks
-previously-known games whose folder disappeared as `missing`, or removes
-them outright if `library.remove_missing` is on; and restores one marked
-`missing` whose folder reappeared. Every one of those publishes
-`game.updated`/`game.added`/`game.removed` as it happens, so a caller can
-rely on the event stream alone to stay in sync rather than re-fetching
-`GET /v1/games` after every scan. Runs synchronously and returns a summary
-rather than a job id — there is no worker/job queue yet, and a scan of a
-normal-sized library finishes well within one HTTP request:
+### `GET /v1/library[?source=epic|steam|gog|itch|amazon]`
+What each account owns, whether or not it's installed:
+
 ```json
-{ "added": 1, "missing": 0, "restored": 0 }
+[{ "source": "epic", "ref": "e8bbb84be35640cda646233152ff3428", "title": "Brotato",
+   "installed": true, "game_id": "epic-e8bbb84be35640cda646233152ff3428",
+   "play_seconds": 0, "owned": true }]
 ```
-This is the on-demand counterpart to automatic detection — `mirad` also
-watches every root continuously via inotify (see
-`library::Watcher`/`docs/architecture.md`) and calls this same scan logic
-itself once a new folder's contents stop changing, with no request needed.
-The watcher follows a `library_roots` change made through the API, but only
-sees new arrivals; this endpoint also picks up what was already there.
 
----
+`ref` is the store's id and what `/v1/library/install` takes. `installed` and `game_id` say whether Mira tracks it as `<source>-<ref>`. `play_seconds` comes from the store (only Steam reports it). `owned` is false for a paid itch game listed from a collection the account hasn't bought.
+
+Owned titles aren't stored; they are read live from each source and become games once installed. A source that isn't set up lists nothing, and `GET /v1/<source>/status` tells why. Steam needs `steam.web_api_key` and `steam.steamid64` to list games that aren't installed. Humble Bundle isn't included.
+
+### `POST /v1/library/install`
+Body `{"source": "...", "ref": "..."}`. Installs an owned title in the background and returns `202 {"status": "installing", "ref": ...}`.
+
+- `epic`: `legendary install`.
+- `gog`: `gogdl download` into `gog.install_root/<id>`.
+- `itch`: butler's install sequence.
+- `amazon`: `nile install` into `amazon.install_root`.
+- `steam`: opens `steam://install/<appid>`. The game appears on the next Steam scan.
+
+Missing tools or logins fail with `409` before anything starts. Afterwards the title is imported and provisioned. Events: `library.install.started`/`finished`/`failed` and, for itch, `library.install.progress`.
+
+### `POST /v1/library/update`
+Same body and events as install. Steam returns `400 unsupported`.
+
+### `GET /v1/library/artwork?source=&ref=`
+A not-installed title's cached cover, or `404 artwork_not_found`. It is cached under `<source>-<ref>`, so the game keeps its cover once installed.
+
+### `POST /v1/library/artwork`
+Body `{"source": "epic", "titles": [{"ref": "...", "title": "..."}]}`. Queues a cover fetch for each title not already cached or queued. Returns `202 {"queued": n}`, which is 0 when `metadata.enabled` is off. Covers come from the store where possible (Steam's store API, Legendary's and nile's cached art, GOG Galaxy's games database for GOG, itch and Amazon), otherwise from SteamGridDB. Events: `library.artwork_ready`/`artwork_failed`.
 
 ## Runners
 
-### `GET /v1/runners` — implemented
-Every installed build of every runner kind, freshly discovered on each
-call (no caching, no refresh endpoint needed as a result):
+### `GET /v1/runners`
+Every installed build, discovered on each call:
+
 ```json
 [{ "kind": "proton", "name": "GE-Proton11-7", "label": "GE-Proton11-7",
    "path": "/home/x/.steam/steam/compatibilitytools.d/GE-Proton11-7-x86_64",
    "version": "1789520217", "reference": "proton:GE-Proton11-7",
    "source": "proton_ge", "removable": true }]
 ```
-`label` is a readable name ("Wine 11.18 staging-tkg" for
-`wine-11.18-staging-tkg-amd64`). `source` is the download source the build
-came from (see `/v1/runners/sources`), empty if unknown. `removable` is
-false for builds outside `runner_search_paths`/`wine_search_paths`: the
-distro's, Steam's or the system's, which Mira neither removes nor updates.
 
-Besides the search paths, discovery looks where Steam, the distro, Heroic,
-Bottles and Lutris keep builds (`/usr/share/steam/compatibilitytools.d`,
-Steam's `steamapps/common`, `~/.config/heroic/tools/*`,
-`~/.local/share/bottles/runners`, `/opt/*` such as `/opt/wine-cachyos`),
-unless `runner_scan_common_dirs` is off. Proton builds only appear when
-`umu-run` is available (see `/v1/runners/tools`).
-`reference` is what a game's `runner_ref` field and `default_runner.*`
-settings use. `native` never appears here — it has no concept of "builds".
-`steam` (see below) never appears here either — its "build" is whatever
-Steam itself set a given prefix up with, resolved per-game, not a
-general-purpose installed build the registry tracks.
+`reference` is what `runner_ref` and `default_runner.*` use. `label` is a readable name, such as "Wine 11.18 staging-tkg". `source` is the download source the build matches, or empty. `removable` is false for builds outside `runner_search_paths`/`wine_search_paths`, such as distro, Steam or system builds.
 
-Each build appears once, however many search paths reach it. On a typical
-Arch/Steam setup `~/.steam/steam` is a symlink to `~/.local/share/Steam`,
-which `libraryfolders.vdf` also lists, so the same Proton build is found
-under both — `runner::DeduplicateBuilds` collapses those by resolved path
-and then by `reference`, since two entries sharing a `reference` are the
-same runner by the definition above and no client could pick between them.
+Discovery also looks where Steam, the distro, Heroic, Bottles and Lutris keep builds, plus `/opt/*`, unless `runner_scan_common_dirs` is off. Proton builds only appear when `umu-run` is available. A build reachable through several paths is listed once. `native` and `steam` have no builds and never appear.
 
-### `GET /v1/runners/sources?kind=proton|wine` — implemented
-Where builds download from, preferred first:
-```json
-[{ "id": "proton_ge", "kind": "proton", "label": "GE-Proton" }]
-```
-Proton: `proton_ge`, `proton_cachyos`, `proton_umu`, `proton_em`,
-`proton_sarek`. Wine: `wine_staging_tkg`, `wine_staging`, `wine_vanilla`
-(Kron4ek's builds), `wine_ge`, `wine_lutris` (both archived upstream).
-GE-Proton and Wine-GE read their repo and asset pattern from
-`runner_sources.proton_ge.*`/`runner_sources.wine_ge.*`.
+### `GET /v1/runners/sources?kind=proton|wine`
+Download sources, preferred first: `[{"id": "proton_ge", "kind": "proton", "label": "GE-Proton"}]`.
 
-### `GET /v1/runners/catalog?kind=proton|wine&source=` — implemented
-What's *available to install* from one source (the kind's first when
-`source` is left out), newest first, from the GitHub API. Listings are
-cached for 10 minutes, since GitHub allows 60 unauthenticated requests an
-hour:
+- Proton: `proton_ge`, `proton_cachyos`, `proton_umu`, `proton_em`, `proton_sarek`.
+- Wine: `wine_staging_tkg`, `wine_staging`, `wine_vanilla` (Kron4ek), `wine_ge`, `wine_lutris`.
+
+GE-Proton and Wine-GE read their repo and asset pattern from `runner_sources.*`.
+
+### `GET /v1/runners/catalog?kind=&source=`
+Releases from one source (the kind's first by default), newest first, cached for 10 minutes to stay under GitHub's rate limit:
+
 ```json
 [{ "tag": "GE-Proton11-7", "name": "GE-Proton11-7", "label": "GE-Proton11-7", "source": "proton_ge",
    "asset_name": "GE-Proton11-7.tar.gz", "size_bytes": 563784602,
    "published_at": "2026-09-16T02:28:16Z", "has_checksum": true, "installed": true }]
 ```
-`name` identifies the release in download events: the tag for Proton, the
-archive name for Wine (Kron4ek's tags are bare versions shared by every
-variant).
 
-### `POST /v1/runners/download` — implemented
-Body: `{"kind": "proton"|"wine", "tag": "...", "source": "..."}` (a tag
-from the catalog above; `source` optional as there). Downloads and installs it into `runner_search_paths[0]` /
-`wine_search_paths[0]`, verifying its checksum first if the release
-shipped one — a mismatch discards the download rather than installing it.
-Checksums come from a `.sha512sum` or `.sha256sum` beside the archive, or
-a release-wide `sha256sums.txt`.
-Runs detached (a build can be 500+ MB; no job queue yet, see
-`docs/architecture.md`) and returns `202` immediately. Progress is on the
-event stream: `runners.download.started` / `.finished` / `.failed`, each
-`{"kind", "tag", "name", "label", "source"}`.
+`name` identifies the release in events: the tag for Proton, the archive name for Wine.
 
-### `GET /v1/runners/updates` — implemented
-Removable builds whose source has a newer release that isn't installed:
+### `POST /v1/runners/download`
+Body `{"kind", "tag", "source"?}`. Downloads a release into the first search path of its kind, checking its `.sha512sum`, `.sha256sum` or `sha256sums.txt` when there is one; a mismatch discards the download. Events: `runners.download.started`/`finished`/`failed` with `{kind, tag, name, label, source}`. When a download finishes, games left broken by a missing runner are provisioned again.
+
+### `GET /v1/runners/updates`
+Removable builds whose source has a newer release:
+
 ```json
 [{ "reference": "wine:wine-11.17-staging-tkg-amd64", "source": "wine_staging_tkg",
    "tag": "11.18", "name": "wine-11.18-staging-tkg-amd64", "label": "Wine 11.18 staging-tkg" }]
 ```
 
-### `POST /v1/runners/update` — implemented
-Body `{"reference": "kind:name"}`, one from `/v1/runners/updates`. Installs
-the newer release like `/v1/runners/download` (`202`, same events), then
-moves every game whose `runner_ref` is the old build, and
-`default_runner.windows` if it names it, onto the new one. The old build
-stays installed. `runners.updated` `{"kind", "from", "to", "games"}` says
-what moved, just before `runners.download.finished` (which then carries
-`"replaced": "<old reference>"`). `409 no_update` when there's nothing
-newer.
+### `POST /v1/runners/update`
+Body `{"reference": "kind:name"}`. Installs the newer release like a download, then moves every game using the old build, and `default_runner.windows` if it names it, onto the new one. The old build stays. `runners.updated {kind, from, to, games}` fires before `runners.download.finished`, which then carries `replaced`. `409 no_update` when nothing is newer.
 
-### `GET /v1/runners/tools` — implemented
-The helpers runners need, and whether they're installed:
+### `GET /v1/runners/tools`
+
 ```json
 [{ "id": "umu", "label": "umu-launcher", "installed": true, "path": "/usr/bin/umu-run", "doc": "..." },
  { "id": "winetricks", "label": "winetricks", "installed": false, "path": "", "doc": "..." }]
 ```
-A copy on `PATH` wins; otherwise Mira's own under `~/.config/mira/tools`.
 
-### `POST /v1/runners/tools/{umu|winetricks}/setup` — implemented
-Installs the latest umu-launcher zipapp (needs only python3) or winetricks
-script into `~/.config/mira/tools`. `202`; `umu.setup.*` /
-`winetricks.setup.*` `started` / `finished` / `failed` report it.
+A copy on `PATH` wins over Mira's own in `~/.config/mira/tools`.
 
-### `DELETE /v1/runners/{kind}:{name}` — implemented
-Uninstalls a build fetched via `/v1/runners/download` — the other half of
-catalog/download; discovery (`GET /v1/runners`) picks the removal up on the
-next call, nothing separate to update. Deletes only a path that both
-resolves to this exact build and really sits inside a configured
-`runner_search_paths`/`wine_search_paths` entry — same containment check
-`DELETE /v1/games/{id}` uses, so `wine:system` (the real system binary,
-found on `PATH`) 400s rather than being deleted. `400` for `auto`/`latest`
-(name a concrete build) or a kind with no separate builds at all (`native`,
-`steam`); `404` if that build isn't actually installed.
+### `POST /v1/runners/tools/{umu|winetricks}/setup`
+Installs the latest umu-launcher zipapp (needs python3) or winetricks script into `~/.config/mira/tools`. Events: `umu.setup.*` or `winetricks.setup.*`.
 
-### `GET /v1/runners/{kind}/schema` — implemented
-What `game.runner_config` accepts for one kind, so a frontend can render it
-generically instead of hardcoding per-runner knowledge (see
-`docs/architecture.md`, Replaceability):
-```json
-[{ "key": "gameid", "type": "string", "doc": "Steam AppID umu should report..." }]
-```
-`[]` for a kind with no fields — every kind but `proton` today. `404` for
-an unknown kind.
+### `DELETE /v1/runners/{kind}:{name}`
+Removes a build that lives inside a search path. `400` for system builds, `auto`/`latest`, or kinds without builds; `404` if the build isn't installed. Publishes `runners.removed`.
 
-### `POST /v1/runners/refresh` — planned (not needed: `GET /v1/runners`
-already discovers fresh on every call, with no caching to invalidate — see
-above)
-
----
+### `GET /v1/runners/{kind}/schema`
+What `runner_config` accepts for a kind: `[{"key": "gameid", "type": "string", "doc": "..."}]`. Empty for every kind but `proton`. `404` for an unknown kind.
 
 ## Steam
 
-Detected Steam games are ordinary entries in `games.toml`/`GET /v1/games`
-(`runner_ref` starting `"steam:<appid>"`) — every other games endpoint
-already works on one unmodified. This section only covers what's actually
-Steam-specific.
+Steam games are ordinary games with `runner_ref` `steam:<appid>`.
 
-### `POST /v1/steam/scan` — implemented
-Detects installed Steam apps (reading Steam's own `libraryfolders.vdf`/
-`appmanifest_*.acf`/`compatdata/<id>/config_info` files directly, not
-asking a possibly-not-running Steam client) and upserts them:
-```json
-{ "added": 2, "updated": 0 }
-```
-Idempotent — rescanning updates Steam-owned fields (`name`, `install_path`,
-`data_dir`) without touching anything the user configured (`exe_path`,
-`args`, `env`, overrides). `exe_path` is never set by this scan: Steam
-resolves the real launch command from its own `appinfo` cache, which isn't
-readable from disk, so it's only known if set manually — relevant only to
-`steam.launch_mode: "direct"` (see `/launch` above), since the default
-`"steam"` mode doesn't need it at all.
-
----
+### `POST /v1/steam/scan`
+Reads Steam's `libraryfolders.vdf`, `appmanifest_*.acf` and `compatdata/<id>/config_info` directly and adds or updates installed games. Returns `{"added": 2, "updated": 0}`. A rescan updates `name`, `install_path` and `data_dir` and leaves user settings alone. `exe_path` is never filled in, because Steam keeps the launch command in its `appinfo` cache; only `steam.launch_mode: "direct"` needs it.
 
 ## Lutris
 
-Imported Lutris games are ordinary entries in `games.toml`/`GET /v1/games` —
-every other games endpoint already works on one unmodified. This section
-only covers what's actually Lutris-specific.
+### `POST /v1/lutris/import`
+Reads Lutris's `pga.db` (through the `sqlite3` CLI) and each game's YAML config (`lutris.data_dir` overrides where to look) and imports `wine` and `linux` runner games:
 
-### `POST /v1/lutris/import` — implemented
-Reads Lutris's own game database (`pga.db`, sqlite, via the `sqlite3` CLI —
-not a bundled sqlite library) and, for each `runner: wine` or `runner:
-linux` game, its per-game YAML config
-(`~/.local/share/lutris/games/<configpath>.yml`, or
-`~/.config/lutris/games/` if that's where Lutris's `CONFIG_DIR` actually
-resolves to — see `lutris.data_dir` for an explicit override) and upserts
-them:
 ```json
 { "added": 3, "updated": 1, "other_runner": 2, "incomplete": 0 }
 ```
-`runner: linux` is Lutris's own native-Linux runner — a `.sh` script or an
-AppImage, pointed at directly with no prefix involved at all; imported as
-`platform: "native"`, `data_dir` empty. `other_runner` counts rows run
-through anything else, which are left alone rather than failed (a
-`steam`-runner row is already covered by `POST /v1/steam/scan`, a
-`flatpak`-runner row's app already has its own real `.desktop` entry,
-covered by `## Desktop entries` below). `incomplete` counts wine/linux rows
-whose config can't be imported as-is: a wine-runner row whose YAML has no
-`prefix` recorded — Lutris
-itself falls back to a filesystem heuristic in that case (walking up from
-the exe looking for something that looks like a prefix), which isn't
-something read from the yaml tree, so it's left alone rather than guessed
-at — and a linux-runner row whose `exe` isn't given as an absolute path,
-since there's no prefix to resolve a relative one against.
 
-Nothing here moves or renames anything on disk, in Lutris's data or Mira's
-library roots — this only reads Lutris's config and writes Mira's own
-`games.toml`. `install_path` is always the exe's own directory and
-`data_dir` is always exactly the yaml's `prefix`, verbatim, wherever it
-actually is (they don't have to be related at all — Lutris allows a prefix
-that lives nowhere near the game's files), or empty for a native-Linux row.
-Idempotent — rescanning updates Lutris-owned fields (`name`, `install_path`,
-`exe_path`, `data_dir`, `env`) without touching anything the user configured
-(`args` is Lutris-owned too, since it's Lutris's own launch argument, but
-`overrides`/`reviewed` are left alone), matched by `install_path` rather
-than an id Lutris and Mira could agree on. `runner_ref` is never set by
-this import: Lutris's own `wine.version` is often a generic alias
-("ge-proton"), not an exact installed build name Mira can resolve, so
-`default_runner.windows` picks one instead (a native row needs no
-`runner_ref` resolution at all).
+- `linux` games import as native with no prefix.
+- `other_runner` counts games using other runners, which are skipped. Steam and Flatpak games are covered by the Steam scan and desktop entry import.
+- `incomplete` counts Wine games with no `prefix` in their config and Linux games with a relative `exe`.
 
-Lutris's own categories are mapped onto `tags` (Lutris's `.hidden` becomes
-Mira's `hidden`, `favorites` becomes `favorite`, everything else carries
-over by name unchanged) and merged into whatever tags the game already has,
-never replacing them — a tag added by hand in Mira survives a re-import, and
-a game Lutris marks hidden stays out of the default `GET /v1/games` listing
-the same way a game Mira marked hidden by hand would. A Lutris install old
-enough to have no `categories`/`games_categories` tables degrades to "no
-categories" rather than failing the import.
+Nothing on disk is moved. `install_path` is the executable's folder and `data_dir` is the configured prefix. `runner_ref` is left empty so `default_runner.windows` applies, since Lutris's Wine version is often an alias. Lutris categories become tags (`.hidden` becomes `hidden`, `favorites` becomes `favorite`) and are merged with existing tags. Re-importing updates Lutris's fields and leaves overrides alone.
 
----
+## Store tools
 
-## Library
+Epic, GOG, itch, Amazon and Humble each wrap a command-line tool. Each has a status call and a setup call that downloads the tool's latest release into `~/.config/mira/tools`; run setup again to update. Status reports the tool as:
 
-What the account *owns* on a storefront, as opposed to what Mira tracks.
-These are deliberately two different things: a tracked game (`GET
-/v1/games`, a row in `games.toml`) is something Mira manages — installed,
-provisioned, launchable, with session history — while a catalog entry is an
-entitlement, and most entitlements aren't on disk at all. Entitlements are
-**not persisted**: they're read through live from whatever each source
-already caches, and a title becomes a `model::Game` only once it's
-installed. Persisting them instead was tried and reverted — 120 Epic
-entitlements meant 120 rows in a file the README promises stays
-hand-editable, each carrying a meaningless `data_dir`/`runner_ref`/
-`play_seconds`.
-
-### `GET /v1/library[?source=epic|steam|gog|itch|amazon]` — implemented
-Every entitlement the configured sources can report, or one source's with
-`?source=`:
 ```json
-[ { "source": "epic", "ref": "e8bbb84be35640cda646233152ff3428",
-    "title": "Brotato", "installed": true,
-    "game_id": "epic-e8bbb84be35640cda646233152ff3428", "play_seconds": 0,
-    "owned": true } ]
+{ "installed": true, "source": "managed", "path": "...", "version": "..." }
 ```
-`ref` is the source's own stable id (Legendary's `app_name`, Steam's
-appid, GOG's/itch's numeric game id) — the handle `POST /v1/library/install`
-takes. `installed` and `game_id` say whether Mira already tracks it,
-resolved by looking up `"<source>-<ref>"` in the game store. `play_seconds`
-is what the source itself reports (Steam does; the others don't, so it's 0).
-`owned` is false only for a paid itch game listed from a collection that the
-account hasn't bought; it can't be installed.
 
-A source that isn't configured or authenticated contributes nothing rather
-than failing the whole listing — one broken storefront shouldn't hide the
-others — so an empty array means "nothing owned, or nothing set up", and
-each source's own `GET /v1/<source>/status` is what distinguishes the two.
-Every source implements `library::ILibrarySource` (`src/library/
-ILibrarySource.h`) and is looked up through a small registry
-(`library::AllSources()`) rather than a hand-written per-source branch —
-Epic/Steam entries come from Legendary's cache / `IPlayerService/
-GetOwnedGames`, same as before; GOG's come from GOG's own `embed.gog.com`
-API directly (gogdl has no catalog subcommand of its own — see `GET
-/v1/gog/status`); itch's come from butlerd's `Fetch.ProfileOwnedKeys`,
-owned bundles, and the games in the account's own collections plus any added
-by link (`GET /v1/itch/collections`).
-Steam additionally needs `steam.web_api_key` + `steam.steamid64`, without
-which it contributes nothing (its on-disk files only ever describe
-*installed* games). Humble Bundle is **not** part of this registry at all
-— see `## Humble Bundle` below for why.
+`source` is `override` (the `<store>.*_bin` setting), `managed` (Mira's copy), `path` or `none`, in that order. Status calls never fail when the tool is missing.
 
-### `POST /v1/library/install` — implemented
-Body `{"source": "epic"|"steam"|"gog"|"itch", "ref": "..."}`. Keyed by
-`{source, ref}` rather than a game id precisely because the whole point is
-installing something Mira doesn't track yet. Dispatches to the matching
-`ILibrarySource::Install`, runs it detached, and returns `202 {"status":
-"installing", "ref": ...}` immediately — a game download is easily minutes
-long and there's no job queue yet (see `docs/architecture.md`), so
-`library.install.started`/`.finished`/`.failed` on the event stream is how
-a caller finds out it's done.
+Store games always launch through Mira's own runners, never through the store tool.
 
-- `epic`: `legendary install`. 409s with `legendary_missing` or
-  `not_authenticated` before starting anything.
-- `gog`: `gogdl download <id> --path <gog.install_root>/<id> --platform
-  windows`, then re-identifies the result via `gogdl import`. 409s the same
-  way if gogdl isn't set up/authenticated.
-- `itch`: butlerd's `Install.Queue` → `Install.Perform` sequence, then
-  re-runs the itch importer. 409s if butler isn't set up/authenticated.
-- `steam`: fires `steam://install/<appid>` and hands off to the Steam
-  client — the same handoff posture as `steam.launch_mode: "steam"`.
-  Nothing is tracked from here; the game shows up via `POST
-  /v1/steam/scan` once Steam has actually put it on disk.
+### Epic
 
-On success the title is re-imported for epic/gog/itch, which is what
-actually creates the tracked game and provisions its Wine/Proton prefix
-(or leaves it native, for a title that shipped a Linux build).
+Wraps [Legendary](https://github.com/derrod/legendary).
 
-### `POST /v1/library/update` — implemented
-Same body and the same detached/event shape. `epic`/`gog`/`itch` all
-support it; `steam` 400s with `unsupported`, since Steam updates its own
-games and there's nothing for Mira to do.
+- `GET /v1/epic/legendary/status`: the tool status above.
+- `POST /v1/epic/legendary/install`: downloads Legendary. Events: `epic.legendary.install.*`.
+- `GET /v1/epic/status`: `{legendary, authenticated, account, login_url}`.
+- `POST /v1/epic/auth`: body `{"code": "..."}`, the `authorizationCode` or the whole JSON the login page shows. Legendary keeps the session. Legendary exits 0 on a bad code, so the result is checked through status; a rejected code fails with `400 login_failed`.
+- `POST /v1/epic/logout`: `legendary auth --delete`.
+- `POST /v1/epic/import`: adds installed titles (`legendary list-installed`), tagged `epic`, and provisions a prefix for each. Returns `{added, updated}`.
 
-### `GET /v1/library/artwork?source=&ref=` — implemented
-A not-installed title's cached cover (binary, like `GET
-/v1/games/{id}/artwork`), or 404 `artwork_not_found` until one is fetched.
-Cached under the id the title gets once installed, `<source>-<ref>`, so an
-installed game starts with its cover. 400 `invalid_request` for an unknown
-source, or a ref that's empty or holds a `/`.
+### GOG
 
-### `POST /v1/library/artwork` — implemented
-`{"source": "epic", "titles": [{"ref": "...", "title": "..."}]}`. Queues a
-cover fetch for each title not cached or already queued, answering 202
-`{"queued": n}` (0 when `metadata.enabled` is false). Fetches run one at a
-time and only get the cover, from the store's own art where there is some:
-Steam's store API for Steam, Legendary's cached store art for Epic, GOG
-Galaxy's public games database (gamesdb.gog.com) for GOG, itch and Amazon,
-nile's cached art for Amazon. Otherwise it's SteamGridDB's top match (needs
-`steamgriddb.api_key`). Installed GOG, itch and Amazon games get their cover
-and hero from gamesdb the same way, with SteamGridDB only adding
-alternates. Each ends in `library.artwork_ready` or
-`library.artwork_failed`.
+Wraps [gogdl](https://github.com/Heroic-Games-Launcher/heroic-gogdl), which needs `python3`. gogdl can't list owned or installed games, so the library listing uses GOG's own API with gogdl's token, and import only looks under `gog.install_root` (default `~/Games/GOG`).
 
----
+- `GET /v1/gog/status`: `{gogdl, authenticated, login_url}`. An expired token is refreshed once.
+- `POST /v1/gog/setup`: downloads gogdl. Events: `gog.setup.*`.
+- `POST /v1/gog/auth`: body `{"code": "..."}`, the `code` from the redirect URL or the whole URL.
+- `POST /v1/gog/logout`: deletes the stored token.
+- `POST /v1/gog/import`: adds games found under `gog.install_root`.
 
-## Epic
+### itch.io
 
-Epic support wraps [Legendary](https://github.com/derrod/legendary), a
-native-Linux Epic Games Store client, for everything protocol-shaped —
-auth, catalog, install/update/uninstall. Mira never runs Legendary's own
-`legendary launch`: an installed Epic game is launched through Mira's own
-Wine/Proton runners like any other Windows game, which is what keeps
-crash/playtime tracking, GameMode and log capture working on it (see
-`docs/architecture.md`). Browsing or buying from the Epic *store* isn't
-possible here and isn't planned — Legendary operates on entitlements the
-account already has; new purchases happen in a browser.
+Wraps [butler](https://itch.io/docs/butler/). `mirad` starts `butler daemon` on first use and keeps the connection, so changing `itch.butler_bin` needs a restart.
 
-### `GET /v1/epic/legendary/status` — implemented
-```json
-{ "installed": true, "source": "managed",
-  "path": "~/.config/mira/tools/legendary", "version": "legendary version \"0.20.34\"..." }
-```
-`source` is `"override"` (`epic.legendary_bin`), `"managed"` (Mira's own
-download), `"path"` ($PATH) or `"none"` — the resolution order. Never
-requires Legendary to already exist, so it's always safe to call first.
+- `GET /v1/itch/status`: `{butler, authenticated, login_url}`. `authenticated` means a key is stored.
+- `POST /v1/itch/setup`: downloads butler and its libraries. Events: `itch.setup.*`.
+- `POST /v1/itch/auth`: body `{"api_key": "..."}` from [itch.io/user/settings/api-keys](https://itch.io/user/settings/api-keys), checked with butler straight away.
+- `POST /v1/itch/logout`: deletes the stored key.
+- `POST /v1/itch/import`: adds installed games (butler's caves), tagged `itch`.
+- `GET /v1/itch/collections`: the collections whose games `GET /v1/library?source=itch` lists: the account's own, then any added by link. `[{"id", "title", "games_count", "own", "url"}]`.
+- `POST /v1/itch/collections`: body `{"link": "https://itch.io/c/8213205/..."}`, or a bare id. The collection is read through butler first, so bad or private links are refused. Returns the collection with `201`.
+- `DELETE /v1/itch/collections/{id}`: removes a collection added by link.
 
-### `POST /v1/epic/legendary/install` — implemented
-Downloads Legendary's latest GitHub release binary into
-`~/.config/mira/tools/legendary` and marks it executable, detached, with
-`epic.legendary.install.started`/`.finished`/`.failed` on the event stream.
-Legendary ships one standalone Linux binary per release rather than an
-archive, so this doesn't reuse `runner::DownloadAndInstall` (which extracts
-a tarball into a runner search path); it does reuse the same
-`runner_sources.*` GitHub-release machinery. Re-running it re-fetches the
-latest release, which is also how staying up to date works — there's no
-separate update endpoint.
+### Amazon Games
 
-### `GET /v1/epic/status` — implemented
-The layered "don't assume setup" call — checks Legendary is installed
-first, and only then asks it about auth:
-```json
-{ "legendary": { "installed": true, "source": "managed", "path": "...", "version": "..." },
-  "authenticated": true, "account": "Exo03", "login_url": "https://www.epicgames.com/id/login?..." }
-```
-Never errors: "not installed" and "not authenticated" are both just fields.
-`login_url` is the page `POST /v1/epic/auth`'s code comes from.
+Wraps [nile](https://github.com/imLinguin/nile). Installed games (`amazon-<product id>`) run their `fuel.json` command through Mira's runner with the Amazon SDK variables `nile launch` would set.
 
-### `POST /v1/epic/auth` — implemented
-Body `{"code": "..."}`. Mira stores no Epic credentials of its own —
-Legendary owns its session (`~/.config/legendary/user.json`) and this only
-shuttles the code to it. The user visits `login_url` in their own browser
-and pastes back the `authorizationCode` it shows, or the whole JSON page;
-mirad pulls the field out itself (`invalid_code` if it can't).
+- `GET /v1/amazon/status`: `{nile, authenticated}`.
+- `POST /v1/amazon/setup`: downloads nile. Events: `amazon.setup.*`.
+- `POST /v1/amazon/login`: returns `{url}` to open in a browser.
+- `POST /v1/amazon/auth`: body `{"redirect": "..."}`, the amazon.com URL the login ends on or its `openid.oa2.authorization_code`.
+- `POST /v1/amazon/logout`
+- `POST /v1/amazon/import`: adds games from nile's `installed.json`. Returns `{added, updated}`.
 
-Verified by re-checking status afterward rather than by the subprocess's
-exit code, because `legendary auth --code` **exits 0 even when the code is
-rejected**, reporting the failure only as a log line. A rejected code 400s
-with `login_failed`.
+### Humble Bundle
 
-### `POST /v1/epic/logout` — implemented
-`legendary auth --delete`.
+Wraps [humble-cli](https://github.com/smbl64/humble-cli). Humble has no installs, only downloads, so it isn't a library source. humble-cli has no JSON output, so its table output is parsed.
 
-### `POST /v1/epic/import` — implemented
-Upserts already-installed Epic titles (`legendary list-installed`) as
-tracked games:
-```json
-{ "added": 1, "updated": 0 }
-```
-Entitlements that aren't installed are deliberately not touched here — see
-`GET /v1/library`. Idempotent, and preserves anything the user configured
-(`exe_path`, `args`, `env`, overrides, `reviewed`), same contract as the
-Steam/Lutris importers. Every imported game is tagged `epic`.
+- `GET /v1/humble/status`, `POST /v1/humble/setup`: as above, with the tool under `humble_cli`. Events: `humble.setup.*`.
+- `POST /v1/humble/auth`: body `{"session_key": "..."}`, the `_simpleauth_sess` cookie from a logged-in browser.
+- `GET /v1/humble/library`: `[{"key", "name", "claimed"}]`.
+- `POST /v1/humble/download`: body `{"bundle_key", "item_numbers"?}` (humble-cli's `1,3,5-7` syntax). Downloads into `<humble.download_root>/<bundle_key>/`. Events: `humble.download.*`; `finished` carries `path` and `downloaded`, which is false when the bundle had nothing to download (such as a Steam key). Add the result with `POST /v1/games/manual`.
 
-`runner_ref` is left empty for `RunnerRegistry` to resolve via
-`default_runner.windows`, exactly like a Lutris wine row. Unlike Steam and
-Lutris, though, Legendary creates **no Wine prefix of its own**, so this
-import is also what provisions one: `data_dir` is set to
-`<prefix_root>/<id>` and `ProvisionGame` runs, the same way `AutoSetup`
-handles a freshly scanned Windows game.
+## Store launchers
 
-`DELETE /v1/games/{id}?delete_files=true` on an Epic-sourced game runs
-`legendary uninstall` instead of deleting the directory directly, so
-Legendary's own manifest stays in sync rather than being left believing the
-title is still installed.
+Battle.net, Ubisoft Connect and the EA app have no Linux client, so each is installed into its own prefix (game `launcher-<id>`). Games installed through a launcher are imported as `<id>-<ref>` with source `battlenet`, `ubisoft` or `ea`, sharing its prefix and runner. `launchers.auto_import` imports on every scan. umu's `STORE` and, when known, `GAMEID` are set so protonfixes apply.
 
----
+### `GET /v1/launchers`
+`[{id, name, game_id, installed, install_state, interactive_install, prefix, error}]`. `install_state` is `idle`, `running`, `finished` or `failed`.
 
-## GOG
+### `POST /v1/launchers/{id}/install`
+Creates the prefix, runs the winetricks steps, then the installer: silent for Ubisoft and EA, shown for Battle.net. Imports games afterwards. `409 install_running`. Events: `launcher.install.*`.
 
-GOG support wraps [gogdl](https://github.com/Heroic-Games-Launcher/heroic-gogdl),
-the downloader Heroic itself uses. It's a Python zipapp (needs a system
-`python3` to run, confirmed live — not a self-contained binary the way
-Legendary is), and unlike Legendary it has **no catalog or "what's
-installed" subcommand of its own** — only `auth`, `download`/`repair`/
-`update`, `import` (identifies an already-unpacked install at a given
-local path), `info`, and `launch` (never used here). Two real consequences:
+### `POST /v1/launchers/{id}/import`
+Returns `{added, updated}`. Battle.net games are found by their default folders, Ubisoft games by registry keys and EA games by `__Installer/installerdata.xml`. `409 launcher_not_installed`.
 
-- Catalog listing (`GET /v1/library?source=gog`) talks to GOG's own
-  `embed.gog.com`/`api.gog.com` API directly with the access token gogdl's
-  own `auth` step obtained, rather than through gogdl.
-- `POST /v1/gog/import` doesn't scan the whole system the way `POST
-  /v1/epic/import` does — it re-identifies whatever's already under
-  `gog.install_root` (default `~/Games/GOG`, one subdirectory per game id),
-  which is what `POST /v1/library/install` itself installs into. A GOG
-  install living somewhere else isn't picked up automatically.
-
-### `GET /v1/gog/status` — implemented
-```json
-{ "gogdl": { "installed": true, "source": "managed", "path": "...", "version": "..." },
-  "authenticated": true, "login_url": "https://auth.gog.com/auth?..." }
-```
-No account name — gogdl exposes no cheap "who am I" call the way Legendary
-does; `authenticated` just reflects whether a stored token is present and
-unexpired (refreshed once, transparently, via a bare `gogdl auth` call, if
-it looks expired).
-
-### `POST /v1/gog/setup` — implemented
-Downloads gogdl's latest GitHub release binary into
-`~/.config/mira/tools/gog/gogdl`, detached, with `gog.setup.started`/
-`.finished`/`.failed` on the event stream. Re-running it re-fetches the
-latest release.
-
-### `POST /v1/gog/auth` — implemented
-Body `{"code": "..."}` — the `code` query param from the redirect that
-`login_url` ends on, or that whole redirect URL (mirad pulls the code out). Verified by re-checking status
-afterward, not the exit code — gogdl's `auth` handler prints `{"error":
-true}` on a rejected code but still exits 0 (confirmed live, the same
-lie Legendary's own `auth --code` tells).
-
-### `POST /v1/gog/logout` — implemented
-Removes Mira's own stored token file — gogdl has no `auth --delete`.
-
-### `POST /v1/gog/import` — implemented
-See the class-comment note above: re-identifies everything already under
-`gog.install_root`, not a system-wide scan.
-
----
+### `POST /v1/launchers/{id}/open`
+Body `{action?: "launch"|"install", ref?}`. Opens the launcher, or asks it to launch or install a game by store id (a Battle.net product code such as `WTCG`, a Ubisoft id or an EA offer id). Not tracked.
 
 ## Sources
 
-### `GET /v1/sources/{id}/removal` — implemented
-What removing a source would do, without doing it:
+### `GET /v1/sources/{id}/removal`
+What removing a source would do:
+
 ```json
 { "source": "ubisoft", "games": [ { "id": "ubisoft-5595", "name": "Trackmania",
     "deletes": "/home/me/Games/prefixes/ubisoft-connect/drive_c/.../Trackmania" } ],
@@ -841,509 +374,115 @@ What removing a source would do, without doing it:
   "kept": [ "/home/me/Games/prefixes/ubisoft-connect", ".../Ubisoft Game Launcher/savegames" ],
   "signs_out": false }
 ```
-`deletes` is empty for a game only dropped from Mira (Steam, Lutris and
-Humble own their files).
 
-### `POST /v1/sources/{id}/remove` — implemented
-Uninstalls the source's games (`legendary uninstall`, `nile uninstall`,
-butler's `Uninstall.Perform`, or deleting the folder when it's inside a
-Mira folder), deletes a launcher's program folder but keeps save folders
-inside it, signs out of a store, removes the games from Mira and sets
-`<id>.enabled` to false. Prefixes are never deleted. A step that fails is
-reported and the rest still run:
-```json
-{ "removed": 3, "problems": [] }
-```
+`deletes` is empty for games that are only dropped from Mira (Steam, Lutris and Humble own their files).
 
-## itch.io
-
-itch.io support wraps [butlerd](https://itch.io/docs/butler/launcher-integration.html),
-itch's own launcher-integration daemon — the one source here with a tool
-*built specifically* for third-party launchers to use, confirmed against
-itch's own docs and a real `butler daemon --json` run. Unlike every other
-source, this is a **long-lived daemon connection**, not a one-shot
-subprocess per call: `mirad` starts `butler daemon` once, lazily, on the
-first itch call any code makes, and keeps that JSON-RPC-over-TCP
-connection for the rest of its run rather than paying butlerd's startup
-cost (a real subprocess spawn plus a database open) every time. A
-consequence worth knowing: changing `itch.butler_bin` takes effect only on
-`mirad`'s next restart, not immediately.
-
-### `GET /v1/itch/status` — implemented
-```json
-{ "butler": { "installed": true, "source": "managed", "path": "...", "version": "..." },
-  "authenticated": true, "login_url": "https://itch.io/user/settings/api-keys" }
-```
-`authenticated` reflects whether an itch.io API key is stored — never
-connects to butlerd just to check this.
-
-### `POST /v1/itch/setup` — implemented
-Downloads butler's latest GitHub release into
-`~/.config/mira/tools/itch/` (a zip, not a bare binary — butler ships with
-shared libraries, `7z.so`/`libc7zip.so`, that have to stay alongside it),
-detached, `itch.setup.started`/`.finished`/`.failed` on the event stream.
-
-### `POST /v1/itch/auth` — implemented
-Body `{"api_key": "..."}` — from
-[itch.io/user/settings/api-keys](https://itch.io/user/settings/api-keys),
-not a pasted redirect code the way Epic/GOG use (itch keys don't expire).
-Verified immediately via butlerd's own `Profile.LoginWithAPIKey`.
-
-### `POST /v1/itch/logout` — implemented
-Removes Mira's own stored key.
-
-### `POST /v1/itch/import` — implemented
-Upserts butlerd's own installed-games state (`Fetch.Caves` — a "cave" is
-butler's word for one installed copy) as tracked games, tagged `itch`.
-**Not fully confirmed against a real logged-in account** — the exact
-`Cave` JSON shape is per itch's own documentation, parsed defensively
-(a missing/renamed field just leaves that piece blank rather than failing
-the import).
-
----
-
-### `GET /v1/itch/collections` — implemented
-The collections whose games `GET /v1/library?source=itch` lists: the
-account's own (butlerd's `Fetch.ProfileCollections`, including the default
-one named after the username), then the ones added by link
-(`itch.collections`).
-```json
-[ { "id": 8213205, "title": "Ex03's Collection", "games_count": 2, "own": true,
-    "url": "https://itch.io/c/8213205" } ]
-```
-
-### `POST /v1/itch/collections` — implemented
-Body `{"link": "https://itch.io/c/8213205/ex03s-collection"}`. Also takes the
-link without the slug or scheme, or a bare id. The collection is read
-through butlerd (`Fetch.Collection`) first, so a bad link or another
-account's private collection is refused. Adds the id to `itch.collections`
-and returns the collection, as above, with 201.
-
-### `DELETE /v1/itch/collections/{id}` — implemented
-Removes a collection added by link. The account's own collections can't be
-removed this way.
-
-## Humble Bundle
-
-Humble Bundle support wraps [humble-cli](https://github.com/smbl64/humble-cli)
-(unofficial). Deliberately **not** part of the `library::ILibrarySource`
-registry the other four sources share — Humble Bundle has no "installed"
-concept of its own at all, just purchased bundles of downloadable files (a
-mix of installers, archives, and DRM-free builds), so there's no catalog/
-install/update *lifecycle* to wrap, only "list what's purchased" and
-"download some files from one bundle." A downloaded item is never
-auto-imported as a `model::Game` — it's an arbitrary archive/installer, not
-a provisioned prefix; the existing manual-add flow (`POST /v1/games`, or
-`AutoSetup` detecting the extracted folder) takes it from there.
-
-humble-cli itself has no `--json` output (confirmed live, v0.23.2) — only
-a human-readable table — so `GET /v1/humble/library` parses that table
-defensively (columns split on runs of 2+ spaces, a Go `text/tabwriter`
-convention) rather than a stable machine format.
-
-### `GET /v1/humble/status` — implemented
-### `POST /v1/humble/setup` — implemented
-Same shape as gog/itch's equivalents; status's tool key is `humble_cli`
-and its `login_url` is Humble's own login page.
-
-### `POST /v1/humble/auth` — implemented
-Body `{"session_key": "..."}` — the `_simpleauth_sess` cookie value,
-copied from a logged-in browser session (documented in humble-cli's own
-README). There's no login URL/code flow the way Epic/GOG have.
-
-### `GET /v1/humble/library` — implemented
-```json
-[ { "key": "abc123def456", "name": "Indie Bundle 42", "claimed": true } ]
-```
-
-### `POST /v1/humble/download` — implemented
-Body `{"bundle_key": "...", "item_numbers": "1,3,5-7"}` (`item_numbers`
-optional, humble-cli's own range syntax). Detached, into
-`<humble.download_root>/<bundle_key>/`, with `humble.download.started`/
-`.finished`/`.failed` on the event stream — `.finished`'s payload includes
-`path` and `downloaded` (bool). `downloaded: false` on an otherwise
-successful run means the key had nothing Humble-hosted to fetch —
-confirmed live against an already-redeemed Steam-key purchase
-(`humble-cli details` showed "No items to show", "Total size: 0 B");
-humble-cli itself exits 0 and prints "Nothing to download" for these,
-which isn't a failure, but isn't a real download either.
-
----
-
-## Amazon Games
-
-Wraps [nile](https://github.com/imLinguin/nile) (Heroic's Amazon Games
-client). Install and update go through `POST /v1/library/install|update`
-with `source: "amazon"` and the product id as `ref`; titles land in
-`amazon.install_root`. An installed game (`amazon-<product id>`) runs its
-`fuel.json` launch command through Mira's own runner, with the Amazon SDK
-variables `nile launch` would set.
-
-### `GET /v1/amazon/status` — implemented
-`{nile: {installed, source, path, version}, authenticated}`.
-
-### `POST /v1/amazon/setup` — implemented
-`202`; downloads nile's latest release. Events `amazon.setup.started/finished/failed`.
-
-### `POST /v1/amazon/login` — implemented
-`{url}` to open in a browser. The login ends on an amazon.com page.
-
-### `POST /v1/amazon/auth` — implemented
-Body `{redirect}`: that page's URL, or its `openid.oa2.authorization_code`
-value. Finishes the login started above.
-
-### `POST /v1/amazon/logout` — implemented
-
-### `POST /v1/amazon/import` — implemented
-`{added, updated}` from nile's `installed.json`.
-
-## Store launchers
-
-Battle.net, Ubisoft Connect and the EA app have no Linux client, so each is
-installed once into its own prefix (game `launcher-<id>`). Games installed
-through a launcher are imported as their own games (`<id>-<ref>`, source
-`battlenet`/`ubisoft`/`ea`) sharing its prefix and runner. Launching one asks
-the launcher to start it; the game's own processes are tracked for playtime
-and `stop`, and the launcher keeps running. `launchers.auto_import` imports
-on every scan. umu's `STORE` and, when found, `GAMEID` are set so
-protonfixes apply.
-
-### `GET /v1/launchers` — implemented
-`[{id, name, game_id, installed, install_state, interactive_install, prefix, error}]`.
-`install_state` is `idle`, `running`, `finished` or `failed`.
-
-### `POST /v1/launchers/{id}/install` — implemented
-`202`. Makes the prefix, runs the winetricks steps, then the launcher's
-installer: silent for Ubisoft and EA, shown for Battle.net. Imports its
-games afterwards. `409 install_running`. Events
-`launcher.install.started/finished/failed`.
-
-### `POST /v1/launchers/{id}/import` — implemented
-`{added, updated}`. Battle.net games are found by their default folders,
-Ubisoft by the launcher's registry keys, EA by each game's
-`__Installer/installerdata.xml`. `409 launcher_not_installed`.
-
-### `POST /v1/launchers/{id}/open` — implemented
-Body `{action?: "launch"|"install", ref?}`. Opens the launcher, or asks it
-to launch or install a game by store id (Battle.net product code such as
-`WTCG`, Ubisoft id, EA offer ids). Not tracked.
+### `POST /v1/sources/{id}/remove`
+Uninstalls the source's games (through the store tool, or by deleting a folder inside a Mira folder), deletes a launcher's program folder but keeps save folders, signs out, removes the games from Mira and sets `<id>.enabled` to false. Prefixes are never deleted. A failed step is reported and the rest still run: `{"removed": 3, "problems": []}`.
 
 ## Desktop entries
 
-Two directions, both covered here: reading someone else's already-installed
-`.desktop` entries and offering them as games (this section), vs. writing
-Mira's own `mira-<id>.desktop` entries for its games (the `desktop_entries.*`
-settings, applied on every library change — see `GET /v1/config/schema`).
-This is deliberately how a Flatpak app gets added: every Flatpak-exported
-entry already carries an `X-Flatpak=<app-id>` key, which is enough to
-relaunch it exactly, with no Flatpak-specific runner needed at all.
+Imports existing `.desktop` entries as games. Mira's own `mira-<id>.desktop` entries are controlled by the `desktop_entries.*` settings. Nothing is imported automatically.
 
-Manual, not auto-import, on purpose: `GET .../candidates` only lists, and
-nothing is added to the library until `POST .../import` is called with
-specific ids a human picked.
+### `GET /v1/desktop-entries/candidates`
+Entries from `$XDG_DATA_HOME/applications`, `$XDG_DATA_DIRS`, the Flatpak export directories and `desktop_import.extra_dirs`:
 
-### `GET /v1/desktop-entries/candidates` — implemented
-Walks `$XDG_DATA_HOME/applications`, every `$XDG_DATA_DIRS` entry, the two
-well-known Flatpak export directories, and `desktop_import.extra_dirs`, and
-lists every `.desktop` entry that could reasonably become a game:
 ```json
 [{ "id": "com.spotify.Client", "name": "Spotify", "icon": "com.spotify.Client" }]
 ```
-`id` is the entry's freedesktop "desktop file ID" (its path relative to
-whichever `applications/` dir it's under, `/` replaced with `-`, `.desktop`
-stripped) — stable across calls, so nothing needs to be remembered between
-listing and importing. An entry is left out when: it has no
-`[Desktop Entry]` section or a `Type=` other than `Application`;
-`NoDisplay=true` or `Hidden=true`; it carries `X-Mira-Game-Id` (it's Mira's
-own, generated entry — importing it back would loop); its `Exec=` looks like
-Steam's own launcher (`steam steam://rungameid/...` — already covered,
-better, by `POST /v1/steam/scan`); or its resolved install path already
-matches an existing game. No filtering on `Categories=` — the picker is
-manual, so nothing is auto-excluded by guessing at what "is a game."
 
-### `POST /v1/desktop-entries/import` — implemented
-Body: `{"ids": ["com.spotify.Client", ...]}` — ids as returned by
-`GET .../candidates`. Re-scans (stateless; no caching between the two calls)
-and, for each requested id: an `X-Flatpak=<app-id>` entry becomes
-`exe_path: "flatpak"`, `args: "run <app-id>"`, `install_path:
-"~/.var/app/<app-id>"` (Exec= itself is ignored entirely — parsing Flatpak's
-own `flatpak run --branch=... --command=... <id> @@u %u @@` line isn't worth
-it when the app id alone relaunches it exactly). Anything else is resolved
-from `Exec=` directly: field codes (`%f %u ...`) and `@@...@@` forwarding
-brackets are dropped, the first remaining token becomes `exe_path` (absolute
-→ split into `install_path`/`exe_path`; bare name → `install_path` empty,
-resolved via `$PATH` at launch same as `flatpak`/`steam`/`wine` already are),
-the rest joined into `args`. `platform` is always `"native"`; `runner_ref` is
-left empty (`native:native` resolves by default). Matched by `install_path`
-— importing an id a second time updates rather than duplicates. Response:
-```json
-{ "added": 1, "updated": 0 }
-```
+`id` is the desktop file ID. Skipped: non-applications, `NoDisplay` or `Hidden` entries, Mira's own entries, Steam game shortcuts, and entries already in the library.
 
-### `POST /v1/desktop-entries/sync` — implemented
-Regenerates Mira's own `mira-<id>.desktop` entries immediately, without
-needing to touch an unrelated game first — useful right after changing
-`desktop_entries.*` settings.
+### `POST /v1/desktop-entries/import`
+Body `{"ids": [...]}`. A Flatpak entry becomes `flatpak run <app-id>`. Anything else uses its `Exec=` line with field codes removed. Imported games are native. Importing the same entry again updates it. Returns `{"added": 1, "updated": 0}`.
 
----
+### `POST /v1/desktop-entries/sync`
+Rewrites Mira's own desktop entries now.
 
 ## GameMode
 
-### `GET /v1/gamemode/status` — implemented
-```json
-{ "installed": true, "daemon_running": false }
-```
-`installed` is whether `gamemoded`/`gamemoderun` is on `PATH` at all;
-`daemon_running` is whether `com.feralinteractive.GameMode` currently owns
-its name on the session bus, i.e. the daemon is actually up right now — the
-two are reported separately since they're different problems (nothing
-installed at all, vs installed but not currently running) needing different
-guidance. Checked via `gdbus`, the desktop-bus-standard `NameHasOwner` call,
-not anything GameMode-specific.
-
-`launch.gamemode` (a per-game-overridable setting, default off) registers
-the game with GameMode automatically via its own D-Bus interface
-(`RegisterGame`/`UnregisterGame`) around the game's exact lifetime — no
-`command_wrappers` entry needed. Always best-effort: a daemon that isn't
-reachable is logged and otherwise ignored, never a launch failure.
-
----
+### `GET /v1/gamemode/status`
+`{"installed": true, "daemon_running": false}`. `installed` means `gamemoded` or `gamemoderun` is on `PATH`; `daemon_running` means GameMode owns its D-Bus name. With `launch.gamemode` on, an unreachable daemon is logged and the game still launches.
 
 ## Metadata
 
-Cover art and store info, fetched from public web APIs and cached on disk
-next to `settings.toml` (`metadata/<id>.json`, `artwork/<id>/<slot>.*`) —
-never written into `games.toml`, since none of it is user-editable state and
-it can always be re-fetched. Two sources, picked by whether a game is
-Steam-owned (`runner_ref` starting `"steam:"`):
+Store info and art are cached in the config directory (`metadata/<id>.json`, `artwork/<id>/<slot>.*`), never in `games.toml`. Sources:
 
-- **Steam-owned**: Steam's own public store API (`store.steampowered.com`)
-  for description, genres, categories, release date, developers/publishers,
-  price, metacritic score, website, header/background image URLs,
-  supported languages, PC requirements, DLC app ids, content descriptors,
-  achievement count, screenshot and trailer URLs; Steam's public
-  review-summary endpoint for the aggregate score; [ProtonDB]
-  (https://www.protondb.com)'s compatibility tier; four art slots from
-  Steam's own CDN — `cover` (`library_600x900`), `hero` (`library_hero`,
-  the wide banner), `capsule` (small store-listing thumbnail), `header`
-  (the classic store-page banner). None of these need a key. If
-  `steamgriddb.api_key` is set, SteamGridDB is also searched by name for
-  `cover`/`hero`/`logo`/`icon` candidates the same as below — added to
-  `art_candidates` as alternates to switch to, never overwriting Steam's own
-  default `cover`/`hero`.
-- **GOG, itch and Amazon**: the store's own cover and hero from GOG
-  Galaxy's public games database (`gamesdb.gog.com`), keyed by the store's
-  id; Amazon also falls back to nile's cached art. No key needed.
-  SteamGridDB, below, then only adds alternates.
-- **Everything else** (and GOG/itch/Amazon games gamesdb doesn't know):
-  [SteamGridDB](https://www.steamgriddb.com), matched by name search, for
-  four art slots — `cover` (grids), `hero`, `logo` (transparent overlay),
-  `icon` — when `steamgriddb.api_key` is set. Failing that, with
-  `metadata.steam_art_by_name` on (the default), Steam's cover and hero for
-  a Steam game of exactly the same name (ignoring case and punctuation;
-  folder names like `CloneDroneintheDangerZone` are split into words to
-  search). **With no key and no art found the fetch fails with
-  `no_steamgriddb_key`**, carried on `game.metadata_failed` — the signal
-  that a key would find more.
-  Every slot's full candidate list is cached too (`art_candidates` below),
-  so a different one can be picked via `POST /v1/games/{id}/artwork?type=`.
-  If `metadata.protondb_for_non_steam` is on (default off), a Steam AppID is
-  also best-matched by name (Steam's own public store search — no key
-  needed) and, if found, ProtonDB is queried the same as the Steam-owned
-  path. Best-effort and independent of `steamgriddb.api_key`: with no key
-  set, this alone is enough for the fetch to succeed instead of failing with
-  `no_steamgriddb_key`, just with no cover art. Matching by name can pick
-  the wrong game (a generic title has no other signal to disambiguate with)
-  and never touches `runner_ref` or how the game actually launches.
+- **Steam games**: Steam's store API, review summary and CDN art (`cover`, `hero`, `capsule`, `header`), plus the ProtonDB tier. No key needed.
+- **GOG, itch and Amazon**: cover and hero from GOG Galaxy's games database, with nile's cached art as a fallback for Amazon.
+- **Everything else**: [SteamGridDB](https://www.steamgriddb.com) by name (`cover`, `hero`, `logo`, `icon`) when `steamgriddb.api_key` is set. Without a key, `metadata.steam_art_by_name` borrows art from a Steam game of the same name. If nothing is found, the fetch fails with `no_steamgriddb_key`.
 
-Fetched automatically the moment a game is first detected (`POST
-/v1/library/scan`, the inotify watcher, and `POST /v1/steam/scan` all
-trigger it for newly-added games only — never re-fetched on every rescan of
-an already-known game) via an in-process queue: three workers, so a scan or
-bulk refresh of hundreds of games doesn't get rate-limited by Steam or
-SteamGridDB; a game already waiting isn't queued twice; tracked games go
-ahead of store titles (`POST /v1/library/artwork`). A slow or unreachable
-source never blocks a scan, and on shutdown whatever hasn't started is
-dropped. Controlled by `metadata.enabled` (default on).
+With a key, SteamGridDB also adds alternates for every game in `art_candidates`, without replacing store art. `metadata.protondb_for_non_steam` looks up a ProtonDB tier by name for non-Steam games.
 
-### `GET /v1/games/{id}/metadata` — implemented
-The cached JSON verbatim, `{"source": "steam"|"steamgriddb", "fetched_at":
-..., "steam": {...}, "steam_reviews": {...}, "protondb": {...}, "artwork":
-{...}, "hero": {...}, "capsule": {...}, "header": {...}, "logo": {...},
-"icon": {...}}` — every top-level key besides `source`/`fetched_at` is
-present only if that source actually returned something for it; `artwork`
-is the cover slot specifically, kept under that name for wire compatibility
-with clients written before `hero` existed. Each art key that is present
-looks like `{"file": "hero.jpg", "content_type": "image/jpeg", "source":
-"steam_cdn"|"steamgriddb", "candidate_id": <id>}` — `candidate_id` only when
-the image came from `art_candidates` (auto-picked or explicitly selected),
-naming which entry in that slot's list is the one currently active; absent
-for Steam's own CDN art, which isn't a candidate. `404` means either "never
-fetched" or
-"fetched, found nothing" — `POST .../metadata/refresh` below disambiguates
-by trying again. `art_candidates` (SteamGridDB games only) is
-`{"hero": [{"id", "url", "thumb", "width", "height", "style", "nsfw"}, ...], ...}`
-per slot — SteamGridDB's first page (50) at fetch time, plus any later pages
-`POST .../artwork/candidates` added. `nsfw` marks art SteamGridDB rates
-adult; it's only listed when `steamgriddb.nsfw` is on, and never auto-picked
-as a slot's default.
+New games are fetched when first added, through a queue of three workers. Tracked games go before store titles. `metadata.enabled` turns automatic fetching off.
 
-### `GET /v1/games/{id}/artwork?type=` — implemented
-The cached image itself for one art slot (`image/jpeg` or `image/png`,
-whatever the source sent), read straight off disk. `type` defaults to
-`cover`; also accepts `hero`, `capsule`, `header` (Steam-owned games) or
-`hero`, `logo`, `icon` (SteamGridDB games) — see the slot list above for
-which source fills which. `404` if that slot isn't cached, whether because
-nothing's been fetched yet or the source didn't have that slot for this
-game.
+### `GET /v1/games/{id}/metadata`
+The cached JSON: `source`, `fetched_at`, and whichever of `steam`, `steam_reviews`, `protondb`, `artwork` (the cover), `hero`, `capsule`, `header`, `logo` and `icon` were found. Art entries look like `{"file", "content_type", "source", "candidate_id"?}`. `art_candidates` maps each slot to `[{"id", "url", "thumb", "width", "height", "style", "nsfw"}]`; adult art is only listed with `steamgriddb.nsfw` on and is never picked by default. `404` when nothing is cached.
 
-### `POST /v1/games/{id}/artwork?type=` — implemented
-Swaps a slot to a different cached `art_candidates` entry: body
-`{"candidate_id": <id>}`, `id` from that list, not a raw URL — the daemon
-never fetches an address the API handed it. `202`, then
-`game.artwork_selected`/`.artwork_select_failed` on the event stream.
-`400` for a missing `?type=` or bad body; `404` if the game doesn't exist.
+### `GET /v1/games/{id}/artwork?type=`
+The cached image for a slot (`cover` by default). `404` if that slot isn't cached.
 
-### `POST /v1/games/{id}/artwork/candidates?type=&page=&request=` — implemented
-Asks SteamGridDB now for one page (50) of the game's art for a slot
-(`cover`, `hero`, `logo`, `icon`), using the current `steamgriddb.nsfw`, so a
-picker isn't limited to what the last metadata fetch cached. `page` starts at
-0. `202`, then `game.artwork_candidates_ready`: `{"id", "type", "page",
-"request", "total", "candidates": [...]}` in SteamGridDB's order, each shaped
-like an `art_candidates` entry and added to that cached list (so it can be
-selected and previewed by id). On failure, `code` and `error` in place of
-`total`/`candidates`: `no_steamgriddb_key`, `no_steamgriddb_match` (no
-`steamgriddb_id` cached for the game yet), `steamgriddb_unreachable`.
-`request` is echoed back unchanged, so a caller can tell its answer from a
-replayed event. `400` for a missing `?type=` or a negative `page`.
+### `POST /v1/games/{id}/artwork?type=`
+Body `{"candidate_id": <id>}`. Switches a slot to a cached candidate. Only candidate ids are accepted, never URLs. Events: `game.artwork_selected`/`artwork_select_failed`.
 
-### `POST /v1/games/{id}/artwork/thumbs?type=` — implemented
-Caches a preview of each listed `art_candidates` entry, for a picker: body
-`{"candidate_ids": [<id>, ...]}`, 1 to 64 ids from that slot's list. The
-preview is the candidate's `thumb` (SteamGridDB's small version), else the
-image itself (Steam, Epic and Lutris entries have no thumb). The batch is
-fetched in parallel. `202`, then one `game.artwork_thumbs_ready` event:
-`{"id", "type", "ready": [<id>, ...], "failed": [<id>, ...]}`, plus `error`
-when the whole batch failed (no metadata cached, say). An id already cached
-is ready straight away, without a download. `400` for a missing `?type=` or
-bad body; `404` if the game doesn't exist.
+### `POST /v1/games/{id}/artwork/candidates?type=&page=&request=`
+Fetches one page (50) of SteamGridDB art for a slot, starting at page 0, and adds it to `art_candidates`. Event: `game.artwork_candidates_ready` with `{id, type, page, request, total, candidates}`, or `code` and `error` (`no_steamgriddb_key`, `no_steamgriddb_match`, `steamgriddb_unreachable`). `request` is echoed back so a caller can match its answer.
 
-### `GET /v1/games/{id}/artwork/thumb?type=&candidate_id=` — implemented
-One cached preview, as saved by the call above. `type` defaults to `cover`.
-`404 thumb_not_cached` until it's fetched; `400` without a `candidate_id`.
+### `POST /v1/games/{id}/artwork/thumbs?type=`
+Body `{"candidate_ids": [...]}`, 1 to 64 ids. Caches a preview for each, in parallel. Event: `game.artwork_thumbs_ready` with `{id, type, ready, failed}` and `error` if the whole batch failed.
 
-### `DELETE /v1/artwork/thumbs` — implemented
-Deletes every game's cached previews. `204`. Previews are only for a picker
-that's open, so they aren't kept like art: the GUI calls this as it quits,
-and mirad clears them itself when it starts and stops.
+### `GET /v1/games/{id}/artwork/thumb?type=&candidate_id=`
+One cached preview. `404 thumb_not_cached` until fetched.
 
-### `POST /v1/games/{id}/metadata/refresh?announce=` — implemented
-Re-runs the fetch for one game on demand — a `steamgriddb.api_key` was just
-set, or the first automatic attempt failed transiently. Bypasses
-`metadata.enabled` (an explicit request should work even with automatic
-fetching off). Runs in the background the same way the automatic fetch
-does; returns `202` immediately. `game.metadata_ready`/`.metadata_failed` on
-the event stream say when it's done. A failure carries both `code` and
-`error` — match on the code, not the message. The one worth handling
-specially is `no_steamgriddb_key`, which is not a transient failure and is
-fixed by setting a config key rather than by retrying.
+### `DELETE /v1/artwork/thumbs`
+Deletes all cached previews (`204`). The GUI calls it on quit, and `mirad` clears them on start and stop.
 
-`?announce=1` marks this as user-initiated: mirad also publishes a
-`notification` event (below) if it fails — success needs none, the cover
-changes on its own — so a caller doesn't
-have to build its own message from `game.metadata_failed`. Omit it (or
-`announce=0`) for a background/bulk refresh, where one notification per
-game would be noise. `no_steamgriddb_key` is never wrapped in a
-`notification` this way — its `game.metadata_failed` event is the only
-signal, since a caller decides for itself whether to interrupt with a
-dialog or just note it.
+### `POST /v1/games/{id}/metadata/refresh?announce=`
+Fetches one game again, even with `metadata.enabled` off. Events: `game.metadata_ready`/`metadata_failed` with `code` and `error`. With `announce=1`, a failure also publishes a `notification`, except for `no_steamgriddb_key`.
 
-### `GET /v1/games/{id}/metadata/matches[?q=]` — implemented
-SteamGridDB's matches for the game's name (or `q`), best first:
-`{query, chosen, matches: [{id, name, release_date?}]}`. `chosen` is the
-game's `metadata.steamgriddb_id`, `0` when the top match is in use. Needs
-`steamgriddb.api_key`.
+### `GET /v1/games/{id}/metadata/matches[?q=]`
+SteamGridDB's matches for the name (or `q`): `{query, chosen, matches: [{id, name, release_date?}]}`. `chosen` is 0 when the top match is in use.
 
-### `POST /v1/games/{id}/metadata/wrong-match` — implemented
-"This art is for the wrong game": moves to the next SteamGridDB match for
-the game's name, saves it as `metadata.steamgriddb_id`, and refetches.
-`202 {status, match}`; `409 no_more_matches` after the last one.
+### `POST /v1/games/{id}/metadata/wrong-match`
+Moves to the next SteamGridDB match, saves it as `metadata.steamgriddb_id` and fetches again. `202 {status, match}`, or `409 no_more_matches`.
 
-### `POST /v1/games/{id}/metadata/match` — implemented
-Body `{steamgriddb_id}`: take art from that SteamGridDB game from now on
-and refetch. `0` goes back to the top match.
+### `POST /v1/games/{id}/metadata/match`
+Body `{"steamgriddb_id": N}`. Uses that SteamGridDB game from now on; `0` goes back to the top match.
 
-### `POST /v1/games/metadata/refresh-missing` — implemented
-Bulk version of the above: enqueues a fetch for every game with no cached
-cover art yet (same check `GET /v1/games/{id}/artwork`'s default `cover`
-slot uses), in one request. Returns `202` immediately with
-`{"status": "fetching", "count": <n>}` — `count` is how many fetches were
-enqueued. Each one's outcome still arrives individually as
-`game.metadata_ready`/`.metadata_failed`, same as a single refresh.
-
----
+### `POST /v1/games/metadata/refresh-missing`
+Queues a fetch for every game without a cover. Returns `202 {"status": "fetching", "count": n}`.
 
 ## Events
 
-### `GET /v1/events` — implemented
-Server-Sent Events. Each event:
+### `GET /v1/events`
+Server-Sent Events:
+
 ```
 id: 42
 event: game.updated
-data: {"id":"celeste","name":"Celeste (Steam)", ...}
-
+data: {"id":"celeste","name":"Celeste", ...}
 ```
-Reconnect with a `Last-Event-ID` header to replay everything published
-since that id — the buffer holds the last 500 events, enough to survive a
-frontend restart, but **not** a daemon restart (events are in-memory only;
-`docs/architecture.md` explains why that trade-off is deliberate).
 
-Published today:
-- `game.added` — fires the moment a new folder is auto-configured,
-  carrying the full detected configuration plus `open_config: <bool>` from
-  the `open_config_on_add` setting, so the frontend knows whether to raise
-  its config menu immediately.
-- `game.updated`, `game.removed`.
-- `game.state` — the full updated game record (same shape as
-  `GET /v1/games/{id}`) plus `"state": "running" | "exited" | "crashed"`,
-  and, for `exited`/`crashed`, this session's own `exit_code`/`signal`/
-  `played_seconds`/`error` alongside the record's own totals — from
-  `proc::ProcessSupervisor` (a Steam game launched via
-  `steam.launch_mode: "steam"` never emits this — Mira isn't tracking its
-  process; see `/launch` above). Carrying the full record means a listener
-  can patch the one row directly instead of re-fetching `GET /v1/games`.
-- `game.launched` — `{"id": ..., "via": "steam"}`, the untracked
-  counterpart to `game.state` for that same case.
-- `runners.download.started` / `.finished` / `.failed` — see
-  `POST /v1/runners/download` above.
-- `runners.updated` — see `POST /v1/runners/update` above.
-- `umu.setup.*` / `winetricks.setup.*` — see
-  `POST /v1/runners/tools/{id}/setup` above.
-- `library.install.started` / `.finished` / `.failed` —
-  `{"source": ..., "ref": ..., "update": false}`, see
-  `POST /v1/library/install` above. `update: true` is the only thing
-  distinguishing an update from an install, rather than a parallel event
-  namespace.
-- `library.install.progress` — `{"source": "itch", "ref": ..., "progress":
-  0.42, "eta": 30, "bps": 1048576}`, about once a second while butlerd
-  downloads. Only itch reports progress so far.
-- `library.artwork_ready` / `.artwork_failed` — `{"source": ..., "ref": ...}`,
-  plus `"code"` on failure (`no_steamgriddb_key`, `no_artwork`, ...); see
-  `POST /v1/library/artwork` above.
-- `epic.legendary.install.started` / `.finished` / `.failed` — fetching
-  the Legendary binary itself, see `POST /v1/epic/legendary/install`.
+Reconnect with `Last-Event-ID` to replay what was missed. The buffer holds the last 500 events in memory. Ids start from the clock, so they keep increasing across a daemon restart.
 
-Planned as the rest of the backend lands: `scan.started`, `scan.finished`,
-`setup.progress`, `setup.finished`, `setup.failed`, `config.changed`.
+| Event | Payload |
+|---|---|
+| `game.added` | The game, plus `open_config` from the `open_config_on_add` setting. |
+| `game.updated` | The game. |
+| `game.removed` | `{id}`. |
+| `game.state` | The game plus `state` (`running`, `exited`, `crashed`, `idle`) and, after an exit, `exit_code`, `signal`, `played_seconds` and `error`. |
+| `game.launched` | `{id, via, tracked}` for launches handed to Steam or a store launcher. |
+| `game.install.*` | See `POST /v1/games/{id}/install`. |
+| `game.metadata_ready`, `game.metadata_failed` | See metadata refresh. |
+| `game.artwork_*` | See the artwork endpoints. |
+| `tricks.*` | See `POST /v1/games/{id}/tricks`. |
+| `library.install.*` | `{source, ref, update}`; `progress` adds `progress`, `eta` and `bps`. |
+| `library.artwork_ready`, `library.artwork_failed` | `{source, ref}`, plus `code` on failure. |
+| `runners.download.*`, `runners.updated`, `runners.removed` | See the runner endpoints. |
+| `umu.setup.*`, `winetricks.setup.*` | Tool installs. |
+| `epic.legendary.install.*`, `gog.setup.*`, `itch.setup.*`, `amazon.setup.*`, `humble.setup.*` | Store tool downloads. |
+| `humble.download.*` | See `POST /v1/humble/download`. |
+| `launcher.install.*` | See `POST /v1/launchers/{id}/install`. |
+| `notification` | A message for the user, with its level. |
 
-`mira watch` (`src/cli/main.cpp`) is the reference client — its whole
-implementation is a streaming `Get` split on blank lines, worth reading
-before building the frontend's equivalent.
-
----
-
-## Jobs
-
-For work long enough that it shouldn't block a request — not scanning
-(synchronous today, see above), but provisioning a prefix once the runner
-layer exists. `GET /v1/jobs/{id}` — **planned**, alongside that work.
+`mira watch` in `src/cli/main.cpp` is a minimal client.

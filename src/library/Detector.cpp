@@ -111,14 +111,14 @@ std::vector<RawCandidate> WalkForExecutables(const fs::path& folder, const Detec
       if (ext == ".exe") {
         found.push_back({rel, model::Platform::Windows, depth,
                          LooksLikeInstaller(entry.path(), settings, dir_has_large_file)});
+      } else if (ext == ".msi") {
+        found.push_back({rel, model::Platform::Windows, depth, /*is_installer=*/true});
       } else if (ext == ".sh" || HasExecuteBit(entry.path()) || LooksLikeElf(entry.path())) {
         // A .sh is a candidate regardless of its executable bit (archives
         // routinely lose it); anything else needs the bit or ELF magic so a
         // stray data file doesn't get treated as a launcher.
-        if (ext != ".exe") {
-          found.push_back({rel, model::Platform::Native, depth,
-                           LooksLikeInstaller(entry.path(), settings, dir_has_large_file)});
-        }
+        found.push_back({rel, model::Platform::Native, depth,
+                         LooksLikeInstaller(entry.path(), settings, dir_has_large_file)});
       }
     }
   };

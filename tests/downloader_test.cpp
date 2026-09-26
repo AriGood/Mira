@@ -69,7 +69,7 @@ TEST_CASE("InstallToolBinary installs a bare binary directly, renamed to binary_
 }
 
 TEST_CASE("InstallToolBinary finds a binary nested inside a zip, alongside sibling files") {
-  // Reproduces butler-linux-amd64.zip's real shape (confirmed live):
+  // butler-linux-amd64.zip's shape:
   // everything nested under "linux-amd64/", the binary alongside shared
   // libraries it needs at runtime -- the whole reason InstallToolBinary
   // searches for binary_name instead of assuming a flat archive.

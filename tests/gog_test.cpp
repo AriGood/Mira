@@ -59,9 +59,8 @@ void WriteFakeGogdl(const fs::path& path, const std::string& auth_success_body, 
 struct Fixture : test::TestEnv {
   explicit Fixture(const char* name) : TestEnv(name) {}
 
-  // gogdl nests the real fields one level down, keyed by client_id --
-  // confirmed live (see Gog.cpp's ReadAuthConfig comment), not the flat
-  // shape it'd be natural to assume.
+  // gogdl nests the fields one level down, keyed by client_id (see Gog.cpp's
+  // ReadAuthConfig).
   void UseFakeGogdl(const std::string& auth_success_body =
                        R"({"46899977096215655": {"access_token": "tok", "refresh_token": "ref", )"
                        R"("expires_in": 3600, "loginTime": 9999999999}})",
@@ -95,7 +94,7 @@ TEST_CASE("Login stores what gogdl wrote, and Status reads it back") {
 }
 
 TEST_CASE("Login fails when gogdl reports {\"error\": true} despite exiting 0") {
-  // Confirmed live: `gogdl auth --code <bogus>` prints {"error": true} but
+  // `gogdl auth --code <bogus>` prints {"error": true} but
   // still exits 0 -- same exit-code lie Legendary has, and the same fix
   // (verify via a real status read-back, not the exit code).
   Fixture fixture("gog-login-bad-code");

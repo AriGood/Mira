@@ -1,30 +1,39 @@
 #pragma once
 
 #include <filesystem>
+#include <optional>
+#include <string_view>
+#include <vector>
 
 #include "core/Result.h"
 
 namespace mira::library {
 
-// True if `path`'s extension is a recognized archive type — regardless of
-// whether the tool needed to actually extract it is installed (see
-// ExtractAndRemove, which is where that's checked and reported).
+// Includes the first volume of a split archive (Game.part1.rar, Game.7z.001).
 bool LooksLikeArchive(const std::filesystem::path& path);
 
-// `archive`'s filename with its recognized archive suffix removed — exactly
-// the matched suffix (".tar.gz", ".zip", ...), not repeated std::filesystem
-// ::path::stem() calls, which would mis-split a name with its own dots in
-// it (e.g. "My.Game.zip"). Returns the filename unchanged if it isn't a
-// recognized archive at all.
+// Game.part2.rar, Game.r00, Game.7z.002, ...: parts that are extracted
+// through their first volume, never on their own.
+bool IsLaterVolume(const std::filesystem::path& path);
+
+// The first volume a later volume belongs to, if it's there.
+std::optional<std::filesystem::path> FirstVolumeOf(const std::filesystem::path& later);
+
+// Every volume of `archive` on disk, `archive` itself first.
+std::vector<std::filesystem::path> VolumesOf(const std::filesystem::path& archive);
+
+// True while any process has one of `paths` open for writing.
+bool AnyOpenForWriting(const std::vector<std::filesystem::path>& paths);
+
 std::filesystem::path StemWithoutArchiveExtension(const std::filesystem::path& archive);
 
-// Extracts `archive` into `dest_dir` (created if it doesn't exist yet)
-// using whichever external tool its extension needs (tar, unzip, unrar,
-// 7z), then deletes `archive` — but only on success. Nothing is deleted or
-// left half-extracted on failure, including a missing extractor tool: that
-// fails with a clear, specific message (which package to install) rather
-// than silently doing nothing, same as a missing runner build does
-// elsewhere in this codebase.
+// Extracts into a hidden folder next to `dest_dir` and moves the result into
+// place only once the tool succeeds, so a failed or truncated archive never
+// leaves a partial game behind. Every volume is deleted on success; on
+// failure the archive is kept.
 Result<void> ExtractAndRemove(const std::filesystem::path& archive, const std::filesystem::path& dest_dir);
+
+// Name prefix of the hidden folders ExtractAndRemove works in.
+inline constexpr std::string_view kExtractingPrefix = ".mira-extracting-";
 
 }  // namespace mira::library

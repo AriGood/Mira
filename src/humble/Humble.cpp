@@ -27,7 +27,7 @@ std::string VersionOf(const std::string& path) {
   return Trim(result->output);
 }
 
-// Confirmed live: humble-cli's --field output is plain CSV, not a padded
+// humble-cli's --field output is plain CSV, not a padded
 // table (no header row either) -- "pS5kGAW5APbRTHH7,Surviving Mars -
 // Deluxe Edition,Yes". Handles a quoted field (a title containing a
 // comma) the standard way, matching Go's encoding/csv default dialect,
@@ -115,8 +115,7 @@ HumbleAuthStatus Status(const config::Config& config) {
 
   // No separate "am I logged in" call exists -- `list` is the cheapest
   // real one, and fails with a specific, recognizable message
-  // ("config file not found...") when no session key has been set yet
-  // (confirmed live).
+  // ("config file not found...") when no session key has been set yet.
   const Result<std::string> listed = RunHumbleCli(config, {"list", "--field", "key"});
   status.authenticated = listed.has_value();
   return status;
@@ -197,7 +196,7 @@ Result<bool> Download(const config::Config& config, const std::string& bundle_ke
   if (result->exit_code != 0) {
     return Err("download_failed", std::format("humble-cli exited {}: {}", result->exit_code, result->output));
   }
-  // Confirmed live: a purchase that's a redeemed Steam key with no
+  // A purchase that's a redeemed Steam key with no
   // Humble-hosted files (`humble-cli details` shows "No items to show",
   // "Total size: 0 B") still exits 0 here, printing this exact line
   // instead of downloading anything.

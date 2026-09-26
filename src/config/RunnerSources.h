@@ -45,14 +45,14 @@ inline constexpr std::string_view kLegendaryRepo = "derrod/legendary";
 inline constexpr std::string_view kLegendaryAssetPattern = "legendary";
 
 // gogdl (Heroic's GOG downloader) also publishes a standalone Linux
-// binary per release, same shape as Legendary — confirmed against a real
-// release (v1.3.0): "gogdl_linux_x86_64", no archive.
+// binary per release, same shape as Legendary: "gogdl_linux_x86_64", no
+// archive.
 inline constexpr std::string_view kGogdlRepo = "Heroic-Games-Launcher/heroic-gogdl";
 inline constexpr std::string_view kGogdlAssetPattern = "gogdl_linux_x86_64";
 
 // butler (itch.io's own launcher-integration daemon) ships zipped, with
 // two shared libraries (7z.so/libc7zip.so) alongside the binary it needs
-// at runtime — confirmed against a real release (v15.31.0). See
+// at runtime. See
 // runner::InstallToolBinary, which extracts and searches rather than
 // assuming a bare binary the way Legendary/gogdl's asset is.
 inline constexpr std::string_view kButlerRepo = "itchio/butler";
@@ -60,7 +60,7 @@ inline constexpr std::string_view kButlerAssetPattern = "butler-linux-amd64.zip"
 
 // humble-cli (unofficial Humble Bundle CLI) ships tarred, with the binary
 // itself named for its own platform ("humble-cli-linux-amd64", not just
-// "humble-cli") — confirmed against a real release (v0.23.2).
+// "humble-cli").
 inline constexpr std::string_view kHumbleCliRepo = "smbl64/humble-cli";
 inline constexpr std::string_view kHumbleCliAssetPattern = "humble-cli-linux-amd64.tar.gz";
 inline constexpr std::string_view kHumbleCliBinaryName = "humble-cli-linux-amd64";

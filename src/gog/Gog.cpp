@@ -41,8 +41,7 @@ std::optional<json> ReadAuthConfig(const config::Config& config) {
   if (parsed.is_discarded() || !parsed.is_object() || parsed.empty()) return std::nullopt;
 
   // gogdl nests the token fields one level down, keyed by client_id:
-  // {"<client_id>": {"access_token": ..., ...}} -- confirmed live, not
-  // documented anywhere.
+  // {"<client_id>": {"access_token": ..., ...}}. This isn't documented.
   const json& inner = parsed.begin().value();
   if (!inner.is_object()) return std::nullopt;
   return inner;
@@ -73,8 +72,8 @@ GogStatus DetectGog(const config::Config& config) {
 }
 
 Result<void> InstallGogBinary(const config::Config& config, const runner::ReleaseAsset& asset) {
-  // gogdl is a Python zipapp ("#!/usr/bin/env python3" shebang, confirmed
-  // against a real release), not a self-contained binary — a system
+  // gogdl is a Python zipapp ("#!/usr/bin/env python3" shebang), not a
+  // self-contained binary — a system
   // python3 has to actually be there for it to run at all, unlike
   // Legendary. Checked here rather than only at first use, so
   // "mira gog setup" fails with a clear, actionable error immediately
@@ -133,9 +132,7 @@ Result<void> Login(const config::Config& config, const std::string& pasted) {
   if (code.empty()) return Err("invalid_code", "no code entered");
   // Same posture as epic::Login: verify by re-reading what gogdl actually
   // wrote, not by trusting a nonzero/zero exit code — gogdl's own `auth`
-  // handler prints {"error": true} on a rejected code but still exits 0
-  // (confirmed live: `gogdl auth --code <bogus>` -> `{"error": true}`,
-  // exit 0).
+  // handler prints {"error": true} on a rejected code but still exits 0.
   if (auto output = RunGogdl(config, {"auth", "--code", code}); !output) {
     return std::unexpected(output.error());
   }

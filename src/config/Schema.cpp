@@ -714,10 +714,10 @@ Schema::Schema() {
   s.Add({.key = "scan.auto_run_installers",
          .label = "Run Installers Automatically",
          .type = Type::Bool,
-         .default_value = true,
-         .doc = "Silently run a detected installer (Inno Setup, NSIS) as soon as it's found, the same "
-                "way a detected archive auto-extracts. Unrecognized formats and failed runs stay "
-                "needs_install for `mira install`."});
+         .default_value = false,
+         .doc = "Silently run a detected installer (Inno Setup, NSIS, MSI) as soon as it's found. "
+                "Off by default: installers wait as needs_install until you run one with "
+                "`mira install` or Install… in the GUI."});
 
   s.Add({.key = "install.retry_failed",
          .label = "Retry Failed Installs",
@@ -767,6 +767,12 @@ Schema::Schema() {
          .type = Type::String,
          .default_value = "/S",
          .doc = "Arguments for a silent NSIS install. /D is added."});
+
+  s.Add({.key = "install.msi_args",
+         .label = "MSI Arguments",
+         .type = Type::String,
+         .default_value = "/qn",
+         .doc = "Arguments for a silent MSI install through msiexec. TARGETDIR is added."});
 
   // --- Store launchers ------------------------------------------------------
   s.Section("Store Launchers");
@@ -915,10 +921,9 @@ Schema::Schema() {
          .type = Type::Bool,
          .default_value = false,
          .doc = "Extract a .zip/.rar/.tar(.gz/.xz/.bz2)/.7z dropped directly into a library root, "
-                "into a same-named folder, then delete the archive — so an archived game drop "
-                "behaves like an already-extracted one. Off by default: silently deleting an "
-                "archive is a real action to opt into, not assume. Extracting a .rar or .7z needs "
-                "unrar/p7zip installed; a missing tool is reported, not silently skipped."});
+                "including split archives (.part1.rar, .7z.001), into a same-named folder, then "
+                "delete the archive. Waits until the archive is fully written. Off by default, "
+                "since it deletes the archive. Needs 7-Zip (7z or 7zz) installed."});
 
   s.Add({.key = "scan.periodic_interval_s",
          .label = "Periodic Scan Interval (s)",

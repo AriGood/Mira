@@ -13,7 +13,7 @@ namespace {
 namespace fs = std::filesystem;
 
 // Only meaningful for a file that actually exists — a nonexistent exe_path
-// (misconfigured, or a unit test using a fictitious path) is left to fail at
+// is left to fail at
 // exec time as before, not reported as "not executable".
 bool MissingExecuteBit(const fs::path& path) {
   std::error_code ec;

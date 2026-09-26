@@ -65,20 +65,17 @@ std::string BuildLabel(const std::string& kind, const std::string& name);
 // allows 60 unauthenticated requests an hour.
 Result<std::vector<ReleaseAsset>> ListFamilyReleases(const RunnerFamily& family);
 
-// Lists releases of `kind` ("proton", "wine", or "legendary" — the last one
-// isn't a runner, but shares the same "GitHub repo + asset glob" source
-// shape; see src/epic/Legendary.h) from its configured GitHub source, newest
-// first. Shells out to curl for the GitHub API request rather than linking
+// Lists releases of `kind` ("proton", "wine", or a tool such as "legendary",
+// "gog" or "umu") from its GitHub source, newest first. Shells out to curl for the GitHub API request rather than linking
 // libcurl — consistent with how umu-run/wine are already run as
 // subprocesses, and this is occasional, human-triggered traffic, not a hot
 // path.
 Result<std::vector<ReleaseAsset>> ListReleases(const config::Config& config, const std::string& kind);
 
-// Downloads `asset` (verifying its sha512sum first, if it has one) and
+// Downloads `asset` (verifying its checksum first, if it has one) and
 // extracts it into the right search path for `kind` —
 // runner_search_paths[0] for "proton", wine_search_paths[0] for "wine" —
-// the same locations Proton-GE/Wine-GE's own install instructions use, so
-// the very next Discover() call finds it with no extra wiring. Shells out
+// so the next Discover() call finds it. Shells out
 // to curl + tar rather than linking an archive/TLS library, for the same
 // reason as ListReleases.
 Result<void> DownloadAndInstall(const config::Config& config, const std::string& kind,

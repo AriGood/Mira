@@ -32,7 +32,6 @@ std::filesystem::path RuntimeDir() {
 
 std::filesystem::path SettingsFile() { return UserDir() / "settings.toml"; }
 std::filesystem::path GamesFile() { return UserDir() / "games.toml"; }
-std::filesystem::path DefaultSocket() { return RuntimeDir() / "mirad.sock"; }
 
 std::filesystem::path Expand(std::string_view raw) {
   std::string out;
