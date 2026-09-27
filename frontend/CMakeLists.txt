@@ -91,6 +91,8 @@ qt_add_executable(mira-gui
   ui/Tray.h
   ui/SettingsNav.cpp
   ui/SettingsNav.h
+  ui/SettingEditor.cpp
+  ui/SettingEditor.h
   ui/SettingsPanel.cpp
   ui/SettingsPanel.h
   ui/GameEditForm.cpp
