@@ -91,7 +91,7 @@ Only `game.added` and `game.updated` carry a game record, so views check the eve
 
 ## Settings
 
-- **`settings.toml`** holds backend settings. `ui/SettingsPanel` is generated from `GET /v1/config/schema`: sections, order, labels, dividers and runner pickers (`is_runner_ref`) all come from the schema, so a new backend setting needs no frontend change. Each row's editor comes from `ui/SettingEditor`, which the source settings card shares.
+- **`settings.toml`** holds backend settings. `ui/SettingsPanel` is generated from `GET /v1/config/schema`: sections, order, labels, dividers and runner pickers (`is_runner_ref`) all come from the schema, so a new backend setting needs no frontend change. Each row's editor comes from `ui/SettingEditor`, which the source settings card shares. A setting's doc opens from the `ui/HelpButton` [?] beside its label on click, not on hover, and a `link` shows as a web link next to the field. Search (`ui/SettingsSearch`) matches every typed word in any order against the key, label, category, doc and `keywords`.
 - **`frontend.toml`** holds GUI state and preferences (`FrontendPrefs` in `client/Types.h`), read and written as the `frontend` key of `/v1/config`. The backend never validates it.
 
 | Key | Meaning |

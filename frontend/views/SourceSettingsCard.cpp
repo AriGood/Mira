@@ -12,6 +12,7 @@
 #include <QVBoxLayout>
 
 #include "../client/MiradClient.h"
+#include "../ui/HelpButton.h"
 #include "../ui/Theme.h"
 
 namespace mira_gui {
@@ -104,11 +105,11 @@ void SourceSettingsCard::BuildRunnerRow(QFormLayout* form) {
   note_row->addWidget(runner_apply_, 0, Qt::AlignTop);
   column_layout->addLayout(note_row);
 
-  auto* label = new QLabel("Runner", this);
-  label->setToolTip(source_.kind == SourceInfo::Kind::Launcher
-                        ? "The Wine or Proton build " + source_.name + " and its games run with."
-                        : "The Wine or Proton build for " + source_.name + " games that have none of their own.");
-  form->addRow(label, column);
+  const QString runner_doc =
+      source_.kind == SourceInfo::Kind::Launcher
+          ? "The Wine or Proton build " + source_.name + " and its games run with."
+          : "The Wine or Proton build for " + source_.name + " games that have none of their own.";
+  form->addRow(LabelWithHelp("Runner", runner_doc, this), column);
   LoadRunner();
 }
 
@@ -210,11 +211,7 @@ void SourceSettingsCard::LoadSettings() {
           }
         }
         if (editor.line != nullptr) connect(editor.line, &QLineEdit::editingFinished, this, [this, i] { Commit(i); });
-        auto* label = new QLabel(QString::fromStdString(editor.entry.label.empty() ? editor.entry.key
-                                                                                   : editor.entry.label),
-                                 this);
-        label->setToolTip(QString::fromStdString(editor.entry.doc));
-        form_->addRow(label, row);
+        form_->addRow(editor.BuildLabel(this), row);
       }
       MiradClient::ListRunnersAsync(this, [this](RunnersResult runners) {
         for (SettingEditor& editor : settings_) {

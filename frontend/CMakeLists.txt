@@ -91,6 +91,10 @@ qt_add_executable(mira-gui
   ui/Tray.h
   ui/SettingsNav.cpp
   ui/SettingsNav.h
+  ui/SettingsSearch.cpp
+  ui/SettingsSearch.h
+  ui/HelpButton.cpp
+  ui/HelpButton.h
   ui/SettingEditor.cpp
   ui/SettingEditor.h
   ui/SettingsPanel.cpp
@@ -206,6 +210,7 @@ add_executable(mira_gui_tests
   ui/LibrarySort.cpp
   ui/DaemonSupervisor.cpp
   ui/DownloadTracker.cpp
+  ui/SettingsSearch.cpp
   client/Transport.cpp
 )
 target_include_directories(mira_gui_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

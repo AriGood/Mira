@@ -45,6 +45,8 @@ struct Entry {
 
   bool is_secret = false;      // a credential: mask it
   bool is_runner_ref = false;  // a runner reference: offer a runner picker
+  std::string link = {};       // where to get the value, e.g. an API key page
+  std::string keywords = {};   // extra search terms a settings screen matches, e.g. "sgdb"
 
   // Set by the section the entry is declared under, never per entry.
   std::string category = {};

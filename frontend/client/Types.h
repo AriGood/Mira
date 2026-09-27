@@ -351,6 +351,8 @@ struct ConfigSchemaEntry {
   bool per_game = false;       // also overridable per game (scope "per_game")
   bool is_secret = false;      // mask this value's field
   bool is_runner_ref = false;  // offer a runner picker (GET /v1/runners) instead of free text
+  std::string link;            // web page where the user gets the value; empty if none
+  std::string keywords;        // extra search terms, space-separated
 };
 
 struct ConfigSchemaResult {

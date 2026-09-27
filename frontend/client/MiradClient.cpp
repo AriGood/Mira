@@ -183,6 +183,8 @@ ConfigSchemaResult GetConfigSchemaSync() {
     e.per_game = entry.value("scope", std::string()) == "per_game";
     e.is_secret = entry.value("is_secret", false);
     e.is_runner_ref = entry.value("is_runner_ref", false);
+    e.link = entry.value("link", std::string());
+    e.keywords = entry.value("keywords", std::string());
     if (entry.contains("default")) e.default_display = mapping::ToDisplayString(entry["default"]);
     if (entry.contains("one_of") && entry["one_of"].is_array()) {
       for (const json& option : entry["one_of"]) {

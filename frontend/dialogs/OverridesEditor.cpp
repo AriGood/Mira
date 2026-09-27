@@ -8,6 +8,7 @@
 #include <QMessageBox>
 #include <QSizePolicy>
 
+#include "../ui/HelpButton.h"
 #include "../ui/Notify.h"
 #include "../ui/SettingsNav.h"
 #include <QPushButton>
@@ -98,9 +99,7 @@ void OverridesEditor::BuildRows(const ConfigSchemaResult& schema) {
 
       const QString label_text =
           QString::fromStdString(entry.label.empty() ? entry.key : entry.label);
-      auto* label = new QLabel(label_text, this);
-      label->setToolTip(QString::fromStdString(entry.doc));
-      row_widget->setToolTip(QString::fromStdString(entry.doc));
+      QWidget* label = LabelWithHelp(label_text, QString::fromStdString(entry.doc), this);
 
       field.row_widget = row_widget;
       fields_.push_back(field);
@@ -108,8 +107,9 @@ void OverridesEditor::BuildRows(const ConfigSchemaResult& schema) {
       connect(field.reset_button, &QPushButton::clicked, this, [this, index] { ResetField(index); });
       form->addRow(label, row_widget);
       nav_->RegisterRow(form, row_widget,
-                        QString("%1 %2 %3 %4").arg(QString::fromStdString(entry.key), label_text,
-                                                    category, QString::fromStdString(entry.doc)));
+                        QString("%1 %2 %3 %4 %5")
+                            .arg(QString::fromStdString(entry.key), label_text, category,
+                                 QString::fromStdString(entry.doc), QString::fromStdString(entry.keywords)));
     }
   }
 }

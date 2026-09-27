@@ -530,6 +530,8 @@ void Server::RegisterRoutes() {
       if (entry.constraint.maximum) entries.back()["maximum"] = *entry.constraint.maximum;
       if (entry.is_secret) entries.back()["is_secret"] = true;
       if (entry.is_runner_ref) entries.back()["is_runner_ref"] = true;
+      if (!entry.link.empty()) entries.back()["link"] = entry.link;
+      if (!entry.keywords.empty()) entries.back()["keywords"] = entry.keywords;
     }
     SendJson(res, std::move(entries));
   });

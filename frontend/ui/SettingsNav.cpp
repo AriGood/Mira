@@ -12,6 +12,8 @@
 #include <QStackedWidget>
 #include <QVBoxLayout>
 
+#include "SettingsSearch.h"
+
 namespace mira_gui {
 
 SettingsNavWidget::SettingsNavWidget(QWidget* parent) : QWidget(parent) {
@@ -89,7 +91,7 @@ void SettingsNavWidget::RegisterRow(QFormLayout* form, QWidget* row_widget,
   RowEntry row;
   row.form = form;
   row.row_widget = row_widget;
-  row.search_text = searchable_text.toLower();
+  row.search_text = settings_search::Normalize(searchable_text);
   row.category_index = category_it.value();
   rows_.push_back(row);
   row_index_by_widget_.insert(row_widget, static_cast<int>(rows_.size()) - 1);
@@ -104,14 +106,16 @@ void SettingsNavWidget::SetRowGateVisible(QWidget* row_widget, bool visible) {
 }
 
 void SettingsNavWidget::ApplyFilter() {
-  const QString query = search_->text().trimmed().toLower();
+  const QString query = search_->text().trimmed();
   std::vector<int> visible_count(categories_.size(), 0);
 
   for (const RowEntry& row : rows_) {
-    const bool visible = row.gate_visible && (query.isEmpty() || row.search_text.contains(query));
+    const bool visible = row.gate_visible && settings_search::Matches(row.search_text, query);
     row.form->setRowVisible(row.row_widget, visible);
     if (visible) visible_count[row.category_index]++;
   }
+  // Search results are a flat list; group dividers would only split them oddly.
+  for (const auto& [form, divider] : dividers_) form->setRowVisible(divider, query.isEmpty());
 
   bool any_visible = false;
   for (size_t i = 0; i < categories_.size(); ++i) {
@@ -173,6 +177,7 @@ void SettingsNavWidget::AddDivider(QFormLayout* form) {
   divider->setFrameShape(QFrame::HLine);
   divider->setFrameShadow(QFrame::Sunken);
   form->addRow(divider);
+  dividers_.push_back({form, divider});
 }
 
 std::vector<CategoryRows> GroupByCategory(const std::vector<std::string>& categories) {

@@ -4,8 +4,11 @@
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QHBoxLayout>
+#include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
+
+#include "HelpButton.h"
 
 namespace mira_gui {
 
@@ -50,6 +53,11 @@ QWidget* SettingEditor::Build(QWidget* parent, std::function<void()> on_reset) {
     resettable = true;
   }
 
+  // Right after the editor itself: index 0 is always the editor.
+  if (!entry.link.empty()) {
+    row_layout->insertWidget(1, MakeExternalLink(QString::fromStdString(entry.link), row_widget));
+  }
+
   if (resettable && on_reset) {
     auto* reset_button = new QPushButton("Reset", row_widget);
     reset_button->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
@@ -57,8 +65,17 @@ QWidget* SettingEditor::Build(QWidget* parent, std::function<void()> on_reset) {
     QObject::connect(reset_button, &QPushButton::clicked, row_widget, std::move(on_reset));
     row_layout->addWidget(reset_button);
   }
-  row_widget->setToolTip(QString::fromStdString(entry.doc));
   return row_widget;
+}
+
+QWidget* SettingEditor::BuildLabel(QWidget* parent) const {
+  const std::string& text = entry.label.empty() ? entry.key : entry.label;
+  return LabelWithHelp(QString::fromStdString(text), QString::fromStdString(entry.doc), parent);
+}
+
+QString SettingEditor::SearchText() const {
+  return QString::fromStdString(entry.key + ' ' + entry.label + ' ' + entry.category + ' ' + entry.doc +
+                                ' ' + entry.keywords);
 }
 
 QWidget* SettingEditor::Input() const {
