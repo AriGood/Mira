@@ -58,6 +58,16 @@ Validator RunnerRef() {
   };
 }
 
+// A runner reference, "auto", or empty for "fall back to the default".
+Validator OptionalRunnerRef() {
+  return [](const json& value) -> std::optional<std::string> {
+    if (!value.is_string()) return "expected a string";
+    const std::string text = value.get<std::string>();
+    if (text.empty() || text == "auto") return std::nullopt;
+    return RunnerRef()(value);
+  };
+}
+
 Validator NonEmptyString() {
   return [](const json& value) -> std::optional<std::string> {
     if (!value.is_string()) return "expected a string";
@@ -506,6 +516,19 @@ Schema::Schema() {
          .doc = "Runner for native Linux games.",
          .constraint = RunnerRef()});
 
+  for (const auto& [id, name] : {std::pair{"epic", "Epic Games"}, std::pair{"gog", "GOG"},
+                                 std::pair{"itch", "itch.io"}, std::pair{"amazon", "Amazon Games"}}) {
+    s.Add({.key = std::format("{}.runner", id),
+           .label = std::format("{} Runner", name),
+           .type = Type::String,
+           .default_value = "",
+           .doc = std::format("Runner for {} games that have none of their own. Empty uses "
+                              "default_runner.windows.",
+                              name),
+           .constraint = OptionalRunnerRef(),
+           .is_runner_ref = true});
+  }
+
   s.Add({.key = "launch.pin_runner",
          .label = "Pin Resolved Runner",
          .type = Type::Bool,
@@ -798,7 +821,9 @@ Schema::Schema() {
          .type = Type::String,
          .default_value = "",
          .doc = "Runner for a store launcher's prefix, e.g. \"proton:GE-Proton11-7\". Empty uses "
-                "default_runner.windows. Games it installs use the same one."});
+                "default_runner.windows. Games it installs use the same one.",
+         .constraint = OptionalRunnerRef(),
+         .is_runner_ref = true});
 
   s.Add({.key = "launchers.detect_timeout_s",
          .label = "Launcher Game Start Timeout (seconds)",

@@ -8,6 +8,7 @@
 #include <system_error>
 #include <tuple>
 
+#include "config/Schema.h"
 #include "core/Log.h"
 #include "runner/Downloader.h"
 #include "runner/NativeRunner.h"
@@ -163,6 +164,11 @@ Result<RunnerRegistry::Resolved> RunnerRegistry::Resolve(const std::string& runn
 
 std::string RunnerRegistry::ResolveRef(const model::Game& game) const {
   std::string ref = game.runner_ref;
+  // Stores with a <source>.runner key can set their own default.
+  if (ref.empty() && game.platform != model::Platform::Native && !game.source.empty() &&
+      config::Schema::Instance().Find(game.source + ".runner") != nullptr) {
+    ref = config_.GetString(game.source + ".runner");
+  }
   if (ref.empty()) {
     ref = config_.GetString(game.platform == model::Platform::Native ? "default_runner.native"
                                                                      : "default_runner.windows");
