@@ -146,7 +146,10 @@ Result<model::Game> RunInstaller(config::Config& config, const model::Game& game
   model::Game to_provision = game;
   if (to_provision.runner_ref.empty()) to_provision.runner_ref = config.GetString("install.runner");
   const model::Game provisioned = runners.ProvisionGame(to_provision);
-  if (provisioned.status == model::GameStatus::Broken) return Err("provision_failed", provisioned.last_error);
+  if (provisioned.status == model::GameStatus::Broken) {
+    return Err("provision_failed", "couldn't set up a Wine prefix for the installer: " + provisioned.last_error,
+               "The runner may be broken. Try a different one.", Fix::Runners());
+  }
   const Result<runner::RunnerRegistry::Resolved> resolved = runners.Resolve(provisioned.runner_ref);
   if (!resolved) return std::unexpected(resolved.error());
 
@@ -201,7 +204,10 @@ Result<model::Game> RunInstaller(config::Config& config, const model::Game& game
     exe = FirstGameExe(detected, dir, installer);
     if (exe) done.install_path = dir.string();
   }
-  if (!exe) return Err("no_executable", "the installer finished but no game executable was found");
+  if (!exe) {
+    return Err("no_executable", "the installer finished, but Mira couldn't find the installed game",
+               "Choose the installed game's executable, then mark it installed.", Fix::Game(game.id, "exe"));
+  }
 
   done.exe_path = exe->rel_path;
   done.candidates = detected.candidates;
@@ -228,12 +234,15 @@ std::string_view ToString(InstallerFormat format) {
 }
 
 Result<InstallerInfo> DescribeInstaller(const config::Config& config, const model::Game& game) {
-  if (game.exe_path.empty()) return Err("no_executable", "game has no exe_path");
+  if (game.exe_path.empty()) return runner::NoExecutable(game);
   InstallerInfo info;
   info.path = fs::path(game.install_path) / game.exe_path;
   std::error_code ec;
   info.size_bytes = fs::file_size(info.path, ec);
-  if (ec) return Err("installer_missing", std::format("no installer at {}", info.path.string()));
+  if (ec) {
+    return Err("installer_missing", std::format("there's no installer at {}", info.path.string()),
+               "Pick the installer again.");
+  }
   info.format = DetectInstallerFormat(info.path);
   info.silent = info.format != InstallerFormat::kUnknown;
   info.silent_args = SilentArgsFor(config, info.format);
@@ -288,7 +297,8 @@ Result<model::Game> Install(config::Config& config, store::GameStore& games, con
     std::error_code ec;
     if (!fs::is_regular_file(*installer, ec)) {
       Finish(id, "installer not found");
-      return Err("installer_missing", std::format("no installer at {}", installer->string()));
+      return Err("installer_missing", std::format("there's no installer at {}", installer->string()),
+                 "Pick the installer again.");
     }
     // Relative when it sits in the game folder, so a relocate keeps it valid.
     const fs::path relative = installer->lexically_relative(game->install_path);

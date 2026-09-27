@@ -20,13 +20,13 @@ constexpr std::string_view kMaxTime = "10";
 Result<std::vector<OwnedGame>> ListOwnedGames(const config::Config& config) {
   const std::string key = config.GetString("steam.web_api_key");
   if (key.empty()) {
-    return Err("no_steam_web_api_key",
-               "listing everything a Steam account owns needs a Steam Web API key — set "
-               "steam.web_api_key (free, from steamcommunity.com/dev/apikey)");
+    return Err("no_steam_web_api_key", "listing the games a Steam account owns needs a Steam Web API key",
+               "Add a free key from steamcommunity.com/dev/apikey.", Fix::Setting("steam.web_api_key"));
   }
   const std::string steamid = config.GetString("steam.steamid64");
   if (steamid.empty()) {
-    return Err("no_steamid64", "set steam.steamid64 to the account's 64-bit Steam ID");
+    return Err("no_steamid64", "listing the games a Steam account owns needs its Steam ID",
+               "Add the account's 64-bit Steam ID.", Fix::Setting("steam.steamid64"));
   }
 
   Command command;

@@ -32,10 +32,10 @@ Result<void> SteamRunner::Provision(const model::Game& game,
 Result<Command> SteamRunner::BuildCommand(const model::Game& game,
                                           const std::optional<model::RunnerBuild>&) const {
   if (game.exe_path.empty()) {
-    return Err("no_executable",
-              "no exe_path set — Mira can't determine a Steam game's real launch command on "
-              "its own (that's inside Steam's own appinfo cache, not the files on disk); set "
-              "exe_path manually, or use steam.launch_mode \"steam\" instead");
+    // Steam keeps a game's real launch command in its own appinfo cache, not on disk.
+    return Err("no_executable", "Mira doesn't know which file starts this Steam game",
+               "Choose the game's executable, or let Steam launch its games (Steam Launch Mode).",
+               Fix::Game(game.id, "exe"));
   }
 
   const fs::path install_path = game.install_path;

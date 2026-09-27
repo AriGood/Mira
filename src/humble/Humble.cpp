@@ -6,6 +6,7 @@
 #include <ranges>
 
 #include "config/RunnerSources.h"
+#include "core/StoreErrors.h"
 #include "runner/Exec.h"
 
 namespace mira::humble {
@@ -93,9 +94,7 @@ Result<void> InstallHumbleCliBinary(const config::Config& config, const runner::
 Result<std::string> RunHumbleCli(const config::Config& config, std::vector<std::string> args) {
   const HumbleStatus status = DetectHumbleCli(config);
   if (!status.installed) {
-    return Err("humble_cli_missing",
-               "humble-cli isn't installed — run \"mira humble setup\" to download it, or install it "
-               "yourself and set humble.humble_cli_bin");
+    return StoreToolMissing("humble", "Humble Bundle", "humble-cli");
   }
   Command command;
   command.argv = {status.path};
@@ -182,7 +181,7 @@ Result<bool> Download(const config::Config& config, const std::string& bundle_ke
   if (ec) return Err("download_dir_failed", ec.message());
 
   const HumbleStatus status = DetectHumbleCli(config);
-  if (!status.installed) return Err("humble_cli_missing", "run \"mira humble setup\" first");
+  if (!status.installed) return StoreToolMissing("humble", "Humble Bundle", "humble-cli");
 
   Command command;
   command.argv = {status.path, "download", bundle_key, "--cur-dir"};

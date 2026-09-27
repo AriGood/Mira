@@ -23,11 +23,11 @@ Result<fs::path> ResolveWineBinary(const RunnerRegistry& runners, const model::G
 
   const std::string kind = resolved->runner->kind();
   if (kind == "wine") {
-    if (!resolved->build) return Err("no_runner_build", "no Wine build resolved for this game");
+    if (!resolved->build) return NoBuild("Wine");
     return fs::path(resolved->build->path);
   }
   if (kind == "proton") {
-    if (!resolved->build) return Err("no_runner_build", "no Proton build resolved for this game");
+    if (!resolved->build) return NoBuild("Proton");
     return fs::path(resolved->build->path) / "files" / "bin" / "wine";
   }
   if (kind == "steam") {
@@ -62,7 +62,7 @@ Result<void> InstallWinetricks() {
   if (!listed) return std::unexpected(listed.error());
   const nlohmann::json release = nlohmann::json::parse(listed->output, nullptr, false);
   const std::string tag = release.is_object() ? release.value("tag_name", std::string()) : std::string();
-  if (tag.empty()) return Err("github_api_error", "couldn't find the latest winetricks release");
+  if (tag.empty()) return Err("github_api_error", "couldn't find the latest winetricks release", kConnectionHint);
 
   const fs::path target = BundledWinetricks();
   std::error_code ec;
@@ -74,7 +74,8 @@ Result<void> InstallWinetricks() {
   const Result<ExecResult> fetched = RunAndWait(download);
   if (!fetched || fetched->exit_code != 0) {
     fs::remove(target, ec);
-    return Err("download_failed", fetched ? fetched->output : fetched.error().message);
+    return Err("download_failed", "couldn't download winetricks: " + (fetched ? fetched->output : fetched.error().message),
+               kConnectionHint);
   }
   fs::permissions(target, fs::perms::owner_exec | fs::perms::group_exec | fs::perms::others_exec,
                   fs::perm_options::add, ec);
@@ -83,10 +84,11 @@ Result<void> InstallWinetricks() {
 }
 
 Result<void> RunTricksVerb(const RunnerRegistry& runners, const model::Game& game, const std::string& verb) {
-  if (game.data_dir.empty()) return Err("no_data_dir", "game has no prefix to run winetricks against");
+  if (game.data_dir.empty()) return NoPrefix(game);
   std::error_code ec;
   if (!fs::exists(fs::path(game.data_dir) / "drive_c", ec)) {
-    return Err("not_provisioned", "this game's prefix hasn't been provisioned yet");
+    return Err("not_provisioned", "this game's Wine prefix hasn't been created yet",
+               "Launch the game once, or run something in its prefix, to create it.");
   }
 
   const Result<fs::path> wine_binary = ResolveWineBinary(runners, game);
@@ -94,7 +96,7 @@ Result<void> RunTricksVerb(const RunnerRegistry& runners, const model::Game& gam
 
   const std::string winetricks = WinetricksPath();
   if (winetricks.empty()) {
-    return Err("winetricks_missing", "winetricks isn't installed — install it from the Runners page");
+    return Err("winetricks_missing", "winetricks isn't installed", "Install winetricks.", Fix::Runners("winetricks"));
   }
 
   Command command;

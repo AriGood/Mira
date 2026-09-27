@@ -12,6 +12,26 @@
 
 namespace mira::runner {
 
+std::unexpected<Error> NoBuild(std::string_view kind) {
+  return Err("no_runner_build", std::format("no {} build is installed for this game to run with", kind),
+             std::format("Install a {} build, or choose another runner for the game.", kind), Fix::Runners());
+}
+
+std::unexpected<Error> NoExecutable(const model::Game& game) {
+  return Err("no_executable", "this game has no executable set", "Choose the file that starts the game.",
+             Fix::Game(game.id, "exe"));
+}
+
+std::unexpected<Error> NoPrefix(const model::Game& game) {
+  return Err("no_data_dir", "this game has no folder for its Wine prefix",
+             "Set a data directory for the game, where its Wine prefix will go.", Fix::Game(game.id, "data_dir"));
+}
+
+std::unexpected<Error> PrefixCreateFailed(const model::Game& game, const std::error_code& ec) {
+  return Err("prefix_create_failed", std::format("couldn't create the Wine prefix at {}: {}", game.data_dir, ec.message()),
+             "Check that the prefix folder is writable, or choose another one.", Fix::Setting("prefix_root"));
+}
+
 std::vector<std::string> WindowsProgram(const std::filesystem::path& file) {
   const std::string ext = strings::ToLower(file.extension().string());
   if (ext == ".msi") return {"msiexec", "/i", file.string()};
@@ -73,12 +93,12 @@ std::vector<model::RunnerBuild> WineRunner::Discover(const config::Config& confi
 
 Result<void> WineRunner::Provision(const model::Game& game,
                                    const std::optional<model::RunnerBuild>& build) const {
-  if (!build) return Err("no_runner_build", "no Wine build resolved for this game");
-  if (game.data_dir.empty()) return Err("no_data_dir", "no Wine prefix (data_dir) has been set up for this game");
+  if (!build) return NoBuild("Wine");
+  if (game.data_dir.empty()) return NoPrefix(game);
 
   std::error_code ec;
   fs::create_directories(game.data_dir, ec);
-  if (ec) return Err("prefix_create_failed", ec.message());
+  if (ec) return PrefixCreateFailed(game, ec);
 
   Command command;
   command.argv = {build->path, "wineboot", "-u"};
@@ -98,16 +118,17 @@ Result<void> WineRunner::Provision(const model::Game& game,
   // same as ProtonRunner, is whether the prefix actually appeared on disk.
   if (!fs::exists(fs::path(game.data_dir) / "drive_c", ec)) {
     return Err("provision_failed",
-              std::format("wineboot produced no prefix (exit {}): {}", result->exit_code, result->output));
+              std::format("wineboot produced no prefix (exit {}): {}", result->exit_code, result->output),
+              "The Wine build may be broken. Try a different one.", Fix::Runners());
   }
   return {};
 }
 
 Result<Command> WineRunner::BuildCommand(const model::Game& game,
                                          const std::optional<model::RunnerBuild>& build) const {
-  if (!build) return Err("no_runner_build", "no Wine build resolved for this game");
-  if (game.exe_path.empty()) return Err("no_executable", "no exe_path set for this game");
-  if (game.data_dir.empty()) return Err("no_data_dir", "no Wine prefix (data_dir) has been set up for this game");
+  if (!build) return NoBuild("Wine");
+  if (game.exe_path.empty()) return NoExecutable(game);
+  if (game.data_dir.empty()) return NoPrefix(game);
 
   const fs::path install_path = game.install_path;
   const fs::path exe = install_path / game.exe_path;

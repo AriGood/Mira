@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "core/Log.h"
+#include "core/StoreErrors.h"
 #include "itch/Itch.h"
 
 namespace mira::itch {
@@ -271,7 +272,7 @@ Result<void> EnsureConnectedLocked(const config::Config& config, Connection& con
 
   const ItchStatus status = DetectButler(config);
   if (!status.installed) {
-    return Err("butler_missing", "butler isn't installed — run \"mira itch setup\" to download it");
+    return StoreToolMissing("itch", "itch.io", "butler");
   }
 
   const fs::path db_path = config.File().parent_path() / "tools" / "itch" / "butler.db";

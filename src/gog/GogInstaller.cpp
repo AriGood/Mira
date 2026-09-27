@@ -1,6 +1,7 @@
 #include "gog/GogInstaller.h"
 
 #include "gog/Gog.h"
+#include "core/StoreErrors.h"
 #include "gog/GogImporter.h"
 
 namespace mira::gog {
@@ -8,8 +9,8 @@ namespace {
 
 Result<void> CheckReady(const config::Config& config) {
   const GogAuthStatus auth = Status(config);
-  if (!auth.gogdl.installed) return Err("gogdl_missing", "run \"mira gog setup\" first");
-  if (!auth.authenticated) return Err("not_authenticated", "run \"mira gog login\" first");
+  if (!auth.gogdl.installed) return StoreToolMissing("gog", "GOG", "gogdl");
+  if (!auth.authenticated) return StoreNotSignedIn("gog", "GOG");
   return {};
 }
 

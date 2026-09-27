@@ -1,6 +1,6 @@
 # Maintainer: arigood99 <arigood99@gmail.com>
 pkgname=mira-launcher
-pkgver=0.7.0
+pkgver=0.10.1
 pkgrel=1
 pkgdesc="Linux game launcher for native games and Windows games via Wine/Proton"
 arch=('x86_64')
@@ -14,7 +14,7 @@ optdepends=('wine: run Windows games without Proton'
            '7zip: auto-extract archives dropped into a library root')
 backup=()
 source=("mira-$pkgver.tar.gz::https://github.com/AriGood/Mira/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('1a748b8962ac8d2d22a432a8614f2cf236187d30115f5b92860de3e471cb5092')
+sha256sums=('SKIP')
 
 build() {
   # GitHub's archive directory name varies by endpoint (Mira-<version> vs.

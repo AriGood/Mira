@@ -51,8 +51,9 @@ TEST_CASE("Fetch on a non-Steam game with no SteamGridDB key fails, and caches n
   const Result<void> fetched = metadata::Fetch(config, game);
   REQUIRE_FALSE(fetched.has_value());
   CHECK(fetched.error().code == "no_steamgriddb_key");
-  // The message names the setting, because it is the whole remedy.
-  CHECK(fetched.error().message.find("steamgriddb.api_key") != std::string::npos);
+  // Points clients at the setting, because it is the whole remedy.
+  CHECK(fetched.error().fix.kind == "setting");
+  CHECK(fetched.error().fix.target == "steamgriddb.api_key");
 
   CHECK_FALSE(fs::exists(metadata::MetadataFile(config, game.id)));
   CHECK_FALSE(fs::exists(metadata::ArtworkDir(config, game.id)));
@@ -239,8 +240,7 @@ TEST_CASE("FetchQueue::Enqueue force=true bypasses metadata.enabled") {
   REQUIRE(published.size() == 1);
   CHECK(published[0].type == "game.metadata_failed");
   CHECK(published[0].payload.value("id", std::string()) == "forced-game");
-  CHECK(published[0].payload.value("error", std::string()).find("steamgriddb.api_key") !=
-        std::string::npos);
+  CHECK(published[0].payload.value("code", std::string()) == "no_steamgriddb_key");
 }
 
 TEST_CASE("FetchQueue runs every queued game once, through a bounded set of workers") {

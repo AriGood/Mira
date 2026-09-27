@@ -4,6 +4,7 @@
 #include <functional>
 
 #include "config/Schema.h"
+#include "core/StoreErrors.h"
 #include "launchers/Launchers.h"
 #include "runner/RunnerRegistry.h"
 
@@ -32,7 +33,7 @@ Result<model::Game> LauncherHost(const store::GameStore& games, std::string_view
   }
   const auto host = games.Find(launchers::GameId(*launcher));
   if (!host || host->data_dir.empty()) {
-    return Err("launcher_not_installed", std::format("{} isn't installed", launcher->name));
+    return LauncherNotInstalled(launcher->id, launcher->name);
   }
   return *host;
 }

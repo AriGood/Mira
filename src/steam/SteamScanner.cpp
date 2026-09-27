@@ -36,7 +36,10 @@ Result<SteamScanSummary> SteamScanner::Scan() {
   if (!config_.GetBool("steam.enabled")) return summary;
 
   const auto root = FindSteamRoot(config_);
-  if (!root) return Err("steam_not_found", "no Steam installation found");
+  if (!root) {
+    return Err("steam_not_found", "Mira couldn't find a Steam installation",
+               "If Steam is installed somewhere unusual, set where it is.", Fix::Setting("steam.root"));
+  }
 
   const std::map<std::string, std::int64_t> steam_playtime = PlaytimeByAppid(config_);
 

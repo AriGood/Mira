@@ -122,7 +122,8 @@ Result<std::vector<ReleaseAsset>> FetchReleases(const std::string& repo, const s
 
   const json parsed = json::parse(result->output, nullptr, false);
   if (parsed.is_discarded() || !parsed.is_array()) {
-    return Err("github_api_error", std::format("couldn't list releases for {}: {}", repo, result->output));
+    return Err("github_api_error", std::format("couldn't list releases for {}: {}", repo, result->output),
+               kConnectionHint);
   }
 
   std::vector<ReleaseAsset> releases;
@@ -160,7 +161,10 @@ Result<void> DownloadVerified(const ReleaseAsset& asset, const fs::path& target)
   if (Result<ExecResult> result = RunAndWait(download); !result || result->exit_code != 0) {
     fs::remove(target, ec);
     return Err("download_failed",
-              !result ? result.error().message : std::format("curl exited {}: {}", result->exit_code, result->output));
+               std::format("couldn't download {}: {}", asset.asset_name,
+                           !result ? result.error().message
+                                   : std::format("curl exited {}: {}", result->exit_code, result->output)),
+               kConnectionHint);
   }
 
   if (asset.checksum_url.empty()) {

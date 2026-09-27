@@ -144,7 +144,8 @@ Result<RunnerRegistry::Resolved> RunnerRegistry::Resolve(const std::string& runn
 
   const std::vector<model::RunnerBuild>& builds = BuildsFor(kind);
   if (builds.empty()) {
-    return Err("runner_build_not_found", std::format("no {} builds are installed", kind));
+    return Err("runner_build_not_found", std::format("no {} builds are installed", kind),
+               std::format("Install a {} build.", kind), Fix::Runners());
   }
 
   if (name == "auto") return Resolved{runner, PickAuto(config_, builds)};
@@ -157,7 +158,8 @@ Result<RunnerRegistry::Resolved> RunnerRegistry::Resolve(const std::string& runn
 
   const auto match = std::ranges::find(builds, name, &model::RunnerBuild::name);
   if (match == builds.end()) {
-    return Err("runner_build_not_found", std::format("no \"{}\" build of \"{}\" is installed", name, kind));
+    return Err("runner_build_not_found", std::format("the {} build \"{}\" isn't installed anymore", kind, name),
+               "Install it again, or choose another runner.", Fix::Runners());
   }
   return Resolved{runner, *match};
 }

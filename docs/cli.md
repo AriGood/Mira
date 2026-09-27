@@ -7,6 +7,14 @@ mirad &
 mira status
 ```
 
+A failed command prints `mirad`'s message, then its hint and the command that fixes it when the error carries one:
+
+```text
+mira: searching SteamGridDB needs an API key (HTTP 502)
+      Add a free SteamGridDB API key. Steam games don't need one.
+      Try: mira config set steamgriddb.api_key <value>
+```
+
 ## Daemon and install
 
 ### `mira status`

@@ -6,6 +6,7 @@
 #include <json.hpp>
 
 #include "core/Log.h"
+#include "core/StoreErrors.h"
 #include "core/Strings.h"
 #include "launchers/Launchers.h"
 #include "library/Detector.h"
@@ -123,8 +124,7 @@ Result<ImportSummary> Import(config::Config& config, store::GameStore& games, ap
                              const Launcher& launcher) {
   const auto host = games.Find(GameId(launcher));
   if (!host || host->status != model::GameStatus::Ready) {
-    return Err("launcher_not_installed",
-               std::format("{} isn't installed -- run `mira launcher install {}`", launcher.name, launcher.id));
+    return LauncherNotInstalled(launcher.id, launcher.name);
   }
   const fs::path prefix = host->data_dir;
   std::vector<Found> found;

@@ -88,11 +88,11 @@ Result<void> Config::Save() {
   const auto temp = file_.string() + ".tmp";
   {
     std::ofstream out(temp);
-    if (!out) return Err("config_write_failed", std::format("cannot write {}", temp));
+    if (!out) return Err("config_write_failed", std::format("couldn't write {}", temp), kDiskHint);
     out << tomljson::ToToml(document_);
   }
   std::filesystem::rename(temp, file_, ec);
-  if (ec) return Err("config_write_failed", ec.message());
+  if (ec) return Err("config_write_failed", std::format("couldn't save {}: {}", file_.string(), ec.message()), kDiskHint);
   return {};
 }
 
@@ -103,11 +103,14 @@ Result<void> Config::SaveFrontendFile() {
   const auto temp = frontend_file_.string() + ".tmp";
   {
     std::ofstream out(temp);
-    if (!out) return Err("config_write_failed", std::format("cannot write {}", temp));
+    if (!out) return Err("config_write_failed", std::format("couldn't write {}", temp), kDiskHint);
     out << tomljson::ToToml(frontend_);
   }
   std::filesystem::rename(temp, frontend_file_, ec);
-  if (ec) return Err("config_write_failed", ec.message());
+  if (ec) {
+    return Err("config_write_failed", std::format("couldn't save {}: {}", frontend_file_.string(), ec.message()),
+               kDiskHint);
+  }
   return {};
 }
 

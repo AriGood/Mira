@@ -50,7 +50,7 @@ void MakeExecutable(const fs::path& path) {
 
 Result<Command> NativeRunner::BuildCommand(const model::Game& game,
                                             const std::optional<model::RunnerBuild>&) const {
-  if (game.exe_path.empty()) return Err("no_executable", "no exe_path set for this game");
+  if (game.exe_path.empty()) return NoExecutable(game);
 
   const std::filesystem::path install_path = game.install_path;
   const std::filesystem::path exe = install_path / game.exe_path;
@@ -71,16 +71,16 @@ Result<Command> NativeRunner::BuildCommand(const model::Game& game,
     if (MissingExecuteBit(exe)) MakeExecutable(exe);
     if (MissingExecuteBit(exe)) {
       return Err("not_executable",
-                std::format("\"{}\" is not executable and could not be made so — chmod +x it manually",
-                            exe.string()));
+                std::format("\"{}\" isn't allowed to run, and Mira couldn't change that", exe.string()),
+                "Make the file executable (chmod +x), or check the folder isn't read-only.");
     }
     command.argv = HasFuse() ? std::vector<std::string>{exe.string()}
                              : std::vector<std::string>{exe.string(), "--appimage-extract-and-run"};
   } else {
     if (MissingExecuteBit(exe)) {
-      return Err("not_executable",
-                std::format("\"{}\" is not marked executable — chmod +x it, or point exe_path at "
-                            "the actual launcher", exe.string()));
+      return Err("not_executable", std::format("\"{}\" isn't marked as a program that can run", exe.string()),
+                "Make it executable (chmod +x), or choose the game's real launcher instead.",
+                Fix::Game(game.id, "exe"));
     }
     command.argv.push_back(exe.string());
   }

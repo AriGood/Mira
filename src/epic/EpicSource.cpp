@@ -4,6 +4,7 @@
 
 #include "epic/EpicImporter.h"
 #include "epic/EpicInstaller.h"
+#include "core/StoreErrors.h"
 #include "epic/Legendary.h"
 
 namespace mira::epic {
@@ -38,8 +39,8 @@ namespace {
 // and authenticated, same as every direct /v1/epic/* route already checks.
 Result<void> CheckReady(const config::Config& config) {
   const EpicAuthStatus auth = Status(config);
-  if (!auth.legendary.installed) return Err("legendary_missing", "run \"mira epic setup\" first");
-  if (!auth.authenticated) return Err("not_authenticated", "run \"mira epic login\" first");
+  if (!auth.legendary.installed) return StoreToolMissing("epic", "Epic Games", "legendary");
+  if (!auth.authenticated) return StoreNotSignedIn("epic", "Epic Games");
   return {};
 }
 }  // namespace

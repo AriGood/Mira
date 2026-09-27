@@ -34,6 +34,17 @@ namespace {
 namespace fs = std::filesystem;
 using nlohmann::json;
 
+std::unexpected<Error> NoGriddbKey(std::string message) {
+  return Err("no_steamgriddb_key", std::move(message),
+             "Add a free SteamGridDB API key. Steam games don't need one.", Fix::Setting("steamgriddb.api_key"));
+}
+
+std::unexpected<Error> MetadataDirFailed(const fs::path& file, const std::error_code& ec) {
+  return Err("metadata_dir_failed",
+             std::format("couldn't create the folder for {}: {}", file.parent_path().string(), ec.message()),
+             kDiskHint);
+}
+
 // Every network call gets a hard ceiling: this runs unattended off a scan,
 // not a user-triggered download, so an unreachable or hanging endpoint must
 // never pile up a stuck background thread.
@@ -718,9 +729,7 @@ Result<void> FetchNonSteam(const config::Config& config, const std::string& name
   // and there was nothing" rather than "Mira was never given the one thing
   // it needed". A found ProtonDB tier is still something, though.
   if (api_key.empty() && !info.contains("artwork") && !found_protondb) {
-    return Err("no_steamgriddb_key",
-               "no cover found for this game — a SteamGridDB API key finds more; set "
-               "steamgriddb.api_key (it is free, from steamgriddb.com)");
+    return NoGriddbKey("no cover found for this game without a SteamGridDB API key");
   }
   return {};
 }
@@ -729,7 +738,7 @@ Result<void> FetchNonSteam(const config::Config& config, const std::string& name
 
 Result<json> SearchSteamGridDb(const config::Config& config, const std::string& name) {
   const std::string api_key = config.GetString("steamgriddb.api_key");
-  if (api_key.empty()) return Err("no_steamgriddb_key", "set steamgriddb.api_key to search SteamGridDB");
+  if (api_key.empty()) return NoGriddbKey("searching SteamGridDB needs an API key");
   const json search = CurlJson({"curl", "-sSL", "-H", std::format("Authorization: Bearer {}", api_key),
                                 std::format("https://www.steamgriddb.com/api/v2/search/autocomplete/{}",
                                            UrlEncode(name))});
@@ -798,7 +807,7 @@ Result<void> Fetch(const config::Config& config, const model::Game& game) {
   const fs::path metadata_file = MetadataFile(config, game.id);
   std::error_code ec;
   fs::create_directories(metadata_file.parent_path(), ec);
-  if (ec) return Err("metadata_dir_failed", ec.message());
+  if (ec) return MetadataDirFailed(metadata_file, ec);
 
   return WriteMetadataFile(metadata_file, info);
 }
@@ -819,14 +828,14 @@ Result<void> FetchCover(const config::Config& config, const model::Game& game) {
     }
   }
   if (!info.contains("artwork")) {
-    if (api_key.empty()) return Err("no_steamgriddb_key", "no cover found; set steamgriddb.api_key to look further");
+    if (api_key.empty()) return NoGriddbKey("no cover found for this game without a SteamGridDB API key");
     return Err("no_artwork", "no cover found for \"" + game.name + "\"");
   }
 
   const fs::path metadata_file = MetadataFile(config, game.id);
   std::error_code ec;
   fs::create_directories(metadata_file.parent_path(), ec);
-  if (ec) return Err("metadata_dir_failed", ec.message());
+  if (ec) return MetadataDirFailed(metadata_file, ec);
   return WriteMetadataFile(metadata_file, info);
 }
 
@@ -864,7 +873,7 @@ Result<void> SelectArtwork(const config::Config& config, const std::string& game
   // daemon never ends up fetching an arbitrary URL on the API's behalf. No
   // credentials on the download itself -- see FetchArtworkInto.
   if (!FetchArtworkInto(config, url, game_id, source, slot, info, candidate_id)) {
-    return Err("download_failed", "couldn't download the selected image");
+    return Err("download_failed", "couldn't download the selected image", kConnectionHint);
   }
 
   return WriteMetadataFile(metadata_file, info);
@@ -879,7 +888,7 @@ Result<json> FetchCandidatePage(const config::Config& config, const std::string&
                                                      : "";
   if (endpoint.empty()) return Err("invalid_type", "unknown art slot");
   const std::string api_key = config.GetString("steamgriddb.api_key");
-  if (api_key.empty()) return Err("no_steamgriddb_key", "set steamgriddb.api_key to browse SteamGridDB's art");
+  if (api_key.empty()) return NoGriddbKey("browsing SteamGridDB's art needs an API key");
 
   const fs::path metadata_file = MetadataFile(config, game_id);
   std::int64_t griddb_id = 0;
@@ -893,7 +902,8 @@ Result<json> FetchCandidatePage(const config::Config& config, const std::string&
   const json response =
       FetchGriddbPage(config, std::format("Authorization: Bearer {}", api_key), endpoint, griddb_id, page);
   if (response.is_discarded() || !Value(response, "success", false)) {
-    return Err("steamgriddb_unreachable", "couldn't reach SteamGridDB");
+    return Err("steamgriddb_unreachable", "couldn't reach SteamGridDB",
+               "Check the internet connection. SteamGridDB also limits requests, so waiting a minute can help.");
   }
   json candidates = json::array();
   for (const auto& item : Value(response, "data", json::array())) {

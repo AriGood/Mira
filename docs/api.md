@@ -8,7 +8,18 @@ Bodies are JSON. Errors share one envelope:
 { "error": { "code": "invalid_setting", "message": "scan.debounce_ms: must be between 0 and 600000" } }
 ```
 
-`code` is stable and meant for code; `message` is meant for people.
+`code` is stable and meant for code; `message` is meant for people and says what went wrong. Two optional fields say what to do about it:
+
+- `hint`: one sentence for the user, worded for any client (no CLI commands, no GUI paths).
+- `fix`: where the fix is, for a client to turn into a button or a command. `{"kind": "setting", "target": "<dotted key>"}`, `{"kind": "runners", "target": ""}` (install a runner) or `"target": "winetricks"`, `{"kind": "source", "target": "<source id>", "step": "setup" | "login" | "install"}`, or `{"kind": "game", "target": "<game id>", "step": "exe" | "data_dir" | "log"}`.
+
+```json
+{ "error": { "code": "no_steamgriddb_key", "message": "searching SteamGridDB needs an API key",
+             "hint": "Add a free SteamGridDB API key. Steam games don't need one.",
+             "fix": { "kind": "setting", "target": "steamgriddb.api_key" } } }
+```
+
+`game.install.failed` events carry the same `hint` and `fix` next to their `error`.
 
 ```sh
 curl --unix-socket "$XDG_RUNTIME_DIR/mira/mirad.sock" http://localhost/v1/health
