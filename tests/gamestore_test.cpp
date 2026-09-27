@@ -1,7 +1,10 @@
 #include <doctest.h>
 
+#include <atomic>
 #include <fstream>
 #include <filesystem>
+#include <thread>
+#include <vector>
 
 #include "store/GameStore.h"
 
@@ -100,4 +103,36 @@ TEST_CASE("a corrupt games.toml is quarantined and the library starts empty") {
   CHECK(store.All().empty());
   CHECK(fs::exists(file.string() + ".bad"));
   fs::remove(file.string() + ".bad");
+}
+
+TEST_CASE("concurrent updates all save, and the file ends with every change") {
+  // The API serves requests on several threads, and batch actions send one per game.
+  const fs::path file = TempFile("games-concurrent.toml");
+  store::GameStore store(file);
+  store.Load();
+  constexpr int kGames = 8;
+  for (int i = 0; i < kGames; ++i) {
+    REQUIRE(store.Upsert(MakeGame("g" + std::to_string(i), "Game")).has_value());
+  }
+
+  std::atomic<int> failures = 0;
+  std::vector<std::thread> threads;
+  for (int i = 0; i < kGames; ++i) {
+    threads.emplace_back([&store, &failures, i] {
+      for (int round = 0; round < 10; ++round) {
+        auto result = store.Update("g" + std::to_string(i), [](model::Game& game) { game.tags = {"favorite"}; });
+        if (!result) ++failures;
+      }
+    });
+  }
+  for (std::thread& thread : threads) thread.join();
+  CHECK(failures == 0);
+
+  store::GameStore reloaded(file);
+  reloaded.Load();
+  for (int i = 0; i < kGames; ++i) {
+    auto found = reloaded.Find("g" + std::to_string(i));
+    REQUIRE(found.has_value());
+    CHECK(found->tags == std::vector<std::string>{"favorite"});
+  }
 }

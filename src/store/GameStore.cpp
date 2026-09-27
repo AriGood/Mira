@@ -57,6 +57,7 @@ Result<void> GameStore::Save() {
   // both touched the same GameStore around the same time). Copied under the
   // lock, then serialized/written from the copy so a slow disk write never
   // holds mutex_ and blocks an unrelated Find()/Update() the whole time.
+  std::lock_guard save_lock(save_mutex_);
   std::vector<model::Game> games_copy;
   {
     std::lock_guard lock(mutex_);

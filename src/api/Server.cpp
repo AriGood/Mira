@@ -71,6 +71,12 @@ void SendError(Response& res, int status, std::string_view code, std::string_vie
   res.set_content(ErrorBody(code, message).dump(), "application/json");
 }
 
+// A GameStore failure: an unknown id is 404, a failed save is the daemon's fault.
+template <typename Error>
+void SendStoreError(Response& res, const Error& error) {
+  SendError(res, error.code == "game_not_found" ? 404 : 500, error.code, error.message);
+}
+
 void SendJson(Response& res, json body, int status = 200) {
   res.status = status;
   res.set_content(body.dump(), "application/json");
@@ -624,7 +630,7 @@ void Server::RegisterRoutes() {
     if (patch.is_discarded()) return SendError(res, 400, "invalid_json", "body is not valid JSON");
 
     auto result = games_.Update(id, [&](model::Game& game) { game = ParseGamePatch(game, patch); });
-    if (!result) return SendError(res, 404, result.error().code, result.error().message);
+    if (!result) return SendStoreError(res, result.error());
     SyncDesktopEntries(config_, games_);
     events_.Publish("game.updated", GameJson(*result, supervisor_));
     SendJson(res, GameJson(*result, supervisor_));
@@ -648,7 +654,7 @@ void Server::RegisterRoutes() {
     }
     auto result =
         games_.Update(id, [&](model::Game& game) { ApplyOverridesPatch(game, patch); });
-    if (!result) return SendError(res, 404, result.error().code, result.error().message);
+    if (!result) return SendStoreError(res, result.error());
     // An override can turn desktop_entries.enabled off for this game.
     SyncDesktopEntries(config_, games_);
     SendJson(res, GameJson(*result, supervisor_));
@@ -691,7 +697,7 @@ void Server::RegisterRoutes() {
     }
 
     auto result = games_.Remove(req.matches[1]);
-    if (!result) return SendError(res, 404, result.error().code, result.error().message);
+    if (!result) return SendStoreError(res, result.error());
     SyncDesktopEntries(config_, games_);
     events_.Publish("game.removed", {{"id", req.matches[1].str()}});
     SendJson(res, json::object());
@@ -1783,7 +1789,7 @@ void Server::RegisterRoutes() {
       g.status = model::GameStatus::Ready;
       g.last_error.clear();
     });
-    if (!result) return SendError(res, 404, result.error().code, result.error().message);
+    if (!result) return SendStoreError(res, result.error());
     SyncDesktopEntries(config_, games_);
     events_.Publish("game.updated", GameJson(*result, supervisor_));
     SendJson(res, GameJson(*result, supervisor_));
