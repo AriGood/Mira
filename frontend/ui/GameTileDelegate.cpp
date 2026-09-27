@@ -7,6 +7,7 @@
 #include <QPixmap>
 
 #include "GamePresentation.h"
+#include "Icons.h"
 #include "Theme.h"
 
 namespace mira_gui {
@@ -147,6 +148,16 @@ void GameTileDelegate::paint(QPainter* painter, const QStyleOptionViewItem& opti
     painter->drawRoundedRect(pill, pill.height() / 2.0, pill.height() / 2.0);
     painter->setPen(enabled ? tokens.on_accent : QColor(255, 255, 255, 200));
     painter->drawText(pill, Qt::AlignCenter, action);
+  }
+
+  // Top-left, clear of the ActionRole pill on the right.
+  if (index.data(PinnedRole).toBool()) {
+    const QRect badge(rect.left() + 6, rect.top() + 6, 22, 22);
+    painter->setPen(Qt::NoPen);
+    painter->setBrush(QColor(0, 0, 0, 150));
+    painter->drawEllipse(badge);
+    static const QIcon kPin = icons::For(icons::Glyph::Pin, QColor(255, 255, 255, 235));
+    kPin.paint(painter, badge.adjusted(4, 4, -4, -4));
   }
 
   // Border last, so selection reads on top of the artwork.

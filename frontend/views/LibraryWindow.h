@@ -151,10 +151,10 @@ private:
   // of them at once, chosen at the pos the right-click landed on.
   void ShowBatchContextMenu(const QList<QListWidgetItem*>& items, const QPoint& pos);
   void ToggleRunning(const std::string& id);
-  void ToggleHidden(const std::string& id);
-  // Adds the hidden tag to each id that doesn't already have it — batch
-  // "Hide" only ever hides, unlike the single-game toggle.
-  void BatchHide(const std::vector<std::string>& ids);
+  // Adds or removes `tag` ("hidden", "favorite") on one game.
+  void ToggleTag(const std::string& id, const std::string& tag);
+  // Adds (`present`) or removes `tag` on each id, skipping those already that way.
+  void BatchSetTag(const std::vector<std::string>& ids, const std::string& tag, bool present);
   void LaunchGame(const std::string& id);
   void OpenGameDialog(const std::string& id);
   // Scrim + centered card slot, built once. Shown/hidden per open rather
@@ -189,7 +189,14 @@ private:
   void OpenManageSources();
   // A source was removed: drop its games and turn its sidebar row off.
   void ForgetSource(const QString& id);
-  void RefreshRecentlyPlayed();
+  // Everything a tile shows except its id.
+  void FillTile(QListWidgetItem* item, const mira_gui::GameSummary& game);
+  // The sidebar's PINNED and RECENTLY PLAYED rows.
+  void RefreshSidebarGames();
+  QPushButton* MakeSidebarGameRow(const mira_gui::GameSummary& game, QWidget* parent);
+  // Rebuilds one section's rows, only if what they'd show differs from `signature`.
+  void FillSidebarSection(QLabel* heading, QVBoxLayout* layout,
+                          const std::vector<const mira_gui::GameSummary*>& games, QString& signature);
   void SetSourceHidden(const QString& id, bool hidden);
   std::vector<QString> SourceOrder() const;
   std::vector<ManageSourcesDialog::Entry> SourceEntries() const;
@@ -311,7 +318,11 @@ private:
   QWidget* source_drop_line_ = nullptr;
   QPushButton* source_drag_row_ = nullptr;
   QPoint source_drag_start_;
+  QLabel* pinned_heading_ = nullptr;
+  QVBoxLayout* pinned_layout_ = nullptr;
+  QString pinned_signature_;  // what the rows show now; see FillSidebarSection
   QLabel* recent_heading_ = nullptr;
+  QString recent_signature_;
   QVBoxLayout* recent_layout_ = nullptr;
   static constexpr int kDefaultRecentCount = 3;
   int recent_count_ = kDefaultRecentCount;  // besides running games

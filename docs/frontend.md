@@ -10,7 +10,9 @@ The **table** (`views/MainWindow`) shows every field of every game. The top bar'
 
 ### Sidebar
 
-From top to bottom: the Mira header, the Library, Runners and Settings rows, search with the filter and sort menu, the sources, recently played games, and the Add games button.
+From top to bottom: the Mira header, the Library, Runners and Settings rows, search with the filter and sort menu, pinned games, the sources, recently played games, and the Add games button.
+
+Pinning a game (game menu, or several at once from the batch menu, which offers Pin/Unpin and Hide/Unhide for whichever selected games each would change) adds the `favorite` tag, the same one Lutris imports its favorites under. Pinned games list by name under PINNED and get a pin badge on their tile. PINNED follows the grid's filter: hidden pinned games show only under the Hidden filter, and only they do.
 
 Only sources that are set up show in the sidebar. *Manage sources* (`dialogs/ManageSourcesDialog`) lists every source, sets which ones show and their order, and opens the page of one that isn't set up yet.
 

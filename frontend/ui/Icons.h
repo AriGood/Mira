@@ -41,6 +41,7 @@ enum class Glyph {
   Store,
   Sliders,
   Dot,
+  Pin,
 };
 
 // Drawn on demand in the current theme's text color, at the handful of sizes

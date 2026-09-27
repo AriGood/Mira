@@ -144,6 +144,23 @@ void PaintGlyph(QPainter& painter, Glyph glyph, const QColor& color) {
       painter.setBrush(color);
       painter.drawEllipse(QPointF(8.0, 8.0), 3.5, 3.5);
       return;
+    case Glyph::Pin: {
+      // A pushpin: head, flared collar, then the needle.
+      QPainterPath head;
+      head.moveTo(5.5, 2.0);
+      head.lineTo(10.5, 2.0);
+      head.lineTo(10.0, 3.2);
+      head.lineTo(10.0, 6.5);
+      head.lineTo(12.5, 9.5);
+      head.lineTo(3.5, 9.5);
+      head.lineTo(6.0, 6.5);
+      head.lineTo(6.0, 3.2);
+      head.closeSubpath();
+      painter.setBrush(color);
+      painter.drawPath(head);
+      painter.drawLine(QPointF(8.0, 9.5), QPointF(8.0, 14.5));
+      return;
+    }
     case Glyph::Store:
       painter.drawRoundedRect(QRectF(3.0, 5.5, 10.0, 8.5), 1.2, 1.2);
       painter.drawArc(QRectF(5.5, 2.5, 5.0, 6.0), 0, 180 * 16);
