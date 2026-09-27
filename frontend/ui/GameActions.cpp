@@ -19,9 +19,9 @@
 namespace mira_gui::actions {
 
 void Launch(QWidget* parent, const std::string& id, std::function<void(bool tracked)> on_launched) {
-  MiradClient::LaunchGameAsync(parent, id, [parent, on_launched](LaunchResult result) {
+  MiradClient::LaunchGameAsync(parent, id, [parent, id, on_launched](LaunchResult result) {
     if (!result.ok) {
-      notify::Failed(parent, "Could not launch the game.", QString::fromStdString(result.error));
+      notify::FailedRequest(parent, "Could not launch the game.", result.error);
       return;
     }
     if (on_launched) on_launched(result.tracked);
@@ -29,9 +29,9 @@ void Launch(QWidget* parent, const std::string& id, std::function<void(bool trac
 }
 
 void Stop(QWidget* parent, const std::string& id) {
-  MiradClient::StopGameAsync(parent, id, [parent](StopResult result) {
+  MiradClient::StopGameAsync(parent, id, [parent, id](StopResult result) {
     if (!result.ok) {
-      notify::Failed(parent, "Could not stop the game.", QString::fromStdString(result.error));
+      notify::FailedRequest(parent, "Could not stop the game.", result.error);
     }
   });
 }
@@ -54,8 +54,7 @@ void Delete(QWidget* parent, const std::string& id, const QString& name,
         parent, id, choice.delete_files, choice.delete_prefix, choice.delete_metadata,
         [parent, name, on_deleted](DeleteResult result) {
           if (!result.ok) {
-            notify::Failed(parent, QString("Could not remove \"%1\".").arg(name),
-                           QString::fromStdString(result.error));
+            notify::FailedRequest(parent, QString("Could not remove \"%1\".").arg(name), result.error);
             return;
           }
           if (on_deleted) on_deleted();
@@ -70,12 +69,9 @@ void RunInPrefix(QWidget* parent, const std::string& id, const std::string& inst
 }
 
 void FinishInstall(QWidget* parent, const std::string& id, std::function<void()> on_finished) {
-  MiradClient::FinishInstallAsync(parent, id, [parent, on_finished](FinishInstallResult result) {
+  MiradClient::FinishInstallAsync(parent, id, [parent, id, on_finished](FinishInstallResult result) {
     if (!result.ok) {
-      notify::FailedWithHint(parent, "Could not mark this game as installed.",
-                             QString::fromStdString(result.error),
-                             "Set the game's executable to whatever the installer produced "
-                             "first, then try again.");
+      notify::FailedRequest(parent, "Could not mark this game as installed.", result.error);
       return;
     }
     if (on_finished) on_finished();
@@ -100,7 +96,7 @@ void ViewLog(QWidget* parent, const std::string& id, const QString& name) {
 void RunWinetricks(QWidget* parent, const std::string& id, const QString& name) {
   MiradClient::GetGameAsync(parent, id, [parent, id, name](GameDetailResult result) {
     if (!result.ok) {
-      notify::Failed(parent, "Could not run winetricks.", QString::fromStdString(result.error));
+      notify::FailedRequest(parent, "Could not run winetricks.", result.error);
       return;
     }
     if (result.game.data_dir.empty()) {
@@ -121,8 +117,7 @@ void ToggleDesktopEntry(QWidget* parent, const std::string& id, bool currently_e
   MiradClient::PatchGameConfigAsync(
       parent, id, {edit}, [parent, currently_enabled](PatchGameConfigResult result) {
         if (!result.ok) {
-          notify::Failed(parent, "Could not update the desktop entry.",
-                         QString::fromStdString(result.error));
+          notify::FailedRequest(parent, "Could not update the desktop entry.", result.error);
           return;
         }
         // The only feedback there is — nothing in Mira's own window changes.

@@ -25,7 +25,7 @@ HealthStatus GetHealthSync() {
   HealthStatus status;
   const transport::Reply reply = transport::Get("/v1/health");
   status.reachable = reply.ok;
-  status.detail = reply.ok ? reply.body.value("status", std::string("ok")) : reply.error;
+  status.detail = reply.ok ? reply.body.value("status", std::string("ok")) : reply.error.message;
   return status;
 }
 
@@ -1585,6 +1585,8 @@ bool MiradClient::ParseGameState(const std::string& data, GameStateEvent* out) {
   if (entry.is_discarded() || !entry.is_object()) return false;
   out->id = entry.value("id", std::string());
   out->state = entry.value("state", std::string());
+  out->played_seconds = entry.value("played_seconds", std::int64_t{0});
+  out->error = entry.value("error", std::string());
   return !out->id.empty();
 }
 
@@ -1836,7 +1838,7 @@ bool MiradClient::ParseInstallEvent(const std::string& event_type, const std::st
   if (entry.is_discarded() || !entry.is_object()) return false;
   out->state = event_type.substr(kPrefix.size());
   out->id = entry.value("id", std::string());
-  out->error = entry.value("error", std::string());
+  out->error = mapping::ToApiError(entry);
   return !out->id.empty();
 }
 

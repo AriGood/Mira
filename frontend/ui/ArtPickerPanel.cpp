@@ -23,6 +23,7 @@
 #include <set>
 
 #include "../client/MiradClient.h"
+#include "ErrorHelp.h"
 #include "Theme.h"
 
 namespace mira_gui {
@@ -259,7 +260,7 @@ ArtPickerPanel::ArtPickerPanel(std::string game_id, QWidget* parent) : QWidget(p
     MiradClient::RefreshMetadataAsync(this, id_, /*announce=*/false, [this](MetadataRefreshResult result) {
       if (result.ok) return;  // game.metadata_ready reloads
       fetching_ = false;
-      ShowMessage("Could not reach SteamGridDB: " + QString::fromStdString(result.error), true);
+      ShowMessage("Could not look on SteamGridDB: " + error_help::Describe(result.error), true);
     });
   });
   message_layout->addWidget(fetch_button_, 0, Qt::AlignHCenter);
@@ -583,7 +584,7 @@ void ArtPickerPanel::LoadMatches(const QString& query) {
     match_->show();
     // No key, or SteamGridDB unreachable: nothing to choose between.
     if (!result.ok) {
-      if (!query.isEmpty()) ShowMessage("Could not search SteamGridDB: " + QString::fromStdString(result.error), false);
+      if (!query.isEmpty()) ShowMessage("Could not search SteamGridDB: " + error_help::Describe(result.error), false);
       return;
     }
     match_row_->show();
@@ -622,7 +623,7 @@ void ArtPickerPanel::ChooseMatch(int index) {
   MiradClient::SetGriddbMatchAsync(this, id_, id.toLongLong(), [this](GameActionResult result) {
     if (result.ok) return;  // game.metadata_ready reloads
     fetching_ = false;
-    ShowMessage("Could not switch games: " + QString::fromStdString(result.error), false);
+    ShowMessage("Could not switch games: " + error_help::Describe(result.error), false);
   });
 }
 

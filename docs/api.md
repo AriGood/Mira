@@ -469,7 +469,7 @@ event: game.updated
 data: {"id":"celeste","name":"Celeste", ...}
 ```
 
-Reconnect with `Last-Event-ID` to replay what was missed. The buffer holds the last 500 events in memory. Ids start from the clock, so they keep increasing across a daemon restart.
+A new connection (no `Last-Event-ID`) first gets the buffered events replayed, then a `stream.live` event with no id: everything after it is new. Show replayed events as state, and announce only what arrives after `stream.live`. Reconnect with `Last-Event-ID` to replay what was missed; a resumed connection gets no `stream.live`. The buffer holds the last 500 events in memory. Ids start from the clock, so they keep increasing across a daemon restart.
 
 | Event | Payload |
 |---|---|

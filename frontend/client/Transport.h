@@ -6,6 +6,8 @@
 #include <optional>
 #include <string>
 
+#include "ApiError.h"
+
 // One request/response round trip against mirad's Unix socket.
 //
 // Every endpoint in MiradClient used to open its own httplib::Client, repeat
@@ -19,7 +21,7 @@ struct Reply {
   // a 404 is a normal answer rather than a failure — GET
   // /v1/games/{id}/metadata, for a game nothing has been fetched for.
   int status = 0;
-  std::string error;    // set when ok is false; already human-readable
+  ApiError error;       // set when ok is false; the message is already human-readable
   nlohmann::json body;  // parsed response body, null if empty or unparsable
 };
 
@@ -50,7 +52,7 @@ Reply Get(const std::string& path, const Options& options = {});
 struct Blob {
   bool ok = false;
   int status = 0;
-  std::string error;
+  ApiError error;
   std::string bytes;
   std::string content_type;
 };

@@ -12,6 +12,7 @@
 #include <QVBoxLayout>
 
 #include "../client/MiradClient.h"
+#include "../ui/ErrorHelp.h"
 #include "../ui/HelpButton.h"
 #include "../ui/Theme.h"
 
@@ -175,7 +176,7 @@ void SourceSettingsCard::SetRunner(const QString& runner_ref, bool apply_to_game
       this, id_, runner_ref.toStdString(), apply_to_games, [this](SourceRunnerResult result) {
         runner_apply_->setEnabled(true);
         if (!result.ok) {
-          ShowStatus("Could not change the runner: " + QString::fromStdString(result.error), true);
+          ShowStatus("Could not change the runner: " + error_help::Describe(result.error), true);
           LoadRunner();
           return;
         }
@@ -247,7 +248,7 @@ void SourceSettingsCard::Commit(size_t index) {
                                     loading_ = true;
                                     done.SetText(done.original);
                                     loading_ = false;
-                                    ShowStatus(QString::fromStdString(result.error), true);
+                                    ShowStatus(error_help::Describe(result.error), true);
                                     return;
                                   }
                                   done.original = value;
@@ -258,7 +259,7 @@ void SourceSettingsCard::Commit(size_t index) {
 void SourceSettingsCard::ResetSetting(size_t index) {
   MiradClient::ResetConfigKeyAsync(this, settings_[index].entry.key, [this, index](PatchConfigResult result) {
     if (!result.ok) {
-      ShowStatus(QString::fromStdString(result.error), true);
+      ShowStatus(error_help::Describe(result.error), true);
       return;
     }
     SettingEditor& editor = settings_[index];

@@ -5,6 +5,8 @@
 #include <cstdlib>
 #include <filesystem>
 
+#include "JsonMapping.h"
+
 namespace mira_gui::transport {
 namespace {
 
@@ -18,9 +20,22 @@ httplib::Client MakeClient(const Options& options) {
   return client;
 }
 
+ApiError Unreachable(const httplib::Result& res) {
+  return ApiError("cannot reach mirad at " + SocketPath() + " (" + httplib::to_string(res.error()) + ")",
+                  ApiError::kUnreachable);
+}
+
+// mirad's {"error": {...}} envelope, or the raw body if it isn't one.
+ApiError FromBody(const std::string& body_text) {
+  const json body = json::parse(body_text, nullptr, false);
+  if (body.is_discarded() || !body.contains("error") || !body["error"].is_object()) return ApiError(body_text);
+  ApiError error = mapping::ToApiError(body["error"]);
+  if (error.message.empty()) error.message = body_text;
+  return error;
+}
+
 // An httplib::Result carries its own error when the request never got a
-// response at all; when it did, mirad's error body is the
-// {"error": {"code", "message"}} envelope every failure uses.
+// response at all; when it did, mirad's error body is the envelope above.
 Reply Finish(const httplib::Result& res) {
   Reply reply;
   if (res) reply.status = res->status;
@@ -31,15 +46,7 @@ Reply Finish(const httplib::Result& res) {
     return reply;
   }
 
-  if (res) {
-    const json body = json::parse(res->body, nullptr, false);
-    reply.error = body.is_discarded()
-                      ? res->body
-                      : body.value("error", json::object()).value("message", res->body);
-  } else {
-    reply.error = "cannot reach mirad at " + SocketPath() + " (" +
-                  httplib::to_string(res.error()) + ") — is it running?";
-  }
+  reply.error = res ? FromBody(res->body) : Unreachable(res);
   return reply;
 }
 
@@ -62,17 +69,13 @@ Blob GetBinary(const std::string& path, const Options& options) {
   const httplib::Result res = MakeClient(options).Get(path);
   Blob blob;
   if (!res) {
-    blob.error = "cannot reach mirad at " + SocketPath() + " (" + httplib::to_string(res.error()) +
-                 ") — is it running?";
+    blob.error = Unreachable(res);
     return blob;
   }
 
   blob.status = res->status;
   if (res->status < 200 || res->status >= 300) {
-    const json body = json::parse(res->body, nullptr, false);
-    blob.error = body.is_discarded()
-                     ? res->body
-                     : body.value("error", json::object()).value("message", res->body);
+    blob.error = FromBody(res->body);
     return blob;
   }
 

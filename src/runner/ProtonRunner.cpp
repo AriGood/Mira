@@ -103,7 +103,7 @@ std::vector<model::RunnerBuild> ProtonRunner::Discover(const config::Config& con
 Result<void> ProtonRunner::Provision(const model::Game& game,
                                   const std::optional<model::RunnerBuild>& build) const {
   if (!build) return Err("no_runner_build", "no Proton build resolved for this game");
-  if (game.data_dir.empty()) return Err("no_data_dir", "game has no data_dir set");
+  if (game.data_dir.empty()) return Err("no_data_dir", "no Wine prefix (data_dir) has been set up for this game");
 
   std::error_code ec;
   fs::create_directories(game.data_dir, ec);
@@ -135,7 +135,7 @@ Result<Command> ProtonRunner::BuildCommand(const model::Game& game,
                                         const std::optional<model::RunnerBuild>& build) const {
   if (!build) return Err("no_runner_build", "no Proton build resolved for this game");
   if (game.exe_path.empty()) return Err("no_executable", "no exe_path set for this game");
-  if (game.data_dir.empty()) return Err("no_data_dir", "game has no data_dir set");
+  if (game.data_dir.empty()) return Err("no_data_dir", "no Wine prefix (data_dir) has been set up for this game");
 
   const fs::path install_path = game.install_path;
   const fs::path exe = install_path / game.exe_path;

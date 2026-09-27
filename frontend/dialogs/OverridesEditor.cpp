@@ -171,8 +171,7 @@ void OverridesEditor::ResetField(size_t index) {
       this, game_id_, {GameConfigEdit{field.entry.key, field.entry.type, std::string(), true}},
       [this](PatchGameConfigResult result) {
         if (!result.ok) {
-          notify::Failed(this, "Could not reset this override.",
-                         QString::fromStdString(result.error));
+          notify::FailedRequest(this, "Could not reset this override.", result.error);
           return;
         }
         Reload();

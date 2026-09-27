@@ -47,6 +47,7 @@ class LibraryGrid;
 namespace mira_gui {
 class ArtPickerPanel;
 class CoverChip;
+class DaemonSupervisor;
 class DownloadTracker;
 class DownloadsPanel;
 class GameEditForm;
@@ -250,6 +251,8 @@ private:
   void SyncDesktopEntries();
   void RemoveAllDesktopEntries();
   void ShowSteamGridDbNotice(bool asked_for);
+  // Routes ui/ErrorHelp's fix-it buttons to this window's pages.
+  void InstallErrorNavigator();
   void UpdateTileCover(const QString& id);
 
   void HandleGameEvent(const std::string& type, const std::string& data);
@@ -382,6 +385,9 @@ private:
   std::vector<mira_gui::GameSummary> games_;
   std::set<std::string> running_ids_;
   mira_gui::DownloadTracker* downloads_ = nullptr;
+  mira_gui::DaemonSupervisor* daemon_supervisor_ = nullptr;  // "Start mirad" from a failure
+  bool events_live_ = false;  // past mirad's replay (`stream.live`); only then announce events
+  bool mirad_reachable_ = true;  // as of the last health check, for the footer
   mira_gui::DownloadsPanel* downloads_panel_ = nullptr;
   // game.added events asking for their settings to open, gathered briefly
   // so a scan's burst of them opens nothing.

@@ -100,8 +100,7 @@ void RunInPrefixDialog::Run() {
                                   setEnabled(true);
                                   run_->setText("Run");
                                   if (!result.ok) {
-                                    mira_gui::notify::Failed(this, "Could not run that.",
-                                                         QString::fromStdString(result.error));
+                                    mira_gui::notify::FailedRequest(this, "Could not run that.", result.error);
                                     return;
                                   }
                                   accept();

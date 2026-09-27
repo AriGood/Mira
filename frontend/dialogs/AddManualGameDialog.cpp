@@ -132,7 +132,7 @@ void AddManualGameDialog::Submit() {
         setEnabled(true);
         add_->setText("Add");
         if (!result.ok) {
-          notify::Failed(this, "Could not add that game.", QString::fromStdString(result.error));
+          notify::FailedRequest(this, "Could not add that game.", result.error);
           return;
         }
         accept();

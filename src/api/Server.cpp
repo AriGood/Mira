@@ -2206,16 +2206,27 @@ void Server::RegisterRoutes() {
 
   http_->Get("/v1/events", [this](const Request& req, Response& res) {
     std::int64_t after_id = 0;
+    bool resuming = false;
     if (auto it = req.headers.find("Last-Event-ID"); it != req.headers.end()) {
       after_id = std::atoll(it->second.c_str());
+      resuming = true;
     }
+    // A new client gets the buffer replayed, then `stream.live` so it can tell
+    // history (show it) from news (announce it). A resuming one only missed news.
+    const std::int64_t replay_end = resuming ? 0 : events_.LatestId();
+    bool live_sent = resuming;
 
     res.set_header("Cache-Control", "no-cache");
     // The 20s wait only checks whether this client went away.
     res.set_chunked_content_provider(
         "text/event-stream",
-        [this, after_id](size_t, httplib::DataSink& sink) mutable -> bool {
+        [this, after_id, replay_end, live_sent](size_t, httplib::DataSink& sink) mutable -> bool {
           if (stopping_.load(std::memory_order_relaxed)) return false;
+          if (!live_sent && after_id >= replay_end) {
+            live_sent = true;
+            static constexpr std::string_view kLive = "event: stream.live\ndata: {}\n\n";
+            return sink.write(kLive.data(), kLive.size());
+          }
           auto event = events_.WaitNext(after_id, stopping_, std::chrono::milliseconds(20000));
           if (!event) return sink.is_writable() && !stopping_.load(std::memory_order_relaxed);
           after_id = event->id;

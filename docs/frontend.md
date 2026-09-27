@@ -124,6 +124,12 @@ Notifications use `org.freedesktop.Notifications` (`ui/SystemNotifier`) with a `
 
 Messages are plain text, since `mirad`'s errors quote paths and commands. Failures show `mirad`'s message under a sentence naming what failed.
 
+Every request result carries an `ApiError`: `mirad`'s message, code, `hint` and `fix` (see the error envelope in [`api.md`](api.md)). `notify::FailedRequest` shows the hint under the message and turns the fix into a button through `ui/ErrorHelp`: the setting to fill in, the Runners page, the game's settings or log, or the store's page. What to say and where to point is `mirad`'s knowledge, so a new error needs no frontend change. The one case `ErrorHelp` words itself is `mirad_unreachable`, set by the transport when a request never reaches `mirad`, which gets a *Start mirad* button. Status lines use `error_help::Describe` for the same text inline. `LibraryWindow` registers the routes with `error_help::SetNavigator`.
+
+A game that crashes within 30 seconds of launch gets a failure with a *View log* button. Later crashes only change the game's status, since many games exit non-zero on a normal quit.
+
+On connect, `mirad` replays its event buffer and then sends `stream.live`. Windows apply replayed events but only announce (notifications, install results, crashes) what comes after it, so a restart doesn't repeat old messages.
+
 ## Cover art
 
 `ui/ArtworkStore` fetches art from `GET /v1/games/{id}/artwork` and always returns a pixmap:

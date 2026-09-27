@@ -178,7 +178,7 @@ void RemoveSource(QWidget* parent, const SourceInfo& source, std::function<void(
   const std::string id = source.id.toStdString();
   MiradClient::GetRemovalPlanAsync(parent, id, [parent, id, name, on_removed](RemovalPlanResult plan) {
     if (!plan.ok) {
-      notify::Failed(parent, "Could not plan the removal.", QString::fromStdString(plan.error));
+      notify::FailedRequest(parent, "Could not plan the removal.", plan.error);
       return;
     }
     QStringList lines;
@@ -200,7 +200,7 @@ void RemoveSource(QWidget* parent, const SourceInfo& source, std::function<void(
     if (!notify::Confirm(parent, "Remove " + name, lines.join("\n"), "Remove", /*destructive=*/true)) return;
     MiradClient::RemoveSourceAsync(parent, id, [parent, name, on_removed](RemoveSourceResult r) {
       if (!r.ok) {
-        notify::Failed(parent, "Could not remove " + name + ".", QString::fromStdString(r.error));
+        notify::FailedRequest(parent, "Could not remove " + name + ".", r.error);
         return;
       }
       if (!r.problems.empty()) {

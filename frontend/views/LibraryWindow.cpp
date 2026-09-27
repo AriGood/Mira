@@ -61,6 +61,7 @@
 
 #include "../ui/AboutPanel.h"
 #include "../ui/CoverArt.h"
+#include "../ui/DaemonSupervisor.h"
 #include "../ui/DownloadTracker.h"
 #include "../ui/DownloadsPanel.h"
 #include "../ui/GameActions.h"
@@ -292,6 +293,9 @@ const FilterEntry kFilters[] = {
     {"Hidden", "hidden", mira_gui::icons::Glyph::EyeSlash},
 };
 
+// A crash within this many seconds of launch reads as "failed to start".
+constexpr std::int64_t kFailedStartSeconds = 30;
+
 // A pinned game's tag. "favorite" because Lutris imports its favorites under it.
 constexpr const char* kPinnedTag = "favorite";
 
@@ -489,6 +493,8 @@ LibraryWindow::LibraryWindow(QWidget* parent) : QMainWindow(parent) {
   // Before the panel and the grid, because both ask it for covers.
   artwork_ = new mira_gui::ArtworkStore(this);
   connect(artwork_, &mira_gui::ArtworkStore::CoverChanged, this, &LibraryWindow::UpdateTileCover);
+
+  InstallErrorNavigator();
 
   // Before the top bar, which shows its count.
   downloads_ = new mira_gui::DownloadTracker(this);
@@ -1073,8 +1079,7 @@ void LibraryWindow::OpenGameDetailPage(const std::string& id) {
 void LibraryWindow::ScanLibrary() {
   mira_gui::MiradClient::ScanLibraryAsync(this, [this](mira_gui::ScanResult result) {
     if (!result.ok) {
-      mira_gui::notify::Failed(this, "Could not scan the library.",
-                               QString::fromStdString(result.error));
+      mira_gui::notify::FailedRequest(this, "Could not scan the library.", result.error);
       return;
     }
     // New games show up in the grid on their own; only "nothing happened"
@@ -1089,8 +1094,7 @@ void LibraryWindow::ScanLibrary() {
 void LibraryWindow::ImportSteamLibrary() {
   mira_gui::MiradClient::ScanSteamAsync(this, [this](mira_gui::SteamScanResult result) {
     if (!result.ok) {
-      mira_gui::notify::Failed(this, "Could not import from Steam.",
-                               QString::fromStdString(result.error));
+      mira_gui::notify::FailedRequest(this, "Could not import from Steam.", result.error);
       return;
     }
     if (result.added == 0) mira_gui::notify::Notice(this, "No new Steam games found.");
@@ -1101,10 +1105,7 @@ void LibraryWindow::ImportSteamLibrary() {
 void LibraryWindow::ImportLutrisLibrary() {
   mira_gui::MiradClient::ImportLutrisAsync(this, [this](mira_gui::LutrisImportResult result) {
     if (!result.ok) {
-      mira_gui::notify::FailedWithHint(
-          this, "Could not import from Lutris.", QString::fromStdString(result.error),
-          "Lutris keeps its library in an sqlite database Mira reads with the sqlite3 command. "
-          "If Lutris is installed somewhere unusual, point lutris.data_dir at it in settings.");
+      mira_gui::notify::FailedRequest(this, "Could not import from Lutris.", result.error);
       return;
     }
     if (result.added == 0) mira_gui::notify::Notice(this, "No new Lutris games found.");
@@ -1125,8 +1126,7 @@ void LibraryWindow::AddGameManually() {
 void LibraryWindow::SyncDesktopEntries() {
   mira_gui::MiradClient::SyncDesktopEntriesAsync(this, [this](mira_gui::DesktopEntrySyncResult result) {
     if (!result.ok) {
-      mira_gui::notify::Failed(this, "Could not regenerate desktop entries.",
-                               QString::fromStdString(result.error));
+      mira_gui::notify::FailedRequest(this, "Could not regenerate desktop entries.", result.error);
       return;
     }
     mira_gui::notify::Notice(this, "Desktop entries regenerated.");
@@ -1149,15 +1149,14 @@ void LibraryWindow::RemoveAllDesktopEntries() {
   mira_gui::MiradClient::PatchConfigAsync(
       this, {edit}, [this](mira_gui::PatchConfigResult patch_result) {
         if (!patch_result.ok) {
-          mira_gui::notify::Failed(this, "Could not turn off desktop entries.",
-                                   QString::fromStdString(patch_result.error));
+          mira_gui::notify::FailedRequest(this, "Could not turn off desktop entries.", patch_result.error);
           return;
         }
         mira_gui::MiradClient::SyncDesktopEntriesAsync(
             this, [this](mira_gui::DesktopEntrySyncResult sync_result) {
               if (!sync_result.ok) {
-                mira_gui::notify::Failed(this, "Could not remove the desktop entries.",
-                                         QString::fromStdString(sync_result.error));
+                mira_gui::notify::FailedRequest(this, "Could not remove the desktop entries.",
+                                                sync_result.error);
                 return;
               }
               mira_gui::notify::Notice(this, "Desktop entries removed.");
@@ -1716,6 +1715,53 @@ void LibraryWindow::UpdateTileCover(const QString& id) {
   }
 }
 
+void LibraryWindow::InstallErrorNavigator() {
+  const auto find_source = [](const std::string& id) -> const mira_gui::SourceInfo* {
+    const auto& sources = mira_gui::AllSources();
+    const auto it = std::ranges::find(sources, QString::fromStdString(id), &mira_gui::SourceInfo::id);
+    return it != sources.end() ? &*it : nullptr;
+  };
+  QPointer<LibraryWindow> self(this);
+  mira_gui::error_help::Navigator nav;
+  nav.open_setting = [self](const QString& key) {
+    if (self) self->OpenSettings(key);
+  };
+  nav.open_runners = [self] {
+    if (self) self->OpenRunners();
+  };
+  nav.open_source = [self, find_source](const std::string& id) {
+    if (const mira_gui::SourceInfo* source = find_source(id); self && source != nullptr) self->OpenSource(*source);
+  };
+  nav.open_game_settings = [self](const std::string& id) {
+    if (self) self->OpenGameDialog(id);
+  };
+  nav.view_log = [self](const std::string& id) {
+    if (!self) return;
+    const mira_gui::GameSummary* game = self->FindGame(id);
+    mira_gui::actions::ViewLog(self, id, game != nullptr ? QString::fromStdString(game->name) : QString());
+  };
+  nav.start_daemon = [self] {
+    if (!self) return;
+    // Kept, not deleted after Ready: its destructor stops a mirad it started.
+    if (self->daemon_supervisor_ == nullptr) {
+      self->daemon_supervisor_ = new mira_gui::DaemonSupervisor(self);
+      connect(self->daemon_supervisor_, &mira_gui::DaemonSupervisor::Ready, self,
+              [self] { self->RefreshHealth(/*force_scan=*/false); });
+      connect(self->daemon_supervisor_, &mira_gui::DaemonSupervisor::Failed, self,
+              [self](const QString& error) {
+                mira_gui::notify::FailedWithHint(self, "Could not start mirad.", error,
+                                                 "Mira looks for mirad next to itself, then on PATH.");
+              });
+    }
+    self->daemon_supervisor_->EnsureRunning();
+  };
+  nav.source_name = [find_source](const std::string& id) {
+    const mira_gui::SourceInfo* source = find_source(id);
+    return source != nullptr ? source->name : QString();
+  };
+  mira_gui::error_help::SetNavigator(std::move(nav));
+}
+
 void LibraryWindow::ShowSteamGridDbNotice(bool asked_for) {
   // Only when the user actually asked for art — a background fetch after a
   // scan hitting this would otherwise nag on every launch. Once per session,
@@ -1735,8 +1781,7 @@ void LibraryWindow::FetchMissingArtwork() {
   mira_gui::MiradClient::RefreshMissingArtworkAsync(
       this, [this](mira_gui::RefreshMissingArtworkResult result) {
         if (!result.ok) {
-          mira_gui::notify::Failed(this, "Could not fetch missing cover art.",
-                                   QString::fromStdString(result.error));
+          mira_gui::notify::FailedRequest(this, "Could not fetch missing cover art.", result.error);
           return;
         }
         if (result.count == 0) {
@@ -1754,8 +1799,7 @@ void LibraryWindow::RefreshMetadata(const std::string& id, bool announce) {
       this, id, announce, [this, id, announce](mira_gui::MetadataRefreshResult result) {
         if (!result.ok) {
           if (announce) {
-            mira_gui::notify::Failed(this, "Could not refresh metadata.",
-                                     QString::fromStdString(result.error));
+            mira_gui::notify::FailedRequest(this, "Could not refresh metadata.", result.error);
           }
           return;
         }
@@ -1767,17 +1811,14 @@ void LibraryWindow::RefreshMetadata(const std::string& id, bool announce) {
 
 void LibraryWindow::RefreshHealth(bool force_scan) {
   mira_gui::MiradClient::CheckHealthAsync(this, [this, force_scan](mira_gui::HealthStatus status) {
+    mirad_reachable_ = status.reachable;
     if (status.reachable) {
       RescanAndRefreshGames(force_scan);
     } else {
       games_.clear();
       ApplyFilter();
-      mira_gui::notify::FailedWithHint(
-          this, "Could not reach mirad.", QString::fromStdString(status.detail),
-          "It was reachable when this window opened, so something stopped it. If you started "
-          "it yourself, run \"mirad\" again in a terminal. If systemd manages it: "
-          "systemctl --user restart mirad — and journalctl --user -u mirad to see why it "
-          "stopped.");
+      mira_gui::notify::FailedRequest(this, "Mira lost its connection to mirad.",
+                                      mira_gui::ApiError(status.detail, mira_gui::ApiError::kUnreachable));
     }
   });
 }
@@ -1805,8 +1846,7 @@ void LibraryWindow::RefreshGames() {
   // front so Ctrl+H is a client-side filter switch, not a round trip.
   mira_gui::MiradClient::ListGamesAsync(this, [this](mira_gui::GamesResult visible) {
     if (!visible.ok) {
-      mira_gui::notify::Failed(this, "Could not list games.",
-                               QString::fromStdString(visible.error));
+      mira_gui::notify::FailedRequest(this, "Could not list games.", visible.error);
       games_.clear();
       ApplyFilter();
       return;
@@ -1937,14 +1977,14 @@ void LibraryWindow::ApplyFilter() {
   }
 
   // Two lines: count first (what you're looking at), connection status
-  // second (background fact, muted further by the dot standing in for a
-  // word). Only reached after a successful fetch, so the dot is always
-  // the "connected" color -- there's no "shown, but not connected" state.
-  footer_->setText(QString("%1 of %2 games shown<br><span style='color:%3'>●</span> Connected via %4")
+  // second (background fact, muted further by the dot standing in for a word).
+  const mira_gui::theme::Tokens& tokens = mira_gui::theme::Current();
+  footer_->setText(QString("%1 of %2 games shown<br><span style='color:%3'>●</span> %4 %5")
                        .arg(shown)
                        .arg(games_.size())
-                       .arg(mira_gui::theme::Current().success.name())
-                       .arg(QString::fromStdString(mira_gui::MiradClient::ResolveSocketPath())));
+                       .arg((mirad_reachable_ ? tokens.success : tokens.error).name(),
+                            mirad_reachable_ ? QString("Connected via") : QString("Not connected to"),
+                            QString::fromStdString(mira_gui::MiradClient::ResolveSocketPath())));
 
   RefreshClassicTable();
   if (source_page_ != nullptr) source_page_->SetGames(games_, running_ids_);
@@ -2239,10 +2279,10 @@ void LibraryWindow::BatchSetTag(const std::vector<std::string>& ids, const std::
     mira_gui::MiradClient::PatchGameAsync(
         this, id, patch, [this, id, tags, tag](mira_gui::PatchGameResult result) {
           if (!result.ok) {
-            mira_gui::notify::Failed(this,
-                                     tag == "hidden" ? "Could not change a game's visibility."
-                                                     : "Could not change whether a game is pinned.",
-                                     QString::fromStdString(result.error));
+            mira_gui::notify::FailedRequest(this,
+                                            tag == "hidden" ? "Could not change a game's visibility."
+                                                            : "Could not change whether a game is pinned.",
+                                            result.error);
             return;
           }
           for (mira_gui::GameSummary& stored : games_) {
@@ -2271,10 +2311,10 @@ void LibraryWindow::ToggleTag(const std::string& id, const std::string& tag) {
   patch.tags = tags;
   mira_gui::MiradClient::PatchGameAsync(this, id, patch, [this, id, tags, tag](mira_gui::PatchGameResult result) {
     if (!result.ok) {
-      mira_gui::notify::Failed(this,
-                               tag == "hidden" ? "Could not change this game's visibility."
-                                               : "Could not change whether this game is pinned.",
-                               QString::fromStdString(result.error));
+      mira_gui::notify::FailedRequest(this,
+                                      tag == "hidden" ? "Could not change this game's visibility."
+                                                      : "Could not change whether this game is pinned.",
+                                      result.error);
       return;
     }
     // Patched in place rather than waiting for the game.updated event, so
@@ -2950,7 +2990,7 @@ void LibraryWindow::RelocateLibrary() {
   mira_gui::notify::Notice(this, "Moving games into Mira's folders…");
   mira_gui::MiradClient::RelocateLibraryAsync(this, [this](mira_gui::RelocateLibraryResult result) {
     if (!result.ok) {
-      mira_gui::notify::Failed(this, "Could not move the games.", QString::fromStdString(result.error));
+      mira_gui::notify::FailedRequest(this, "Could not move the games.", result.error);
       return;
     }
     if (result.failed > 0) {
@@ -3091,7 +3131,7 @@ void LibraryWindow::OpenManageSources() {
     refresh();
     const mira_gui::ConfigEdit edit{(id + ".enabled").toStdString(), "a boolean", on ? "true" : "false"};
     mira_gui::MiradClient::PatchConfigAsync(this, {edit}, [this](mira_gui::PatchConfigResult result) {
-      if (!result.ok) mira_gui::notify::Failed(this, "Could not change that source.", QString::fromStdString(result.error));
+      if (!result.ok) mira_gui::notify::FailedRequest(this, "Could not change that source.", result.error);
       RefreshSourceNavs();
     });
   });
@@ -3455,9 +3495,15 @@ void LibraryWindow::RefreshClassicTable() {
 }
 
 void LibraryWindow::HandleGameEvent(const std::string& type, const std::string& data) {
+  // Before this, events are mirad's replayed history: apply them, announce nothing.
+  if (type == "stream.live") {
+    events_live_ = true;
+    return;
+  }
+
   if (type == "notification") {
     mira_gui::NotificationEvent event;
-    if (mira_gui::MiradClient::ParseNotification(data, &event)) {
+    if (events_live_ && mira_gui::MiradClient::ParseNotification(data, &event)) {
       const QString message = QString::fromStdString(event.message);
       const auto level = mira_gui::notify::LevelFromString(QString::fromStdString(event.level));
       if (level == mira_gui::notify::Level::Warning || level == mira_gui::notify::Level::Error) {
@@ -3480,8 +3526,10 @@ void LibraryWindow::HandleGameEvent(const std::string& type, const std::string& 
   if (mira_gui::InstallEvent install; mira_gui::MiradClient::ParseInstallEvent(type, data, &install)) {
     const mira_gui::GameSummary* game = FindGame(install.id);
     const QString name = game != nullptr ? QString::fromStdString(game->name) : QString("A game");
-    if (install.state == "failed") {
-      mira_gui::notify::Failed(this, "Could not install " + name + ".", QString::fromStdString(install.error));
+    if (!events_live_) {
+      // History: the grid below still picks up the result.
+    } else if (install.state == "failed") {
+      mira_gui::notify::FailedRequest(this, "Could not install " + name + ".", install.error);
     } else if (install.state == "finished") {
       mira_gui::notify::Notice(this, name + " is installed.");
     }
@@ -3509,6 +3557,17 @@ void LibraryWindow::HandleGameEvent(const std::string& type, const std::string& 
       UpsertGame(game);
     } else {
       RefreshGames();
+    }
+    // A crash soon after launch is a game that failed to start. A later one is
+    // left to the game's status: plenty of games exit non-zero on a normal quit.
+    if (events_live_ && state.state == "crashed" && state.played_seconds < kFailedStartSeconds) {
+      const mira_gui::GameSummary* crashed = FindGame(state.id);
+      const QString name = crashed != nullptr ? QString::fromStdString(crashed->name) : QString("The game");
+      const std::string id = state.id;
+      mira_gui::notify::FailedWithAction(
+          this, name + " closed right after starting.", QString::fromStdString(state.error),
+          "Its log usually says why. A different runner in the game's settings often helps.", "View log",
+          [this, id, name] { mira_gui::actions::ViewLog(this, id, name); });
     }
     return;
   }
