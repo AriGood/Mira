@@ -105,6 +105,8 @@ qt_add_executable(mira-gui
   views/RunnersPage.h
   views/SourcePage.cpp
   views/SourcePage.h
+  views/SourceSettingsCard.cpp
+  views/SourceSettingsCard.h
   views/MainWindow.cpp
   views/MainWindow.h
 

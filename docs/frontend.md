@@ -24,6 +24,8 @@ Each source row opens `views/SourcePage` in the grid's place:
 
 A page shows a banner with the source's status, a setup card while a step is left, and the source's games as tiles (`ui/TileGrid`). Covers for games that aren't installed come from `/v1/library/artwork`. Login URLs and paste parsing come from `mirad`, so the page only holds wording. A source turned off with `<id>.enabled` isn't listed.
 
+The banner's gear opens `views/SourceSettingsCard` under it: the source's runner (`/v1/sources/{id}/runner`) and every schema setting under its own keys (`<id>.*`, plus `launchers.<id>.*`), each saved as soon as it changes. The banner's ⋯ menu updates a store's tool, opens a launcher's prefix tools (folder, winetricks, run a program, log) and removes the source through the same confirmation Manage sources uses.
+
 ### Runners page
 
 `views/RunnersPage` has a Proton/Wine switch that filters both of its lists:
@@ -89,7 +91,7 @@ Only `game.added` and `game.updated` carry a game record, so views check the eve
 
 ## Settings
 
-- **`settings.toml`** holds backend settings. `ui/SettingsPanel` is generated from `GET /v1/config/schema`: sections, order, labels, dividers and runner pickers (`is_runner_ref`) all come from the schema, so a new backend setting needs no frontend change.
+- **`settings.toml`** holds backend settings. `ui/SettingsPanel` is generated from `GET /v1/config/schema`: sections, order, labels, dividers and runner pickers (`is_runner_ref`) all come from the schema, so a new backend setting needs no frontend change. Each row's editor comes from `ui/SettingEditor`, which the source settings card shares.
 - **`frontend.toml`** holds GUI state and preferences (`FrontendPrefs` in `client/Types.h`), read and written as the `frontend` key of `/v1/config`. The backend never validates it.
 
 | Key | Meaning |

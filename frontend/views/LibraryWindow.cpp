@@ -2773,6 +2773,10 @@ void LibraryWindow::OpenSource(const mira_gui::SourceInfo& source) {
   });
   connect(source_page_, &mira_gui::SourcePage::OpenSettingsRequested, this,
           [this](const QString& key) { OpenSettings(key); });
+  connect(source_page_, &mira_gui::SourcePage::Removed, this, [this, id = source.id] {
+    CloseSource();
+    ForgetSource(id);
+  });
   connect(source_page_, &mira_gui::SourcePage::OpenGameRequested, this,
           [this](const QString& id) { OpenGameDialog(id.toStdString()); });
   // Same rule as the grid's double-click: only a ready game has anything to launch.
@@ -3038,13 +3042,8 @@ void LibraryWindow::OpenManageSources() {
     RefreshGames();
   });
   connect(&dialog, &ManageSourcesDialog::Removed, this, [this, refresh](const QString& id) {
-    disabled_sources_.insert(id);
-    source_ready_[id] = false;
-    std::erase_if(games_, [&id](const mira_gui::GameSummary& game) { return QString::fromStdString(game.source) == id; });
-    UpdateSourceNavs();
+    ForgetSource(id);
     refresh();
-    RefreshGames();
-    RefreshSourceNavs();
   });
   QString open_id;
   connect(&dialog, &ManageSourcesDialog::OpenRequested, this, [&open_id](const QString& id) { open_id = id; });
@@ -3053,6 +3052,15 @@ void LibraryWindow::OpenManageSources() {
   for (const mira_gui::SourceInfo& source : mira_gui::AllSources()) {
     if (source.id == open_id) OpenSource(source);
   }
+}
+
+void LibraryWindow::ForgetSource(const QString& id) {
+  disabled_sources_.insert(id);
+  source_ready_[id] = false;
+  std::erase_if(games_, [&id](const mira_gui::GameSummary& game) { return QString::fromStdString(game.source) == id; });
+  UpdateSourceNavs();
+  RefreshGames();
+  RefreshSourceNavs();
 }
 
 std::vector<QString> LibraryWindow::SourceOrder() const {

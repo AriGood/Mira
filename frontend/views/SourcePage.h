@@ -7,6 +7,7 @@
 #include <QString>
 #include <QWidget>
 
+#include <functional>
 #include <set>
 #include <string>
 #include <vector>
@@ -17,7 +18,9 @@
 class QLabel;
 class QLineEdit;
 class QListWidgetItem;
+class QMenu;
 class QPushButton;
+class QToolButton;
 class QVBoxLayout;
 
 namespace mira_gui {
@@ -25,6 +28,7 @@ namespace mira_gui {
 class ArtworkStore;
 class DownloadTracker;
 class HoverCard;
+class SourceSettingsCard;
 class TileGrid;
 
 struct SourceInfo {
@@ -41,6 +45,10 @@ struct SourceInfo {
 
 // Every source the sidebar lists, in order.
 const std::vector<SourceInfo>& AllSources();
+
+// Shows what removing `source` would do, asks, then removes it.
+// `on_removed` runs only once it's gone.
+void RemoveSource(QWidget* parent, const SourceInfo& source, std::function<void()> on_removed);
 
 // One store, launcher or other program's page in the library window: the
 // games that came from it as cover tiles, whatever setup it still needs, and
@@ -69,6 +77,8 @@ signals:
   // Right-click on an installed game: the library's own game menu, plus
   // Update when `update_ref` is set.
   void GameMenuRequested(QString id, QPoint global_pos, QString update_ref);
+  // The source was removed from the banner's menu; the page should close.
+  void Removed();
 
 private:
   bool IsStore() const { return source_.kind == SourceInfo::Kind::Store; }
@@ -81,6 +91,10 @@ private:
   QWidget* BuildSetupCard();
   QWidget* BuildLibrarySection();
   QWidget* BuildOwnedSection();
+
+  void ToggleSettings(bool shown);
+  void FillMoreMenu(QMenu* menu);
+  void UpdateTool();
 
   void RefreshStatus();
   void ApplyStoreStatus(const StoreStatusResult& status);
@@ -108,6 +122,10 @@ private:
   bool authenticated_ = false;
   bool launcher_installed_ = false;
   bool launcher_installing_ = false;
+  bool tool_updating_ = false;
+  std::string tool_version_;
+  std::string launcher_game_id_;
+  std::string launcher_prefix_;
   std::string account_;
   std::string login_url_;
   int library_count_ = 0;
@@ -115,6 +133,10 @@ private:
   QLabel* status_line_ = nullptr;
   QPushButton* banner_primary_ = nullptr;  // Open launcher / Sign out
   QLineEdit* filter_ = nullptr;
+  QToolButton* settings_button_ = nullptr;
+  QToolButton* more_button_ = nullptr;
+  QVBoxLayout* content_layout_ = nullptr;
+  SourceSettingsCard* settings_card_ = nullptr;  // built on first open
 
   // Setup card: the steps still to do before the rest of the page works.
   QWidget* setup_card_ = nullptr;

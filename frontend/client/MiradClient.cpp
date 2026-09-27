@@ -1125,6 +1125,29 @@ RemoveSourceResult RemoveSourceSync(const std::string& source) {
   return result;
 }
 
+SourceRunnerResult SourceRunnerFrom(const transport::Reply& reply) {
+  SourceRunnerResult result;
+  if (!reply.ok) {
+    result.error = reply.error;
+    return result;
+  }
+  result.ok = true;
+  result.runner_ref = reply.body.value("runner_ref", std::string());
+  result.games = reply.body.value("games", 0);
+  result.differing = reply.body.value("differing", 0);
+  return result;
+}
+
+SourceRunnerResult GetSourceRunnerSync(const std::string& source) {
+  return SourceRunnerFrom(transport::Get("/v1/sources/" + source + "/runner"));
+}
+
+SourceRunnerResult SetSourceRunnerSync(const std::string& source, const std::string& runner_ref,
+                                       bool apply_to_games) {
+  return SourceRunnerFrom(transport::PostJson(
+      "/v1/sources/" + source + "/runner", {{"runner_ref", runner_ref}, {"apply_to_games", apply_to_games}}));
+}
+
 ItchCollectionsResult GetItchCollectionsSync() {
   ItchCollectionsResult result;
   const transport::Reply reply = transport::Get("/v1/itch/collections");
@@ -1247,6 +1270,8 @@ LaunchersResult GetLaunchersSync() {
                                 .installed = entry.value("installed", false),
                                 .install_state = entry.value("install_state", std::string()),
                                 .interactive_install = entry.value("interactive_install", false),
+                                .prefix = entry.value("prefix", std::string()),
+                                .runner_ref = entry.value("runner_ref", std::string()),
                                 .error = entry.value("error", std::string())});
   }
   return result;
@@ -1714,6 +1739,19 @@ void MiradClient::GetRemovalPlanAsync(QObject* context, const std::string& sourc
 void MiradClient::RemoveSourceAsync(QObject* context, const std::string& source,
                                     std::function<void(RemoveSourceResult)> callback) {
   async::Run(context, [source] { return RemoveSourceSync(source); }, std::move(callback));
+}
+
+void MiradClient::GetSourceRunnerAsync(QObject* context, const std::string& source,
+                                       std::function<void(SourceRunnerResult)> callback) {
+  async::Run(context, [source] { return GetSourceRunnerSync(source); }, std::move(callback));
+}
+
+void MiradClient::SetSourceRunnerAsync(QObject* context, const std::string& source,
+                                       const std::string& runner_ref, bool apply_to_games,
+                                       std::function<void(SourceRunnerResult)> callback) {
+  async::Run(
+      context, [source, runner_ref, apply_to_games] { return SetSourceRunnerSync(source, runner_ref, apply_to_games); },
+      std::move(callback));
 }
 
 void MiradClient::GetItchCollectionsAsync(QObject* context,
