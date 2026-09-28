@@ -23,7 +23,7 @@ struct GogImportSummary {
 std::filesystem::path FindGameDir(const config::Config& config, const std::string& id);
 
 // Unlike epic::EpicImporter, gogdl has no "list what's installed" of its
-// own (see Gog.h) — the only source of truth is gog.install_root, the
+// own (see Gog.h), so the only source of truth is gog.install_root, the
 // directory Mira itself installs into. Import() walks its immediate
 // subdirectories and runs `gogdl import <dir>` on each to identify it, so
 // a game GogInstaller already put there is picked up on a fresh `mirad`

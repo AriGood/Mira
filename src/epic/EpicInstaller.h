@@ -10,12 +10,12 @@
 namespace mira::epic {
 
 // Installs or updates one Epic title via `legendary install`/`update`.
-// Blocking — the caller (api::Server's POST /v1/epic/install|update
+// Blocking: the caller (api::Server's POST /v1/epic/install|update
 // routes) runs this on a detached thread and reports progress over
 // EventBus, the same "don't block the request thread on a slow download"
 // pattern used for Proton-GE (see runner::DownloadAndInstall's caller). On
 // success, re-runs EpicImporter, which is what actually picks up the new
-// install and provisions a Wine/Proton prefix for it — Legendary itself
+// install and provisions a Wine/Proton prefix for it. Legendary itself
 // never creates one (see EpicImporter.h's class comment).
 class EpicInstaller {
 public:

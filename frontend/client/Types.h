@@ -23,7 +23,7 @@ struct HealthStatus {
 };
 
 // Mirrors the subset of the `Game` fields (docs/api.md, GET /v1/games) a
-// library list needs — not the full record.
+// library list needs, not the full record.
 struct GameSummary {
   std::string id;
   std::string name;
@@ -52,7 +52,7 @@ struct GamesResult {
 };
 
 // docs/api.md's `game.state` event, trimmed to what a row's Launch/Stop
-// button needs — see ParseGameState.
+// button needs; see ParseGameState.
 struct GameStateEvent {
   std::string id;
   std::string state;  // "running" | "exited" | "crashed"
@@ -73,7 +73,7 @@ struct DeleteResult {
 // `tracked` is mirad's own answer to "are game.state events coming for this
 // launch" (docs/api.md), not something inferred here. It is false only for
 // a Steam-sourced game under `steam.launch_mode: "steam"` *with*
-// `steam.track_process` off — mirad handed it to
+// `steam.track_process` off: mirad handed it to
 // `steam://rungameid/<appid>` and is watching nothing. With track_process
 // on (the default) mirad polls /proc for it and real game.state events do
 // arrive, a few seconds later than a normal launch.
@@ -87,7 +87,7 @@ struct LaunchResult {
   bool tracked = true;
 };
 
-// `game.launched` — the event mirad publishes for a Steam launch, carrying
+// `game.launched`, the event mirad publishes for a Steam launch, carrying
 // the same `tracked` the launch reply does. Needed as an event and not just
 // a reply because the launch may have come from somewhere else entirely
 // (the CLI, the other window), and then this is all a client ever sees.
@@ -96,7 +96,7 @@ struct GameLaunchedEvent {
   bool tracked = false;
 };
 
-// GET /v1/games/{id}/artwork — the cached cover image itself, as bytes.
+// GET /v1/games/{id}/artwork: the cached cover image itself, as bytes.
 //
 // `missing` is the 404 case and is not an error: most games have no cached
 // artwork, and the placeholder cover is the intended answer for them. Only
@@ -109,14 +109,14 @@ struct ArtworkResult {
   std::string content_type;
 };
 
-// GET /v1/games/{id}/metadata — the store info mirad cached alongside the
+// GET /v1/games/{id}/metadata: the store info mirad cached alongside the
 // art. Only what a details panel shows; the cached JSON carries more
 // (screenshots, requirements, DLC ids) than anything here reads.
-// One entry from art_candidates (docs/api.md, GET .../metadata) — a
+// One entry from art_candidates (docs/api.md, GET .../metadata), a
 // SteamGridDB result not necessarily the one currently applied. `url`/
 // `thumb` are left out: they're addresses on SteamGridDB's own CDN, and the
-// frontend has no HTTP client for the open internet, only mirad's socket —
-// a candidate is chosen by `id` and mirad fetches it, never the frontend.
+// frontend has no HTTP client for the open internet, only mirad's socket.
+// A candidate is chosen by `id` and mirad fetches it, never the frontend.
 struct ArtCandidate {
   std::int64_t id = 0;
   int width = 0;
@@ -172,17 +172,17 @@ struct GameMetadata {
   std::vector<std::string> art_slots;
   // Every cover/hero SteamGridDB returned, cached alongside whichever one is
   // active. Populated for a Steam-owned game too now (as alternates to
-  // Steam's own CDN default, not a replacement for it) — empty only when no
+  // Steam's own CDN default, not a replacement for it). Empty only when no
   // steamgriddb.api_key is set, or SteamGridDB has no match for the name.
   std::vector<ArtCandidate> cover_candidates;
   std::vector<ArtCandidate> hero_candidates;
   // The candidate currently applied to each slot, when it came from one of
-  // the lists above — unset for Steam's own CDN art, which isn't a
+  // the lists above, and unset for Steam's own CDN art, which isn't a
   // candidate. What ArtworkPickerDialog marks "(current)".
   std::optional<std::int64_t> cover_active_candidate_id;
   std::optional<std::int64_t> hero_active_candidate_id;
 
-  // The wider store info that doesn't fit the sidebar — see
+  // The wider store info that doesn't fit the sidebar; see
   // GameDetailPageDialog. requirements_min/rec are HTML, not plain text.
   std::string requirements_min;
   std::string requirements_rec;
@@ -200,7 +200,7 @@ struct GameMetadataResult {
   GameMetadata metadata;
 };
 
-// POST /v1/games/{id}/metadata/refresh — 202, so this says only that the
+// POST /v1/games/{id}/metadata/refresh: 202, so this says only that the
 // fetch was accepted. The outcome arrives as game.metadata_ready or
 // game.metadata_failed on the event stream (docs/api.md).
 struct MetadataRefreshResult {
@@ -225,7 +225,7 @@ struct MetadataEvent {
   ApiError error;
 };
 
-// game.artwork_selected / .artwork_select_failed — the outcome of
+// game.artwork_selected / .artwork_select_failed: the outcome of
 // POST /v1/games/{id}/artwork?type=, which itself only returns 202.
 struct ArtworkSelectEvent {
   std::string id;
@@ -233,14 +233,14 @@ struct ArtworkSelectEvent {
   std::string error;  // .artwork_select_failed only
 };
 
-// POST /v1/games/{id}/artwork?type= — 202, so this is only "accepted", not
+// POST /v1/games/{id}/artwork?type=: 202, so this is only "accepted", not
 // "done". The outcome is ArtworkSelectEvent on the event stream.
 struct ArtworkSelectResult {
   bool ok = false;
   ApiError error;
 };
 
-// A `notification` event — mirad's own decision that this is worth telling
+// A `notification` event: mirad's own decision that this is worth telling
 // the user about; the UI just renders it (see MiradClient::ParseNotification
 // and mira_gui::notify::Warn/Notice).
 struct NotificationEvent {
@@ -261,7 +261,7 @@ struct ScanResult {
   int restored = 0;
 };
 
-// The full record GET /v1/games/{id} returns (docs/api.md) — everything a
+// The full record GET /v1/games/{id} returns (docs/api.md), everything a
 // detail/edit view needs, beyond GameSummary's list-row subset.
 struct GameDetail {
   struct Candidate {
@@ -276,7 +276,7 @@ struct GameDetail {
   std::string name;
   std::string status;
   std::string platform;
-  // "scan", "steam", "lutris", or "desktop-entry" — which source owns this
+  // "scan", "steam", "lutris", or "desktop-entry", which source owns this
   // game's own fields on a rescan/re-import. GameEditForm uses it to warn
   // when exe_path isn't actually what launches the game; DeleteGameDialog
   // uses "desktop-entry" to disable file/prefix deletion.
@@ -293,7 +293,7 @@ struct GameDetail {
   std::optional<std::int64_t> last_played_at;
   std::int64_t play_seconds = 0;
   // `runner_config`/`env` are arbitrary JSON objects (docs/api.md) with no
-  // fixed shape to build widgets for, so they round-trip as raw JSON text —
+  // fixed shape to build widgets for, so they round-trip as raw JSON text,
   // pretty-printed for display, re-parsed on save (MiradClient.cpp).
   std::string runner_config_json;
   std::string env_json;
@@ -316,10 +316,10 @@ struct GamePatch {
   std::optional<std::string> working_dir;
   std::optional<std::string> runner_ref;
   std::optional<std::string> data_dir;
-  // Raw JSON text (must parse to an object) — see GameDetail's comment.
+  // Raw JSON text (must parse to an object); see GameDetail's comment.
   std::optional<std::string> runner_config_json;
   std::optional<std::string> env_json;
-  // Replaces the whole set (docs/api.md) — there's no per-entry merge for a
+  // Replaces the whole set (docs/api.md); there's no per-entry merge for a
   // plain list the way env's null-removes-a-key convention gives it one.
   std::optional<std::vector<std::string>> tags;
 };
@@ -375,7 +375,7 @@ struct ConfigResult {
   // matching Schema entries' own `key` (e.g. "scan.debounce_ms"), each
   // stringified for display/editing: a bool as "true"/"false", a number in
   // its natural text form, an array of strings comma-joined. The opaque
-  // `frontend` table (docs/architecture.md) is excluded — it isn't part of
+  // `frontend` table (docs/architecture.md) is excluded because it isn't part of
   // the schema this screen renders.
   std::map<std::string, std::string> values;
 };
@@ -396,7 +396,7 @@ struct PatchConfigResult {
 
 // One entry from GET /v1/runners (docs/api.md): an installed build of one
 // runner kind, discovered fresh on every call. `reference` is what a game's
-// `runner_ref` field and the `default_runner.*` settings both use — the
+// `runner_ref` field and the `default_runner.*` settings both use, the
 // only string that actually round-trips, `name`/`version` are just for
 // display.
 struct RunnerInfo {
@@ -419,7 +419,7 @@ struct RunnersResult {
 // One key from GET /v1/games/{id}/config (docs/api.md): every schema key
 // resolved through default -> settings.toml -> this game's overrides,
 // tagged with which layer supplied it. Only entries with `overridable: true`
-// (config::Resolver::IsOverridable) make sense to show as editable — some
+// (config::Resolver::IsOverridable) make sense to show as editable, since some
 // settings describe the daemon rather than a game (e.g. `library_roots`)
 // and are excluded there for exactly that reason.
 struct GameConfigEntry {
@@ -437,7 +437,7 @@ struct GameConfigResult {
 
 // One edit to send in a PATCH /v1/games/{id}/config body. `clear` sends a
 // JSON null for `key`, removing this game's override and falling back to
-// the next layer down — the per-game equivalent of ConfigEdit, which has no
+// the next layer down, the per-game equivalent of ConfigEdit, which has no
 // such concept since a global setting has no further layer to fall back to.
 struct GameConfigEdit {
   std::string key;
@@ -549,7 +549,7 @@ struct LutrisImportResult {
   int updated = 0;
 };
 
-// POST /v1/games/{id}/run — an arbitrary executable inside this game's own
+// POST /v1/games/{id}/run: an arbitrary executable inside this game's own
 // prefix, tracked like a normal launch.
 struct RunInPrefixResult {
   bool ok = false;
@@ -562,7 +562,7 @@ struct FinishInstallResult {
   ApiError error;
 };
 
-// The frontend's own preferences, which live in frontend.toml — the sibling
+// The frontend's own preferences, which live in frontend.toml, the sibling
 // file the backend stores verbatim and never interprets
 // (docs/architecture.md), reachable as the opaque `frontend` key of
 // GET/PATCH /v1/config.
@@ -572,7 +572,7 @@ struct FinishInstallResult {
 // this does.
 //
 // Every field is optional because the file is allowed to be absent, partial
-// or hand-edited — an unset field means "use the built-in default", not
+// or hand-edited: an unset field means "use the built-in default", not
 // zero.
 struct FrontendPrefs {
   std::optional<int> window_width;
@@ -587,12 +587,12 @@ struct FrontendPrefs {
   // is the slowest thing about startup and the daemon's own watcher
   // (library::Watcher) already keeps the library current while it runs.
   std::optional<bool> scan_on_startup;
-  // A theme name (ui/Theme.h), or "auto" — the default — to follow the
+  // A theme name (ui/Theme.h), or "auto" (the default) to follow the
   // desktop's own light/dark preference.
   std::optional<std::string> theme;
   // On (default): dragging across the grid rubber-band selects tiles.
   std::optional<bool> drag_select;
-  // Shape adjustments layered over whatever the theme sets, in pixels — see
+  // Shape adjustments layered over whatever the theme sets, in pixels; see
   // theme::Overrides. Unset means "leave it to the theme".
   std::optional<int> tile_spacing;
   std::optional<int> grid_margin;
@@ -677,7 +677,7 @@ struct RelocateLibraryResult {
   int failed = 0;
 };
 
-// GET /v1/games/{id}/log?lines= — the game's own log tail. An empty
+// GET /v1/games/{id}/log?lines=: the game's own log tail. An empty
 // `lines` means nothing was ever logged, not an error.
 struct GameLogResult {
   bool ok = false;
@@ -685,7 +685,7 @@ struct GameLogResult {
   std::vector<std::string> lines;
 };
 
-// GET /v1/gamemode/status — is Feral GameMode's daemon installed/reachable.
+// GET /v1/gamemode/status: is Feral GameMode's daemon installed/reachable.
 // Purely informational; `launch.gamemode` (a plain config key) is the toggle.
 struct GameModeStatusResult {
   bool ok = false;
@@ -694,7 +694,7 @@ struct GameModeStatusResult {
   bool daemon_running = false;
 };
 
-// POST /v1/games/{id}/tricks — 202, so this only means "accepted". The
+// POST /v1/games/{id}/tricks: 202, so this only means "accepted". The
 // outcome arrives as a tricks.started/.finished/.failed event.
 struct TricksResult {
   bool ok = false;
@@ -709,7 +709,7 @@ struct TricksEvent {
   std::string error;  // only on "failed"
 };
 
-// One accepted config key for a runner kind. Informational only — no
+// One accepted config key for a runner kind. Informational only: no
 // structured editor exists; runner_config stays free-text JSON.
 struct RunnerSchemaEntry {
   std::string key;
@@ -723,13 +723,13 @@ struct RunnerSchemaResult {
   std::vector<RunnerSchemaEntry> entries;
 };
 
-// DELETE /v1/runners/{kind}:{name} — synchronous, 200 on success.
+// DELETE /v1/runners/{kind}:{name}: synchronous, 200 on success.
 struct RunnerRemoveResult {
   bool ok = false;
   ApiError error;
 };
 
-// GET /v1/desktop-entries/candidates — an already-installed .desktop entry
+// GET /v1/desktop-entries/candidates: an already-installed .desktop entry
 // (Flatpak or otherwise) that could become a game. `icon` is a theme icon
 // name/path, not image bytes.
 struct DesktopEntryCandidate {
@@ -752,7 +752,7 @@ struct DesktopEntryImportResult {
   int updated = 0;
 };
 
-// POST /v1/desktop-entries/sync — regenerates Mira's own desktop entries.
+// POST /v1/desktop-entries/sync: regenerates Mira's own desktop entries.
 struct DesktopEntrySyncResult {
   bool ok = false;
   ApiError error;

@@ -76,7 +76,7 @@ void ShowReference(QWidget* parent, const QList<Entry>& window_specific) {
   auto* form = new QFormLayout();
   form->setHorizontalSpacing(28);
 
-  // This window's own keys first — what the reader came for. The three
+  // This window's own keys first, since that is what the reader came for. The three
   // that work everywhere go last, under a rule.
   AddRows(form, &dialog, window_specific);
   if (!window_specific.isEmpty()) {

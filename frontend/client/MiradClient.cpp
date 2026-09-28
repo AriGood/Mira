@@ -19,7 +19,7 @@ using nlohmann::json;
 
 // Each of these is the blocking half of one endpoint, run on a worker thread
 // by async::Run below. They are written as "ask transport, shape the reply"
-// and nothing else — no socket, no timeouts, no error unwrapping.
+// and nothing else: no socket, no timeouts, no error unwrapping.
 
 HealthStatus GetHealthSync() {
   HealthStatus status;
@@ -492,7 +492,7 @@ GameMetadataResult GetMetadataSync(const std::string& id) {
   if (reply.body.contains("protondb") && reply.body["protondb"].is_object()) {
     out.protondb_tier = reply.body["protondb"].value("tier", std::string());
   }
-  // "artwork" is the cover slot under its pre-`hero` name — see docs/api.md.
+  // "artwork" is the cover slot under its pre-`hero` name; see docs/api.md.
   for (const char* key : {"artwork", "hero", "capsule", "header", "logo", "icon"}) {
     if (!reply.body.contains(key) || !reply.body[key].is_object()) continue;
     out.art_slots.push_back(std::string(key) == "artwork" ? "cover" : key);

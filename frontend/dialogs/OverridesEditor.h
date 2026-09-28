@@ -31,7 +31,7 @@ public:
   explicit OverridesEditor(std::string game_id, QWidget* parent = nullptr);
 
   // Fetches the schema, builds a row per key, then fills in this game's
-  // resolved values. Non-fatal if either request fails — the rest of the
+  // resolved values. Non-fatal if either request fails: the rest of the
   // dialog still works without this section.
   void Load();
 
@@ -40,7 +40,7 @@ public:
   // opened and saved unedited sends no override patch at all.
   std::vector<GameConfigEdit> PendingEdits() const;
 
-  // Call after PendingEdits() was successfully applied — resets the
+  // Call after PendingEdits() was successfully applied. It resets the
   // change-tracking baseline without a re-fetch, so PendingEdits() goes
   // back to empty.
   void MarkSaved();

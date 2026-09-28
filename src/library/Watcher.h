@@ -10,7 +10,7 @@
 
 namespace mira::library {
 
-// Watches every enabled library root and rescans automatically — "drop a
+// Watches every enabled library root and rescans automatically: "drop a
 // folder in and it's picked up" without running `mira scan` by hand.
 //
 // One inotify watch per root, non-recursive. A new directory is debounced

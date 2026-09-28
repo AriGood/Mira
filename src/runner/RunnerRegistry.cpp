@@ -22,7 +22,7 @@ namespace {
 // Orders builds of one runner kind for "latest". Proton's version field is a
 // bare unix timestamp; Wine's is a string like "wine-10.0 (Staging)", where
 // parsing from the front yields nothing at all and made every build compare
-// equal — so scan to the first digit and read up to two dotted components.
+// equal, so scan to the first digit and read up to two dotted components.
 // Only ever compares builds of the same kind, so the differing scales between
 // kinds don't matter.
 std::int64_t ParseVersion(const std::string& version) {
@@ -98,7 +98,7 @@ const model::RunnerBuild& PickAuto(const config::Config& config, const std::vect
 }
 
 const std::vector<model::RunnerBuild>& RunnerRegistry::BuildsFor(const std::string& kind) const {
-  // Discovery is not free — WineRunner spawns `wine --version` per build —
+  // Discovery is not free: WineRunner spawns `wine --version` per build,
   // and one scan resolves a runner for every new game it finds. A registry
   // is constructed per scan/request, so caching for its lifetime removes the
   // repeated cost without ever going stale in practice.
@@ -130,7 +130,7 @@ Result<RunnerRegistry::Resolved> RunnerRegistry::Resolve(const std::string& runn
   }
   std::string kind = runner_ref.substr(0, colon);
   // umu used to be modelled as its own runner kind. It's the mechanism
-  // Proton runs through, not a runner — accept the old spelling so a
+  // Proton runs through, not a runner. Accept the old spelling so a
   // games.toml written before the rename keeps resolving.
   if (kind == "proton_umu") kind = "proton";
   const std::string name = runner_ref.substr(colon + 1);
@@ -175,7 +175,7 @@ std::string RunnerRegistry::ResolveRef(const model::Game& game) const {
     ref = config_.GetString(game.platform == model::Platform::Native ? "default_runner.native"
                                                                      : "default_runner.windows");
   }
-  // "auto" isn't itself "kind:name" — it means "the best available windows
+  // "auto" isn't itself "kind:name": it means "the best available windows
   // runner": Proton if a build is installed (protonfixes come with it),
   // else plain Wine, else nothing usable and Resolve below says so clearly.
   if (ref == "auto") ref = BuildsFor("proton").empty() ? "wine:auto" : "proton:auto";
@@ -191,7 +191,7 @@ model::Game RunnerRegistry::ProvisionGame(model::Game game) const {
     return game;
   }
 
-  // Pin the concrete build, not "latest" — a Proton update afterwards must
+  // Pin the concrete build, not "latest". A Proton update afterwards must
   // not silently change a working game's runtime.
   game.runner_ref = resolved->build ? std::format("{}:{}", resolved->runner->kind(), resolved->build->name)
                                     : ref;

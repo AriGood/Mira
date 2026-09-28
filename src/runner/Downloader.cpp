@@ -33,8 +33,8 @@ Result<Source> SourceFor(const config::Config& config, const std::string& kind) 
     const RunnerFamily family = Families(config, kind).front();
     return Source{.repo = family.repo, .asset_pattern = family.asset_pattern, .exclude = family.exclude};
   }
-  // Not a runner kind — Legendary is the Epic Games Store CLI client
-  // (see src/epic/Legendary.h) — but it shares the same "list a GitHub
+  // Not a runner kind: Legendary is the Epic Games Store CLI client
+  // (see src/epic/Legendary.h), but it shares the same "list a GitHub
   // repo's releases, filter assets by glob" shape, so it reuses ListReleases
   // rather than duplicating the GitHub API call.
   if (kind == "legendary") {
@@ -369,7 +369,7 @@ Result<void> DownloadAndInstall(const config::Config& config, const std::string&
   if (ec) return Err("install_dir_failed", ec.message());
 
   // Downloaded into the install dir itself so a same-filesystem rename
-  // isn't a concern and there's nothing to clean up across filesystems —
+  // isn't a concern and there's nothing to clean up across filesystems;
   // both the archive and (if present) its checksum file are removed again
   // once extraction succeeds.
   const fs::path archive = install_dir / asset.asset_name;

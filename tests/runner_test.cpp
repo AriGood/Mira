@@ -106,7 +106,7 @@ TEST_CASE("NativeRunner runs an executable AppImage directly when FUSE is availa
   auto command = native.BuildCommand(game, std::nullopt);
   REQUIRE(command.has_value());
   // Whether extraction is forced depends on whether this machine actually has
-  // FUSE — assert whichever shape that implies, same posture as the
+  // FUSE: assert whichever shape that implies, same posture as the
   // environment-dependent Proton/Wine tests below.
   if (command->argv.size() > 1 && command->argv[1] == "--appimage-extract-and-run") {
     CHECK(command->argv[0] == exe.string());
@@ -160,7 +160,7 @@ TEST_CASE("RunnerRegistry::Resolve rejects a malformed or unknown reference") {
 TEST_CASE("DeduplicateBuilds collapses one build reached through a symlink") {
   // The real case this exists for: on a normal Arch/Steam setup
   // ~/.steam/steam is a symlink to ~/.local/share/Steam, and
-  // libraryfolders.vdf lists the target as well — so every Proton build under
+  // libraryfolders.vdf lists the target as well, so every Proton build under
   // it is discovered twice, once per search path, with only `path` differing.
   const fs::path root = fs::temp_directory_path() / "mira-tests" / "runner-dedupe";
   fs::remove_all(root);
@@ -183,7 +183,7 @@ TEST_CASE("DeduplicateBuilds collapses one build reached through a symlink") {
 }
 
 TEST_CASE("DeduplicateBuilds collapses two entries sharing a reference") {
-  // Different directories, same "kind:name" — which is all a game stores
+  // Different directories, same "kind:name", which is all a game stores
   // (model::RunnerBuild::Reference), so no client could pick between them.
   std::vector<model::RunnerBuild> builds = {
       {"proton", "GE-Proton11-7", "/a/GE-Proton11-7", "2"},
@@ -229,7 +229,7 @@ TEST_CASE("Resolve reports an uninstalled build instead of succeeding with none"
   runner::RunnerRegistry registry(config);
 
   // Regression: this used to return success-with-no-build, which made a
-  // Windows game resolve to "no build" and report a vague error — and made
+  // Windows game resolve to "no build" and report a vague error, and made
   // native:anything-at-all silently "succeed" for a Windows game.
   auto proton = registry.Resolve("proton:GE-Proton-Nonexistent");
   CHECK_FALSE(proton.has_value());

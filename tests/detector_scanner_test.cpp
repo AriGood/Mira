@@ -150,7 +150,7 @@ TEST_CASE("Scanner adds new games, skips known ones, and marks missing folders")
   library::Scanner scanner(env.config, env.games, env.events);
 
   // A prefix directory sitting inside the library root must never be
-  // rediscovered as a game — this is the regression the design specifically
+  // rediscovered as a game. This is the regression the design specifically
   // guards against (see docs/architecture.md).
   fs::create_directories(lib / "prefix" / "celeste" / "drive_c");
   Touch(lib / "prefix" / "celeste" / "system.reg");
@@ -235,7 +235,7 @@ TEST_CASE("Scanner retries provisioning for games left setting_up or broken by a
   REQUIRE(celeste.has_value());
   CHECK(celeste->status == model::GameStatus::SettingUp);
 
-  // auto_setup turns on later — a later scan of the same, already-known
+  // auto_setup turns on later, a later scan of the same, already-known
   // folder must retry rather than skip it forever.
   // With no runner installed it breaks, and comes back once one resolves.
   REQUIRE(env.config.Set("auto_setup", true).has_value());
@@ -305,7 +305,7 @@ TEST_CASE("AutoSetup stores an installer candidate as needs_install, not launcha
 
 TEST_CASE("A small installer stub is still flagged if a large sibling payload sits beside it") {
   // Regression: InstallShield/Inno Setup split installers are commonly a
-  // few-MB launcher .exe next to a much larger separate .bin/.cab payload —
+  // few-MB launcher .exe next to a much larger separate .bin/.cab payload,
   // found against a real Wingspan install where every setup_*.exe was under
   // 7MB but sat beside a 1.8GB .bin file. Checking only the exe's own size
   // missed this entirely.
@@ -353,7 +353,7 @@ TEST_CASE("the real default deny list excludes known engine/launcher helper exec
 TEST_CASE("a restored game keeps needs_install instead of becoming launchable") {
   // Regression: the Missing->restore path keyed on "has an exe_path", but an
   // installer has one too (kept for reference), so unplugging and replugging
-  // a drive silently promoted needs_install to ready — pointed straight at
+  // a drive silently promoted needs_install to ready, pointed straight at
   // setup.exe, undoing the installer guard entirely.
   const fs::path lib = TempDir("restore-installer-library");
   const fs::path state = TempDir("restore-installer-state");
@@ -413,6 +413,6 @@ TEST_CASE("a restored windows game with no prefix is not claimed ready") {
   fs::rename(lib / "Celeste-away", lib / "Celeste");
   scanner.ScanAll();
 
-  // No runner_ref, no prefix on disk — "ready" would be a lie.
+  // No runner_ref, no prefix on disk: "ready" would be a lie.
   CHECK(games.Find("celeste")->status == model::GameStatus::SettingUp);
 }

@@ -88,7 +88,7 @@ void OverridesEditor::BuildRows(const ConfigSchemaResult& schema) {
       field.layer_label->setMinimumWidth(56);
       row_layout->addWidget(field.layer_label);
 
-      // Only meaningful once this game actually has an override to remove —
+      // Only meaningful once this game actually has an override to remove,
       // disabled until ApplyValues confirms layer == "game", since there's
       // nothing to clear otherwise.
       field.reset_button = new QPushButton("Clear", row_widget);
@@ -117,7 +117,7 @@ void OverridesEditor::BuildRows(const ConfigSchemaResult& schema) {
 
 void OverridesEditor::ApplyValues(const GameConfigResult& config) {
   // BuildRows makes one row per schema key, since only this per-game
-  // response says which are overridable — daemon-only keys are hidden here
+  // response says which are overridable, so daemon-only keys are hidden here
   // rather than never built.
   for (const GameConfigEntry& entry : config.entries) {
     const auto it = std::ranges::find(fields_, entry.key,

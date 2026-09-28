@@ -11,9 +11,9 @@
 
 namespace mira::proc {
 
-// One launch, start to finish. Written twice by mira-run — once right after
+// One launch, start to finish. Written twice by mira-run: once right after
 // the game is forked (game_pid set, finished false), once after it exits
-// (finished true, everything below set) — and read by mirad both to serve
+// (finished true, everything below set). It is read by mirad both to serve
 // GET /v1/games/{id} while it's running and, on startup, to reconcile a
 // session that outlived a mirad restart (see docs/architecture.md).
 struct SessionRecord {
@@ -33,7 +33,7 @@ struct SessionRecord {
   bool post_timed_out = false;
 
   // Set by mirad's startup reconciliation for a session whose wrapper_pid
-  // was already dead — the record is as complete as it can be made, but the
+  // was already dead: the record is as complete as it can be made, but the
   // true end time/exit status were never observed.
   bool incomplete = false;
 };
@@ -42,12 +42,12 @@ std::filesystem::path SessionFilePath(const std::filesystem::path& sessions_dir,
                                       std::int64_t started_at);
 
 // Write-temp-then-rename, matching store::GameStore::Save's durability
-// shape, plus an explicit fsync before the rename — a session record is
+// shape, plus an explicit fsync before the rename. A session record is
 // exactly the kind of thing that must survive a crash a moment later, which
 // is the whole reason it exists.
 Result<void> WriteSessionRecord(const std::filesystem::path& path, const SessionRecord& record);
 
-// A corrupt or truncated file is reported as an error, not thrown — callers
+// A corrupt or truncated file is reported as an error, not thrown, so callers
 // (mirad's reconciliation) are expected to log it, delete the file, and move
 // on rather than fail startup over one bad record.
 Result<SessionRecord> ReadSessionRecord(const std::filesystem::path& path);

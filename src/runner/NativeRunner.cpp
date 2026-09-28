@@ -12,7 +12,7 @@ namespace mira::runner {
 namespace {
 namespace fs = std::filesystem;
 
-// Only meaningful for a file that actually exists — a nonexistent exe_path
+// Only meaningful for a file that actually exists: a nonexistent exe_path
 // is left to fail at
 // exec time as before, not reported as "not executable".
 bool MissingExecuteBit(const fs::path& path) {
@@ -28,7 +28,7 @@ std::string ToLower(std::string text) {
 }
 
 // A FUSE-less system needs "--appimage-extract-and-run" as the AppImage's
-// own first argument (see AppImage's own docs) — /dev/fuse absent, or
+// own first argument (see AppImage's own docs): /dev/fuse absent, or
 // neither fusermount nor fusermount3 on PATH, both mean no FUSE.
 bool HasFuse() {
   return std::filesystem::exists("/dev/fuse") || FindOnPath("fusermount") || FindOnPath("fusermount3");
@@ -59,7 +59,7 @@ Result<Command> NativeRunner::BuildCommand(const model::Game& game,
   Command command;
   if (ext == ".sh" || ext == ".bash") {
     // A .sh routinely loses its executable bit in an archive, so it's still
-    // accepted as a candidate without one (see library::Detector) — run it
+    // accepted as a candidate without one (see library::Detector), so run it
     // through sh explicitly instead of relying on exec's own +x check.
     command.argv = {"sh", exe.string()};
   } else if (ext == ".appimage") {
@@ -85,7 +85,7 @@ Result<Command> NativeRunner::BuildCommand(const model::Game& game,
     command.argv.push_back(exe.string());
   }
 
-  // game.args is a plain space-separated string, not shell-quoted — no
+  // game.args is a plain space-separated string, not shell-quoted, so no
   // support for an argument containing a literal space yet.
   for (const std::string& arg : strings::Split(game.args, ' ')) {
     if (!arg.empty()) command.argv.push_back(arg);

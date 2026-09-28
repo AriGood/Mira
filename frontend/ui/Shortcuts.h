@@ -27,7 +27,7 @@ struct Common {
 //
 // Adding them to the window is what makes the keys live: a QAction's
 // shortcut only fires while it belongs to a widget in the focus chain. A
-// window with a menu bar can still put these in a menu afterwards — the
+// window with a menu bar can still put these in a menu afterwards, and the
 // same QAction in two places is the normal Qt arrangement.
 //
 // `window_specific` is the rest of this window's keys, listed in the

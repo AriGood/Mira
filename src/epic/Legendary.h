@@ -13,7 +13,7 @@
 
 // Epic Games Store support: wraps Legendary, a native-Linux Epic CLI client,
 // for everything protocol-shaped (auth, catalog, install, update, uninstall).
-// Mira never runs Legendary's own `legendary launch` — once a game is
+// Mira never runs Legendary's own `legendary launch`: once a game is
 // installed, it's launched through Mira's own Wine/Proton runners like any
 // other Windows game (see docs/architecture.md). This file only knows how to
 // find or fetch the `legendary` binary and run it; it has no game-library
@@ -27,34 +27,34 @@ struct LegendaryStatus {
   std::string version;
 };
 
-// Where Mira's own managed download lives, if it ever fetches one — never
+// Where Mira's own managed download lives, if it ever fetches one. It never
 // requires the file to actually exist.
 std::filesystem::path ManagedLegendaryPath(const config::Config& config);
 
 // Legendary's own per-title metadata cache file (populated by `legendary
 // list`), read directly by metadata::FetchEpicOwned rather than shelling out
-// again — just reading another program's own cache, same posture as reading
+// again, just reading another program's own cache, same posture as reading
 // Lutris's pga.db. $XDG_CONFIG_HOME/legendary (default ~/.config/legendary)
-// is Legendary's own config dir, independent of Mira's — not affected by
+// is Legendary's own config dir, independent of Mira's and not affected by
 // epic.legendary_bin, which only overrides where the binary lives.
 std::filesystem::path LegendaryMetadataFile(const std::string& app_name);
 
 // Detects legendary in this order: epic.legendary_bin override, Mira's own
 // managed download, then $PATH. Never itself requires legendary to already
-// work — safe to call before anything is set up, unlike everything below.
+// work, so it is safe to call before anything is set up, unlike everything below.
 LegendaryStatus DetectLegendary(const config::Config& config);
 
 // Downloads legendary's latest matching GitHub release asset (a standalone
 // binary, not an archive) into ManagedLegendaryPath and marks it executable.
 // Reuses runner::ListReleases (config kind "legendary") rather than
 // runner::DownloadAndInstall, which assumes a tarball extracted into a
-// runner search path — neither fits a single raw binary with nowhere else to
+// runner search path, and neither fits a single raw binary with nowhere else to
 // live.
 Result<void> InstallLegendaryBinary(const config::Config& config, const runner::ReleaseAsset& asset);
 
 // Runs `legendary <args...>` using whatever DetectLegendary resolved.
 // Err("legendary_missing", ...) up front if nothing resolved, pointing at
-// "mira epic setup" — never assumes legendary is there. Returns combined
+// "mira epic setup", and never assumes legendary is there. Returns combined
 // stdout+stderr; Err("legendary_failed", ...) on a nonzero exit.
 Result<std::string> RunLegendary(const config::Config& config, std::vector<std::string> args);
 
@@ -62,7 +62,7 @@ Result<std::string> RunLegendary(const config::Config& config, std::vector<std::
 Result<nlohmann::json> RunLegendaryJson(const config::Config& config, std::vector<std::string> args);
 
 // Legendary's own documented manual-login URL (its README's instructions for
-// an environment with no browser legendary itself can open — the case here,
+// an environment with no browser legendary itself can open, which is the case here,
 // since RunLegendary always executes on mirad's side, headless). A fixed,
 // public URL, not a secret; only changes if Epic ever rotates the OAuth
 // client id legendary itself uses.
@@ -78,11 +78,11 @@ struct EpicAuthStatus {
 
 // The layered "don't assume setup" status call: checks legendary is
 // installed first (no subprocess if not), only runs `legendary status
-// --json` if it is. Never itself errors — "not installed" and "not
+// --json` if it is. Never itself errors: "not installed" and "not
 // authenticated" are both just fields on the result, not failures.
 EpicAuthStatus Status(const config::Config& config);
 
-// Runs `legendary auth --code <code>` — the headless login path (see
+// Runs `legendary auth --code <code>`, the headless login path (see
 // kLoginUrl's comment): the user visits kLoginUrl in their own browser,
 // pastes back the code it shows. Err("legendary_missing", ...) if legendary
 // isn't installed, same as everything else here. `pasted` may also be the

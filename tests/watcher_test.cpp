@@ -29,7 +29,7 @@ void Touch(const fs::path& path, bool executable = false) {
 }
 
 // Waits for a "game.added" event, polling the bus rather than sleeping a
-// fixed amount — debounce plus the watcher's poll tick make the exact timing
+// fixed amount: debounce plus the watcher's poll tick make the exact timing
 // unpredictable, so this waits for the actual signal instead.
 bool WaitForGameAdded(api::EventBus& events, std::chrono::milliseconds timeout) {
   const auto deadline = std::chrono::steady_clock::now() + timeout;
@@ -66,7 +66,7 @@ TEST_CASE("Watcher picks up a new game folder in each of two watched roots") {
 
   // Both native: a .exe here would trigger a real, multi-second umu-run
   // provisioning attempt as a side effect (see tests/runner_test.cpp for
-  // that, deliberately isolated) — this test's job is proving two
+  // that, deliberately isolated), so this test's job is proving two
   // independently-watched roots both get picked up, not provisioning.
   fs::create_directories(games_root / "Celeste");
   Touch(games_root / "Celeste" / "Celeste", /*executable=*/true);
@@ -168,7 +168,7 @@ TEST_CASE("Watcher auto-extracts a dropped archive and picks up the resulting fo
 
   // Build a real tar.gz containing a native game folder's shape, and drop
   // it directly into the watched root, exactly like a user extracting a
-  // download by hand — except here Mira does it.
+  // download by hand, except here Mira does it.
   const fs::path staging = TempDir("watch-archive-staging");
   fs::create_directories(staging / "Celeste");
   Touch(staging / "Celeste" / "Celeste", /*executable=*/true);

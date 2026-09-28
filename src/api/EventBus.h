@@ -18,7 +18,7 @@ namespace mira::api {
 
 // In-memory pub/sub for everything the frontend needs to react to: a game
 // detected, provisioning progress, a launch starting. Kept in a capped ring
-// buffer rather than persisted — SSE reconnect-and-replay only needs to
+// buffer rather than persisted: SSE reconnect-and-replay only needs to
 // survive the *frontend* restarting, not the daemon, so there is nothing to
 // gain from writing every event to disk.
 class EventBus {
@@ -42,7 +42,7 @@ public:
   // this: real events are delivered with no added latency, and the bounded
   // timeout is only there so a connection whose client vanished without
   // closing cleanly gets periodically checked rather than parking its thread
-  // forever. That check is not an idle-budget wakeup — it only runs for the
+  // forever. That check is not an idle-budget wakeup, and it only runs for the
   // lifetime of an actual open connection. Returns nullopt on timeout or if
   // `stop` is set concurrently (shutdown); the caller distinguishes the two
   // via `stop`.

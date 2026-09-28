@@ -49,7 +49,7 @@ PopupDialog::PopupDialog(QWidget* parent, notify::Level level, const QString& ti
 
   // Top-right X: the cancel/dismiss affordance a frameless dialog has no WM
   // titlebar to supply one for. Same hand-drawn glyph as the top bar's own
-  // window controls, not a font character — nothing guarantees a fallback
+  // window controls, not a font character: nothing guarantees a fallback
   // font has one.
   close_button_ = new QToolButton(this);
   close_button_->setAutoRaise(true);

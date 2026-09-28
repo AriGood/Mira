@@ -128,7 +128,7 @@ EpicAuthStatus Status(const config::Config& config) {
   if (!status.legendary.installed) return status;  // authenticated=false, no subprocess needed
 
   // Not RunLegendaryJson: "not logged in" is an ordinary result of this
-  // specific call, not an error to propagate — a failed/unparseable run
+  // specific call, not an error to propagate. A failed/unparseable run
   // just leaves authenticated=false rather than failing the whole status
   // call the way every other legendary invocation here does.
   Command command;

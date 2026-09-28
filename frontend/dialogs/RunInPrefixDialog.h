@@ -10,14 +10,14 @@ class QPushButton;
 
 namespace mira_gui {
 
-// "Run something inside this game's prefix" — `POST /v1/games/{id}/run`.
+// "Run something inside this game's prefix": `POST /v1/games/{id}/run`.
 //
 // The executable is picked with a file browser rather than prefilled from a
 // folder scan: install_path is usually a Wine prefix full of DLLs and
 // support files alongside the real executable, and a detected-candidates
 // list there tends to be mostly noise.
 //
-// Takes install_path/name directly rather than a GameDetail — both are
+// Takes install_path/name directly rather than a GameDetail, since both are
 // already on GameSummary, so a caller never needs a fresh detail fetch just
 // to open this.
 class RunInPrefixDialog : public QDialog {

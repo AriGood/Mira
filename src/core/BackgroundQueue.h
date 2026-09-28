@@ -8,7 +8,7 @@
 namespace mira {
 
 // Owns every task run through it, joining each one no later than its own
-// destruction — same "own it, don't detach it" discipline as
+// destruction, the same "own it, don't detach it" discipline as
 // proc::ProcessSupervisor's watcher threads. A detached thread capturing
 // references to caller state is unsafe once that state can be torn down
 // before the thread finishes, which TSan caught in a test using this class.

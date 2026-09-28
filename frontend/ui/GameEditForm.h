@@ -25,7 +25,7 @@ class QWidget;
 namespace mira_gui {
 
 // One game's editable record (GET/PATCH /v1/games/{id}), with no QDialog
-// machinery — embeddable in a dialog shell (dialogs/GameDetailDialog) or
+// machinery, embeddable in a dialog shell (dialogs/GameDetailDialog) or
 // directly in a window (LibraryWindow, full-width).
 class GameEditForm : public QWidget {
   Q_OBJECT
@@ -48,11 +48,11 @@ public:
   void Save();
 
   // True once any field differs from what Populate() last loaded or Save()
-  // last confirmed — the signal a caller uses to warn before discarding.
+  // last confirmed; the signal a caller uses to warn before discarding.
   bool IsDirty() const;
 
   // For game.artwork_selected/a fresh cover fetch to reach this form's own
-  // hero/cover box while it's open — both are safe no-ops if this isn't the
+  // hero/cover box while it's open; both are safe no-ops if this isn't the
   // game currently on screen (HeroArtWidget's own concern, see its header).
   void RefreshCover();
   void RefreshBanner(const std::string& id);
@@ -94,7 +94,7 @@ private:
   QComboBox* runner_combo_;
 
   // Swaps the fields column (art stays on screen) for the per-game overrides
-  // table and back — not a separate dialog, so opening it never covers the
+  // table and back, not a separate dialog, so opening it never covers the
   // art side or needs its own window chrome beyond a Back button.
   QStackedWidget* fields_stack_ = nullptr;
   QLineEdit* data_dir_edit_;

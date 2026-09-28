@@ -414,7 +414,7 @@ private:
 
 // Sidebar's filter+sort pill. Plain QWidget, not QPushButton: needs two
 // icon+label pairs and a chevron, not one icon+text. Plain callback (like
-// LibraryGrid), not a signal — too small to need one.
+// LibraryGrid), not a signal, since it is too small to need one.
 class FilterSortButton : public QWidget {
 public:
   explicit FilterSortButton(QWidget* parent) : QWidget(parent) {
@@ -486,7 +486,7 @@ LibraryWindow::LibraryWindow(QWidget* parent) : QMainWindow(parent) {
   } else {
     resize(size);
   }
-  // Custom top bar takes over move/resize/minimize/maximize/close — no OS
+  // Custom top bar takes over move/resize/minimize/maximize/close, so no OS
   // decoration left.
   setWindowFlags(Qt::Window | Qt::FramelessWindowHint);
 
@@ -514,7 +514,7 @@ LibraryWindow::LibraryWindow(QWidget* parent) : QMainWindow(parent) {
           [this](const QString& id) { ShowGame(id.toStdString()); });
 
   // The stylesheet re-polishes every widget by itself; what it cannot reach
-  // is what we paint — the tiles, and the placeholder covers drawn in the
+  // is what we paint: the tiles, and the placeholder covers drawn in the
   // theme's own colors.
   connect(mira_gui::theme::Notifier::Instance(), &mira_gui::theme::Notifier::Changed, this, [this] {
     artwork_->InvalidateAllRenderings();
@@ -599,7 +599,7 @@ void LibraryWindow::BuildShortcuts() {
             });
 
   // Each of these registers with ui/KeyBindings so Settings' Shortcuts
-  // category can list and edit it — Ctrl+1…9's per-filter loop below is the
+  // category can list and edit it; Ctrl+1…9's per-filter loop below is the
   // one deliberate exception (see its own comment).
   auto window_action = [this](const QString& id, const QString& label, QKeySequence default_keys,
                               QList<QKeySequence> extra_aliases, auto slot) {
@@ -668,7 +668,7 @@ void LibraryWindow::BuildShortcuts() {
 
   // Ctrl+1 through Ctrl+8, in filter order. Guarded by count() rather than
   // by kFilters so adding a ninth filter cannot walk past Ctrl+9. Not
-  // registered with keybindings — nine near-identical rebindable rows for
+  // registered with keybindings: nine near-identical rebindable rows for
   // "pick the Nth filter" isn't worth the Settings screen space, and the
   // filter list itself isn't fixed enough to make good default labels for.
   for (int row = 0; row < filters_->count() && row < 9; ++row) {
@@ -688,7 +688,7 @@ void LibraryWindow::BuildShortcuts() {
                                                                         : hidden_row);
                });
 
-  // Neither is a menu entry anymore (both are sidebar rows now) — kept here
+  // Neither is a menu entry anymore (both are sidebar rows now), kept here
   // so their shortcuts and Settings-screen Shortcuts-category listing
   // survive the menu trim.
   window_action("settings", "Settings", QKeySequence(Qt::CTRL | Qt::Key_Comma), {},
@@ -815,7 +815,7 @@ void LibraryWindow::SavePrefs() {
   if (sizes.size() == 2) prefs.sidebar_width = sizes[0];
   // Blocking, not fire-and-forget: the async form's detached thread might
   // not reach the socket before the process exits on the last window's
-  // close. Failure isn't reported — the cost is a remembered layout, not data.
+  // close. Failure isn't reported: the cost is a remembered layout, not data.
   mira_gui::MiradClient::SaveFrontendPrefsBlocking(prefs);
 }
 
@@ -985,7 +985,7 @@ bool LibraryWindow::eventFilter(QObject* watched, QEvent* event) {
 }
 
 void LibraryWindow::closeEvent(QCloseEvent* event) {
-  // Only for the window Attach() made the tray's — a secondary window
+  // Only for the window Attach() made the tray's; a secondary window
   // closes for real either way, since nothing would bring it back.
   if (mira_gui::tray::IsManaged(this) && !mira_gui::tray::Quitting()) {
     SavePrefs();
@@ -1006,7 +1006,7 @@ void LibraryWindow::closeEvent(QCloseEvent* event) {
         return;
       case mira_gui::notify::UnsavedAction::SaveAndExit:
         event->ignore();
-        // Neither Save() finishes synchronously — quit for real only once it
+        // Neither Save() finishes synchronously, so quit for real only once it
         // has, via the one-shot below, not this closeEvent call.
         if (settings_dirty) {
           connect(settings_panel_, &mira_gui::SettingsPanel::SaveFinished, this,
@@ -1166,7 +1166,7 @@ void LibraryWindow::RemoveAllDesktopEntries() {
 QWidget* LibraryWindow::BuildTopBar() {
   top_bar_ = new QWidget(this);
   top_bar_->setObjectName("top_bar");
-  // Catches a press/double-click on the bar's own empty background — see
+  // Catches a press/double-click on the bar's own empty background; see
   // eventFilter. A click on any child widget never reaches here.
   top_bar_->installEventFilter(this);
 
@@ -1427,7 +1427,7 @@ QWidget* LibraryWindow::BuildSidebar() {
   layout->addWidget(header);
 
   // Always visible (not just a "back" affordance): checked/highlighted
-  // exactly when the grid is the current content — see UpdateLibraryNavActive.
+  // exactly when the grid is the current content; see UpdateLibraryNavActive.
   library_nav_ = new QPushButton("Library", sidebar);
   library_nav_->setObjectName("library_nav");
   library_nav_->setFlat(true);
@@ -1658,7 +1658,7 @@ QWidget* LibraryWindow::BuildGrid() {
     }
     // Same rule as the context menu's Play entry and the Enter shortcut: a
     // game that isn't ready has nothing to launch, and /launch would just
-    // 409. Stop needs no such guard — running_ids_ already reflects reality.
+    // 409. Stop needs no such guard: running_ids_ already reflects reality.
     if (!running_ids_.contains(id) && status != "ready") return;
     ToggleRunning(id);
   });
@@ -1706,7 +1706,7 @@ void LibraryWindow::UpdateTileCover(const QString& id) {
     if (game == nullptr) return;
     item->setData(Qt::DecorationRole, CoverFor(*game));
     // The edit page draws the same game at a different size, so it needs the
-    // same nudge — it has no way to notice the store changed under it. A
+    // same nudge, since it has no way to notice the store changed under it. A
     // no-op if it isn't currently showing this game (or isn't open at all).
     if (game_edit_form_ != nullptr) game_edit_form_->RefreshCover();
     if (game_edit_backdrop_ != nullptr) game_edit_backdrop_->RefreshCover(id.toStdString());
@@ -1762,7 +1762,7 @@ void LibraryWindow::InstallErrorNavigator() {
 }
 
 void LibraryWindow::ShowSteamGridDbNotice(bool asked_for) {
-  // Only when the user actually asked for art — a background fetch after a
+  // Only when the user actually asked for art: a background fetch after a
   // scan hitting this would otherwise nag on every launch. Once per session,
   // however many games report it.
   if (!asked_for || steamgriddb_notice_shown_) return;
@@ -1855,7 +1855,7 @@ void LibraryWindow::RefreshGames() {
         [this, visible = std::move(visible)](mira_gui::GamesResult hidden) mutable {
           games_ = std::move(visible.games);
           // A failed second fetch just means the Hidden filter shows
-          // nothing this round — not worth failing the whole refresh over.
+          // nothing this round, and not worth failing the whole refresh over.
           if (hidden.ok) {
             for (mira_gui::GameSummary& game : hidden.games) games_.push_back(std::move(game));
           }
@@ -1891,7 +1891,7 @@ bool LibraryWindow::MatchesFilterKey(const mira_gui::GameSummary& game, const QS
   // Store launchers (Battle.net, ...) live on their source pages, not here.
   if (game.source == "launcher") return false;
   if (key == "hidden") return HasTag(game, "hidden");
-  // Every other filter excludes a hidden game — "not displayed by default"
+  // Every other filter excludes a hidden game: "not displayed by default"
   // means not in "All games" either, not just off the initial screen.
   if (HasTag(game, "hidden")) return false;
   if (key == "all") return true;
@@ -1964,7 +1964,7 @@ void LibraryWindow::ApplyFilter() {
       grid_->setCurrentItem(to_select, QItemSelectionModel::NoUpdate);
       to_select->setSelected(true);
     } else if (!previously_selected.empty()) {
-      // Selected game was filtered away or removed — don't keep showing it.
+      // Selected game was filtered away or removed, so don't keep showing it.
       selected_id_.clear();
     }
   }
@@ -2036,7 +2036,7 @@ void LibraryWindow::RemoveGame(const std::string& id) {
 }
 
 void LibraryWindow::SelectionChanged() {
-  // Not the grid on screen (Settings or classic table instead) — a stray
+  // Not the grid on screen (Settings or classic table instead), and a stray
   // signal (e.g. ApplyFilter rebuilding the grid) should stay a no-op.
   if (!GridShown()) return;
 
@@ -2517,7 +2517,7 @@ void LibraryWindow::SetGridControlsEnabled(bool enabled) {
   // The grid itself is what's leaving the screen either way -- nothing left
   // to preview.
   if (!enabled) ShowHoverCard(nullptr);
-  // These act on a hidden grid. library_nav_ stays clickable — it's the way
+  // These act on a hidden grid. library_nav_ stays clickable, since it's the way
   // back out. Disabling filter_sort_button_ alone blocks its popover too.
   for (QWidget* control :
        {filter_sort_button_, static_cast<QWidget*>(add_games_), static_cast<QWidget*>(search_),
@@ -2600,7 +2600,7 @@ QWidget* LibraryWindow::BuildSettingsPage() {
               mira_gui::notify::Failed(this, "Could not save the settings.", error);
               return;
             }
-            // The screen closing back to the grid is already the feedback —
+            // The screen closing back to the grid is already the feedback:
             // a save the user just triggered isn't the background-result
             // case a toast is for.
             CloseSettings();
@@ -2805,7 +2805,7 @@ QWidget* LibraryWindow::BuildGameEditCard(const std::string& id) {
               mira_gui::notify::Failed(this, "Could not save this game.", error);
               return;
             }
-            // The overlay closing back to the grid is already the feedback —
+            // The overlay closing back to the grid is already the feedback:
             // a save the user just triggered isn't the background-result
             // case a toast is for.
             CloseGameEdit();
@@ -3414,7 +3414,7 @@ QWidget* LibraryWindow::BuildClassicPage() {
 void LibraryWindow::RefreshClassicTable() {
   if (classic_table_ == nullptr) return;
 
-  // Same source and same filter as the grid — one games_ list, two
+  // Same source and same filter as the grid: one games_ list, two
   // presentations, always in sync since both are rebuilt from ApplyFilter.
   std::vector<const mira_gui::GameSummary*> shown;
   for (const mira_gui::GameSummary& game : games_) {
@@ -3566,13 +3566,13 @@ void LibraryWindow::HandleGameEvent(const std::string& type, const std::string& 
     mira_gui::MetadataEvent event;
     if (!mira_gui::MiradClient::ParseMetadataEvent(data, &event)) return;
     if (type == "game.metadata_ready") {
-      // Only the artwork is refetched here — the rest of the metadata isn't
+      // Only the artwork is refetched here; the rest of the metadata isn't
       // part of the game record, so nothing else in the library view changes.
       artwork_->Invalidate(event.id);
       return;
     }
     // The one failure worth interrupting for: it's fixable and never
-    // transient — no SteamGridDB key means every non-Steam game keeps its
+    // transient: no SteamGridDB key means every non-Steam game keeps its
     // placeholder forever.
     if (event.code == "no_steamgriddb_key") {
       const bool asked_for = awaiting_metadata_.erase(event.id) > 0 || artwork_fetch_requested_;
@@ -3611,7 +3611,7 @@ void LibraryWindow::HandleGameEvent(const std::string& type, const std::string& 
   }
 
   // Explicitly the two event types that carry a game record, not "anything
-  // left over" — mirad also publishes runners.download.* and tricks.* here.
+  // left over": mirad also publishes runners.download.* and tricks.* here.
   if (type != "game.added" && type != "game.updated") return;
 
   mira_gui::GameSummary game;

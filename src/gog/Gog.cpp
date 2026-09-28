@@ -74,7 +74,7 @@ GogStatus DetectGog(const config::Config& config) {
 
 Result<void> InstallGogBinary(const config::Config& config, const runner::ReleaseAsset& asset) {
   // gogdl is a Python zipapp ("#!/usr/bin/env python3" shebang), not a
-  // self-contained binary — a system
+  // self-contained binary, so a system
   // python3 has to actually be there for it to run at all, unlike
   // Legendary. Checked here rather than only at first use, so
   // "mira gog setup" fails with a clear, actionable error immediately
@@ -130,7 +130,7 @@ Result<void> Login(const config::Config& config, const std::string& pasted) {
   }
   if (code.empty()) return Err("invalid_code", "no code entered");
   // Same posture as epic::Login: verify by re-reading what gogdl actually
-  // wrote, not by trusting a nonzero/zero exit code — gogdl's own `auth`
+  // wrote, not by trusting a nonzero/zero exit code: gogdl's own `auth`
   // handler prints {"error": true} on a rejected code but still exits 0.
   if (auto output = RunGogdl(config, {"auth", "--code", code}); !output) {
     return std::unexpected(output.error());
@@ -163,8 +163,8 @@ Result<std::string> AccessToken(const config::Config& config) {
     // gogdl's own load path refreshes an expired token using its stored
     // refresh_token as a side effect of loading --auth-config-path at all
     // (confirmed in heroic-gogdl's auth.py: is_credential_expired/
-    // refresh_credentials run before any subcommand does its own work) —
-    // triggering that is as simple as invoking gogdl with no real work to
+    // refresh_credentials run before any subcommand does its own work),
+    // so triggering that is as simple as invoking gogdl with no real work to
     // do.
     if (auto refreshed = RunGogdl(config, {"auth"}); !refreshed) return std::unexpected(refreshed.error());
     stored = ReadAuthConfig(config);

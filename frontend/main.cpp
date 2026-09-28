@@ -24,7 +24,7 @@ int main(int argc, char** argv) {
 
   // Mira closes to tray rather than quitting, so a second launch (another
   // double-click on the AppImage, another "Mira" from the app menu) must
-  // not open a second window against the same daemon — it should just no-op.
+  // not open a second window against the same daemon; it should just no-op.
   // QLockFile detects and clears a lock left by a crashed instance on its
   // own (it checks whether the PID that holds it is still alive).
   const QString runtime_dir = QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation) + "/mira";
@@ -44,7 +44,7 @@ int main(int argc, char** argv) {
   }
   // Matches packaging/mira.desktop, which is how the compositor and the
   // notification service work out which application this is. Only when
-  // that file is actually installed — claiming an unresolvable app id
+  // that file is actually installed: claiming an unresolvable app id
   // makes xdg-desktop-portal log a warning on every start.
   if (mira_gui::notify::system_notifier::DesktopEntryInstalled()) {
     QGuiApplication::setDesktopFileName("mira");
@@ -76,7 +76,7 @@ int main(int argc, char** argv) {
     QMainWindow* window = classic ? static_cast<QMainWindow*>(new MainWindow())
                                   : static_cast<QMainWindow*>(new LibraryWindow());
     window->setAttribute(Qt::WA_DeleteOnClose);
-    // A no-op on a desktop with no tray (Tray.cpp) — window->close() then
+    // A no-op on a desktop with no tray (Tray.cpp): window->close() then
     // means exactly what it always did.
     mira_gui::tray::Attach(window);
     window->show();

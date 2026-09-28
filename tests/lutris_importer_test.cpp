@@ -184,7 +184,7 @@ TEST_CASE("LutrisImporter skips non-wine runners and updates known games in plac
   prefix: {}
 )",
                                                                    game_dir.string(), game_dir.string()));
-  // The steam-runner row has no yaml fixture at all — ReadGameConfig fails
+  // The steam-runner row has no yaml fixture at all, so ReadGameConfig fails
   // to open it, which is exactly what "not a wine game we handle" looks
   // like in a real pga.db too (Steam rows aren't given a Lutris yaml).
 
@@ -209,7 +209,7 @@ TEST_CASE("LutrisImporter refuses an install_path that's really the whole shared
   fs::create_directories(prefix_dir / "drive_c");
 
   REQUIRE(BuildFixtureDb(fx.lutris_dir / "pga.db", {{"Hearthstone", "hearthstone", "wine", "hs-1", {}}}).has_value());
-  // A launcher script referenced with no subdirectory at all — install_path
+  // A launcher script referenced with no subdirectory at all: install_path
   // would resolve to prefix/drive_c, the whole C: drive shared by every
   // other game in this prefix (Battle.net, HDT, ...). Must be refused, not
   // handed out as a deletion scope.

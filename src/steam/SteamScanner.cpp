@@ -11,7 +11,7 @@ namespace mira::steam {
 namespace {
 
 // appid -> Steam's own playtime_forever, in seconds. Empty when the Web API
-// isn't configured (the normal case) or unreachable — playtime import is
+// isn't configured (the normal case) or unreachable. Playtime import is
 // strictly an enrichment on top of a scan that works fine without it.
 std::map<std::string, std::int64_t> PlaytimeByAppid(const config::Config& config) {
   std::map<std::string, std::int64_t> playtime;
@@ -48,7 +48,7 @@ Result<SteamScanSummary> SteamScanner::Scan() {
     const auto existing = games_.Find(id);
 
     // Preserve anything the user already configured across a rescan
-    // (exe_path/args/env for "direct" mode, overrides, reviewed) — only the
+    // (exe_path/args/env for "direct" mode, overrides, reviewed), only the
     // fields Steam itself owns get overwritten.
     model::Game game = existing.value_or(model::Game{});
     game.id = id;

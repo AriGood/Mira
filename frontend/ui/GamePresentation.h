@@ -29,7 +29,7 @@ inline QColor StatusColor(const std::string& status) {
 // ProtonDB's own tier colors, read out of their production site's own
 // bundle (head.protondb.pages.dev/static/js/main.*.js, theme.colors.medals)
 // rather than approximated. "native" is deliberately not part of that
-// `medals` map on their side either — it lives as its own top-level
+// `medals` map on their side either: it lives as its own top-level
 // `native: "green"` entry in the same object, because it means "doesn't
 // touch Proton at all" rather than grading how well Proton runs it, which
 // is the distinction ProtonDbTierIsNative below exists to carry into ours.

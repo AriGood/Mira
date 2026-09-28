@@ -9,7 +9,7 @@
 
 namespace mira::steam {
 
-// One title the Steam account owns, per Steam's own Web API — including
+// One title the Steam account owns, per Steam's own Web API, including
 // ones that aren't installed, which is the part Steam's on-disk files
 // (libraryfolders.vdf/appmanifest_*.acf, see SteamDetector) can't tell you.
 struct OwnedGame {

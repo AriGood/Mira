@@ -11,7 +11,7 @@
 
 namespace mira::runner {
 
-// One release asset offered for download — already filtered to the single
+// One release asset offered for download, already filtered to the single
 // asset per release that matches the source's asset_pattern (see
 // RunnerSources.h / the runner_sources.* settings), so a caller never has
 // to know GitHub's release/asset JSON shape.
@@ -67,14 +67,14 @@ Result<std::vector<ReleaseAsset>> ListFamilyReleases(const RunnerFamily& family)
 
 // Lists releases of `kind` ("proton", "wine", or a tool such as "legendary",
 // "gog" or "umu") from its GitHub source, newest first. Shells out to curl for the GitHub API request rather than linking
-// libcurl — consistent with how umu-run/wine are already run as
+// libcurl, consistent with how umu-run/wine are already run as
 // subprocesses, and this is occasional, human-triggered traffic, not a hot
 // path.
 Result<std::vector<ReleaseAsset>> ListReleases(const config::Config& config, const std::string& kind);
 
 // Downloads `asset` (verifying its checksum first, if it has one) and
-// extracts it into the right search path for `kind` —
-// runner_search_paths[0] for "proton", wine_search_paths[0] for "wine" —
+// extracts it into the right search path for `kind`:
+// runner_search_paths[0] for "proton", wine_search_paths[0] for "wine",
 // so the next Discover() call finds it. Shells out
 // to curl + tar rather than linking an archive/TLS library, for the same
 // reason as ListReleases.

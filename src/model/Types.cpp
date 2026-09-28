@@ -124,7 +124,7 @@ Game GameFromJson(const json& document) {
   game.reviewed = document.value("reviewed", false);
   game.platform = PlatformFromString(document.value("platform", "unknown"));
   // "scan", not empty: an old games.toml written before this field existed
-  // was necessarily a folder scan — Steam/Lutris imports are new enough
+  // was necessarily a folder scan: Steam/Lutris imports are new enough
   // that every row they ever wrote already carries their own source.
   game.source = document.value("source", "scan");
   game.exe_path = document.value("exe_path", std::string());

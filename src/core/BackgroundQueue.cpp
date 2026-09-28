@@ -19,7 +19,7 @@ void BackgroundQueue::Run(std::function<void()> task) {
   });
   // Caught here rather than left to the future. A task that throws stores
   // its exception in the future, and this queue discards futures without
-  // ever calling get() — so the throw produced no log line, no event and no
+  // ever calling get(), so the throw produced no log line, no event and no
   // result, and the work simply appeared not to have happened. That is
   // exactly how a json::type_error in the metadata fetcher hid: three games
   // silently had no metadata and nothing anywhere said why.

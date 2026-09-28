@@ -1,4 +1,4 @@
-// mira — command-line client for mirad.
+// mira: command-line client for mirad.
 //
 // A pure REST client over the same Unix socket the frontend uses: no direct
 // access to settings.toml/games.toml, no special privilege.
@@ -1664,7 +1664,7 @@ int CmdWatch() {
 
 int CmdDaemon(int argc, char** argv, const char* self) {
   // `mira daemon` is a convenience that execs mirad alongside this binary (or
-  // on PATH), forwarding any remaining arguments — it does not talk to the
+  // on PATH), forwarding any remaining arguments. It does not talk to the
   // API, since there is nothing listening yet.
   std::filesystem::path candidate = std::filesystem::path(self).parent_path() / "mirad";
   std::vector<char*> exec_argv;

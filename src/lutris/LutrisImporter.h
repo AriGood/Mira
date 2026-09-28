@@ -32,7 +32,7 @@ struct LutrisImportSummary {
 };
 
 // Reads Lutris's own game database (pga.db, sqlite) and per-game YAML
-// configs and upserts them into the same GameStore as everything else — a
+// configs and upserts them into the same GameStore as everything else, a
 // Lutris game is a normal model::Game, so every existing endpoint already
 // works on it. Manual (POST /v1/lutris/import), not inotify-driven: Lutris
 // owns this data, Mira only reads a snapshot of it on request.

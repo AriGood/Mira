@@ -28,7 +28,7 @@ std::vector<std::string> Names(const std::vector<GameSummary>& games) {
 }  // namespace
 
 TEST_CASE("SortGames orders by name case-insensitively") {
-  // Game names come from folder names, so capitalisation is an accident —
+  // Game names come from folder names, so capitalisation is an accident,
   // a plain byte compare would file every lowercase title after every
   // uppercase one.
   std::vector<GameSummary> games = {Game("wandering sword", 1), Game("Animal Well", 2),
@@ -39,7 +39,7 @@ TEST_CASE("SortGames orders by name case-insensitively") {
 
 TEST_CASE("SortGames sorts never-played games as older than any played one") {
   // "Never" is not a date. Treating it as 0 would file it next to 1970,
-  // which is a real timestamp — it belongs at the far end instead.
+  // which is a real timestamp, so it belongs at the far end instead.
   std::vector<GameSummary> games = {Game("played", 1789620825), Game("never", std::nullopt),
                                     Game("epoch", 0)};
 

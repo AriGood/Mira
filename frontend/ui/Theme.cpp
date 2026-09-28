@@ -32,7 +32,7 @@ QString g_name = "auto";
 QString g_resolved = "mira-dark";
 bool g_following_desktop = false;
 
-// "#rrggbb" and "#rrggbbaa" — CSS order, because that is the order anyone
+// "#rrggbb" and "#rrggbbaa", in CSS order, because that is the order anyone
 // writing a theme by hand will reach for. (QColor's own "#aarrggbb" puts
 // alpha first, which silently turns a translucent panel into a tinted one.)
 QColor ParseColor(const std::string& text, const QColor& fallback) {
@@ -127,7 +127,7 @@ Tokens ParseTokens(const std::string& text) {
   return tokens;
 }
 
-// A checkbox's tick and a combo's chevron cannot be shapes in the stylesheet —
+// A checkbox's tick and a combo's chevron cannot be shapes in the stylesheet,
 // Qt takes only an image for a sub-control like that. They are drawn here, in
 // the theme's own colors, and cached as PNG rather than SVG so nothing depends
 // on the qtsvg image plugin being present (it is not something the AppImage can

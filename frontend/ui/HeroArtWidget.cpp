@@ -17,8 +17,8 @@ namespace mira_gui {
 namespace {
 
 // This box is hero-shaped: a game with a hero shows it, one without shows
-// its cover instead, but the box itself — and how a mismatched source fits
-// into it — doesn't change based on which. Scales `source` down or up so it
+// its cover instead, but the box itself (and how a mismatched source fits
+// into it) doesn't change based on which. Scales `source` down or up so it
 // fits entirely inside `box` without being cropped, then centers it on
 // `background`. A null `source` just paints the empty box, for a
 // placeholder cover that's already drawn to fill it.
@@ -53,7 +53,7 @@ HeroArtWidget::HeroArtWidget(QWidget* parent) : QWidget(parent) {
   layout->setContentsMargins(0, 0, 0, 0);
 
   // Exactly one of these three is ever visible (UpdateImageVisibility):
-  // hero, cover, or this placeholder while it's still unknown which — never
+  // hero, cover, or this placeholder while it's still unknown which, never
   // the cover speculatively, to avoid a cover-then-hero flash.
   // Ignored horizontally: a QLabel's sizeHint tracks its current pixmap, so
   // last render's width would floor this widget's minimum and block
@@ -102,7 +102,7 @@ void HeroArtWidget::ShowGame(const GameSummary& game) {
   game_id_ = game.id;
   current_game_ = game;
 
-  // Applied immediately, before the metadata round trip below even starts —
+  // Applied immediately, before the metadata round trip below even starts,
   // a repeat selection skips the placeholder and any cover-then-hero flash.
   UpdateImageVisibility();
   RefreshCover();
@@ -154,7 +154,7 @@ QSize HeroArtWidget::ImageBoxSize() const {
   // already the sidebar's real width.
   const int width = qMax(120, this->width());
   // Height derived from width via SteamGridDB's own 1920x620 ratio, not a
-  // fixed number — a box whose shape doesn't match a real hero's pads even
+  // fixed number: a box whose shape doesn't match a real hero's pads even
   // a correctly-sized one with empty bands.
   constexpr qreal kHeroAspect = 1920.0 / 620.0;
   const int height = qMax(20, qRound(width / kHeroAspect));
@@ -166,7 +166,7 @@ void HeroArtWidget::RenderBanner() {
   const QSize box = ImageBoxSize();
   // Contain-fit, not cover: SteamGridDB's own hero shape is 1920x620, but a
   // mismatched alternate should show whole and undistorted, not have its
-  // edges cut off — same treatment RefreshCover gives a game with no hero.
+  // edges cut off, the same treatment RefreshCover gives a game with no hero.
   banner_->setPixmap(
       FitLetterboxed(banner_source_, box, theme::Current().radius_panel, theme::Current().surface_alt));
   UpdateImageVisibility();
@@ -207,13 +207,13 @@ void HeroArtWidget::RefreshCover() {
   if (artwork_ != nullptr && artwork_->HasArtwork(current_game_->id)) {
     // Real art: fit-and-letterbox it into the same box the hero banner
     // gets, rather than the cover-crop Cover() itself would give a grid
-    // tile — a cover showing here at all means there's no hero, and this
+    // tile: a cover showing here at all means there's no hero, and this
     // box is hero-shaped either way; never cropped, same as RenderBanner.
     cover_->setPixmap(FitLetterboxed(artwork_->RawArtwork(current_game_->id), box,
                                      theme::Current().radius_panel, theme::Current().surface_alt));
     return;
   }
-  // No real art (yet, or ever) — the generated placeholder is drawn
+  // No real art (yet, or ever), so the generated placeholder is drawn
   // straight to the box's own size; nothing to letterbox since it's
   // synthetic, not sourced from an image with its own aspect ratio.
   cover_->setPixmap(PlaceholderCover(name, id, box, devicePixelRatioF()));

@@ -9,7 +9,7 @@ namespace mira_gui {
 
 // How the library grid orders its tiles.
 //
-// A free function over the summaries, not a method on the window — the
+// A free function over the summaries, not a method on the window, so the
 // ordering is a rule about games, not widgets, and worth testing without
 // an event loop.
 //

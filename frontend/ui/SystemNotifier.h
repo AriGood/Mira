@@ -10,7 +10,7 @@ namespace mira_gui::notify {
 // obeys Do Not Disturb.
 namespace system_notifier {
 
-// Persistent: critical urgency, never expires — the user has to see it.
+// Persistent: critical urgency, never expires: the user has to see it.
 // Transient: normal urgency, the desktop's own default timeout.
 enum class Urgency { Transient, Persistent };
 

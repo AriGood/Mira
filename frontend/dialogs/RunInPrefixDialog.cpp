@@ -25,7 +25,7 @@ RunInPrefixDialog::RunInPrefixDialog(std::string game_id, const std::string& ins
   // 680, not the old 520, for a real install path next to the Browse
   // button. setMinimumWidth, not resize(680, 0): resize() marks the widget
   // explicitly sized, clamping it to the layout's bare minimum instead of
-  // its sizeHint() on first show — that's what clipped the button's text.
+  // its sizeHint() on first show, which is what clipped the button's text.
   setMinimumWidth(680);
 
   auto* layout = new QVBoxLayout(this);
@@ -78,7 +78,7 @@ RunInPrefixDialog::RunInPrefixDialog(std::string game_id, const std::string& ins
 
   auto* buttons = new QDialogButtonBox(QDialogButtonBox::Cancel, this);
   run_ = buttons->addButton("Run", QDialogButtonBox::AcceptRole);
-  // Nothing to run until a path is picked — disabling this says so, instead
+  // Nothing to run until a path is picked, so disabling this says so, instead
   // of a popup only reachable by clicking Run first to find out.
   run_->setEnabled(false);
   connect(run_, &QPushButton::clicked, this, &RunInPrefixDialog::Run);

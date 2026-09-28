@@ -10,7 +10,7 @@
 SettingsDialog::SettingsDialog(QWidget* parent) : QDialog(parent) {
   setWindowTitle("Settings");
   // Wide enough for the nav column (SettingsNavWidget) plus a usable form
-  // column next to it — the old size predates that layout.
+  // column next to it; the old size predates that layout.
   resize(880, 620);
 
   auto* layout = new QVBoxLayout(this);

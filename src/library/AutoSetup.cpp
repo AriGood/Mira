@@ -42,7 +42,7 @@ model::Game AutoSetup::CreateGame(const fs::path& install_path, const Detector::
     game.platform = top.kind;
     game.exe_path = top.rel_path;
     if (top.is_installer) {
-      // Running an installer isn't running the game — flag it rather than
+      // Running an installer isn't running the game: flag it rather than
       // silently provisioning/launching a setup wizard as if it were.
       game.status = model::GameStatus::NeedsInstall;
       game.last_error = "This looks like an installer (" + top.rel_path +

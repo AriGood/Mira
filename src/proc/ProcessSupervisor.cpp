@@ -185,7 +185,7 @@ ProcessSupervisor::ProcessSupervisor(store::GameStore& games, api::EventBus& eve
 
 ProcessSupervisor::~ProcessSupervisor() {
   stopping_.store(true, std::memory_order_relaxed);
-  // Games are deliberately left running — quitting the daemon shouldn't kill
+  // Games are deliberately left running: quitting the daemon shouldn't kill
   // what the player is playing. The watchers just stop watching.
   std::map<std::string, std::thread> watchers;
   {
@@ -295,7 +295,7 @@ Result<void> ProcessSupervisor::Stop(const std::string& game_id) {
       match = external->second;
     }
   }
-  // 0 is TrackSteamLaunch's "reserved, not confirmed yet" sentinel — kill(0,
+  // 0 is TrackSteamLaunch's "reserved, not confirmed yet" sentinel: kill(0,
   // ...)/kill(-0, ...) both mean "signal every process in the caller's own
   // group" per POSIX, which would hit mirad itself. A real pid is always > 0.
   if (pid <= 0) {
@@ -367,7 +367,7 @@ void ProcessSupervisor::Watch(std::string game_id, pid_t pid, std::int64_t start
 
   // A crash is a different outcome from a clean exit and has to be reported
   // as one: killed by a signal, or exited non-zero. Playtime is recorded
-  // either way — the session still happened.
+  // either way, since the session still happened.
   const bool signalled = WIFSIGNALED(status);
   const int signal_number = signalled ? WTERMSIG(status) : 0;
   const int exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
@@ -413,7 +413,7 @@ void ProcessSupervisor::Watch(std::string game_id, pid_t pid, std::int64_t start
   }
   // The full updated record rides along on top of the session-only fields
   // below (exit_code, signal, played_seconds are this session's, not the
-  // row's running totals) so a listener can patch its one row directly —
+  // row's running totals) so a listener can patch its one row directly;
   // this used to carry only id/state, forcing a full GET /v1/games relist
   // just to pick up the new play_seconds/last_played_at/last_error.
   json event = updated ? model::ToJson(*updated) : json{{"id", game_id}};
@@ -573,7 +573,7 @@ void ProcessSupervisor::Reconcile(const std::filesystem::path& sessions_dir) {
     if (record->finished) {
       // mira-run had already finished and written the final record, but
       // the mirad that was supposed to notice and archive it died first.
-      // Nothing to watch — just finish the bookkeeping mira-run itself
+      // Nothing to watch, so just finish the bookkeeping mira-run itself
       // already completed the hard part of.
       FinalizeWrappedSession(record->game_id, *record, path);
       continue;
@@ -685,7 +685,7 @@ void ProcessSupervisor::WatchExternal(std::string game_id, ExternalMatch match, 
     if (current.empty() && !AnyAlive(matched)) break;
     if (!current.empty()) matched = current;
 
-    // Same SIGKILL escalation Watch() does for a directly-launched game —
+    // Same SIGKILL escalation Watch() does for a directly-launched game;
     // missing here before meant Stop() on a Steam-launched game only ever
     // sent one SIGTERM and never followed up, so a game that ignored it kept
     // running forever with mirad unable to tell.

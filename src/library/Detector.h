@@ -9,7 +9,7 @@
 
 namespace mira::library {
 
-// Every knob here mirrors a `detect.*` schema key (src/config/Schema.cpp) —
+// Every knob here mirrors a `detect.*` schema key (src/config/Schema.cpp),
 // Detector takes plain values rather than a config::Config so it stays
 // testable with no settings file involved, and callers (Scanner) are the
 // only place that has to know these come from config at all.
@@ -33,7 +33,7 @@ struct DetectorSettings {
 // post-install re-detect), so both score/flag candidates identically.
 DetectorSettings SettingsFromConfig(const config::Config& config);
 
-// Scores the executables inside one already-identified game folder — it does
+// Scores the executables inside one already-identified game folder. It does
 // not discover game folders itself (that is Scanner's job) and does not know
 // about runners or prefixes. `detect.rules` selects which of the passes
 // below run, and in what order: an unrecognised or omitted name simply does

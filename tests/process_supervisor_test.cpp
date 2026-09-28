@@ -31,7 +31,7 @@ fs::path TempDir(const char* name) {
 }
 
 // Waits up to `timeout` for `predicate()` to become true, polling rather
-// than sleeping the whole timeout — these tests spawn real subprocesses, so
+// than sleeping the whole timeout. These tests spawn real subprocesses, so
 // exact timing isn't guaranteed.
 bool WaitFor(std::function<bool()> predicate, std::chrono::milliseconds timeout) {
   const auto deadline = std::chrono::steady_clock::now() + timeout;
@@ -171,7 +171,7 @@ TEST_CASE("ProcessSupervisor::Stop refuses a not-yet-confirmed TrackSteamLaunch 
 TEST_CASE("FindPrefixProcesses finds a process that left its process group") {
   const fs::path prefix = TempDir("proc-prefix-escaped");
 
-  // setsid(), like wineserver does — the env var is all that's left tying
+  // setsid(), like wineserver does, the env var is all that's left tying
   // this process to the game.
   Command command;
   command.argv = {"sh", "-c", "setsid sleep 30 & sleep 30"};

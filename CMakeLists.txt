@@ -68,13 +68,13 @@ add_executable(mira src/cli/main.cpp)
 target_link_libraries(mira PRIVATE mira_core mira_flags)
 
 # The process mirad actually spawns for a game launch (see proc/Session.h,
-# docs/architecture.md) — a separate binary, not a mirad-internal thread, so
+# docs/architecture.md), a separate binary, not a mirad-internal thread, so
 # a launched game's session survives mirad restarting or crashing mid-game.
 add_executable(mira-run src/wrapper/main.cpp)
 target_link_libraries(mira-run PRIVATE mira_core mira_flags)
 
 # A target's own compile options are always ordered before flags inherited
-# through target_link_libraries, on every CMake generator — so a local
+# through target_link_libraries, on every CMake generator, so a local
 # -Wno-... cannot override a dependency's -Werror by appearing "later" in the
 # test target's own option list. mira_tests therefore gets a deliberately
 # looser flag set (no -Wpedantic, no -Werror) rather than mira_flags: the
@@ -111,7 +111,7 @@ endif()
 
 # Dev convenience only, not part of the install story: builds mira-gui (and
 # whatever it depends on) then execs it, so trying the GUI is one command.
-# Only defined when mira-gui actually exists as a target — MIRA_BUILD_FRONTEND
+# Only defined when mira-gui actually exists as a target: MIRA_BUILD_FRONTEND
 # off, or Qt6 missing, means frontend/CMakeLists.txt returns before defining
 # it (see the "Qt6 not found" branch there).
 if(TARGET mira-gui)

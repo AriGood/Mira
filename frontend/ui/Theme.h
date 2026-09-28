@@ -61,12 +61,12 @@ struct Tokens {
   int placeholder_value = 135;
 };
 
-// What everything currently draws with. Valid before Apply() is ever called —
+// What everything currently draws with. Valid before Apply() is ever called,
 // it starts as the built-in defaults.
 const Tokens& Current();
 
 // The current theme's own shape values, before the user's Overrides are
-// layered on — what a shape control unset (-1) actually resolves to. For
+// layered on: what a shape control unset (-1) actually resolves to. For
 // showing that number in the settings screen instead of a placeholder like
 // "Theme default".
 const Tokens& ThemeDefaults();
@@ -100,7 +100,7 @@ void Apply(const QString& name);
 // The name last passed to Apply(), so the settings picker can show it.
 QString CurrentName();
 
-// Sets one of the stylesheet's own properties on a widget — "role" for a text
+// Sets one of the stylesheet's own properties on a widget: "role" for a text
 // style (muted, heading, section, error, keys), "status" for a lifecycle
 // color. Qt does not restyle a widget when a property changes after it has
 // been polished, so this re-polishes it; setting the property directly works
@@ -108,7 +108,7 @@ QString CurrentName();
 void SetStyleProperty(QWidget* widget, const char* name, const QString& value);
 
 // Changed() fires after every Apply(). Anything that paints with tokens
-// instead of with the stylesheet — the tile delegate, the toasts — connects to
+// instead of with the stylesheet (the tile delegate, the toasts) connects to
 // it and repaints.
 class Notifier : public QObject {
   Q_OBJECT

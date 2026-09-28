@@ -118,7 +118,7 @@ void GameTileDelegate::paint(QPainter* painter, const QStyleOptionViewItem& opti
   painter->drawText(title_rect, Qt::AlignLeft | Qt::AlignVCenter,
                     QFontMetrics(title_font).elidedText(name, Qt::ElideRight, title_rect.width()));
 
-  // "Ready" says nothing worth a line on every tile — only a state that
+  // "Ready" says nothing worth a line on every tile, only a state that
   // needs attention (or Playing) earns one.
   const QString status_text = index.data(StatusTextRole).toString();
   if (running || status != "ready" || !status_text.isEmpty()) {

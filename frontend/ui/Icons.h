@@ -45,11 +45,11 @@ enum class Glyph {
 };
 
 // Drawn on demand in the current theme's text color, at the handful of sizes
-// Qt might ask for. Regenerate after a theme change — the color is baked in
+// Qt might ask for. Regenerate after a theme change, since the color is baked in
 // (see LibraryWindow's theme::Notifier connection).
 QIcon For(Glyph glyph);
 
-// Same, in a caller-chosen color — a muted row or an on_accent icon,
+// Same, in a caller-chosen color, such as a muted row or an on_accent icon,
 // neither the plain text color the no-argument overload assumes.
 QIcon For(Glyph glyph, const QColor& color);
 

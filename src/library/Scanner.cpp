@@ -22,7 +22,7 @@ namespace fs = std::filesystem;
 
 // What a game's status should be when its folder reappears after being
 // marked Missing. Derived from the game's own data rather than assumed:
-// "has an exe_path" is not the same as "launchable" — an installer has one
+// "has an exe_path" is not the same as "launchable": an installer has one
 // too, and a Windows game that was never provisioned has no prefix behind
 // it. Getting this wrong silently un-did the installer guard.
 model::GameStatus RestoredStatus(const model::Game& game) {
@@ -138,7 +138,7 @@ ScanSummary Scanner::ScanRoot(const fs::path& root) {
 
     // A combined install+prefix layout (Lutris colocates a Wine prefix
     // inside the game's own folder) legitimately looks like a Wine prefix
-    // too — only exclude that shape from *new* detection, never from a
+    // too. Only exclude that shape from *new* detection, never from a
     // folder that's already a known game, or every scan would flip it to
     // Missing.
     if (!existing && LooksLikeWinePrefix(dir)) continue;
@@ -201,7 +201,7 @@ ScanSummary Scanner::ScanRoot(const fs::path& root) {
   // disappeared. Default: mark it, don't delete it, so configuration and
   // playtime survive an unplugged drive or a temporarily-offline network
   // share. `library.remove_missing` trades that safety net for an
-  // always-current list — still never touches the game's files themselves,
+  // always-current list. It still never touches the game's files themselves,
   // same as DELETE /v1/games/{id}.
   const bool remove_missing = config_.GetBool("library.remove_missing");
   for (const model::Game& game : games_.All()) {
@@ -211,7 +211,7 @@ ScanSummary Scanner::ScanRoot(const fs::path& root) {
     // Checked before the already-Missing skip below, not after: otherwise
     // turning the toggle on would only ever catch a game the *next* time it
     // disappears, leaving anything already sitting at Missing stuck there
-    // forever — surprising, since the whole point of flipping it on is to
+    // forever, which is surprising, since the whole point of flipping it on is to
     // clean up what's already gone.
     if (remove_missing) {
       auto removed = games_.Remove(game.id);

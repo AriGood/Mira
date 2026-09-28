@@ -6,7 +6,7 @@
 
 namespace mira::runner {
 
-// Runs Windows games through Proton — any build: Proton-GE, Proton-CachyOS,
+// Runs Windows games through Proton, any build: Proton-GE, Proton-CachyOS,
 // UMU-Proton, Valve's own.
 //
 // umu-run is the *mechanism*, not the identity: Proton outside Steam needs

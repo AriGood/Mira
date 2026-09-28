@@ -16,7 +16,7 @@ struct ExecResult {
   std::string output;  // combined stdout+stderr
 };
 
-// Blocking: runs `command`, waits for it to exit. Provisioning only — an
+// Blocking: runs `command`, waits for it to exit. Provisioning only: an
 // actual game launch is supervised, not blocked on (see
 // proc::ProcessSupervisor).
 Result<ExecResult> RunAndWait(const Command& command);
@@ -28,7 +28,7 @@ Result<ExecResult> RunAndWait(const Command& command);
 Result<pid_t> SpawnDetached(const Command& command);
 
 // Like SpawnDetached, but the child's file descriptor 3 is connected to a
-// pipe whose read end is returned via `status_read_fd` — for spawning
+// pipe whose read end is returned via `status_read_fd`, for spawning
 // mira-run with a --status-fd 3 it can report "ready" or "pre_launch
 // failed" on, without mirad blocking on the whole process the way
 // RunAndWait does. The caller owns the returned fd and must close it.

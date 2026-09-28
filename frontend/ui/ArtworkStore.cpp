@@ -16,7 +16,7 @@ QString ScaleKey(const QString& id, QSize tile) {
 }
 
 // Real artwork isn't always 2:3 like the tile, so it's scaled to cover and
-// centre-cropped rather than letterboxed — a cropped edge reads as a cover,
+// centre-cropped rather than letterboxed: a cropped edge reads as a cover,
 // a background band reads as a broken image.
 //
 // Rounded here to the live radius_tile, not a fixed constant: GameTileDelegate
@@ -116,7 +116,7 @@ void ArtworkStore::TitleArtworkReady(const std::string& id) {
 }
 
 void ArtworkStore::InvalidateRendering(const std::string& id) {
-  // Every scaled copy, not just the current tile size — the zoom slider
+  // Every scaled copy, not just the current tile size: the zoom slider
   // leaves entries behind at every size it passed through.
   const QString prefix = QString::fromStdString(id) + "@";
   for (auto it = scaled_.begin(); it != scaled_.end();) {
@@ -140,14 +140,14 @@ void ArtworkStore::Pump() {
     auto on_result = [this, id](ArtworkResult result) {
       --in_flight_;
       queued_.remove(id);
-      // Answered covers all three outcomes on purpose — re-asking on every
+      // Answered covers all three outcomes on purpose: re-asking on every
       // repaint would turn an empty library into a request loop. Only
       // Invalidate reopens the question.
       answered_.insert(id);
 
       if (result.ok) {
         QPixmap art;
-        // Loaded from bytes, not a path — the image lives in mirad's own
+        // Loaded from bytes, not a path: the image lives in mirad's own
         // cache directory, which the frontend has no business knowing.
         if (art.loadFromData(reinterpret_cast<const uchar*>(result.bytes.data()),
                              static_cast<uint>(result.bytes.size()))) {

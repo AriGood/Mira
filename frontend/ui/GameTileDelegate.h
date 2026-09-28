@@ -9,7 +9,7 @@ namespace mira_gui {
 // over it, and the status.
 //
 // Everything it draws comes from the item's own roles, so a repaint never
-// reaches back into the window that owns the grid — the grid can be
+// reaches back into the window that owns the grid, because the grid can be
 // rebuilt from scratch on every keystroke without the painting code
 // knowing that happened.
 class GameTileDelegate : public QStyledItemDelegate {

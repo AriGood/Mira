@@ -55,7 +55,7 @@ constexpr std::string_view kMaxTime = "10";
 //
 // This is not defensive decoration. nlohmann's value() throws
 // type_error.302 when the key exists holding a different type, and JSON
-// null is a different type — so `data.value("website", std::string())`
+// null is a different type, so `data.value("website", std::string())`
 // throws on every Steam store page that has no website. Neon White,
 // HoloCure and Armored Core VI are all such pages, and all three threw out
 // of Fetch and ended up with no metadata and no cover at all. Every field
@@ -92,7 +92,7 @@ std::string UrlEncode(std::string_view input) {
 
 // Runs curl and parses its stdout as JSON. Empty/malformed output (offline,
 // rate-limited, endpoint down) comes back as a discarded json rather than an
-// error — every call site treats "couldn't get this source" as "skip it",
+// error: every call site treats "couldn't get this source" as "skip it",
 // not "fail the whole fetch".
 json CurlJson(std::vector<std::string> argv) {
   argv.insert(argv.begin() + 1, {"--max-time", std::string(kMaxTime)});
@@ -112,7 +112,7 @@ std::string ContentTypeFor(const fs::path& file) {
 
 // Downloads `url` into this game's artwork dir under `slot` (curl -f, so a
 // 404 never gets saved as art), recording it into
-// `info[slot == "cover" ? "artwork" : slot]` on success — "artwork" is
+// `info[slot == "cover" ? "artwork" : slot]` on success; "artwork" is
 // legacy naming for the cover slot, kept for API wire compatibility.
 // Sends no credentials: both sources use a plain public CDN, and
 // SteamGridDB's own API 401s if its key is passed to it here.
@@ -544,7 +544,7 @@ void FetchSteamOwned(const config::Config& config, const std::string& appid, con
     info["steam"] = steam_info;
   }
 
-  // Not part of appdetails — Steam's user review summary is a separate
+  // Not part of appdetails: Steam's user review summary is a separate
   // public endpoint (still no key needed), so it's a second call rather than
   // a field pulled off `store` above.
   const json reviews = CurlJson({"curl", "-sSL",
@@ -607,7 +607,7 @@ void FetchSteamOwned(const config::Config& config, const std::string& appid, con
 }
 
 // Legendary's own catalog cache already has title metadata and store art
-// URLs for every title it knows about — populated by `legendary list`, read
+// URLs for every title it knows about, populated by `legendary list`, read
 // here directly rather than hitting Epic's API again (Legendary already did
 // that work). Never fails: a cold/missing cache entry (a title added before
 // any `legendary list` refresh) falls back to SteamGridDB by name, same as
@@ -627,7 +627,7 @@ void FetchEpicOwned(const config::Config& config, const std::string& app_name, c
 
     // Epic's own image-type taxonomy: "DieselStoreFrontTall" is the
     // vertical boxart-equivalent cover, "DieselStoreFrontWide" the wide
-    // banner-equivalent hero — same two slots Steam's own CDN fills in
+    // banner-equivalent hero, the same two slots Steam's own CDN fills in
     // FetchSteamOwned above.
     const json key_images = Value(meta, "keyImages", json::array());
     auto find_image = [&](std::string_view type) { return FindKeyImage(key_images, type); };
@@ -651,7 +651,7 @@ void FetchEpicOwned(const config::Config& config, const std::string& app_name, c
 
   // Epic's own art above is already the default; SteamGridDB only adds
   // alternates, same trailing call FetchSteamOwned makes. Never fails the
-  // fetch either way — Epic-owned art is there regardless of a key.
+  // fetch either way: Epic-owned art is there regardless of a key.
   if (const std::string api_key = config.GetString("steamgriddb.api_key"); !api_key.empty()) {
     FetchGriddbCandidates(config, api_key, name, game_id, griddb_id, info);
   }
@@ -768,7 +768,7 @@ Result<void> Fetch(const config::Config& config, const model::Game& game) {
 
   // Checked before the steam: prefix below: an Epic game's runner_ref is
   // "proton:..."/"wine:..." (it's launched through Mira's own Wine/Proton
-  // runners, not Legendary — see epic/Legendary.h), indistinguishable from
+  // runners, not Legendary; see epic/Legendary.h), indistinguishable from
   // a Lutris or scanned Windows game by runner_ref alone.
   if (game.source == "epic") {
     info["source"] = "epic";

@@ -17,7 +17,7 @@ namespace mira_gui {
 
 namespace {
 
-// No catalog endpoint exists — just a shortlist of common verbs, alongside
+// No catalog endpoint exists, just a shortlist of common verbs, alongside
 // the free-text field.
 constexpr const char* kCommonVerbs[] = {
     "corefonts", "vcrun2019", "vcrun2017", "dotnet48", "dotnet6",

@@ -64,7 +64,7 @@ GameEditForm::GameEditForm(std::string id, QWidget* parent) : QWidget(parent), i
   status_label_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
   install_path_label_ = new QLabel(this);
   // Also Ignored horizontally: a path has no spaces to word-wrap at, so its
-  // minimumSizeHint was the whole string — the sidebar's own floor.
+  // minimumSizeHint was the whole string, the sidebar's own floor.
   install_path_label_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
   install_path_label_->setTextInteractionFlags(Qt::TextSelectableByMouse);
   last_error_label_ = new QLabel(this);
@@ -171,14 +171,14 @@ GameEditForm::GameEditForm(std::string id, QWidget* parent) : QWidget(parent), i
   // sitting in the middle of the form fields above it.
   advanced_button_ = new QPushButton("Advanced settings…", this);
   QPushButton* advanced_button = advanced_button_;
-  // QPushButton defaults to Fixed horizontal — same sidebar-floor bug as
+  // QPushButton defaults to Fixed horizontal, the same sidebar-floor bug as
   // install_path_label_ above, this time spilling the button's own text.
   advanced_button->setSizePolicy(QSizePolicy::Ignored, advanced_button->sizePolicy().verticalPolicy());
   advanced_button->setToolTip("Per-game overrides of the global settings.");
   connect(advanced_button, &QPushButton::clicked, this, &GameEditForm::OpenAdvanced);
   fields_layout->addWidget(advanced_button);
 
-  // Covers just the fields column when open — the art column stays on
+  // Covers just the fields column when open; the art column stays on
   // screen either side of it, unlike the separate dialog this used to be.
   fields_stack_ = new QStackedWidget(this);
   fields_stack_->addWidget(fields_column);
@@ -219,7 +219,7 @@ void GameEditForm::OpenAdvanced() {
 
 void GameEditForm::ResetScroll() {
   // Both host contexts (LibraryWindow's overlay card, GameDetailDialog)
-  // wrap this form in a QScrollArea it has no direct handle to — walking up
+  // wrap this form in a QScrollArea it has no direct handle to, so walking up
   // to find it beats each host remembering to reset scroll on page-switch.
   for (QWidget* ancestor = parentWidget(); ancestor != nullptr; ancestor = ancestor->parentWidget()) {
     if (auto* scroll_area = qobject_cast<QScrollArea*>(ancestor)) {
@@ -264,7 +264,7 @@ void GameEditForm::Populate(const mira_gui::GameDetail& game) {
   summary.tags = game.tags;
   hero_art_->ShowGame(summary);
 
-  // "Ready" is the common case and says nothing worth a line of its own —
+  // "Ready" is the common case and says nothing worth a line of its own,
   // only a state that needs attention earns one.
   status_box_->setVisible(game.status != "ready");
   status_label_->setText(QString::fromStdString(game.status));

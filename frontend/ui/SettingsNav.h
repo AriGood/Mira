@@ -30,7 +30,7 @@ std::vector<CategoryRows> GroupByCategory(const std::vector<std::string>& catego
 // Left-nav-plus-search chrome shared by the Settings screen and the
 // per-game Advanced editor: category list + search on the left, a
 // QStackedWidget of per-category forms on the right. Knows nothing about
-// config schemas — each consumer's own gate (the overridable filter)
+// config schemas: each consumer's own gate (the overridable filter)
 // composes with the live search via SetRowGateVisible instead of
 // both fighting over the same row's setRowVisible call.
 class SettingsNavWidget : public QWidget {
@@ -44,7 +44,7 @@ public:
   // nav-list entry. Returns the form, ready for addRow calls.
   QFormLayout* AddCategory(const QString& title);
 
-  // Call once per row, right after form->addRow(label, row_widget) — lets
+  // Call once per row, right after form->addRow(label, row_widget); it lets
   // the search box find it later. searchable_text should already contain
   // everything the row should match on (key, doc, category, hand-picked
   // synonyms for non-schema rows). Every query word must appear, in any
@@ -59,7 +59,7 @@ public:
 
   // Clears any active search (so the target row can't be hidden by a stale
   // query), switches to row_widget's category, and scrolls it into view.
-  // Does not change focus — the caller still owns whichever inner control
+  // Does not change focus; the caller still owns whichever inner control
   // widget should actually receive it.
   void RevealRow(QWidget* row_widget);
 

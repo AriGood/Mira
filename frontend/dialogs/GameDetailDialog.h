@@ -23,7 +23,7 @@ public:
   // shows placeholders in that case.
   GameDetailDialog(std::string id, QWidget* parent = nullptr, mira_gui::ArtworkStore* artwork = nullptr);
 
-  // Warns before discarding unsaved changes — covers Cancel, Esc, and the
+  // Warns before discarding unsaved changes; covers Cancel, Esc, and the
   // titlebar close button, which all route through reject().
   void reject() override;
 

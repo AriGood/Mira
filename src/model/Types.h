@@ -26,13 +26,13 @@ std::string_view ToString(GameStatus status);
 Platform PlatformFromString(std::string_view text);
 GameStatus GameStatusFromString(std::string_view text);
 
-// Severity of a `notification` event (EventBus::PublishNotification) — the
+// Severity of a `notification` event (EventBus::PublishNotification), the
 // frontend maps this straight onto its toast/system-notification styling.
 enum class NotifyLevel { Info, Success, Warning, Error };
 std::string_view ToString(NotifyLevel level);
 
 // One executable the detector found, offered to the frontend as an
-// alternative to the one it chose. Identified by rel_path, not a numeric id —
+// alternative to the one it chose. Identified by rel_path, not a numeric id:
 // there is no database assigning one.
 struct Candidate {
   std::string rel_path;
@@ -63,7 +63,7 @@ struct Game {
   // "kind:name", e.g. "proton:GE-Proton11-7"; empty until resolved.
   std::string runner_ref;
 
-  // Opaque, owned by whatever `source` is — e.g. Legendary's app_name for
+  // Opaque, owned by whatever `source` is, e.g. Legendary's app_name for
   // an "epic" game. Distinct from runner_config, which is owned by the
   // runner instead. Empty for sources that don't need one.
   std::string source_ref;
@@ -84,14 +84,14 @@ struct Game {
   std::map<std::string, std::string> env;
   std::vector<Candidate> candidates;
 
-  // Free-form, user-assigned. No tag is special-cased in storage — "hidden"
+  // Free-form, user-assigned. No tag is special-cased in storage: "hidden"
   // is a convention the API/CLI treat specially (excluded from the default
   // GET /v1/games list; see docs/api.md), not a separate field.
   std::vector<std::string> tags;
 };
 
 // An installed runner build, e.g. GE-Proton11-7. Rediscovered at startup and
-// on demand rather than persisted, so it has no stored id — a game refers to
+// on demand rather than persisted, so it has no stored id, so a game refers to
 // one by its "kind:name" reference string.
 struct RunnerBuild {
   std::string kind;  // "native", "wine", "proton", ...

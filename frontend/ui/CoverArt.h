@@ -7,7 +7,7 @@
 
 namespace mira_gui {
 
-// Placeholder cover art, for a game with no fetched artwork — a grid of
+// Placeholder cover art, for a game with no fetched artwork: a grid of
 // identical grey rectangles is unusable. Derived from the game's id, so it
 // stays stable across restarts, renames, and every machine showing the
 // same library.

@@ -34,7 +34,7 @@ QCheckBox* AddPathOption(QVBoxLayout* layout, QWidget* parent, const QString& la
   return check;
 }
 
-// The metadata checkbox, destructive warning, and button box — identical
+// The metadata checkbox, destructive warning, and button box, identical
 // whether one game or a batch is being asked about.
 DeleteChoice FinishDeleteDialog(QDialog& dialog, QVBoxLayout* layout, QCheckBox* files_check,
                                 QCheckBox* prefix_check) {
@@ -105,7 +105,7 @@ DeleteChoice AskDeleteGame(QWidget* parent, const QString& name, const QString& 
   explanation->setWordWrap(true);
   layout->addWidget(explanation);
 
-  // A desktop-entry import only ever linked to another app's own files —
+  // A desktop-entry import only ever linked to another app's own files:
   // Mira never owned install_path/data_dir for it, so offering to delete
   // them would delete someone else's install.
   const bool linked_only = source == "desktop-entry";

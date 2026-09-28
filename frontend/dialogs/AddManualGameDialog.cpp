@@ -102,7 +102,7 @@ void AddManualGameDialog::BrowseExe() {
   if (selected.isEmpty()) return;
 
   // Picking the exe before the install path says which folder is the game's
-  // own — filling install_path_ from it beats making the user go browse a
+  // own, so filling install_path_ from it beats making the user go browse a
   // second time for what BrowseExe just showed them.
   if (install_path_->text().trimmed().isEmpty()) {
     const QFileInfo info(selected);

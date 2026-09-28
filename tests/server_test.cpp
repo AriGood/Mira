@@ -27,7 +27,7 @@ fs::path TempDir(const char* name) {
   return dir;
 }
 
-// Runs a real Server over a real UDS socket for the lifetime of the test —
+// Runs a real Server over a real UDS socket for the lifetime of the test,
 // PATCH /v1/games/{id} env handling is otherwise only ever exercised by hand
 // over curl/the CLI, which is exactly the kind of "looks right, isn't" gap
 // this project has repeatedly found by testing real behavior instead.
@@ -73,7 +73,7 @@ private:
 
 // Polling POST .../stop is the only externally-visible "has this launch
 // actually finished yet" signal available over the API (ProcessSupervisor's
-// own IsRunning() is test-only, not exposed to a client) — a 409 means
+// own IsRunning() is test-only, not exposed to a client), so a 409 means
 // ProcessSupervisor no longer considers the game running, i.e. the watcher
 // thread already reaped it and recorded the outcome.
 bool WaitForExit(httplib::Client& client, const std::string& id,
@@ -111,7 +111,7 @@ std::string LastError(httplib::Client& client, const std::string& id) {
 }
 
 // A small script, since command_wrappers/launch.env behavior needs actual
-// env vars visible to a real child process to verify against — not something
+// env vars visible to a real child process to verify against, not something
 // observable from argv alone over HTTP.
 fs::path WriteEnvCheckScript(const fs::path& dir, std::string_view expect_foo) {
   fs::create_directories(dir);
@@ -225,7 +225,7 @@ TEST_CASE("POST /v1/games/{id}/launch splits a multi-token command_wrappers entr
   game.install_path = "/bin";
   game.exe_path = "true";
   // If this weren't split on spaces, exec would look for a binary literally
-  // named "sh -c true" and fail with exit 127 — a passing "true" here is
+  // named "sh -c true" and fail with exit 127, so a passing "true" here is
   // only possible if ApplyCommandWrappers actually split it into ["sh",
   // "-c", "true"].
   game.overrides["command_wrappers"] = nlohmann::json::array({"sh -c true"});

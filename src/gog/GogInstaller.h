@@ -12,7 +12,7 @@ namespace mira::gog {
 // Downloads/updates one GOG title via `gogdl download`, into
 // "<gog.install_root>/<id>", then runs GogImporter::ImportPath on that
 // directory to pick it up as a tracked model::Game and provision a
-// Wine/Proton prefix for it — gogdl never creates one, same posture as
+// Wine/Proton prefix for it. gogdl never creates one, the same posture as
 // EpicInstaller re: Legendary.
 class GogInstaller {
 public:

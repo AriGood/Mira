@@ -29,7 +29,7 @@ fs::path EnvOr(const char* name, const fs::path& fallback) {
 }
 
 // Lutris's own settings.py: CONFIG_DIR = get_user_config_dir()/lutris, but
-// falls back to DATA_DIR when that doesn't exist — which is where the
+// falls back to DATA_DIR when that doesn't exist, which is where the
 // per-game YAML actually lives on a system that never had ~/.config/lutris.
 struct LutrisRow {
   int id = 0;
@@ -71,7 +71,7 @@ Result<std::vector<LutrisRow>> ReadCatalog(const std::string& sqlite3_bin, const
 }
 
 // Lutris's "hidden" is a category named ".hidden", and "favorite" is
-// "favorites" — both discovered from a real pga.db, not Lutris's docs (see
+// "favorites", both discovered from a real pga.db, not Lutris's docs (see
 // lutris/game.py's is_hidden/mark_as_hidden). Everything else maps straight
 // across as a same-named tag: a category is meant to organize games, which
 // is exactly what a tag already does in Mira.
@@ -81,7 +81,7 @@ std::string TagForCategory(const std::string& category) {
   return category;
 }
 
-// categories/games_categories don't exist on every Lutris version — a
+// categories/games_categories don't exist on every Lutris version, and a
 // missing table degrades to "no categories" rather than failing the whole
 // import; only a real sqlite3 dependency failure (already reported by
 // ReadCatalog above) is worth surfacing loudly.
@@ -105,7 +105,7 @@ std::map<int, std::vector<std::string>> ReadCategories(const std::string& sqlite
   return by_game;
 }
 
-// Union, not replace — a re-import must keep tags the user added by hand,
+// Union, not replace: a re-import must keep tags the user added by hand,
 // same contract as every other field Lutris doesn't own (see Import()'s
 // comment below).
 std::vector<std::string> MergeTags(std::vector<std::string> existing, const std::vector<std::string>& lutris_tags) {
@@ -171,7 +171,7 @@ std::optional<LutrisGameConfig> ReadGameConfig(const fs::path& yaml_path, bool r
 }  // namespace
 
 // Lutris's own settings.py: CONFIG_DIR = get_user_config_dir()/lutris, but
-// falls back to DATA_DIR when that doesn't exist — which is where the
+// falls back to DATA_DIR when that doesn't exist, which is where the
 // per-game YAML actually lives on a system that never had ~/.config/lutris.
 std::optional<fs::path> FindLutrisDataDir(const config::Config& config) {
   std::vector<fs::path> candidates;
@@ -217,7 +217,7 @@ Result<LutrisImportSummary> LutrisImporter::Import() {
     // (a .sh script or an AppImage, pointed at directly, no prefix at all).
     // Anything else is skipped (a "steam" row is
     // already covered by SteamScanner, a "flatpak" row's app already has its
-    // own real .desktop entry, covered by desktop::DesktopEntryScanner) —
+    // own real .desktop entry, covered by desktop::DesktopEntryScanner),
     // note it, don't guess at it.
     const bool is_native = row.runner == "linux";
     if (row.runner != "wine" && !is_native) {
@@ -233,12 +233,12 @@ Result<LutrisImportSummary> LutrisImporter::Import() {
     }
 
     // Nothing here is inferred from how exe and prefix relate to each other
-    // on disk — an exe given relative is relative to prefix because that's
+    // on disk: an exe given relative is relative to prefix because that's
     // what Lutris's own config format declares (see Epic's real config:
     // exe under drive_c, prefix $GAMEDIR), not because Mira went looking. A
     // "linux" row has no prefix at all, so its exe is always given as an
     // absolute path (Lutris's own linux.py: a plain file picker, nothing to
-    // resolve relative to) — a relative one here has nothing to resolve
+    // resolve relative to), so a relative one here has nothing to resolve
     // against and is skipped rather than guessed at.
     const fs::path prefix = fs::path(cfg->prefix);
     const fs::path exe_raw = fs::path(cfg->exe);
@@ -252,12 +252,12 @@ Result<LutrisImportSummary> LutrisImporter::Import() {
     const std::string exe_path = exe_abs.filename().string();
     const std::string data_dir_path = is_native ? std::string() : prefix.string();
 
-    // Not a layout guess — a safety floor for one specific real shape,
+    // Not a layout guess: a safety floor for one specific real shape,
     // wine-only (a native row has no prefix to share in the first place):
     // an exe referenced with no subdirectory at all under drive_c (a
     // launcher script dropped straight at the C: drive root, e.g. a second
     // game riding along in another game's prefix). That makes install_path
-    // the whole C: drive, shared by every other game in that prefix —
+    // the whole C: drive, shared by every other game in that prefix,
     // Mira's DELETE /v1/games removes install_path's contents, so handing
     // out a scope that broad would let deleting this game take the others
     // with it. A combined install+prefix layout (install_path == prefix
@@ -272,7 +272,7 @@ Result<LutrisImportSummary> LutrisImporter::Import() {
 
     const auto existing = games_.FindByInstallPath(install_path);
 
-    // Preserve anything the user already configured across a re-import —
+    // Preserve anything the user already configured across a re-import,
     // only the fields Lutris itself owns get overwritten, same contract as
     // SteamScanner::Scan.
     model::Game game = existing.value_or(model::Game{});
@@ -290,7 +290,7 @@ Result<LutrisImportSummary> LutrisImporter::Import() {
       game.tags = MergeTags(game.tags, it->second);
     }
     // Lutris's own wine.version is often a generic alias ("ge-proton"), not
-    // an exact installed build name Mira can resolve — leave runner_ref
+    // an exact installed build name Mira can resolve, so leave runner_ref
     // alone (empty for a new game) and let default_runner.windows pick one.
     // A native row needs no runner_ref at all (NativeRunner has no builds).
     game.status = model::GameStatus::Ready;  // Lutris already installed and configured it

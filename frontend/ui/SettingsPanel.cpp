@@ -333,7 +333,7 @@ void SettingsPanel::FocusKey(const QString& key) {
   }
   const auto it = std::ranges::find(fields_, wanted, [](const Field& f) { return f.entry.key; });
   if (it == fields_.end()) {
-    // Schema not loaded yet, most likely — try again once it is.
+    // Schema not loaded yet, most likely. Try again once it is.
     pending_focus_key_ = key;
     return;
   }
