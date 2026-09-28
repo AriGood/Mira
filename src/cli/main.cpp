@@ -65,7 +65,7 @@ void PrintError(const httplib::Result& res) {
     if (!command.empty()) std::fprintf(stderr, "      Try: %s\n", command.c_str());
   } else {
     std::fprintf(stderr,
-                 "mira: cannot reach mirad at %s (%s) — is it running? "
+                 "mira: cannot reach mirad at %s (%s). Is it running? "
                  "Try `systemctl --user status mirad` or just running `mirad`.\n",
                  ResolveSocketPath().string().c_str(), httplib::to_string(res.error()).c_str());
   }
@@ -119,7 +119,7 @@ int CmdRunnersList() {
   }
   json builds = json::parse(res->body);
   if (builds.empty()) {
-    std::puts("(no runner builds found — check runner_search_paths / wine_search_paths)");
+    std::puts("(no runner builds found, check runner_search_paths / wine_search_paths)");
     return 0;
   }
   for (const json& build : builds) {
@@ -168,7 +168,7 @@ int CmdRunnersUpdate(int argc, char** argv) {
     PrintError(res);
     return 1;
   }
-  std::printf("updating to %s — watch `mira watch` for runners.download.finished/failed\n",
+  std::printf("updating to %s: watch `mira watch` for runners.download.finished/failed\n",
              json::parse(res->body).value("name", "").c_str());
   return 0;
 }
@@ -181,7 +181,7 @@ int CmdRunnersTools(int argc, char** argv) {
       PrintError(res);
       return 1;
     }
-    std::printf("installing %s — watch `mira watch` for %s.setup.finished/failed\n", argv[1], argv[1]);
+    std::printf("installing %s: watch `mira watch` for %s.setup.finished/failed\n", argv[1], argv[1]);
     return 0;
   }
   return PrintList("/v1/runners/tools", "", [](const json& t) {
@@ -204,7 +204,7 @@ int CmdRunnersCatalog(int argc, char** argv) {
   }
   json releases = json::parse(res->body);
   if (releases.empty()) {
-    std::puts("(no releases found — check runner_sources.*.repo / .asset_pattern)");
+    std::puts("(no releases found, check runner_sources.*.repo / .asset_pattern)");
     return 0;
   }
   for (const json& r : releases) {
@@ -235,7 +235,7 @@ int CmdRunnersDownload(int argc, char** argv) {
     PrintError(res);
     return 1;
   }
-  std::printf("downloading %s %s — watch `mira watch` for runners.download.finished/failed\n",
+  std::printf("downloading %s %s: watch `mira watch` for runners.download.finished/failed\n",
              kind.c_str(), tag.c_str());
   return 0;
 }
@@ -334,7 +334,7 @@ int CmdRun(int argc, char** argv) {
     std::fprintf(stderr,
                  "usage: mira run <id> --exe PATH [--args ARGS]\n"
                  "  runs an arbitrary exe inside this game's own prefix (tracked like a normal\n"
-                 "  launch) — provisions one first if it doesn't have one yet, which is how a\n"
+                 "  launch). It provisions one first if it doesn't have one yet, which is how a\n"
                  "  needs_install game's installer actually gets run.\n");
     return 2;
   }
@@ -435,7 +435,7 @@ int CmdInstall(int argc, char** argv) {
   if (info || progress) {
     std::puts(json::parse(res->body).dump(2).c_str());
   } else {
-    std::printf("installing — `mira install %s --progress` to check on it\n", id.c_str());
+    std::printf("installing: `mira install %s --progress` to check on it\n", id.c_str());
   }
   return 0;
 }
@@ -487,7 +487,7 @@ int CmdRemove(int argc, char** argv) {
                  "  forgets the game; nothing on disk is touched unless you ask for it\n"
                  "  explicitly, and only paths that are really inside a configured root.\n"
                  "  --delete-files     removes the game's own install folder\n"
-                 "  --delete-prefix    removes its Wine/Proton prefix — use --delete-files\n"
+                 "  --delete-prefix    removes its Wine/Proton prefix; use --delete-files\n"
                  "                     alone to remove the game but leave the prefix in place\n"
                  "  --delete-metadata  removes cached cover art / store info\n"
                  "  --purge            shorthand for all three of the above\n");
@@ -549,7 +549,7 @@ int CmdLutrisImport() {
   json summary = json::parse(res->body);
   std::printf("added: %lld  updated: %lld\n", summary.value("added", 0LL), summary.value("updated", 0LL));
   if (const long long other = summary.value("other_runner", 0LL); other > 0) {
-    std::printf("%lld left to another runner (Steam, Flatpak, ...) — they stay in Lutris, and a Steam "
+    std::printf("%lld left to another runner (Steam, Flatpak, ...). They stay in Lutris, and a Steam "
                 "game is picked up by `mira steam scan`\n",
                 other);
   }
@@ -578,12 +578,12 @@ int CmdAmazon(int argc, char** argv) {
     const json status = json::parse(res->body);
     const json& nile = status["nile"];
     if (!nile.value("installed", false)) {
-      std::puts("nile: not installed — run \"mira amazon setup\"");
+      std::puts("nile: not installed, run \"mira amazon setup\"");
       return 0;
     }
     std::printf("nile: installed (%s, %s) at %s\n", nile.value("source", "").c_str(), nile.value("version", "").c_str(),
                 nile.value("path", "").c_str());
-    std::puts(status.value("authenticated", false) ? "authenticated" : "not authenticated — run \"mira amazon login\"");
+    std::puts(status.value("authenticated", false) ? "authenticated" : "not authenticated, run \"mira amazon login\"");
     return 0;
   }
   if (sub == "login") {
@@ -616,7 +616,7 @@ int CmdAmazon(int argc, char** argv) {
       PrintError(res);
       return 1;
     }
-    if (sub == "setup") std::puts("downloading nile — `mira amazon status` to check on it");
+    if (sub == "setup") std::puts("downloading nile: `mira amazon status` to check on it");
     if (sub == "logout") std::puts("logged out");
     if (sub == "import") {
       const json summary = json::parse(res->body);
@@ -655,7 +655,7 @@ int CmdLauncher(int argc, char** argv) {
       return 1;
     }
     if (sub == "install") {
-      std::printf("installing — `mira launcher list` to check on it\n");
+      std::printf("installing: `mira launcher list` to check on it\n");
     } else {
       const json summary = json::parse(res->body);
       std::printf("added: %lld  updated: %lld\n", summary.value("added", 0LL), summary.value("updated", 0LL));
@@ -696,7 +696,7 @@ int CmdEpicSetup() {
     return 1;
   }
   json body = json::parse(res->body);
-  std::printf("downloading legendary %s — watch `mira watch` for epic.legendary.install.finished\n",
+  std::printf("downloading legendary %s: watch `mira watch` for epic.legendary.install.finished\n",
              body.value("tag", std::string()).c_str());
   return 0;
 }
@@ -711,7 +711,7 @@ int CmdEpicStatus() {
   json status = json::parse(res->body);
   const json& legendary = status["legendary"];
   if (!legendary.value("installed", false)) {
-    std::puts("legendary: not installed — run \"mira epic setup\"");
+    std::puts("legendary: not installed, run \"mira epic setup\"");
     return 0;
   }
   std::printf("legendary: installed (%s, %s) at %s\n", legendary.value("source", "").c_str(),
@@ -719,7 +719,7 @@ int CmdEpicStatus() {
   if (status.value("authenticated", false)) {
     std::printf("authenticated as %s\n", status.value("account", "").c_str());
   } else {
-    std::puts("not authenticated — run \"mira epic login\"");
+    std::puts("not authenticated, run \"mira epic login\"");
   }
   return 0;
 }
@@ -734,7 +734,7 @@ int CmdEpicLogin() {
     }
     json legendary = json::parse(res->body);
     if (!legendary.value("installed", false)) {
-      std::fprintf(stderr, "mira: legendary isn't installed — run \"mira epic setup\" first\n");
+      std::fprintf(stderr, "mira: legendary isn't installed, run \"mira epic setup\" first\n");
       return 1;
     }
   }
@@ -790,7 +790,7 @@ int CmdLibraryList(int argc, char** argv) {
   }
   json entries = json::parse(res->body);
   if (entries.empty()) {
-    std::puts("(nothing — is the source configured and authenticated? try `mira epic status`)");
+    std::puts("(nothing found. Is the source configured and authenticated? Try `mira epic status`)");
     return 0;
   }
   for (const json& entry : entries) {
@@ -814,7 +814,7 @@ int CmdLibraryInstallOrUpdate(int argc, char** argv, bool is_update) {
     PrintError(res);
     return 1;
   }
-  std::printf("%s — watch `mira watch` for library.install.finished\n", is_update ? "updating" : "installing");
+  std::printf("%s: watch `mira watch` for library.install.finished\n", is_update ? "updating" : "installing");
   return 0;
 }
 
@@ -862,7 +862,7 @@ int CmdGogSetup() {
     return 1;
   }
   json body = json::parse(res->body);
-  std::printf("downloading gogdl %s — watch `mira watch` for gog.setup.finished\n",
+  std::printf("downloading gogdl %s: watch `mira watch` for gog.setup.finished\n",
              body.value("tag", std::string()).c_str());
   return 0;
 }
@@ -877,12 +877,12 @@ int CmdGogStatus() {
   json status = json::parse(res->body);
   const json& gogdl = status["gogdl"];
   if (!gogdl.value("installed", false)) {
-    std::puts("gogdl: not installed — run \"mira gog setup\"");
+    std::puts("gogdl: not installed, run \"mira gog setup\"");
     return 0;
   }
   std::printf("gogdl: installed (%s, %s) at %s\n", gogdl.value("source", "").c_str(),
              gogdl.value("version", "").c_str(), gogdl.value("path", "").c_str());
-  std::puts(status.value("authenticated", false) ? "authenticated" : "not authenticated — run \"mira gog login\"");
+  std::puts(status.value("authenticated", false) ? "authenticated" : "not authenticated, run \"mira gog login\"");
   return 0;
 }
 
@@ -896,13 +896,13 @@ int CmdGogLogin() {
     }
     json status = json::parse(res->body);
     if (!status["gogdl"].value("installed", false)) {
-      std::fprintf(stderr, "mira: gogdl isn't installed — run \"mira gog setup\" first\n");
+      std::fprintf(stderr, "mira: gogdl isn't installed, run \"mira gog setup\" first\n");
       return 1;
     }
   }
 
   std::printf(
-      "Visit %s and log in. It redirects to a blank page — GOG's own client_id, not something Mira can point "
+      "Visit %s and log in. It redirects to a blank page. That is GOG's own client_id, not something Mira can point "
       "at a nicer landing page.\n"
       "Paste the whole address-bar URL from that blank page (or just the \"code\" value, if you'd rather pull "
       "it out yourself):\nurl or code: ",
@@ -973,7 +973,7 @@ int CmdItchSetup() {
     return 1;
   }
   json body = json::parse(res->body);
-  std::printf("downloading butler %s — watch `mira watch` for itch.setup.finished\n",
+  std::printf("downloading butler %s: watch `mira watch` for itch.setup.finished\n",
              body.value("tag", std::string()).c_str());
   return 0;
 }
@@ -988,12 +988,12 @@ int CmdItchStatus() {
   json status = json::parse(res->body);
   const json& butler = status["butler"];
   if (!butler.value("installed", false)) {
-    std::puts("butler: not installed — run \"mira itch setup\"");
+    std::puts("butler: not installed, run \"mira itch setup\"");
     return 0;
   }
   std::printf("butler: installed (%s, %s) at %s\n", butler.value("source", "").c_str(),
              butler.value("version", "").c_str(), butler.value("path", "").c_str());
-  std::puts(status.value("authenticated", false) ? "authenticated" : "not authenticated — run \"mira itch login\"");
+  std::puts(status.value("authenticated", false) ? "authenticated" : "not authenticated, run \"mira itch login\"");
   return 0;
 }
 
@@ -1007,7 +1007,7 @@ int CmdItchLogin() {
     }
     json status = json::parse(res->body);
     if (!status["butler"].value("installed", false)) {
-      std::fprintf(stderr, "mira: butler isn't installed — run \"mira itch setup\" first\n");
+      std::fprintf(stderr, "mira: butler isn't installed, run \"mira itch setup\" first\n");
       return 1;
     }
   }
@@ -1119,7 +1119,7 @@ int CmdHumbleSetup() {
     return 1;
   }
   json body = json::parse(res->body);
-  std::printf("downloading humble-cli %s — watch `mira watch` for humble.setup.finished\n",
+  std::printf("downloading humble-cli %s: watch `mira watch` for humble.setup.finished\n",
              body.value("tag", std::string()).c_str());
   return 0;
 }
@@ -1134,13 +1134,13 @@ int CmdHumbleStatus() {
   json status = json::parse(res->body);
   const json& cli = status["humble_cli"];
   if (!cli.value("installed", false)) {
-    std::puts("humble-cli: not installed — run \"mira humble setup\"");
+    std::puts("humble-cli: not installed, run \"mira humble setup\"");
     return 0;
   }
   std::printf("humble-cli: installed (%s, %s) at %s\n", cli.value("source", "").c_str(),
              cli.value("version", "").c_str(), cli.value("path", "").c_str());
   std::puts(status.value("authenticated", false) ? "authenticated"
-                                                 : "not authenticated — run \"mira humble login\"");
+                                                 : "not authenticated, run \"mira humble login\"");
   return 0;
 }
 
@@ -1171,7 +1171,7 @@ int CmdHumbleLibrary() {
   }
   json bundles = json::parse(res->body);
   if (bundles.empty()) {
-    std::puts("(nothing — is humble-cli set up and logged in? try `mira humble status`)");
+    std::puts("(nothing found. Is humble-cli set up and logged in? Try `mira humble status`)");
     return 0;
   }
   for (const json& bundle : bundles) {
@@ -1195,7 +1195,7 @@ int CmdHumbleDownload(int argc, char** argv) {
     return 1;
   }
   json status = json::parse(res->body);
-  std::printf("downloading into %s — watch `mira watch` for humble.download.finished\n",
+  std::printf("downloading into %s: watch `mira watch` for humble.download.finished\n",
              status.value("path", std::string()).c_str());
   return 0;
 }
@@ -1219,7 +1219,7 @@ int CmdDesktopEntriesList() {
   }
   json candidates = json::parse(res->body);
   if (candidates.empty()) {
-    std::puts("(no candidates — every already-installed .desktop entry is either already a game, "
+    std::puts("(no candidates: every already-installed .desktop entry is either already a game, "
               "Mira's own, or covered by another importer)");
     return 0;
   }
@@ -1293,7 +1293,7 @@ int CmdTricks(int argc, char** argv) {
     PrintError(res);
     return 1;
   }
-  std::puts("running — watch `mira watch` for tricks.finished/.failed");
+  std::puts("running: watch `mira watch` for tricks.finished/.failed");
   return 0;
 }
 
@@ -1320,7 +1320,7 @@ int CmdMetadata(int argc, char** argv) {
       PrintError(posted);
       return 1;
     }
-    std::puts("fetching — watch `mira watch` for game.metadata_ready/.metadata_failed");
+    std::puts("fetching: watch `mira watch` for game.metadata_ready/.metadata_failed");
     return 0;
   }
 
@@ -1788,7 +1788,7 @@ void PrintUsage() {
       "                         Steam game, depending on steam.launch_mode)\n"
       "  stop <id>              stop a running game\n"
       "  run <id> --exe PATH [--args ARGS]        run an arbitrary exe in this\n"
-      "                         game's prefix — how you run a needs_install game's\n"
+      "                         game's prefix, which is how you run a needs_install game's\n"
       "                         installer\n"
       "  install <id> [--interactive] [--installer PATH]   run a needs_install game's\n"
       "                         installer (silent for Inno/NSIS, otherwise shown)\n"

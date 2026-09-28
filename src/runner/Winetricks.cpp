@@ -32,12 +32,12 @@ Result<fs::path> ResolveWineBinary(const RunnerRegistry& runners, const model::G
   }
   if (kind == "steam") {
     if (game.data_dir.empty()) {
-      return Err("not_windows", "this Steam game is native — winetricks needs a Wine/Proton prefix");
+      return Err("not_windows", "this Steam game is native, and winetricks needs a Wine/Proton prefix");
     }
     const auto info = steam::ResolveProtonCompatInfo(game.data_dir);
     if (!info) {
       return Err("steam_proton_unresolved",
-                "couldn't determine which Proton build this prefix uses — run this game once "
+                "couldn't determine which Proton build this prefix uses. Run this game once "
                 "through Steam first");
     }
     return info->proton_path.parent_path() / "files" / "bin" / "wine";

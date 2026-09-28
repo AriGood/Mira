@@ -1440,7 +1440,7 @@ void Server::RegisterRoutes() {
     if (is_installer) {
       // An installer isn't the game, so it isn't provisioned or launchable yet.
       game.status = model::GameStatus::NeedsInstall;
-      game.last_error = "This is an installer, not the game itself — run it first, then point Mira at the "
+      game.last_error = "This is an installer, not the game itself. Run it first, then point Mira at the "
                         "installed game.";
     } else {
       if (platform != model::Platform::Windows) {

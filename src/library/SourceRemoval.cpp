@@ -131,7 +131,7 @@ Result<void> DeleteInside(const std::string& target, const std::vector<fs::path>
   });
   if (!contained)
     return Err("path_outside_root",
-               std::format("\"{}\" isn't inside a Mira folder — left alone", target));
+               std::format("\"{}\" isn't inside a Mira folder, so it was left alone", target));
   fs::remove_all(resolved, ec);
   if (ec) return Err("delete_failed", ec.message());
   return {};

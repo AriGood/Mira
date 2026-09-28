@@ -300,11 +300,11 @@ Result<void> ProcessSupervisor::Stop(const std::string& game_id) {
   // group" per POSIX, which would hit mirad itself. A real pid is always > 0.
   if (pid <= 0) {
     return Err("not_yet_confirmed",
-              std::format("\"{}\" was launched but its process isn't confirmed yet — try again shortly",
+              std::format("\"{}\" was launched but its process isn't confirmed yet. Try again shortly",
                           game_id));
   }
-  // Group (see runner::SpawnDetached's setpgid note) plus the prefix, plus —
-  // for a Steam-launched game — every pid FindSteamProcesses finds under its
+  // Group (see runner::SpawnDetached's setpgid note) plus the prefix, plus
+  // (for a Steam-launched game) every pid FindSteamProcesses finds under its
   // appid: that tree is Steam's own (reaper/pressure-vessel/proton/the game),
   // not a child of mirad and not one shared process group, so the group
   // signal above only ever reaches whichever single pid WatchExternal recorded.

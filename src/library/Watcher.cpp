@@ -122,7 +122,7 @@ void Watcher::WatchRoots() {
   for (const fs::path& root : config_.GetPathArray("library_roots")) {
     std::error_code ec;
     if (!fs::is_directory(root, ec)) {
-      log::Warn("Watcher: library root {} does not exist yet — not watched until it does", root.string());
+      log::Warn("Watcher: library root {} does not exist yet, so it is not watched until it does", root.string());
       continue;
     }
     const int wd = inotify_add_watch(inotify_fd_, root.c_str(), kWatchMask);

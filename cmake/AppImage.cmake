@@ -48,7 +48,7 @@ find_program(MIRA_QMAKE_EXECUTABLE
   NAMES qmake6 qmake
   HINTS "${Qt6_DIR}/../../../bin" "${Qt6_DIR}/../../../../bin")
 if(NOT MIRA_QMAKE_EXECUTABLE)
-  message(WARNING "qmake6 not found near Qt6_DIR (${Qt6_DIR}) or on PATH — "
+  message(WARNING "qmake6 not found near Qt6_DIR (${Qt6_DIR}) or on PATH, "
                   "skipping the 'appimage' target; install qmake6 or set "
                   "MIRA_QMAKE_EXECUTABLE manually and reconfigure.")
 else()

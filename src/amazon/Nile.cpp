@@ -138,14 +138,14 @@ Result<void> FinishLogin(const config::Config& config, const std::string& redire
                                          "--code-verifier", pending.value("code_verifier", ""), "--serial",
                                          pending.value("serial", "")});
       !registered) {
-    return Err("login_failed", "nile couldn't register this device — the code may be wrong or expired");
+    return Err("login_failed", "nile couldn't register this device. The code may be wrong or expired");
   }
   {
     const std::lock_guard lock(pending_mutex);
     pending_login.reset();
   }
   if (!Status(config).authenticated) {
-    return Err("login_failed", "nile didn't accept that code — it may be wrong, expired, or already used");
+    return Err("login_failed", "nile didn't accept that code. It may be wrong, expired, or already used");
   }
   return {};
 }

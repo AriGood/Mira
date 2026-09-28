@@ -168,7 +168,7 @@ Result<void> DownloadVerified(const ReleaseAsset& asset, const fs::path& target)
   }
 
   if (asset.checksum_url.empty()) {
-    log::Warn("no checksum available for {} — installing unverified", asset.asset_name);
+    log::Warn("no checksum available for {}, installing unverified", asset.asset_name);
     return {};
   }
 
@@ -206,7 +206,7 @@ Result<void> DownloadVerified(const ReleaseAsset& asset, const fs::path& target)
   if (!verified || verified->exit_code != 0) {
     fs::remove(target, ec);
     return Err("checksum_mismatch",
-              "downloaded file's checksum didn't match — discarded rather than installing a "
+              "downloaded file's checksum didn't match, so it was discarded instead of installing a "
               "corrupted or tampered build");
   }
   return {};

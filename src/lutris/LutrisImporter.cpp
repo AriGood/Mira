@@ -203,7 +203,7 @@ Result<LutrisImportSummary> LutrisImporter::Import() {
   const auto sqlite3 = runner::FindOnPath("sqlite3");
   if (!sqlite3) {
     return Err("sqlite3_missing",
-               "sqlite3 isn't installed — install it from your distro's package manager to read "
+               "sqlite3 isn't installed. Install it from your distro's package manager to read "
                "Lutris's game database");
   }
   const fs::path pga_db = *data_dir / "pga.db";

@@ -104,7 +104,7 @@ ScanSummary Scanner::ScanRoot(const fs::path& root) {
   ScanSummary summary;
   std::error_code ec;
   if (!fs::is_directory(root, ec)) {
-    log::Warn("library root {} does not exist — skipping", root.string());
+    log::Warn("library root {} does not exist, skipping", root.string());
     return summary;
   }
 

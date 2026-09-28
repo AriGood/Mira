@@ -85,7 +85,7 @@ Result<void> InstallLegendaryBinary(const config::Config& config, const runner::
   }
 
   // Legendary's releases ship no checksum, so it's installed unverified.
-  log::Warn("no checksum available for legendary {} — installing unverified", asset.tag);
+  log::Warn("no checksum available for legendary {}, installing unverified", asset.tag);
 
   fs::permissions(target,
                   fs::perms::owner_all | fs::perms::group_read | fs::perms::group_exec | fs::perms::others_read |
@@ -167,7 +167,7 @@ Result<void> Login(const config::Config& config, const std::string& pasted) {
     return std::unexpected(output.error());
   }
   if (const EpicAuthStatus status = Status(config); !status.authenticated) {
-    return Err("login_failed", "legendary didn't accept that code — it may be wrong, expired, or already used");
+    return Err("login_failed", "legendary didn't accept that code. It may be wrong, expired, or already used");
   }
   return {};
 }

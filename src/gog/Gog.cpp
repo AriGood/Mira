@@ -81,8 +81,8 @@ Result<void> InstallGogBinary(const config::Config& config, const runner::Releas
   // instead of leaving a binary that can't execute.
   if (!runner::FindOnPath("python3")) {
     return Err("python3_missing",
-              "gogdl needs a system python3 to run (it's a Python zipapp, not a standalone binary) — "
-              "install python3 first");
+              "gogdl needs a system python3 to run (it's a Python zipapp, not a standalone binary). "
+              "Install python3 first");
   }
   auto installed = runner::InstallToolBinary(config, "gog", asset, "gogdl");
   if (!installed) return std::unexpected(installed.error());
@@ -136,7 +136,7 @@ Result<void> Login(const config::Config& config, const std::string& pasted) {
     return std::unexpected(output.error());
   }
   if (const GogAuthStatus status = Status(config); !status.authenticated) {
-    return Err("login_failed", "gogdl didn't accept that code — it may be wrong, expired, or already used");
+    return Err("login_failed", "gogdl didn't accept that code. It may be wrong, expired, or already used");
   }
   return {};
 }

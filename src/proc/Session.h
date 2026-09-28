@@ -18,7 +18,7 @@ namespace mira::proc {
 // session that outlived a mirad restart (see docs/architecture.md).
 struct SessionRecord {
   std::string game_id;
-  pid_t wrapper_pid = 0;  // mira-run's own pid — used to detect a live session on restart
+  pid_t wrapper_pid = 0;  // mira-run's own pid, used to detect a live session on restart
   pid_t game_pid = 0;     // the actual game; kept even if wrapper_pid dies, so it can still be Stop()ed
   std::int64_t started_at = 0;
 
