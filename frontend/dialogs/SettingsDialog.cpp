@@ -33,7 +33,7 @@ SettingsDialog::SettingsDialog(QWidget* parent) : QDialog(parent) {
 
   auto* buttons = new QDialogButtonBox(this);
   QPushButton* reset_button = buttons->addButton("Reset", QDialogButtonBox::ResetRole);
-  reset_button->setToolTip("Discard unsaved changes on this screen — back to what was last saved.");
+  reset_button->setToolTip("Discard unsaved changes and go back to the last saved settings.");
   connect(reset_button, &QPushButton::clicked, panel_, &mira_gui::SettingsPanel::DiscardChanges);
   QPushButton* save_button = buttons->addButton("Save", QDialogButtonBox::AcceptRole);
   buttons->addButton(QDialogButtonBox::Close);

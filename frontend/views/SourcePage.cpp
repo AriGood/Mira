@@ -367,7 +367,7 @@ void SourcePage::FillMoreMenu(QMenu* menu) {
     QAction* update = menu->addAction(icons::For(icons::Glyph::Download), "Update " + tool + version, this,
                                       &SourcePage::UpdateTool);
     update->setEnabled(!tool_updating_);
-    update->setToolTip("Downloads " + tool + "'s latest release again.");
+    update->setToolTip("Download the latest release of " + tool + " again.");
   }
   if (IsLauncher() && launcher_installed_ && !launcher_game_id_.empty()) {
     const std::string game_id = launcher_game_id_;
@@ -533,7 +533,7 @@ QWidget* SourcePage::BuildOwnedSection() {
   connect(owned_refresh_, &QPushButton::clicked, this, &SourcePage::RefreshOwned);
   if (id_ == "itch") {
     auto* collections = new QPushButton("Manage collections…", owned_section_);
-    collections->setToolTip("Show the games from itch.io collections here, yours or any added by link.");
+    collections->setToolTip("Show games from itch.io collections here. Add your own or any collection by link.");
     connect(collections, &QPushButton::clicked, this, [this] {
       ItchCollectionsDialog dialog(this);
       dialog.exec();
@@ -560,8 +560,8 @@ QWidget* SourcePage::BuildOwnedSection() {
   if (id_ != "humble") {
     art_key_ = new QPushButton("Add a SteamGridDB key for covers", owned_section_);
     art_key_->setIcon(icons::For(icons::Glyph::Image));
-    art_key_->setToolTip(source_.name + " doesn't provide covers Mira can use; SteamGridDB does, "
-                         "with a free API key.");
+    art_key_->setToolTip(source_.name + " has no covers Mira can use. SteamGridDB has them and "
+                         "needs a free API key.");
     art_key_->setVisible(false);
     connect(art_key_, &QPushButton::clicked, this,
             [this] { emit OpenSettingsRequested("steamgriddb.api_key"); });

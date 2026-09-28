@@ -24,7 +24,7 @@ DesktopEntryImportDialog::DesktopEntryImportDialog(QWidget* parent) : QDialog(pa
 
   auto* explanation = new QLabel(
       "Already-installed application-menu entries mirad hasn't seen yet. This is how a Flatpak "
-      "app gets added — its own entry carries everything needed to relaunch it.",
+      "app gets added, because its entry carries everything needed to relaunch it.",
       this);
   explanation->setWordWrap(true);
   layout->addWidget(explanation);

@@ -17,12 +17,12 @@ project(mira-gui LANGUAGES CXX)
 find_package(Qt6 6.5 QUIET COMPONENTS Widgets DBus Network)
 
 if(NOT Qt6_FOUND)
-  message(STATUS "Qt6 (>= 6.5, Widgets) not found — skipping mira-gui. "
+  message(STATUS "Qt6 (>= 6.5, Widgets) not found, skipping mira-gui. "
                  "The backend (mirad, mira) does not depend on it.")
   return()
 endif()
 
-message(STATUS "Qt6 ${Qt6_VERSION} found — building mira-gui")
+message(STATUS "Qt6 ${Qt6_VERSION} found, building mira-gui")
 
 qt_standard_project_setup()
 

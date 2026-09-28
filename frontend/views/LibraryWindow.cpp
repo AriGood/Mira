@@ -590,7 +590,7 @@ void LibraryWindow::BuildShortcuts() {
                 {"Ctrl+1…9", "Pick a filter"},
                 {"Ctrl+H", "Toggle the Hidden filter"},
                 {"F5, Ctrl+R", "Refresh the library"},
-                {"Enter", "Play the selected game — Stop while it runs"},
+                {"Enter", "Play the selected game, or stop it while it runs"},
                 {"Alt+Enter", "Game settings"},
                 {"Delete", "Remove the selected game"},
                 {"Ctrl++, Ctrl+-", "Tile size"},
@@ -700,9 +700,9 @@ void LibraryWindow::BuildShortcuts() {
                {QKeySequence(Qt::CTRL | Qt::Key_R)},
                [this] { RefreshHealth(/*force_scan=*/true); });
 
-  // Qt::Key_Enter is the keypad one — a separate key from Qt::Key_Return,
+  // Qt::Key_Enter is the keypad one, a separate key from Qt::Key_Return,
   // and binding only Return would leave it dead.
-  grid_action("play_stop", "Play the selected game — Stop while it runs", QKeySequence(Qt::Key_Return),
+  grid_action("play_stop", "Play the selected game, or stop it while it runs", QKeySequence(Qt::Key_Return),
              {QKeySequence(Qt::Key_Enter)}, [this] {
                const mira_gui::GameSummary* game = FindGame(selected_id_);
                if (game == nullptr) return;
@@ -1084,7 +1084,7 @@ void LibraryWindow::ScanLibrary() {
     // New games show up in the grid on their own; only "nothing happened"
     // has no visible result of its own.
     if (result.added == 0 && result.missing == 0 && result.restored == 0) {
-      mira_gui::notify::Notice(this, "Scan finished — no changes.");
+      mira_gui::notify::Notice(this, "Scan finished. No changes.");
     }
     RefreshGames();
   });
@@ -1135,10 +1135,10 @@ void LibraryWindow::SyncDesktopEntries() {
 void LibraryWindow::RemoveAllDesktopEntries() {
   // desktop_entries.enabled is the only lever that actually makes Sync()
   // remove every mira-<id>.desktop entry rather than immediately rewriting
-  // them (see desktop::DesktopEntries::Sync) — there's no "wipe once, stay
+  // them (see desktop::DesktopEntries::Sync), so there's no "wipe once, stay
   // enabled" concept, so this is honest about turning the setting off too.
   if (!mira_gui::notify::Confirm(
-          this, "Remove all desktop entries",
+          this, "Remove All Desktop Entries",
           "This turns off desktop entries and deletes every one Mira generated. "
           "Re-enable them any time in Settings → Desktop Entries.",
           "Remove all", /*destructive=*/true)) {
@@ -1394,8 +1394,8 @@ void LibraryWindow::UpdateFilterSortSummary() {
                                                         : QString::fromUtf8("\xe2\x86\x91")));
   // The popover's own button shows the current direction too.
   sort_direction_->setArrowType(sort_descending_ ? Qt::DownArrow : Qt::UpArrow);
-  sort_direction_->setToolTip(sort_descending_ ? "Descending — click for ascending"
-                                               : "Ascending — click for descending");
+  sort_direction_->setToolTip(sort_descending_ ? "Descending. Click for ascending."
+                                               : "Ascending. Click for descending.");
 }
 
 QWidget* LibraryWindow::BuildSidebar() {
@@ -1581,13 +1581,13 @@ QWidget* LibraryWindow::BuildSidebar() {
   add_games_menu
       ->addAction("Import Lutris games", this, &LibraryWindow::ImportLutrisLibrary)
       ->setToolTip(
-          "Read Lutris's own database and add its Wine games here. Nothing is moved or renamed, "
-          "in either launcher's files — a game stays playable in Lutris too.");
+          "Add the Wine games from Lutris's database. Nothing is moved or renamed, so the games "
+          "stay playable in Lutris too.");
   add_games_menu
       ->addAction("Import desktop entries…", this, &LibraryWindow::ImportDesktopEntries)
       ->setToolTip(
-          "Pick from already-installed application-menu entries — including Flatpak apps, via "
-          "their own X-Flatpak key.");
+          "Pick installed apps from your application menu to add as games. This includes "
+          "Flatpak apps.");
   add_games_menu->addSeparator();
   add_games_menu->addAction("Add game manually…", this, &LibraryWindow::AddGameManually);
   add_games_->setMenu(add_games_menu);
@@ -1771,7 +1771,7 @@ void LibraryWindow::ShowSteamGridDbNotice(bool asked_for) {
   mira_gui::notify::FailedWithAction(
       this, "No SteamGridDB API key set.",
       "Non-Steam games need a free SteamGridDB API key before Mira can find cover art for "
-      "them — there is no other free source for one. Steam games are unaffected.",
+      "them, because there is no other free source. Steam games are unaffected.",
       QString(), "Open the Metadata settings…", [this] { OpenSettings("steamgriddb.api_key"); });
 }
 
@@ -2122,20 +2122,20 @@ void LibraryWindow::ShowGameMenu(const std::string& id, const QPoint& global_pos
   QAction* finish_install = menu.addAction("Mark as installed");
   finish_install->setEnabled(status == "needs_install");
   finish_install->setToolTip(status == "needs_install"
-                                 ? "Flip this game to ready once its executable points at the "
+                                 ? "Mark this game as ready once its executable points at the "
                                    "installed program"
-                                 : "Only applies to a game that still needs installing");
+                                 : "Only available for a game that still needs installing");
   QAction* refresh_metadata = menu.addAction("Refresh metadata && cover art");
   QAction* view_log = menu.addAction("View log…");
   QAction* winetricks = menu.addAction("Run winetricks…");
   QAction* relocate = menu.addAction("Move to Mira's folders…");
-  relocate->setToolTip("Move this game's files and prefix into your games folder");
+  relocate->setToolTip("Move this game's files and prefix into the library and prefix folders");
   const bool native = current_game != nullptr && current_game->platform == "native";
   winetricks->setEnabled(!native);
-  winetricks->setToolTip(native ? "Native game — no Wine/Proton prefix." : QString());
+  winetricks->setToolTip(native ? "Native games have no Wine or Proton prefix." : QString());
   // Resolved (not on GameSummary), and the menu item's own label is the only
   // place that state shows, so it's fetched synchronously here rather than
-  // asking first and acting second — a local socket round trip, once, before
+  // asking first and acting second: a local socket round trip, once, before
   // the menu is shown.
   bool desktop_entry_enabled = true;
   {
@@ -2156,7 +2156,6 @@ void LibraryWindow::ShowGameMenu(const std::string& id, const QPoint& global_pos
   }
   QAction* desktop_entry =
       menu.addAction(desktop_entry_enabled ? "Remove desktop entry" : "Add desktop entry");
-  desktop_entry->setToolTip("Whether this game has its own entry in the application menu.");
   menu.addSeparator();
   const bool hidden = current_game != nullptr && HasTag(*current_game, "hidden");
   QAction* toggle_hidden = menu.addAction(hidden ? "Unhide" : "Hide");
@@ -2222,7 +2221,7 @@ void LibraryWindow::ShowBatchContextMenu(const QList<QListWidgetItem*>& items, c
   QAction* unpin = pinned > 0 ? menu.addAction(QString("Unpin (%1)").arg(pinned)) : nullptr;
   QAction* hide = hidden < count ? menu.addAction(QString("Hide (%1)").arg(count - hidden)) : nullptr;
   if (hide != nullptr) {
-    hide->setToolTip("Keep these games out of the library until asked for (Ctrl+H, or the Hidden filter)");
+    hide->setToolTip("Keep these games out of the library until you ask for them (Ctrl+H, or the Hidden filter)");
   }
   QAction* unhide = hidden > 0 ? menu.addAction(QString("Unhide (%1)").arg(hidden)) : nullptr;
   auto* desktop_menu = menu.addMenu("Desktop entry");
@@ -2611,16 +2610,16 @@ QWidget* LibraryWindow::BuildSettingsPage() {
   layout->addWidget(settings_panel_, /*stretch=*/1);
 
   settings_panel_->AddSectionAction(
-      "Library", "Move games into Mira's folders",
-      "Moves every game's files into your games folder and its prefix into the prefixes folder. "
-      "Changing those folders moves nothing until this runs.",
+      "Library", "Move Games into Mira's Folders",
+      "Moves each game's files into the library folder and its prefix into the prefix folder. "
+      "Changing those folders does not move anything until you run this.",
       "Move games…", [this] { RelocateLibrary(); });
   settings_panel_->AddSectionAction(
-      "Desktop Entries", "Regenerate desktop entries",
-      "Rewrites Mira's own mira-<id>.desktop entries immediately, without waiting for the next "
-      "library change to pick up a desktop_entries.* setting edit.",
+      "Desktop Entries", "Regenerate Desktop Entries",
+      "Rewrites Mira's desktop entries now, so changes to the desktop entry settings apply "
+      "without waiting for the next library change.",
       "Regenerate", [this] { SyncDesktopEntries(); });
-  settings_panel_->AddSectionAction("Desktop Entries", "Remove all desktop entries",
+  settings_panel_->AddSectionAction("Desktop Entries", "Remove All Desktop Entries",
                                     "Turns off desktop entries and deletes every one Mira generated.",
                                     "Remove…", [this] { RemoveAllDesktopEntries(); });
 
@@ -2632,7 +2631,7 @@ QWidget* LibraryWindow::BuildSettingsPage() {
   auto* back = new QPushButton("← Back", actions);
   connect(back, &QPushButton::clicked, this, &LibraryWindow::RequestCloseSettings);
   auto* reset = new QPushButton("Reset", actions);
-  reset->setToolTip("Discard unsaved changes on this screen — back to what was last saved.");
+  reset->setToolTip("Discard unsaved changes and go back to the last saved settings.");
   connect(reset, &QPushButton::clicked, this, [this] {
     if (settings_panel_ != nullptr) settings_panel_->DiscardChanges();
   });
@@ -2970,7 +2969,7 @@ void LibraryWindow::ShowGame(const std::string& id) {
 
 void LibraryWindow::RelocateLibrary() {
   if (!mira_gui::notify::Confirm(
-          this, "Move games into Mira's folders",
+          this, "Move Games into Mira's Folders",
           "Move every game's files into your games folder, and each prefix into the prefixes "
           "folder, named after the game? Games installed by a store (Steam, Epic, GOG, itch.io) "
           "keep their install folder; only the prefix moves. Games on another drive are copied "

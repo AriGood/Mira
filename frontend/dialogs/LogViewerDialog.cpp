@@ -19,7 +19,7 @@ constexpr int kLines = 200;
 
 LogViewerDialog::LogViewerDialog(std::string game_id, QString game_name, QWidget* parent)
     : QDialog(parent), game_id_(std::move(game_id)) {
-  setWindowTitle(QString("Log — %1").arg(game_name));
+  setWindowTitle(QString("Log: %1").arg(game_name));
   resize(720, 520);
 
   auto* layout = new QVBoxLayout(this);

@@ -33,7 +33,7 @@ RunInPrefixDialog::RunInPrefixDialog(std::string game_id, const std::string& ins
 
   auto* explanation = new QLabel(
       QString("Runs an executable inside \"%1\"'s own Wine/Proton prefix. If the game has no "
-              "prefix yet, one is created first — which is how an installer gets run for a game "
+              "prefix yet, one is created first. This is how you run an installer for a game "
               "that needs installing.")
           .arg(name),
       this);

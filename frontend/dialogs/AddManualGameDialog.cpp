@@ -81,8 +81,8 @@ AddManualGameDialog::AddManualGameDialog(QWidget* parent) : QDialog(parent) {
 
   is_installer_ = new QCheckBox("This is an installer, not the game itself", this);
   is_installer_->setToolTip(
-      "Adds it as needs-install instead of ready — run it, then Finish Install once the real "
-      "game is in place.");
+      "Adds it as needing install instead of ready. Run the installer, then mark the game as "
+      "installed once it is in place.");
   form->addRow(QString(), is_installer_);
 
   layout->addLayout(form);

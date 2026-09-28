@@ -69,7 +69,7 @@ inline QString FormatLastPlayed(const std::optional<std::int64_t>& last_played_a
 }
 
 inline QString FormatPlaytime(std::int64_t play_seconds) {
-  if (play_seconds <= 0) return "—";
+  if (play_seconds <= 0) return "0m";
   const std::int64_t hours = play_seconds / 3600;
   const std::int64_t minutes = (play_seconds % 3600) / 60;
   if (hours > 0) return QString("%1h %2m").arg(hours).arg(minutes);

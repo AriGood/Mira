@@ -108,8 +108,8 @@ void SourceSettingsCard::BuildRunnerRow(QFormLayout* form) {
 
   const QString runner_doc =
       source_.kind == SourceInfo::Kind::Launcher
-          ? "The Wine or Proton build " + source_.name + " and its games run with."
-          : "The Wine or Proton build for " + source_.name + " games that have none of their own.";
+          ? "The Wine or Proton build that " + source_.name + " and its games run with."
+          : "The Wine or Proton build for " + source_.name + " games that have no runner of their own.";
   form->addRow(LabelWithHelp("Runner", runner_doc, this), column);
   LoadRunner();
 }

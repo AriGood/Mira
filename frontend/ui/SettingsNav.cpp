@@ -180,6 +180,14 @@ void SettingsNavWidget::AddDivider(QFormLayout* form) {
   dividers_.push_back({form, divider});
 }
 
+void SettingsNavWidget::AddSubheading(QFormLayout* form, const QString& text) {
+  AddDivider(form);
+  auto* heading = new QLabel(text, this);
+  heading->setProperty("role", "heading");
+  form->addRow(heading);
+  dividers_.push_back({form, heading});
+}
+
 std::vector<CategoryRows> GroupByCategory(const std::vector<std::string>& categories) {
   std::vector<CategoryRows> out;
   for (size_t i = 0; i < categories.size(); ++i) {

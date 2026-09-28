@@ -83,10 +83,10 @@ GameEditForm::GameEditForm(std::string id, QWidget* parent) : QWidget(parent), i
   args_edit_ = new QLineEdit(this);
   working_dir_edit_ = new QLineEdit(this);
   tags_edit_ = new QLineEdit(this);
-  tags_edit_->setPlaceholderText("comma-separated — e.g. hidden, co-op");
+  tags_edit_->setPlaceholderText("Comma-separated, e.g. hidden, co-op");
   tags_edit_->setToolTip(
-      "Free-form labels. \"hidden\" keeps this game out of the library until asked for "
-      "(Ctrl+H, or the Hidden filter).");
+      "Labels of your choice. The \"hidden\" tag keeps this game out of the library until you "
+      "ask for it (Ctrl+H, or the Hidden filter).");
 
   exe_combo_ = new QComboBox(this);
   exe_combo_->setEditable(true);
@@ -120,18 +120,18 @@ GameEditForm::GameEditForm(std::string id, QWidget* parent) : QWidget(parent), i
   runner_row->addWidget(runner_combo_, /*stretch=*/1);
 
   data_dir_edit_ = new QLineEdit(this);
-  data_dir_edit_->setToolTip("Where this game's prefix/data directory lives.");
+  data_dir_edit_->setToolTip("The folder holding this game's Wine or Proton prefix and data.");
 
   runner_config_edit_ = new QPlainTextEdit(this);
   runner_config_edit_->setFixedHeight(70);
-  runner_config_edit_->setToolTip("Runner-specific settings, as a JSON object. Merged, not replaced.");
+  runner_config_edit_->setToolTip("Runner settings as a JSON object. They are merged with the defaults, not replacing them.");
 
   env_edit_ = new QPlainTextEdit(this);
   // Taller than runner_config_edit_'s 70: env vars are usually several
   // KEY=value-shaped entries, one per line, and 70px only showed two of
   // them at a time before scrolling took over.
   env_edit_->setFixedHeight(110);
-  env_edit_->setToolTip("Extra environment variables, as a JSON object of strings. Merged, not replaced.");
+  env_edit_->setToolTip("Extra environment variables as a JSON object of strings. They are added to the defaults, not replacing them.");
 
   // A caption above its field; the pair shows and hides together.
   auto add_field = [form, this](const QString& text, QWidget* field, int row, int column, int span) {
@@ -277,7 +277,7 @@ void GameEditForm::Populate(const mira_gui::GameDetail& game) {
   if (game.source == "steam") {
     source_note_label_->setText(
         "Imported from Steam. Steam launches this game itself, using its own record of the "
-        "executable — the Executable field below isn't what runs it, and editing it won't "
+        "executable. The Executable field below isn't what runs it, and editing it won't "
         "change how it launches.");
   } else if (game.source == "lutris") {
     source_note_label_->setText(
@@ -322,7 +322,7 @@ void GameEditForm::PopulateExeCombo(const std::vector<mira_gui::GameDetail::Cand
   exe_combo_->blockSignals(true);
   exe_combo_->clear();
   for (const mira_gui::GameDetail::Candidate& candidate : sorted) {
-    QString label = QString("%1 — %2, score %3")
+    QString label = QString("%1 (%2, score %3)")
                         .arg(QString::fromStdString(candidate.rel_path),
                              QString::fromStdString(candidate.kind))
                         .arg(candidate.score, 0, 'f', 1);

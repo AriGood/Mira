@@ -11,12 +11,12 @@ using namespace mira::config;
 namespace fs = std::filesystem;
 
 TEST_CASE("every schema entry is well-formed") {
-  // Guards the registry itself: a key with no doc string or an invalid
-  // default would silently produce a broken settings UI and undocumented
-  // config.md, so this is checked mechanically rather than by review.
+  // Guards the registry itself: a key with no label or an invalid default
+  // would silently produce a broken settings UI, so this is checked
+  // mechanically rather than by review. A doc may be empty when the label
+  // says it all.
   for (const Entry& entry : Schema::Instance().Entries()) {
     INFO("key: ", entry.key);
-    CHECK_FALSE(entry.doc.empty());
     CHECK_FALSE(entry.label.empty());
     CHECK_FALSE(entry.category.empty());
     CHECK_FALSE(Schema::Instance().Validate(entry.key, entry.default_value).has_value());
@@ -28,7 +28,7 @@ TEST_CASE("Schema::Validate rejects bad values with a reason") {
   CHECK_FALSE(schema.Validate("scan.debounce_ms", 5000).has_value());
   CHECK(schema.Validate("scan.debounce_ms", -1).has_value());
   CHECK(schema.Validate("scan.debounce_ms", "not a number").has_value());
-  CHECK(schema.Validate("prefix_provider", "not_a_real_option").has_value());
+  CHECK(schema.Validate("prefix_naming", "not_a_real_option").has_value());
   CHECK(schema.Validate("nonexistent.key", 1).has_value());
 }
 

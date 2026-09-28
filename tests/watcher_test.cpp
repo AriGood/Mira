@@ -199,7 +199,7 @@ TEST_CASE("Watcher leaves a dropped archive alone when auto_extract_archives is 
   REQUIRE(config.Set("library_roots", nlohmann::json::array({root.string()})).has_value());
   REQUIRE(config.Set("prefix_root", (root / "prefix").string()).has_value());
   REQUIRE(config.Set("scan.debounce_ms", 100).has_value());
-  // scan.auto_extract_archives left at its default: false.
+  REQUIRE(config.Set("scan.auto_extract_archives", false).has_value());
 
   store::GameStore games(state / "games.toml");
   games.Load();

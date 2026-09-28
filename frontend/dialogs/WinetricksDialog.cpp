@@ -28,7 +28,7 @@ constexpr const char* kCommonVerbs[] = {
 
 WinetricksDialog::WinetricksDialog(std::string game_id, QString game_name, QWidget* parent)
     : QDialog(parent), game_id_(std::move(game_id)) {
-  setWindowTitle(QString("Winetricks — %1").arg(game_name));
+  setWindowTitle(QString("Winetricks: %1").arg(game_name));
   setMinimumWidth(480);
 
   auto* layout = new QVBoxLayout(this);

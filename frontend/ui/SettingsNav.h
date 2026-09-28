@@ -77,6 +77,10 @@ public:
   // A thin line across `form`, between two groups of rows.
   void AddDivider(QFormLayout* form);
 
+  // A divider followed by a larger title, for a named block of rows inside a
+  // category. Hidden while searching, like the dividers.
+  void AddSubheading(QFormLayout* form, const QString& text);
+
 private:
   struct Category {
     QListWidgetItem* item = nullptr;

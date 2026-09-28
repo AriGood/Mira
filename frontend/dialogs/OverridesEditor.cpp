@@ -94,7 +94,7 @@ void OverridesEditor::BuildRows(const ConfigSchemaResult& schema) {
       field.reset_button = new QPushButton("Clear", row_widget);
       field.reset_button->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
       field.reset_button->setEnabled(false);
-      field.reset_button->setToolTip("No per-game override set for this key");
+      field.reset_button->setToolTip("This game has no override for this setting");
       row_layout->addWidget(field.reset_button);
 
       const QString label_text =
@@ -132,8 +132,8 @@ void OverridesEditor::ApplyValues(const GameConfigResult& config) {
     field.layer_label->setText(QString("(%1)").arg(QString::fromStdString(entry.layer)));
     field.reset_button->setEnabled(entry.layer == "game");
     field.reset_button->setToolTip(
-        entry.layer == "game" ? "Remove this game's override, falling back to the setting below it"
-                              : "No per-game override set for this key");
+        entry.layer == "game" ? "Remove this game's override and use the global setting again"
+                              : "This game has no override for this setting");
     if (field.check) {
       field.check->setChecked(entry.value_display == "true");
     } else {
