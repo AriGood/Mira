@@ -99,7 +99,8 @@ void OverridesEditor::BuildRows(const ConfigSchemaResult& schema) {
 
       const QString label_text =
           QString::fromStdString(entry.label.empty() ? entry.key : entry.label);
-      QWidget* label = LabelWithHelp(label_text, QString::fromStdString(entry.doc), this);
+      const std::string& doc = entry.game_doc.empty() ? entry.doc : entry.game_doc;
+      QWidget* label = LabelWithHelp(label_text, QString::fromStdString(doc), this);
 
       field.row_widget = row_widget;
       fields_.push_back(field);

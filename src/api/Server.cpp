@@ -551,6 +551,7 @@ void Server::RegisterRoutes() {
       if (!entry.constraint.one_of.empty()) entries.back()["one_of"] = entry.constraint.one_of;
       if (entry.constraint.minimum) entries.back()["minimum"] = *entry.constraint.minimum;
       if (entry.constraint.maximum) entries.back()["maximum"] = *entry.constraint.maximum;
+      if (!entry.game_doc.empty()) entries.back()["game_doc"] = entry.game_doc;
       if (entry.is_secret) entries.back()["is_secret"] = true;
       if (entry.is_runner_ref) entries.back()["is_runner_ref"] = true;
       if (!entry.link.empty()) entries.back()["link"] = entry.link;

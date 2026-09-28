@@ -348,8 +348,8 @@ private:
   // saved, not stale edits left over from a discarded previous open.
   QWidget* settings_page_ = nullptr;
   mira_gui::SettingsPanel* settings_panel_ = nullptr;
-  // A game's editable form, in a centered overlay card (game_settings_in_sidebar_)
-  // or a modal dialog — see OpenGameDialog. The overlay is a chrome sibling,
+  // A game's editable form, in a centered overlay card; see OpenGameDialog.
+  // The overlay is a chrome sibling,
   // not a content_stack_ page, so the grid stays visible (dimmed) underneath.
   QWidget* game_edit_overlay_ = nullptr;
   QGridLayout* game_edit_overlay_layout_ = nullptr;
@@ -369,7 +369,6 @@ private:
   QPushButton* game_edit_back_ = nullptr;
   QPushButton* game_edit_advanced_ = nullptr;
   QPushButton* game_edit_save_ = nullptr;
-  bool game_settings_in_sidebar_ = true;
   // Built once at startup, not per-open like settings_page_/game_edit_card_
   // — it has no per-session state to go stale, so it just stays synced via
   // RefreshClassicTable().

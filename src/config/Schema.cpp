@@ -173,21 +173,20 @@ Schema::Schema() {
          .type = Type::StringArray,
          .default_value = json::array(),
          .scope = Scope::PerGame,
-         .doc = "Wrappers applied to the launch command in order, e.g. [\"gamemoderun\", \"gamescope -W "
-                "1920 -H 1080\"]. The first entry ends up outermost. Each entry is split on spaces (like "
-                "a game's own args -- no shell quoting support), and receives the game's command line as "
-                "its arguments. A wrapper whose own binary isn't on PATH fails the launch with a clear "
-                "error instead of a mysterious \"exited with code 127\"."});
+         .doc = "Programs that wrap the game's launch command, for example \"gamemoderun\" or "
+                "\"gamescope -W 1920 -H 1080\". The first entry is the outermost wrapper. Each entry "
+                "is split on spaces, so quotes do not work. If a wrapper is not installed, the "
+                "launch fails with an error that names it.",
+         .game_doc = "Programs that wrap this game's launch command. This list replaces the "
+                     "global one for this game. The first entry is the outermost wrapper."});
 
   s.Add({.key = "library.remove_missing",
-         .label = "Remove Missing",
+         .label = "Remove Missing Games",
          .type = Type::Bool,
          .default_value = false,
-         .doc = "When a previously-detected game's folder disappears, forget it entirely instead of "
-                "just marking it missing. Off by default: missing keeps the game's configuration, "
-                "overrides, and playtime around in case a drive or network share is just temporarily "
-                "offline. Never touches the game's files themselves either way — same as "
-                "DELETE /v1/games/{id}."});
+         .doc = "Remove a game from the library when its folder disappears, instead of marking it "
+                "missing. A missing game keeps its settings and playtime in case a drive or network "
+                "share is only offline. Mira never deletes game files either way."});
 
   s.Divider();
 
@@ -238,12 +237,13 @@ Schema::Schema() {
          .keywords = "sgdb"});
 
   s.Add({.key = "metadata.steamgriddb_id",
-         .label = "SteamGridDB Game",
+         .label = "SteamGridDB Game ID",
          .type = Type::Int,
          .default_value = 0,
-         .scope = Scope::PerGame,
-         .doc = "Which SteamGridDB game this game's art comes from. 0 uses the top search result for "
-                "its name; set it when that picks the wrong game (see `mira metadata <id> --matches`).",
+         .scope = Scope::GameOnly,
+         .doc = "The SteamGridDB game this game's art comes from. 0 uses the top search result for "
+                "the game's name. Enter the ID from the game's steamgriddb.com page address when "
+                "that result is the wrong game.",
          .constraint = Range(0, 1e12),
          .keywords = "sgdb"});
 
@@ -686,13 +686,15 @@ Schema::Schema() {
          .type = Type::StringArray,
          .default_value = json::array(),
          .scope = Scope::PerGame,
-         .doc = "KEY=VALUE environment variables set for every launch, e.g. [\"MANGOHUD=1\", "
-                "\"DXVK_ASYNC=1\"]. A game's own env (per-game overrides) always wins over these. Not "
-                "applied to a Steam game launched via steam.launch_mode \"steam\" -- Mira only hands "
-                "off a steam:// URL there, it never builds the game's own command line."});
+         .doc = "Environment variables (KEY=VALUE) set for every launch, for example "
+                "\"MANGOHUD=1\" or \"DXVK_ASYNC=1\". A game's own Environment field wins over "
+                "these. They do not apply to Steam games launched through the Steam client.",
+         .game_doc = "Environment variables (KEY=VALUE) for this game, for example \"MANGOHUD=1\". "
+                     "This list replaces the global one for this game. The game's own Environment "
+                     "field wins over it."});
 
   s.Add({.key = "launch.pre_script",
-         .label = "Default Pre-Launch Script",
+         .label = "Pre-Launch Script",
          .type = Type::String,
          .default_value = "",
          .scope = Scope::PerGame,
@@ -981,19 +983,19 @@ Schema::Schema() {
          .type = Type::Bool,
          .default_value = true,
          .scope = Scope::PerGame,
-         .doc = "Add each ready game to your application menu as a .desktop entry, so it can be "
-                "launched from the desktop like any other app. Turn this off to keep Mira's games "
-                "out of your menu entirely."});
+         .doc = "Add each ready game to your application menu, so you can launch it like any "
+                "other app. Turn this off to keep Mira's games out of your menu.",
+         .game_doc = "Add this game to your application menu."});
 
   s.Add({.key = "desktop_entries.directory",
-         .label = "Desktop Entries Directory",
+         .label = "Desktop Entries Folder",
          .type = Type::String,
          .default_value = "~/.local/share/applications",
-         .doc = "Where .desktop entries are written. Only files Mira created (mira-<id>.desktop) are "
-                "ever touched."});
+         .doc = "The folder where desktop entries are written. Mira only changes the files it "
+                "created itself."});
 
   s.Add({.key = "desktop_entries.categories",
-         .label = "Desktop Entries Categories",
+         .label = "Menu Categories",
          .type = Type::String,
          .default_value = "Game;",
          .scope = Scope::PerGame,
@@ -1119,6 +1121,7 @@ std::string_view ToString(Scope scope) {
   switch (scope) {
     case Scope::Global:  return "global";
     case Scope::PerGame: return "per_game";
+    case Scope::GameOnly: return "game_only";
   }
   return "global";
 }

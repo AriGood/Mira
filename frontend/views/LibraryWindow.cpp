@@ -782,7 +782,6 @@ void LibraryWindow::LoadPrefs() {
     overrides.radius_control = shape(prefs.control_radius);
     mira_gui::theme::SetOverrides(overrides);
     if (prefs.theme) mira_gui::theme::Apply(QString::fromStdString(*prefs.theme));
-    if (prefs.game_settings_in_sidebar) game_settings_in_sidebar_ = *prefs.game_settings_in_sidebar;
     if (prefs.hidden_sources) {
       hidden_sources_.clear();
       for (const std::string& id : *prefs.hidden_sources) hidden_sources_.insert(QString::fromStdString(id));
@@ -2349,13 +2348,6 @@ void LibraryWindow::LaunchGame(const std::string& id) {
 }
 
 void LibraryWindow::OpenGameDialog(const std::string& id) {
-  if (!game_settings_in_sidebar_) {
-    GameDetailDialog dialog(id, this, artwork_);
-    dialog.exec();
-    RefreshGames();
-    return;
-  }
-
   // Fresh instance each time: GameEditForm loads its id at construction.
   if (game_edit_card_ != nullptr) {
     game_edit_overlay_layout_->removeWidget(game_edit_card_);
@@ -2613,7 +2605,6 @@ QWidget* LibraryWindow::BuildSettingsPage() {
             // a save the user just triggered isn't the background-result
             // case a toast is for.
             CloseSettings();
-            // Picks up a changed game_settings_in_sidebar without a restart.
             LoadPrefs();
             RefreshSourceNavs();
           });

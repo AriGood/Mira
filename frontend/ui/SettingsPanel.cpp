@@ -118,15 +118,6 @@ void SettingsPanel::BuildInterfaceGroup() {
                theme_);
   nav_->RegisterRow(form, theme_, "theme appearance dark light");
 
-  game_settings_in_sidebar_ = new QCheckBox(box);
-  game_settings_in_sidebar_->setChecked(true);
-  form->addRow(LabelWithHelp("Edit a game in the sidebar",
-                             "\"Details & settings\" edits a game in a card over the library instead of "
-                             "a separate window.",
-                             box),
-               game_settings_in_sidebar_);
-  nav_->RegisterRow(form, game_settings_in_sidebar_, "edit a game in the sidebar");
-
   drag_select_ = new QCheckBox(box);
   drag_select_->setChecked(true);
   form->addRow(
@@ -281,10 +272,6 @@ void SettingsPanel::LoadFrontendPrefs() {
       const int index = theme_->findData(theme_original_);
       if (index >= 0) theme_->setCurrentIndex(index);
     }
-    if (result.prefs.game_settings_in_sidebar) {
-      game_settings_in_sidebar_original_ = *result.prefs.game_settings_in_sidebar;
-      game_settings_in_sidebar_->setChecked(game_settings_in_sidebar_original_);
-    }
     if (result.prefs.drag_select) {
       drag_select_original_ = *result.prefs.drag_select;
       drag_select_->setChecked(drag_select_original_);
@@ -319,6 +306,7 @@ void SettingsPanel::Load() {
     }
 
     for (mira_gui::ConfigSchemaEntry& entry : schema.entries) {
+      if (entry.game_only) continue;
       Field field;
       field.entry = std::move(entry);
       fields_.push_back(std::move(field));
@@ -467,7 +455,6 @@ void SettingsPanel::SetFooterActions(QWidget* actions) { nav_->AddFooterWidget(a
 bool SettingsPanel::IsDirty() const {
   if (scan_on_startup_->isChecked() != scan_on_startup_original_) return true;
   if (theme_->currentData().toString() != theme_original_) return true;
-  if (game_settings_in_sidebar_->isChecked() != game_settings_in_sidebar_original_) return true;
   if (drag_select_->isChecked() != drag_select_original_) return true;
   if (SidebarDirty()) return true;
   for (const ShapeField* field :
@@ -487,7 +474,6 @@ void SettingsPanel::DiscardChanges() {
   scan_on_startup_->setChecked(scan_on_startup_original_);
   const int theme_index = theme_->findData(theme_original_);
   if (theme_index >= 0) theme_->setCurrentIndex(theme_index);
-  game_settings_in_sidebar_->setChecked(game_settings_in_sidebar_original_);
   drag_select_->setChecked(drag_select_original_);
   recent_count_->setValue(recent_count_original_);
   source_counts_->setChecked(source_counts_original_);
@@ -502,7 +488,6 @@ void SettingsPanel::DiscardChanges() {
 
 void SettingsPanel::Save() {
   const QString theme_name = theme_->currentData().toString();
-  const bool game_settings_in_sidebar = game_settings_in_sidebar_->isChecked();
   bool shapes_changed = false;
   for (const ShapeField* field :
        {&tile_spacing_, &grid_margin_, &tile_radius_, &panel_radius_, &control_radius_}) {
@@ -514,7 +499,6 @@ void SettingsPanel::Save() {
   }
   if (scan_on_startup_->isChecked() != scan_on_startup_original_ ||
       theme_name != theme_original_ || shapes_changed || shortcuts_changed ||
-      game_settings_in_sidebar != game_settings_in_sidebar_original_ ||
       drag_select_->isChecked() != drag_select_original_ || SidebarDirty()) {
     mira_gui::FrontendPrefs prefs;
     prefs.sidebar_recent_count = recent_count_->value();
@@ -529,7 +513,6 @@ void SettingsPanel::Save() {
     hidden_sources_original_ = hidden;
     prefs.scan_on_startup = scan_on_startup_->isChecked();
     prefs.theme = theme_name.toStdString();
-    prefs.game_settings_in_sidebar = game_settings_in_sidebar;
     prefs.drag_select = drag_select_->isChecked();
     // Always written, including the -1 that means "theme default": the key
     // has to be able to go back to unset, and a merge-patch cannot drop one.
@@ -571,7 +554,6 @@ void SettingsPanel::Save() {
       prefs.shortcut_overrides = mira_gui::keybindings::Current();
     }
     scan_on_startup_original_ = *prefs.scan_on_startup;
-    game_settings_in_sidebar_original_ = game_settings_in_sidebar;
     drag_select_original_ = *prefs.drag_select;
     if (theme_name != theme_original_) {
       theme_original_ = theme_name;

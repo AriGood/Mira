@@ -22,7 +22,7 @@ Resolver::Resolver(const Config& config, json game_overrides)
 
 bool Resolver::IsOverridable(std::string_view key) {
   const Entry* entry = Schema::Instance().Find(key);
-  return entry != nullptr && entry->scope == Scope::PerGame;
+  return entry != nullptr && entry->scope != Scope::Global;
 }
 
 Resolved Resolver::Resolve(std::string_view key) const {

@@ -340,6 +340,7 @@ struct ConfigSchemaEntry {
   std::string label;  // display name; the key is only what's stored
   std::string type;
   std::string doc;
+  std::string game_doc;  // help for a game's own settings; empty means `doc`
   std::string default_display;
 
   // What the daemon will accept, when that has a shape worth rendering
@@ -353,7 +354,8 @@ struct ConfigSchemaEntry {
   std::optional<double> maximum;
   std::string category;        // UI grouping; always present
   int group = 0;               // a divider goes where this changes within a category
-  bool per_game = false;       // also overridable per game (scope "per_game")
+  bool per_game = false;       // overridable per game (scope "per_game" or "game_only")
+  bool game_only = false;      // only exists per game; not listed in the global settings
   bool is_secret = false;      // mask this value's field
   bool is_runner_ref = false;  // offer a runner picker (GET /v1/runners) instead of free text
   std::string link;            // web page where the user gets the value; empty if none
@@ -588,9 +590,6 @@ struct FrontendPrefs {
   // A theme name (ui/Theme.h), or "auto" — the default — to follow the
   // desktop's own light/dark preference.
   std::optional<std::string> theme;
-  // On (default): "Details & settings" edits a game inline in the right
-  // panel instead of opening a dialog.
-  std::optional<bool> game_settings_in_sidebar;
   // On (default): dragging across the grid rubber-band selects tiles.
   std::optional<bool> drag_select;
   // Shape adjustments layered over whatever the theme sets, in pixels — see

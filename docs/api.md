@@ -49,7 +49,7 @@ Every setting in display order:
    "minimum": 0, "maximum": 600000 }]
 ```
 
-`category` is the settings section and `group` changes where a divider goes. `scope` is `per_game` when a game can override the setting. Optional fields, present only when they apply: `one_of` (enum values), `minimum`/`maximum`, `is_secret` (mask the value), `is_runner_ref` (offer a runner picker), `link` (a web page where the user gets the value, e.g. an API key page) and `keywords` (extra search terms such as abbreviations, space-separated).
+`category` is the settings section and `group` changes where a divider goes. `scope` is `per_game` when a game can override the setting and `game_only` when it only exists per game. Optional fields, present only when they apply: `game_doc` (help text for a game's own settings, used instead of `doc`), `one_of` (enum values), `minimum`/`maximum`, `is_secret` (mask the value), `is_runner_ref` (offer a runner picker), `link` (a web page where the user gets the value, e.g. an API key page) and `keywords` (extra search terms such as abbreviations, space-separated).
 
 ### `PATCH /v1/config`
 Sets any subset of settings, nested like `GET /v1/config`, plus an optional `frontend` key. The whole patch is validated first; one bad value means nothing is applied.

@@ -1,5 +1,6 @@
 #include "HelpButton.h"
 
+#include <QCursor>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QUrl>
@@ -52,6 +53,15 @@ void HelpButton::ShowCard() {
   auto* help_card = new HelpCard(text_, link_, this);
   const QRect anchor(mapToGlobal(QPoint(0, 0)), size());
   help_card->move(card::Place(anchor, help_card->size(), /*beside=*/false));
+  // The popup grabs the mouse, so the button gets no Leave while it is open, and closing the popup
+  // hands focus back to the button. Both leave the accent color stuck.
+  const bool by_mouse = underMouse();
+  connect(help_card, &QObject::destroyed, this, [this, by_mouse] {
+    if (by_mouse) clearFocus();
+    if (rect().contains(mapFromGlobal(QCursor::pos()))) return;
+    setAttribute(Qt::WA_UnderMouse, false);
+    update();
+  });
   help_card->show();
 }
 

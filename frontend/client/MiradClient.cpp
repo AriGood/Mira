@@ -178,9 +178,12 @@ ConfigSchemaResult GetConfigSchemaSync() {
     e.type = entry.value("type", std::string());
     e.label = entry.value("label", std::string());
     e.doc = entry.value("doc", std::string());
+    e.game_doc = entry.value("game_doc", std::string());
     e.category = entry.value("category", std::string());
     e.group = entry.value("group", 0);
-    e.per_game = entry.value("scope", std::string()) == "per_game";
+    const std::string scope = entry.value("scope", std::string());
+    e.per_game = scope == "per_game" || scope == "game_only";
+    e.game_only = scope == "game_only";
     e.is_secret = entry.value("is_secret", false);
     e.is_runner_ref = entry.value("is_runner_ref", false);
     e.link = entry.value("link", std::string());
@@ -318,7 +321,6 @@ FrontendPrefsResult GetFrontendPrefsSync() {
   read_bool("sort_descending", result.prefs.sort_descending);
   read_bool("scan_on_startup", result.prefs.scan_on_startup);
   read_string("theme", result.prefs.theme);
-  read_bool("game_settings_in_sidebar", result.prefs.game_settings_in_sidebar);
   read_bool("drag_select", result.prefs.drag_select);
   read_int("tile_spacing", result.prefs.tile_spacing);
   read_int("grid_margin", result.prefs.grid_margin);
@@ -369,9 +371,6 @@ PatchConfigResult SaveFrontendPrefsSync(const FrontendPrefs& prefs) {
   if (prefs.sort_descending) table["sort_descending"] = *prefs.sort_descending;
   if (prefs.scan_on_startup) table["scan_on_startup"] = *prefs.scan_on_startup;
   if (prefs.theme) table["theme"] = *prefs.theme;
-  if (prefs.game_settings_in_sidebar) {
-    table["game_settings_in_sidebar"] = *prefs.game_settings_in_sidebar;
-  }
   if (prefs.drag_select) table["drag_select"] = *prefs.drag_select;
   if (prefs.tile_spacing) table["tile_spacing"] = *prefs.tile_spacing;
   if (prefs.grid_margin) table["grid_margin"] = *prefs.grid_margin;
