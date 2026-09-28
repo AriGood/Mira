@@ -39,6 +39,7 @@
 #include "humble/Humble.h"
 #include "itch/Itch.h"
 #include "library/SourceRemoval.h"
+#include "library/SourceRunner.h"
 #include "itch/ItchImporter.h"
 #include "itch/ItchInstaller.h"
 #include "launchers/Launchers.h"
@@ -960,6 +961,7 @@ void Server::RegisterRoutes() {
                       {"install_state", launchers::InstallState(launcher)},
                       {"interactive_install", launcher.interactive},
                       {"prefix", game ? game->data_dir : ""},
+                      {"runner_ref", game ? game->runner_ref : ""},
                       {"error", game ? game->last_error : ""}});
     }
     SendJson(res, list);
@@ -1104,6 +1106,34 @@ void Server::RegisterRoutes() {
     if (!removed) return SendError(res, 404, removed.error().code, removed.error().message);
     SyncDesktopEntries(config_, games_);
     SendJson(res, {{"removed", removed->removed}, {"problems", removed->problems}});
+  });
+
+  const auto send_source_runner = [](Response& res, const Result<library::SourceRunner>& runner) {
+    if (!runner) {
+      const int status = runner.error().code == "launcher_not_installed" ? 409 : 400;
+      return SendError(res, status, runner.error().code, runner.error().message);
+    }
+    SendJson(res, {{"runner_ref", runner->runner_ref}, {"games", runner->games}, {"differing", runner->differing}});
+  };
+
+  http_->Get(R"(/v1/sources/([a-z]+)/runner)", [this, send_source_runner](const Request& req, Response& res) {
+    send_source_runner(res, library::GetSourceRunner(config_, games_, req.matches[1].str()));
+  });
+
+  http_->Post(R"(/v1/sources/([a-z]+)/runner)", [this, send_source_runner](const Request& req, Response& res) {
+    const json body = json::parse(req.body, nullptr, false);
+    if (!body.is_object() || !body.contains("runner_ref") || !body["runner_ref"].is_string()) {
+      return SendError(res, 400, "invalid_body", R"(expected {"runner_ref": "kind:name", "apply_to_games"?: bool})");
+    }
+    const auto runner = library::SetSourceRunner(config_, games_, req.matches[1].str(),
+                                                 body["runner_ref"].get<std::string>(),
+                                                 body.value("apply_to_games", false));
+    if (runner) {
+      for (const std::string& id : runner->changed) {
+        if (const auto game = games_.Find(id)) events_.Publish("game.updated", GameJson(*game, supervisor_));
+      }
+    }
+    send_source_runner(res, runner);
   });
 
   http_->Get("/v1/itch/collections", [this](const Request&, Response& res) {

@@ -811,6 +811,15 @@ struct RemoveSourceResult {
   std::vector<std::string> problems;
 };
 
+// GET/POST /v1/sources/{id}/runner.
+struct SourceRunnerResult {
+  bool ok = false;
+  std::string error;
+  std::string runner_ref;  // empty: the default runner
+  int games = 0;           // the source's Windows games
+  int differing = 0;       // of those, the ones on another runner
+};
+
 // GET /v1/itch/collections.
 struct ItchCollection {
   std::int64_t id = 0;
@@ -851,6 +860,8 @@ struct LauncherInfo {
   bool installed = false;
   std::string install_state;  // "idle" | "running" | "finished" | "failed"
   bool interactive_install = false;
+  std::string prefix;
+  std::string runner_ref;
   std::string error;
 };
 

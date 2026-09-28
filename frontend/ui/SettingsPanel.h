@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "../client/MiradClient.h"
+#include "SettingEditor.h"
 
 class QCheckBox;
 class QComboBox;
@@ -72,14 +73,7 @@ signals:
   void SaveFinished(bool ok, QString error);
 
 private:
-  struct Field {
-    mira_gui::ConfigSchemaEntry entry;
-    std::string original;  // last value loaded from the daemon, for change detection
-    QCheckBox* check = nullptr;
-    QLineEdit* line = nullptr;
-    QComboBox* combo = nullptr;     // set instead of `line` for a runner key or a schema enum
-    QDoubleSpinBox* spin = nullptr;  // set instead of `line` for a bounded number
-    QWidget* row_widget = nullptr;  // the field column's widget, for setRowVisible
+  struct Field : SettingEditor {
     QFormLayout* owner_form = nullptr;  // the category group's form this row lives in
   };
 
@@ -122,8 +116,6 @@ private:
   void LoadGameModeStatus();
   void PopulateRunnerCombos(const mira_gui::RunnersResult& result);
   void ResetField(size_t index);
-  std::string CurrentText(const Field& field) const;
-  void SetFieldText(Field& field, const std::string& text);
 
   SettingsNavWidget* nav_ = nullptr;
   QCheckBox* scan_on_startup_ = nullptr;

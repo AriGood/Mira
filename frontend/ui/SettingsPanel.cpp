@@ -313,7 +313,9 @@ void SettingsPanel::Load() {
     }
 
     for (mira_gui::ConfigSchemaEntry& entry : schema.entries) {
-      fields_.push_back(Field{std::move(entry), std::string(), nullptr, nullptr, nullptr, nullptr, nullptr});
+      Field field;
+      field.entry = std::move(entry);
+      fields_.push_back(std::move(field));
     }
     BuildRows();
 
@@ -328,8 +330,8 @@ void SettingsPanel::Load() {
       }
       for (Field& field : fields_) {
         const auto it = config.values.find(field.entry.key);
-        SetFieldText(field, it != config.values.end() ? it->second : field.entry.default_display);
-        field.original = CurrentText(field);
+        field.SetText(it != config.values.end() ? it->second : field.entry.default_display);
+        field.original = field.Text();
       }
       setEnabled(true);
       if (!pending_focus_key_.isEmpty()) FocusKey(std::exchange(pending_focus_key_, QString()));
@@ -352,10 +354,7 @@ void SettingsPanel::FocusKey(const QString& key) {
 
   nav_->RevealRow(it->row_widget);
 
-  QWidget* field_widget = it->check   ? static_cast<QWidget*>(it->check)
-                          : it->combo ? static_cast<QWidget*>(it->combo)
-                          : it->spin  ? static_cast<QWidget*>(it->spin)
-                                      : static_cast<QWidget*>(it->line);
+  QWidget* field_widget = it->Input();
   if (field_widget == nullptr) return;
   field_widget->setFocus(Qt::OtherFocusReason);
   if (auto* line = qobject_cast<QLineEdit*>(field_widget)) line->selectAll();
@@ -378,75 +377,12 @@ void SettingsPanel::BuildRows() {
 
       Field& field = fields_[i];
       field.owner_form = form;
-
-      auto* row_widget = new QWidget(this);
-      auto* row_layout = new QHBoxLayout(row_widget);
-      row_layout->setContentsMargins(0, 0, 0, 0);
-      row_layout->setSpacing(8);
-
-      if (field.entry.type == "a boolean") {
-        field.check = new QCheckBox(row_widget);
-        row_layout->addWidget(field.check);
-        row_layout->addStretch(1);
-      } else if (!field.entry.one_of.empty()) {
-        field.combo = new QComboBox(row_widget);
-        for (const std::string& option : field.entry.one_of) {
-          field.combo->addItem(QString::fromStdString(option));
-        }
-        row_layout->addWidget(field.combo, /*stretch=*/1);
-      } else if (field.entry.minimum && field.entry.maximum &&
-                 (field.entry.type == "an integer" || field.entry.type == "a number")) {
-        field.spin = new QDoubleSpinBox(row_widget);
-        field.spin->setDecimals(field.entry.type == "an integer" ? 0 : 2);
-        field.spin->setRange(*field.entry.minimum, *field.entry.maximum);
-        field.spin->setKeyboardTracking(false);
-        field.spin->setToolTip(QString("Between %1 and %2")
-                                   .arg(*field.entry.minimum)
-                                   .arg(*field.entry.maximum));
-        row_layout->addWidget(field.spin, /*stretch=*/1);
-        row_layout->addStretch(1);
-      } else if (field.entry.is_runner_ref) {
-        field.combo = new QComboBox(row_widget);
-        field.combo->setEditable(true);
-        field.combo->setInsertPolicy(QComboBox::NoInsert);
-        connect(field.combo, QOverload<int>::of(&QComboBox::activated), this,
-                [field = &field](int idx) {
-                  field->combo->setEditText(field->combo->itemData(idx).toString());
-                  field->combo->lineEdit()->setCursorPosition(0);
-                });
-        row_layout->addWidget(field.combo, /*stretch=*/1);
-
-        auto* reset_button = new QPushButton("Reset", row_widget);
-        reset_button->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
-        reset_button->setToolTip(
-            QString("Reset to default: %1").arg(QString::fromStdString(field.entry.default_display)));
-        connect(reset_button, &QPushButton::clicked, this, [this, i] { ResetField(i); });
-        row_layout->addWidget(reset_button);
-      } else {
-        field.line = new QLineEdit(row_widget);
-        if (field.entry.type == "an array of strings") {
-          field.line->setPlaceholderText("comma-separated");
-        }
-        if (field.entry.is_secret) {
-          field.line->setEchoMode(QLineEdit::PasswordEchoOnEdit);
-        }
-        row_layout->addWidget(field.line, /*stretch=*/1);
-
-        auto* reset_button = new QPushButton("Reset", row_widget);
-        reset_button->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
-        reset_button->setToolTip(
-            QString("Reset to default: %1").arg(QString::fromStdString(field.entry.default_display)));
-        connect(reset_button, &QPushButton::clicked, this, [this, i] { ResetField(i); });
-        row_layout->addWidget(reset_button);
-      }
+      QWidget* row_widget = field.Build(this, [this, i] { ResetField(i); });
 
       const QString label_text = QString::fromStdString(
           field.entry.label.empty() ? field.entry.key : field.entry.label);
       auto* label = new QLabel(label_text, this);
       label->setToolTip(QString::fromStdString(field.entry.doc));
-      row_widget->setToolTip(QString::fromStdString(field.entry.doc));
-
-      field.row_widget = row_widget;
       form->addRow(label, row_widget);
       nav_->RegisterRow(form, row_widget,
                         QString("%1 %2 %3 %4").arg(QString::fromStdString(field.entry.key), label_text,
@@ -512,53 +448,8 @@ void SettingsPanel::LoadGameModeStatus() {
 
 void SettingsPanel::PopulateRunnerCombos(const mira_gui::RunnersResult& result) {
   for (Field& field : fields_) {
-    if (!field.combo || !field.entry.is_runner_ref) continue;
-
-    const QString current = field.combo->currentText();
-    field.combo->blockSignals(true);
-    field.combo->clear();
-    field.combo->addItem("Auto (best available)", "auto");
-    if (result.ok) {
-      for (const mira_gui::RunnerInfo& runner : result.runners) {
-        const QString label = QString("%1 (%2)").arg(QString::fromStdString(runner.name),
-                                                       QString::fromStdString(runner.kind));
-        field.combo->addItem(label, QString::fromStdString(runner.reference));
-      }
-    }
-    field.combo->setEditText(current);
-    field.combo->blockSignals(false);
+    if (field.combo != nullptr && field.entry.is_runner_ref) FillRunnerCombo(field.combo, result);
   }
-}
-
-std::string SettingsPanel::CurrentText(const Field& field) const {
-  if (field.check) return field.check->isChecked() ? "true" : "false";
-  if (field.spin) return field.spin->cleanText().toStdString();
-  if (field.combo) return field.combo->currentText().toStdString();
-  return field.line->text().toStdString();
-}
-
-void SettingsPanel::SetFieldText(Field& field, const std::string& text) {
-  if (field.check) {
-    field.check->setChecked(text == "true");
-    return;
-  }
-  if (field.spin) {
-    field.spin->setValue(QString::fromStdString(text).toDouble());
-    return;
-  }
-  if (field.combo != nullptr && !field.combo->isEditable()) {
-    const int index = field.combo->findText(QString::fromStdString(text));
-    if (index >= 0) {
-      field.combo->setCurrentIndex(index);
-    } else if (!text.empty()) {
-      field.combo->insertItem(0, QString::fromStdString(text));
-      field.combo->setCurrentIndex(0);
-    }
-    return;
-  }
-  QLineEdit* edit = field.combo ? field.combo->lineEdit() : field.line;
-  edit->setText(QString::fromStdString(text));
-  edit->setCursorPosition(0);
 }
 
 void SettingsPanel::ResetField(size_t index) {
@@ -569,8 +460,8 @@ void SettingsPanel::ResetField(size_t index) {
           return;
         }
         Field& field = fields_[index];
-        SetFieldText(field, field.entry.default_display);
-        field.original = CurrentText(field);
+        field.SetText(field.entry.default_display);
+        field.original = field.Text();
       });
 }
 
@@ -590,7 +481,7 @@ bool SettingsPanel::IsDirty() const {
     if (field.edit->keySequence() != field.original) return true;
   }
   for (const Field& field : fields_) {
-    if (CurrentText(field) != field.original) return true;
+    if (field.Text() != field.original) return true;
   }
   return false;
 }
@@ -609,7 +500,7 @@ void SettingsPanel::DiscardChanges() {
     field->spin->setValue(field->original);
   }
   for (ShortcutField& field : shortcuts_) field.edit->setKeySequence(field.original);
-  for (Field& field : fields_) SetFieldText(field, field.original);
+  for (Field& field : fields_) field.SetText(field.original);
 }
 
 void SettingsPanel::Save() {
@@ -694,7 +585,7 @@ void SettingsPanel::Save() {
 
   std::vector<mira_gui::ConfigEdit> edits;
   for (const Field& field : fields_) {
-    const std::string current = CurrentText(field);
+    const std::string current = field.Text();
     if (current != field.original) {
       edits.push_back(mira_gui::ConfigEdit{field.entry.key, field.entry.type, current});
     }
@@ -712,7 +603,7 @@ void SettingsPanel::Save() {
       emit SaveFinished(false, QString::fromStdString(result.error));
       return;
     }
-    for (Field& field : fields_) field.original = CurrentText(field);
+    for (Field& field : fields_) field.original = field.Text();
     emit SaveFinished(true, QString());
   });
 }

@@ -12,7 +12,6 @@
 #include <QVBoxLayout>
 
 #include "../client/MiradClient.h"
-#include "../ui/Notify.h"
 #include "../ui/Theme.h"
 
 namespace {
@@ -206,53 +205,5 @@ void ManageSourcesDialog::Import(const Entry& entry, QWidget* status_holder) {
 }
 
 void ManageSourcesDialog::Remove(const Entry& entry) {
-  const QString id = entry.source.id;
-  const QString name = entry.source.name;
-  mira_gui::MiradClient::GetRemovalPlanAsync(
-      this, id.toStdString(), [this, id, name](mira_gui::RemovalPlanResult plan) {
-        if (!plan.ok) {
-          mira_gui::notify::Failed(this, "Could not plan the removal.",
-                                   QString::fromStdString(plan.error));
-          return;
-        }
-        QStringList lines;
-        const auto uninstalled =
-            std::ranges::count_if(plan.games, [](const auto& g) { return !g.deletes.empty(); });
-        if (uninstalled > 0)
-          lines
-              << QString("Uninstalls %1 game%2:").arg(uninstalled).arg(uninstalled == 1 ? "" : "s");
-        for (const auto& game : plan.games) {
-          if (!game.deletes.empty()) lines << "  • " + QString::fromStdString(game.name);
-        }
-        const auto dropped = static_cast<qsizetype>(plan.games.size()) - uninstalled;
-        if (dropped > 0) {
-          lines << QString("Removes %1 game%2 from Mira only (their files stay where they are).")
-                       .arg(dropped)
-                       .arg(dropped == 1 ? "" : "s");
-        }
-        if (!plan.launcher_dir.empty()) lines << "Deletes " + name + " itself.";
-        if (plan.signs_out) lines << "Signs you out of " + name + ".";
-        if (!plan.kept.empty()) lines << "Keeps game data and saves (prefixes stay on disk).";
-        lines << name + " is turned off; turn it on again here any time.";
-        if (!mira_gui::notify::Confirm(this, "Remove " + name, lines.join("\n"), "Remove",
-                                       /*destructive=*/true)) {
-          return;
-        }
-        mira_gui::MiradClient::RemoveSourceAsync(
-            this, id.toStdString(), [this, id, name](mira_gui::RemoveSourceResult r) {
-              if (!r.ok) {
-                mira_gui::notify::Failed(this, "Could not remove " + name + ".",
-                                         QString::fromStdString(r.error));
-                return;
-              }
-              if (!r.problems.empty()) {
-                QStringList problems;
-                for (const std::string& problem : r.problems)
-                  problems << QString::fromStdString(problem);
-                mira_gui::notify::Failed(this, name + " was removed, but some steps failed.",
-                                         problems.join("\n"));
-              }
-              emit Removed(id);
-            });
-      });
+  mira_gui::RemoveSource(this, entry.source, [this, id = entry.source.id] { emit Removed(id); });
 }

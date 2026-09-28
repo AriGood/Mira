@@ -187,6 +187,8 @@ private:
   void UpdateLibraryNavActive();
   void ShowLibrary();
   void OpenManageSources();
+  // A source was removed: drop its games and turn its sidebar row off.
+  void ForgetSource(const QString& id);
   void RefreshRecentlyPlayed();
   void SetSourceHidden(const QString& id, bool hidden);
   std::vector<QString> SourceOrder() const;

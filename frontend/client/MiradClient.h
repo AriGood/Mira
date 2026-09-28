@@ -346,6 +346,11 @@ public:
                                   std::function<void(RemovalPlanResult)> callback);
   static void RemoveSourceAsync(QObject* context, const std::string& source,
                                 std::function<void(RemoveSourceResult)> callback);
+  // GET/POST /v1/sources/{id}/runner: a store's default runner, or a launcher's prefix runner.
+  static void GetSourceRunnerAsync(QObject* context, const std::string& source,
+                                   std::function<void(SourceRunnerResult)> callback);
+  static void SetSourceRunnerAsync(QObject* context, const std::string& source, const std::string& runner_ref,
+                                   bool apply_to_games, std::function<void(SourceRunnerResult)> callback);
   // GET/POST /v1/itch/collections, DELETE /v1/itch/collections/{id}.
   static void GetItchCollectionsAsync(QObject* context, std::function<void(ItchCollectionsResult)> callback);
   static void AddItchCollectionAsync(QObject* context, const std::string& link,

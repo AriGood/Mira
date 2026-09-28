@@ -351,7 +351,7 @@ Wraps [humble-cli](https://github.com/smbl64/humble-cli). Humble has no installs
 Battle.net, Ubisoft Connect and the EA app have no Linux client, so each is installed into its own prefix (game `launcher-<id>`). Games installed through a launcher are imported as `<id>-<ref>` with source `battlenet`, `ubisoft` or `ea`, sharing its prefix and runner. `launchers.auto_import` imports on every scan. umu's `STORE` and, when known, `GAMEID` are set so protonfixes apply.
 
 ### `GET /v1/launchers`
-`[{id, name, game_id, installed, install_state, interactive_install, prefix, error}]`. `install_state` is `idle`, `running`, `finished` or `failed`.
+`[{id, name, game_id, installed, install_state, interactive_install, prefix, runner_ref, error}]`. `install_state` is `idle`, `running`, `finished` or `failed`.
 
 ### `POST /v1/launchers/{id}/install`
 Creates the prefix, runs the winetricks steps, then the installer: silent for Ubisoft and EA, shown for Battle.net. Imports games afterwards. `409 install_running`. Events: `launcher.install.*`.
@@ -379,6 +379,12 @@ What removing a source would do:
 
 ### `POST /v1/sources/{id}/remove`
 Uninstalls the source's games (through the store tool, or by deleting a folder inside a Mira folder), deletes a launcher's program folder but keeps save folders, signs out, removes the games from Mira and sets `<id>.enabled` to false. Prefixes are never deleted. A failed step is reported and the rest still run: `{"removed": 3, "problems": []}`.
+
+### `GET /v1/sources/{id}/runner`
+The runner a source's games use: `{"runner_ref", "games", "differing"}`. `games` counts its Windows games and `differing` the ones on another runner. For Epic, GOG, itch and Amazon this is `<id>.runner`, the default for their games with no runner of their own (empty falls back to `default_runner.windows`). For a launcher it is the runner of its prefix, which its games share. `400 no_runner` for Steam, Lutris and Humble; `409 launcher_not_installed`.
+
+### `POST /v1/sources/{id}/runner`
+Body `{"runner_ref", "apply_to_games"?}`. `runner_ref` is `kind:name`, `auto` or empty, and must resolve to an installed build. A store's default changes, plus every Windows game from it when `apply_to_games` is true. A launcher and the games in its prefix always change together. Returns the new state as above and publishes `game.updated` for each game it moved.
 
 ## Desktop entries
 

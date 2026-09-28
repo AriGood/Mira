@@ -12,6 +12,7 @@
 #include <QPushButton>
 #include <QScrollArea>
 #include <QStyle>
+#include <QToolButton>
 #include <QUrl>
 #include <QVBoxLayout>
 
@@ -20,11 +21,14 @@
 #include "../ui/ArtworkStore.h"
 #include "../ui/CoverArt.h"
 #include "../ui/DownloadTracker.h"
+#include "../ui/GameActions.h"
 #include "../ui/GameTileDelegate.h"
 #include "../ui/HoverCard.h"
 #include "../ui/Icons.h"
+#include "../ui/Notify.h"
 #include "../ui/Theme.h"
 #include "../ui/TileGrid.h"
+#include "SourceSettingsCard.h"
 
 namespace mira_gui {
 namespace {
@@ -169,6 +173,46 @@ const std::vector<SourceInfo>& AllSources() {
   return sources;
 }
 
+void RemoveSource(QWidget* parent, const SourceInfo& source, std::function<void()> on_removed) {
+  const QString name = source.name;
+  const std::string id = source.id.toStdString();
+  MiradClient::GetRemovalPlanAsync(parent, id, [parent, id, name, on_removed](RemovalPlanResult plan) {
+    if (!plan.ok) {
+      notify::Failed(parent, "Could not plan the removal.", QString::fromStdString(plan.error));
+      return;
+    }
+    QStringList lines;
+    const auto uninstalled = std::ranges::count_if(plan.games, [](const auto& g) { return !g.deletes.empty(); });
+    if (uninstalled > 0) lines << QString("Uninstalls %1 game%2:").arg(uninstalled).arg(uninstalled == 1 ? "" : "s");
+    for (const auto& game : plan.games) {
+      if (!game.deletes.empty()) lines << "  • " + QString::fromStdString(game.name);
+    }
+    const auto dropped = static_cast<qsizetype>(plan.games.size()) - uninstalled;
+    if (dropped > 0) {
+      lines << QString("Removes %1 game%2 from Mira only (their files stay where they are).")
+                   .arg(dropped)
+                   .arg(dropped == 1 ? "" : "s");
+    }
+    if (!plan.launcher_dir.empty()) lines << "Deletes " + name + " itself.";
+    if (plan.signs_out) lines << "Signs you out of " + name + ".";
+    if (!plan.kept.empty()) lines << "Keeps game data and saves (prefixes stay on disk).";
+    lines << name + " is turned off; turn it on again in Manage sources any time.";
+    if (!notify::Confirm(parent, "Remove " + name, lines.join("\n"), "Remove", /*destructive=*/true)) return;
+    MiradClient::RemoveSourceAsync(parent, id, [parent, name, on_removed](RemoveSourceResult r) {
+      if (!r.ok) {
+        notify::Failed(parent, "Could not remove " + name + ".", QString::fromStdString(r.error));
+        return;
+      }
+      if (!r.problems.empty()) {
+        QStringList problems;
+        for (const std::string& problem : r.problems) problems << QString::fromStdString(problem);
+        notify::Failed(parent, name + " was removed, but some steps failed.", problems.join("\n"));
+      }
+      on_removed();
+    });
+  });
+}
+
 SourcePage::SourcePage(const SourceInfo& source, ArtworkStore* artwork, DownloadTracker* downloads,
                        QWidget* parent)
     : QWidget(parent), source_(source), id_(source.id.toStdString()), artwork_(artwork), downloads_(downloads) {
@@ -179,14 +223,14 @@ SourcePage::SourcePage(const SourceInfo& source, ArtworkStore* artwork, Download
   scroll->setWidgetResizable(true);
   scroll->setFrameShape(QFrame::NoFrame);
   auto* content = new QWidget();
-  auto* layout = new QVBoxLayout(content);
-  layout->setContentsMargins(16, 12, 16, 16);
-  layout->setSpacing(16);
-  layout->addWidget(BuildBanner());
-  layout->addWidget(BuildSetupCard());
-  if (id_ != "humble") layout->addWidget(BuildLibrarySection());
-  if (HasOwned()) layout->addWidget(BuildOwnedSection());
-  layout->addStretch(1);
+  content_layout_ = new QVBoxLayout(content);
+  content_layout_->setContentsMargins(16, 12, 16, 16);
+  content_layout_->setSpacing(16);
+  content_layout_->addWidget(BuildBanner());
+  content_layout_->addWidget(BuildSetupCard());
+  if (id_ != "humble") content_layout_->addWidget(BuildLibrarySection());
+  if (HasOwned()) content_layout_->addWidget(BuildOwnedSection());
+  content_layout_->addStretch(1);
   scroll->setWidget(content);
   outer->addWidget(scroll);
 
@@ -226,6 +270,32 @@ QWidget* SourcePage::BuildBanner() {
   filter_->setFixedWidth(220);
   connect(filter_, &QLineEdit::textChanged, this, &SourcePage::ApplyFilter);
   top->addWidget(filter_);
+
+  const QColor on_banner(Qt::white);
+  // A dark backing keeps the white glyphs readable where the gradient fades to the window color.
+  const QString banner_button = "QToolButton { border: none; border-radius: 6px; padding: 5px; "
+                                "background: rgba(0, 0, 0, 90); }"
+                                "QToolButton:hover, QToolButton:checked { background: rgba(0, 0, 0, 150); }"
+                                "QToolButton::menu-indicator { image: none; }";
+  settings_button_ = new QToolButton(banner);
+  settings_button_->setIcon(icons::For(icons::Glyph::Settings, on_banner));
+  settings_button_->setToolTip(source_.name + " settings");
+  settings_button_->setCheckable(true);
+  settings_button_->setStyleSheet(banner_button);
+  settings_button_->setCursor(Qt::PointingHandCursor);
+  connect(settings_button_, &QToolButton::toggled, this, &SourcePage::ToggleSettings);
+  top->addWidget(settings_button_);
+
+  more_button_ = new QToolButton(banner);
+  more_button_->setText("⋯");
+  more_button_->setToolTip("More");
+  more_button_->setStyleSheet(banner_button + "QToolButton { color: white; font-weight: 700; }");
+  more_button_->setCursor(Qt::PointingHandCursor);
+  more_button_->setPopupMode(QToolButton::InstantPopup);
+  auto* more_menu = new QMenu(more_button_);
+  connect(more_menu, &QMenu::aboutToShow, this, [this, more_menu] { FillMoreMenu(more_menu); });
+  more_button_->setMenu(more_menu);
+  top->addWidget(more_button_);
   layout->addLayout(top);
   layout->addStretch(1);
 
@@ -276,6 +346,68 @@ QWidget* SourcePage::BuildBanner() {
   bottom->addWidget(banner_primary_, 0, Qt::AlignBottom);
   layout->addLayout(bottom);
   return banner;
+}
+
+void SourcePage::ToggleSettings(bool shown) {
+  if (shown && settings_card_ == nullptr) {
+    settings_card_ = new SourceSettingsCard(source_, this);
+    connect(settings_card_, &SourceSettingsCard::OpenSettingsRequested, this, &SourcePage::OpenSettingsRequested);
+    content_layout_->insertWidget(1, settings_card_);  // right under the banner
+  } else if (shown) {
+    settings_card_->Refresh();
+  }
+  if (settings_card_ != nullptr) settings_card_->setVisible(shown);
+}
+
+void SourcePage::FillMoreMenu(QMenu* menu) {
+  menu->clear();
+  const QString tool = CopyFor(id_).tool;
+  if (IsStore() && tool_installed_) {
+    const QString version = tool_version_.empty() ? QString() : " (" + QString::fromStdString(tool_version_) + ")";
+    QAction* update = menu->addAction(icons::For(icons::Glyph::Download), "Update " + tool + version, this,
+                                      &SourcePage::UpdateTool);
+    update->setEnabled(!tool_updating_);
+    update->setToolTip("Downloads " + tool + "'s latest release again.");
+  }
+  if (IsLauncher() && launcher_installed_ && !launcher_game_id_.empty()) {
+    const std::string game_id = launcher_game_id_;
+    menu->addAction(icons::For(icons::Glyph::Home), "Open prefix folder", this, [this] {
+      actions::OpenInstallFolder(this, launcher_prefix_);
+    });
+    menu->addAction(icons::For(icons::Glyph::Wrench), "Winetricks…", this,
+                    [this, game_id] { actions::RunWinetricks(this, game_id, source_.name); });
+    menu->addAction("Run a program in its prefix…", this, [this, game_id] {
+      actions::RunInPrefix(this, game_id, launcher_prefix_ + "/drive_c", source_.name);
+    });
+    menu->addAction("View log", this, [this, game_id] { actions::ViewLog(this, game_id, source_.name); });
+  }
+
+  // What removing does differs per kind; RemoveSource spells it out before anything happens.
+  const bool removable = library_count_ > 0 || (IsStore() ? tool_installed_ || authenticated_
+                                                : IsLauncher() ? launcher_installed_
+                                                               : true);
+  if (removable) {
+    if (!menu->isEmpty()) menu->addSeparator();
+    const QString label = IsLauncher() ? "Uninstall " + source_.name + "…"
+                          : IsStore()  ? "Remove " + source_.name + "…"
+                                       : "Remove from Mira…";
+    menu->addAction(icons::For(icons::Glyph::Trash, theme::Current().error), label, this, [this] {
+      RemoveSource(this, source_, [this] { emit Removed(); });
+    });
+  }
+  if (menu->isEmpty()) menu->addAction("Nothing to manage until it's set up")->setEnabled(false);
+}
+
+void SourcePage::UpdateTool() {
+  tool_updating_ = true;
+  UpdateStatusLine();
+  MiradClient::SetupStoreToolAsync(this, id_, [this](StoreActionResult result) {
+    if (result.ok) return;  // the setup event finishes the job
+    tool_updating_ = false;
+    UpdateStatusLine();
+    setup_card_->setVisible(true);
+    ShowError(setup_error_, "Could not update " + CopyFor(id_).tool + ".", result.error);
+  });
 }
 
 QWidget* SourcePage::BuildSetupCard() {
@@ -545,6 +677,7 @@ void SourcePage::ApplyStoreStatus(const StoreStatusResult& status) {
   }
   const bool was_authenticated = authenticated_;
   tool_installed_ = status.tool_installed;
+  tool_version_ = status.tool_version;
   authenticated_ = status.authenticated;
   account_ = status.account;
   login_url_ = status.login_url;
@@ -577,8 +710,13 @@ void SourcePage::ApplyStoreStatus(const StoreStatusResult& status) {
 }
 
 void SourcePage::ApplyLauncher(const LauncherInfo& launcher) {
+  const bool was_installed = launcher_installed_;
   launcher_installed_ = launcher.installed;
   launcher_installing_ = launcher.install_state == "running";
+  launcher_game_id_ = launcher.game_id;
+  launcher_prefix_ = launcher.prefix;
+  // Its runner row only works once there's a prefix.
+  if (launcher_installed_ != was_installed && settings_card_ != nullptr) settings_card_->Refresh();
   setup_card_->setVisible(!launcher_installed_);
   if (!launcher_installed_) {
     setup_title_->setText("Install " + source_.name);
@@ -604,7 +742,9 @@ void SourcePage::ApplyLauncher(const LauncherInfo& launcher) {
 void SourcePage::UpdateStatusLine() {
   QStringList parts;
   if (IsStore()) {
-    if (!tool_installed_) {
+    if (tool_updating_) {
+      parts << "Updating " + CopyFor(id_).tool + "…";
+    } else if (!tool_installed_) {
       parts << "Not set up";
     } else if (!authenticated_) {
       parts << "Not signed in";
@@ -872,10 +1012,17 @@ void SourcePage::HandleEvent(const std::string& type, const std::string& data) {
   if (event.kind == "setup") {
     if (event.state == "finished") {
       launcher_installing_ = false;
+      tool_updating_ = false;
       RefreshStatus();
       if (IsLauncher()) emit LibraryChanged();
     } else if (event.state == "failed") {
       launcher_installing_ = false;
+      tool_updating_ = false;
+      setup_card_->setVisible(true);
+      if (IsStore() && tool_installed_) {
+        setup_title_->setText("Update " + CopyFor(id_).tool);
+        setup_text_->clear();
+      }
       setup_button_->setEnabled(true);
       setup_button_->setText(IsLauncher() ? "Install " + source_.name : "Retry download");
       ShowError(setup_error_, "It failed.", event.error);
