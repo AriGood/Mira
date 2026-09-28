@@ -21,6 +21,12 @@ namespace mira::runner {
 // .bat/.cmd through cmd, everything else runs as is.
 std::vector<std::string> WindowsProgram(const std::filesystem::path& file);
 
+// The errors every runner shares, worded the same everywhere.
+std::unexpected<Error> NoBuild(std::string_view kind);  // "Wine" or "Proton"
+std::unexpected<Error> NoExecutable(const model::Game& game);
+std::unexpected<Error> NoPrefix(const model::Game& game);
+std::unexpected<Error> PrefixCreateFailed(const model::Game& game, const std::error_code& ec);
+
 // One way to run a game: native, Proton, Wine or Steam. Every umu/Proton
 // detail lives inside ProtonRunner; this interface knows none of it.
 class IRunner {

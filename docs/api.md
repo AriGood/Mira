@@ -8,7 +8,18 @@ Bodies are JSON. Errors share one envelope:
 { "error": { "code": "invalid_setting", "message": "scan.debounce_ms: must be between 0 and 600000" } }
 ```
 
-`code` is stable and meant for code; `message` is meant for people.
+`code` is stable and meant for code; `message` is meant for people and says what went wrong. Two optional fields say what to do about it:
+
+- `hint`: one sentence for the user, worded for any client (no CLI commands, no GUI paths).
+- `fix`: where the fix is, for a client to turn into a button or a command. `{"kind": "setting", "target": "<dotted key>"}`, `{"kind": "runners", "target": ""}` (install a runner) or `"target": "winetricks"`, `{"kind": "source", "target": "<source id>", "step": "setup" | "login" | "install"}`, or `{"kind": "game", "target": "<game id>", "step": "exe" | "data_dir" | "log"}`.
+
+```json
+{ "error": { "code": "no_steamgriddb_key", "message": "searching SteamGridDB needs an API key",
+             "hint": "Add a free SteamGridDB API key. Steam games don't need one.",
+             "fix": { "kind": "setting", "target": "steamgriddb.api_key" } } }
+```
+
+`game.install.failed` events carry the same `hint` and `fix` next to their `error`.
 
 ```sh
 curl --unix-socket "$XDG_RUNTIME_DIR/mira/mirad.sock" http://localhost/v1/health
@@ -38,7 +49,7 @@ Every setting in display order:
    "minimum": 0, "maximum": 600000 }]
 ```
 
-`category` is the settings section and `group` changes where a divider goes. `scope` is `per_game` when a game can override the setting. Optional fields, present only when they apply: `one_of` (enum values), `minimum`/`maximum`, `is_secret` (mask the value) and `is_runner_ref` (offer a runner picker).
+`category` is the settings section and `group` changes where a divider goes. `scope` is `per_game` when a game can override the setting. Optional fields, present only when they apply: `one_of` (enum values), `minimum`/`maximum`, `is_secret` (mask the value), `is_runner_ref` (offer a runner picker), `link` (a web page where the user gets the value, e.g. an API key page) and `keywords` (extra search terms such as abbreviations, space-separated).
 
 ### `PATCH /v1/config`
 Sets any subset of settings, nested like `GET /v1/config`, plus an optional `frontend` key. The whole patch is validated first; one bad value means nothing is applied.
@@ -469,7 +480,7 @@ event: game.updated
 data: {"id":"celeste","name":"Celeste", ...}
 ```
 
-Reconnect with `Last-Event-ID` to replay what was missed. The buffer holds the last 500 events in memory. Ids start from the clock, so they keep increasing across a daemon restart.
+A new connection (no `Last-Event-ID`) first gets the buffered events replayed, then a `stream.live` event with no id: everything after it is new. Show replayed events as state, and announce only what arrives after `stream.live`. Reconnect with `Last-Event-ID` to replay what was missed; a resumed connection gets no `stream.live`. The buffer holds the last 500 events in memory. Ids start from the clock, so they keep increasing across a daemon restart.
 
 | Event | Payload |
 |---|---|

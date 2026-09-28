@@ -53,6 +53,9 @@ public:
 
 private:
   mutable std::mutex mutex_;
+  // Held for a whole Save: concurrent saves share one temp file, and the last
+  // one to finish must also be the one holding the newest games_.
+  std::mutex save_mutex_;
   std::filesystem::path file_;
   std::vector<model::Game> games_;
 };

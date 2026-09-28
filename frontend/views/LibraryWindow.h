@@ -47,6 +47,7 @@ class LibraryGrid;
 namespace mira_gui {
 class ArtPickerPanel;
 class CoverChip;
+class DaemonSupervisor;
 class DownloadTracker;
 class DownloadsPanel;
 class GameEditForm;
@@ -151,10 +152,10 @@ private:
   // of them at once, chosen at the pos the right-click landed on.
   void ShowBatchContextMenu(const QList<QListWidgetItem*>& items, const QPoint& pos);
   void ToggleRunning(const std::string& id);
-  void ToggleHidden(const std::string& id);
-  // Adds the hidden tag to each id that doesn't already have it — batch
-  // "Hide" only ever hides, unlike the single-game toggle.
-  void BatchHide(const std::vector<std::string>& ids);
+  // Adds or removes `tag` ("hidden", "favorite") on one game.
+  void ToggleTag(const std::string& id, const std::string& tag);
+  // Adds (`present`) or removes `tag` on each id, skipping those already that way.
+  void BatchSetTag(const std::vector<std::string>& ids, const std::string& tag, bool present);
   void LaunchGame(const std::string& id);
   void OpenGameDialog(const std::string& id);
   // Scrim + centered card slot, built once. Shown/hidden per open rather
@@ -189,7 +190,14 @@ private:
   void OpenManageSources();
   // A source was removed: drop its games and turn its sidebar row off.
   void ForgetSource(const QString& id);
-  void RefreshRecentlyPlayed();
+  // Everything a tile shows except its id.
+  void FillTile(QListWidgetItem* item, const mira_gui::GameSummary& game);
+  // The sidebar's PINNED and RECENTLY PLAYED rows.
+  void RefreshSidebarGames();
+  QPushButton* MakeSidebarGameRow(const mira_gui::GameSummary& game, QWidget* parent);
+  // Rebuilds one section's rows, only if what they'd show differs from `signature`.
+  void FillSidebarSection(QLabel* heading, QVBoxLayout* layout,
+                          const std::vector<const mira_gui::GameSummary*>& games, QString& signature);
   void SetSourceHidden(const QString& id, bool hidden);
   std::vector<QString> SourceOrder() const;
   std::vector<ManageSourcesDialog::Entry> SourceEntries() const;
@@ -243,6 +251,8 @@ private:
   void SyncDesktopEntries();
   void RemoveAllDesktopEntries();
   void ShowSteamGridDbNotice(bool asked_for);
+  // Routes ui/ErrorHelp's fix-it buttons to this window's pages.
+  void InstallErrorNavigator();
   void UpdateTileCover(const QString& id);
 
   void HandleGameEvent(const std::string& type, const std::string& data);
@@ -311,7 +321,11 @@ private:
   QWidget* source_drop_line_ = nullptr;
   QPushButton* source_drag_row_ = nullptr;
   QPoint source_drag_start_;
+  QLabel* pinned_heading_ = nullptr;
+  QVBoxLayout* pinned_layout_ = nullptr;
+  QString pinned_signature_;  // what the rows show now; see FillSidebarSection
   QLabel* recent_heading_ = nullptr;
+  QString recent_signature_;
   QVBoxLayout* recent_layout_ = nullptr;
   static constexpr int kDefaultRecentCount = 3;
   int recent_count_ = kDefaultRecentCount;  // besides running games
@@ -371,6 +385,9 @@ private:
   std::vector<mira_gui::GameSummary> games_;
   std::set<std::string> running_ids_;
   mira_gui::DownloadTracker* downloads_ = nullptr;
+  mira_gui::DaemonSupervisor* daemon_supervisor_ = nullptr;  // "Start mirad" from a failure
+  bool events_live_ = false;  // past mirad's replay (`stream.live`); only then announce events
+  bool mirad_reachable_ = true;  // as of the last health check, for the footer
   mira_gui::DownloadsPanel* downloads_panel_ = nullptr;
   // game.added events asking for their settings to open, gathered briefly
   // so a scan's burst of them opens nothing.

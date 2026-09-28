@@ -8,6 +8,7 @@
 
 #include "itch/Butlerd.h"
 #include "itch/Itch.h"
+#include "core/StoreErrors.h"
 #include "itch/ItchImporter.h"
 
 namespace mira::itch {
@@ -16,8 +17,8 @@ using nlohmann::json;
 
 Result<void> CheckReady(const config::Config& config) {
   const ItchAuthStatus auth = Status(config);
-  if (!auth.butler.installed) return Err("butler_missing", "run \"mira itch setup\" first");
-  if (!auth.authenticated) return Err("not_authenticated", "run \"mira itch login\" first");
+  if (!auth.butler.installed) return StoreToolMissing("itch", "itch.io", "butler");
+  if (!auth.authenticated) return StoreNotSignedIn("itch", "itch.io");
   return {};
 }
 

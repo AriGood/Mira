@@ -4,6 +4,7 @@
 
 #include "amazon/AmazonImporter.h"
 #include "amazon/Nile.h"
+#include "core/StoreErrors.h"
 
 namespace mira::amazon {
 namespace {
@@ -11,8 +12,8 @@ using nlohmann::json;
 
 Result<void> CheckReady(const config::Config& config) {
   const AmazonAuthStatus auth = Status(config);
-  if (!auth.nile.installed) return Err("nile_missing", "run \"mira amazon setup\" first");
-  if (!auth.authenticated) return Err("not_authenticated", "run \"mira amazon login\" first");
+  if (!auth.nile.installed) return StoreToolMissing("amazon", "Amazon Games", "nile");
+  if (!auth.authenticated) return StoreNotSignedIn("amazon", "Amazon Games");
   return {};
 }
 

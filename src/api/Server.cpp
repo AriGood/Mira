@@ -71,6 +71,28 @@ void SendError(Response& res, int status, std::string_view code, std::string_vie
   res.set_content(ErrorBody(code, message).dump(), "application/json");
 }
 
+// Adds an error's optional hint and fix to `out` (an error envelope or an event).
+void AddHintAndFix(json& out, const Error& error) {
+  if (!error.hint.empty()) out["hint"] = error.hint;
+  if (error.fix.kind.empty()) return;
+  json fix = {{"kind", error.fix.kind}, {"target", error.fix.target}};
+  if (!error.fix.step.empty()) fix["step"] = error.fix.step;
+  out["fix"] = std::move(fix);
+}
+
+// Same, keeping the error's hint and fix for the client to offer.
+void SendError(Response& res, int status, const Error& error) {
+  json body = ErrorBody(error.code, error.message);
+  AddHintAndFix(body["error"], error);
+  res.status = status;
+  res.set_content(body.dump(), "application/json");
+}
+
+// A GameStore failure: an unknown id is 404, a failed save is the daemon's fault.
+void SendStoreError(Response& res, const Error& error) {
+  SendError(res, error.code == "game_not_found" ? 404 : 500, error);
+}
+
 void SendJson(Response& res, json body, int status = 200) {
   res.status = status;
   res.set_content(body.dump(), "application/json");
@@ -80,7 +102,7 @@ void SendResult(Response& res, const Result<void>& result) {
   if (result) {
     SendJson(res, json::object());
   } else {
-    SendError(res, 400, result.error().code, result.error().message);
+    SendError(res, 400, result.error());
   }
 }
 
@@ -172,8 +194,8 @@ Result<void> CheckCommandWrappers(const std::vector<std::string>& wrappers) {
     const std::vector<std::string> tokens = strings::Split(entry, ' ');
     if (tokens.empty()) continue;
     if (!runner::FindOnPath(tokens[0])) {
-      return Err("wrapper_not_found",
-                std::format("command_wrappers entry \"{}\" is not on PATH", tokens[0]));
+      return Err("wrapper_not_found", std::format("the command wrapper \"{}\" isn't installed", tokens[0]),
+                 "Install it, or remove it from Command Wrappers.", Fix::Setting("command_wrappers"));
     }
   }
   return {};
@@ -196,9 +218,10 @@ Result<void> RunPreScriptInline(const std::string& pre_script) {
   script.argv = {"sh", "-c", pre_script};
   const Result<runner::ExecResult> ran = runner::RunAndWait(script);
   if (!ran || ran->exit_code != 0) {
-    return Err("pre_launch_failed", !ran ? ran.error().message
-                                          : std::format("launch.pre_script exited {}: {}", ran->exit_code,
-                                                        ran->output));
+    return Err("pre_launch_failed",
+               !ran ? ran.error().message
+                    : std::format("the pre-launch script exited {}: {}", ran->exit_code, ran->output),
+               "Fix or clear the pre-launch script.", Fix::Setting("launch.pre_script"));
   }
   return {};
 }
@@ -530,6 +553,8 @@ void Server::RegisterRoutes() {
       if (entry.constraint.maximum) entries.back()["maximum"] = *entry.constraint.maximum;
       if (entry.is_secret) entries.back()["is_secret"] = true;
       if (entry.is_runner_ref) entries.back()["is_runner_ref"] = true;
+      if (!entry.link.empty()) entries.back()["link"] = entry.link;
+      if (!entry.keywords.empty()) entries.back()["keywords"] = entry.keywords;
     }
     SendJson(res, std::move(entries));
   });
@@ -622,7 +647,7 @@ void Server::RegisterRoutes() {
     if (patch.is_discarded()) return SendError(res, 400, "invalid_json", "body is not valid JSON");
 
     auto result = games_.Update(id, [&](model::Game& game) { game = ParseGamePatch(game, patch); });
-    if (!result) return SendError(res, 404, result.error().code, result.error().message);
+    if (!result) return SendStoreError(res, result.error());
     SyncDesktopEntries(config_, games_);
     events_.Publish("game.updated", GameJson(*result, supervisor_));
     SendJson(res, GameJson(*result, supervisor_));
@@ -646,7 +671,7 @@ void Server::RegisterRoutes() {
     }
     auto result =
         games_.Update(id, [&](model::Game& game) { ApplyOverridesPatch(game, patch); });
-    if (!result) return SendError(res, 404, result.error().code, result.error().message);
+    if (!result) return SendStoreError(res, result.error());
     // An override can turn desktop_entries.enabled off for this game.
     SyncDesktopEntries(config_, games_);
     SendJson(res, GameJson(*result, supervisor_));
@@ -667,16 +692,16 @@ void Server::RegisterRoutes() {
     if (delete_files && game->source == "epic" && !game->source_ref.empty()) {
       // Uninstall through Legendary so its manifest stays in sync.
       if (auto uninstalled = epic::RunLegendary(config_, {"uninstall", game->source_ref, "-y"}); !uninstalled) {
-        return SendError(res, 400, uninstalled.error().code, uninstalled.error().message);
+        return SendError(res, 400, uninstalled.error());
       }
     } else if (delete_files) {
       if (auto deleted = DeleteUnderRoot(game->install_path, config_.GetPathArray("library_roots")); !deleted) {
-        return SendError(res, 400, deleted.error().code, deleted.error().message);
+        return SendError(res, 400, deleted.error());
       }
     }
     if (delete_prefix) {
       if (auto deleted = DeleteUnderRoot(game->data_dir, {config_.GetPath("prefix_root")}); !deleted) {
-        return SendError(res, 400, deleted.error().code, deleted.error().message);
+        return SendError(res, 400, deleted.error());
       }
     }
     if (delete_metadata) {
@@ -689,7 +714,7 @@ void Server::RegisterRoutes() {
     }
 
     auto result = games_.Remove(req.matches[1]);
-    if (!result) return SendError(res, 404, result.error().code, result.error().message);
+    if (!result) return SendStoreError(res, result.error());
     SyncDesktopEntries(config_, games_);
     events_.Publish("game.removed", {{"id", req.matches[1].str()}});
     SendJson(res, json::object());
@@ -737,7 +762,7 @@ void Server::RegisterRoutes() {
   http_->Post("/v1/steam/scan", [this](const Request&, Response& res) {
     steam::SteamScanner scanner(config_, games_, events_);
     auto summary = scanner.Scan();
-    if (!summary) return SendError(res, 404, summary.error().code, summary.error().message);
+    if (!summary) return SendError(res, 404, summary.error());
     SyncDesktopEntries(config_, games_);
     for (const model::Game& game : summary->added_games) metadata_fetches_.Enqueue(config_, events_, game);
     SendJson(res, {{"added", summary->added}, {"updated", summary->updated}});
@@ -748,7 +773,7 @@ void Server::RegisterRoutes() {
   http_->Post("/v1/lutris/import", [this](const Request&, Response& res) {
     lutris::LutrisImporter importer(config_, games_, events_);
     auto summary = importer.Import();
-    if (!summary) return SendError(res, 404, summary.error().code, summary.error().message);
+    if (!summary) return SendError(res, 404, summary.error());
     SyncDesktopEntries(config_, games_);
     for (const model::Game& game : summary->added_games) metadata_fetches_.Enqueue(config_, events_, game);
     SendJson(res, {{"added", summary->added}, {"updated", summary->updated}, {"other_runner", summary->other_runner}, {"incomplete", summary->incomplete}});
@@ -767,7 +792,7 @@ void Server::RegisterRoutes() {
   // Re-running this fetches the latest release, which is also how updates work.
   http_->Post("/v1/epic/legendary/install", [this](const Request&, Response& res) {
     auto releases = runner::ListReleases(config_, "legendary");
-    if (!releases) return SendError(res, 502, releases.error().code, releases.error().message);
+    if (!releases) return SendError(res, 502, releases.error());
     if (releases->empty()) return SendError(res, 404, "no_release_found", "no matching legendary release found");
 
     const runner::ReleaseAsset asset = releases->front();  // newest first
@@ -802,7 +827,7 @@ void Server::RegisterRoutes() {
       return SendError(res, 400, "invalid_body", R"(expected {"code": "..."})");
     }
     if (auto logged_in = epic::Login(config_, body["code"]); !logged_in) {
-      return SendError(res, 400, logged_in.error().code, logged_in.error().message);
+      return SendError(res, 400, logged_in.error());
     }
     const epic::EpicAuthStatus status = epic::Status(config_);
     SendJson(res, {{"authenticated", status.authenticated}, {"account", status.account}});
@@ -810,7 +835,7 @@ void Server::RegisterRoutes() {
 
   http_->Post("/v1/epic/logout", [this](const Request&, Response& res) {
     if (auto logged_out = epic::Logout(config_); !logged_out) {
-      return SendError(res, 400, logged_out.error().code, logged_out.error().message);
+      return SendError(res, 400, logged_out.error());
     }
     SendJson(res, {{"status", "logged_out"}});
   });
@@ -818,7 +843,7 @@ void Server::RegisterRoutes() {
   http_->Post("/v1/epic/import", [this](const Request&, Response& res) {
     epic::EpicImporter importer(config_, games_, events_);
     auto summary = importer.Import();
-    if (!summary) return SendError(res, 404, summary.error().code, summary.error().message);
+    if (!summary) return SendError(res, 404, summary.error());
     SyncDesktopEntries(config_, games_);
     for (const model::Game& game : summary->added_games) metadata_fetches_.Enqueue(config_, events_, game);
     SendJson(res, {{"added", summary->added}, {"updated", summary->updated}});
@@ -838,7 +863,7 @@ void Server::RegisterRoutes() {
 
   http_->Post("/v1/gog/setup", [this](const Request&, Response& res) {
     auto releases = runner::ListReleases(config_, "gog");
-    if (!releases) return SendError(res, 502, releases.error().code, releases.error().message);
+    if (!releases) return SendError(res, 502, releases.error());
     if (releases->empty()) return SendError(res, 404, "no_release_found", "no matching gogdl release found");
 
     const runner::ReleaseAsset asset = releases->front();
@@ -862,7 +887,7 @@ void Server::RegisterRoutes() {
       return SendError(res, 400, "invalid_body", R"(expected {"code": "..."})");
     }
     if (auto logged_in = gog::Login(config_, body["code"]); !logged_in) {
-      return SendError(res, 400, logged_in.error().code, logged_in.error().message);
+      return SendError(res, 400, logged_in.error());
     }
     const gog::GogAuthStatus status = gog::Status(config_);
     SendJson(res, {{"authenticated", status.authenticated}});
@@ -870,7 +895,7 @@ void Server::RegisterRoutes() {
 
   http_->Post("/v1/gog/logout", [this](const Request&, Response& res) {
     if (auto logged_out = gog::Logout(config_); !logged_out) {
-      return SendError(res, 400, logged_out.error().code, logged_out.error().message);
+      return SendError(res, 400, logged_out.error());
     }
     SendJson(res, {{"status", "logged_out"}});
   });
@@ -879,7 +904,7 @@ void Server::RegisterRoutes() {
   http_->Post("/v1/gog/import", [this](const Request&, Response& res) {
     gog::GogImporter importer(config_, games_, events_);
     auto summary = importer.Import();
-    if (!summary) return SendError(res, 404, summary.error().code, summary.error().message);
+    if (!summary) return SendError(res, 404, summary.error());
     SyncDesktopEntries(config_, games_);
     for (const model::Game& game : summary->added_games) metadata_fetches_.Enqueue(config_, events_, game);
     SendJson(res, {{"added", summary->added}, {"updated", summary->updated}});
@@ -898,7 +923,7 @@ void Server::RegisterRoutes() {
 
   http_->Post("/v1/amazon/setup", [this](const Request&, Response& res) {
     auto releases = runner::ListReleases(config_, "amazon");
-    if (!releases) return SendError(res, 502, releases.error().code, releases.error().message);
+    if (!releases) return SendError(res, 502, releases.error());
     if (releases->empty()) return SendError(res, 404, "no_release_found", "no matching nile release found");
 
     const runner::ReleaseAsset asset = releases->front();
@@ -917,7 +942,7 @@ void Server::RegisterRoutes() {
 
   http_->Post("/v1/amazon/login", [this](const Request&, Response& res) {
     const auto url = amazon::BeginLogin(config_);
-    if (!url) return SendError(res, 409, url.error().code, url.error().message);
+    if (!url) return SendError(res, 409, url.error());
     SendJson(res, {{"url", *url}});
   });
 
@@ -927,14 +952,14 @@ void Server::RegisterRoutes() {
       return SendError(res, 400, "invalid_body", R"(expected {"redirect": "..."})");
     }
     if (auto logged_in = amazon::FinishLogin(config_, body["redirect"]); !logged_in) {
-      return SendError(res, 400, logged_in.error().code, logged_in.error().message);
+      return SendError(res, 400, logged_in.error());
     }
     SendJson(res, {{"authenticated", true}});
   });
 
   http_->Post("/v1/amazon/logout", [this](const Request&, Response& res) {
     if (auto logged_out = amazon::Logout(config_); !logged_out) {
-      return SendError(res, 400, logged_out.error().code, logged_out.error().message);
+      return SendError(res, 400, logged_out.error());
     }
     SendJson(res, {{"status", "logged_out"}});
   });
@@ -942,7 +967,7 @@ void Server::RegisterRoutes() {
   http_->Post("/v1/amazon/import", [this](const Request&, Response& res) {
     amazon::AmazonImporter importer(config_, games_, events_);
     auto summary = importer.Import();
-    if (!summary) return SendError(res, 404, summary.error().code, summary.error().message);
+    if (!summary) return SendError(res, 404, summary.error());
     SyncDesktopEntries(config_, games_);
     for (const model::Game& game : summary->added_games) metadata_fetches_.Enqueue(config_, events_, game);
     SendJson(res, {{"added", summary->added}, {"updated", summary->updated}});
@@ -996,7 +1021,7 @@ void Server::RegisterRoutes() {
     const launchers::Launcher* launcher = launchers::Find(req.matches[1].str());
     if (!launcher) return SendError(res, 404, "launcher_not_found", "no such launcher");
     const auto summary = launchers::Import(config_, games_, events_, *launcher);
-    if (!summary) return SendError(res, 409, summary.error().code, summary.error().message);
+    if (!summary) return SendError(res, 409, summary.error());
     SyncDesktopEntries(config_, games_);
     for (const model::Game& game : summary->added_games) metadata_fetches_.Enqueue(config_, events_, game);
     SendJson(res, {{"added", summary->added}, {"updated", summary->updated}});
@@ -1019,9 +1044,9 @@ void Server::RegisterRoutes() {
       target.source_ref = ref;
     }
     auto command = launchers::BuildCommand(config_, games_, target, action);
-    if (!command) return SendError(res, 409, command.error().code, command.error().message);
+    if (!command) return SendError(res, 409, command.error());
     if (auto spawned = runner::SpawnDetached(*command); !spawned) {
-      return SendError(res, 500, spawned.error().code, spawned.error().message);
+      return SendError(res, 500, spawned.error());
     }
     SendJson(res, {{"status", "opened"}});
   });
@@ -1040,7 +1065,7 @@ void Server::RegisterRoutes() {
 
   http_->Post("/v1/itch/setup", [this](const Request&, Response& res) {
     auto releases = runner::ListReleases(config_, "itch");
-    if (!releases) return SendError(res, 502, releases.error().code, releases.error().message);
+    if (!releases) return SendError(res, 502, releases.error());
     if (releases->empty()) return SendError(res, 404, "no_release_found", "no matching butler release found");
 
     const runner::ReleaseAsset asset = releases->front();
@@ -1064,14 +1089,14 @@ void Server::RegisterRoutes() {
       return SendError(res, 400, "invalid_body", R"(expected {"api_key": "..."})");
     }
     if (auto logged_in = itch::Login(config_, body["api_key"]); !logged_in) {
-      return SendError(res, 400, logged_in.error().code, logged_in.error().message);
+      return SendError(res, 400, logged_in.error());
     }
     SendJson(res, {{"authenticated", true}});
   });
 
   http_->Post("/v1/itch/logout", [this](const Request&, Response& res) {
     if (auto logged_out = itch::Logout(config_); !logged_out) {
-      return SendError(res, 400, logged_out.error().code, logged_out.error().message);
+      return SendError(res, 400, logged_out.error());
     }
     SendJson(res, {{"status", "logged_out"}});
   });
@@ -1079,7 +1104,7 @@ void Server::RegisterRoutes() {
   http_->Post("/v1/itch/import", [this](const Request&, Response& res) {
     itch::ItchImporter importer(config_, games_, events_);
     auto summary = importer.Import();
-    if (!summary) return SendError(res, 404, summary.error().code, summary.error().message);
+    if (!summary) return SendError(res, 404, summary.error());
     SyncDesktopEntries(config_, games_);
     for (const model::Game& game : summary->added_games) metadata_fetches_.Enqueue(config_, events_, game);
     SendJson(res, {{"added", summary->added}, {"updated", summary->updated}});
@@ -1089,7 +1114,7 @@ void Server::RegisterRoutes() {
 
   http_->Get(R"(/v1/sources/([a-z]+)/removal)", [this](const Request& req, Response& res) {
     auto plan = library::PlanRemoval(config_, games_, req.matches[1].str());
-    if (!plan) return SendError(res, 404, plan.error().code, plan.error().message);
+    if (!plan) return SendError(res, 404, plan.error());
     json games = json::array();
     for (const library::RemovalGame& game : plan->games) {
       games.push_back({{"id", game.id}, {"name", game.name}, {"deletes", game.deletes}});
@@ -1103,7 +1128,7 @@ void Server::RegisterRoutes() {
 
   http_->Post(R"(/v1/sources/([a-z]+)/remove)", [this](const Request& req, Response& res) {
     auto removed = library::RemoveSource(config_, games_, events_, req.matches[1].str());
-    if (!removed) return SendError(res, 404, removed.error().code, removed.error().message);
+    if (!removed) return SendError(res, 404, removed.error());
     SyncDesktopEntries(config_, games_);
     SendJson(res, {{"removed", removed->removed}, {"problems", removed->problems}});
   });
@@ -1111,7 +1136,7 @@ void Server::RegisterRoutes() {
   const auto send_source_runner = [](Response& res, const Result<library::SourceRunner>& runner) {
     if (!runner) {
       const int status = runner.error().code == "launcher_not_installed" ? 409 : 400;
-      return SendError(res, status, runner.error().code, runner.error().message);
+      return SendError(res, status, runner.error());
     }
     SendJson(res, {{"runner_ref", runner->runner_ref}, {"games", runner->games}, {"differing", runner->differing}});
   };
@@ -1138,7 +1163,7 @@ void Server::RegisterRoutes() {
 
   http_->Get("/v1/itch/collections", [this](const Request&, Response& res) {
     auto collections = itch::ListCollections(config_);
-    if (!collections) return SendError(res, 400, collections.error().code, collections.error().message);
+    if (!collections) return SendError(res, 400, collections.error());
     json out = json::array();
     for (const itch::ItchCollection& collection : *collections) out.push_back(CollectionJson(collection));
     SendJson(res, std::move(out));
@@ -1150,7 +1175,7 @@ void Server::RegisterRoutes() {
       return SendError(res, 400, "invalid_body", R"(expected {"link": "https://itch.io/c/<id>/..."})");
     }
     auto added = itch::AddCollection(config_, body["link"].get<std::string>());
-    if (!added) return SendError(res, 400, added.error().code, added.error().message);
+    if (!added) return SendError(res, 400, added.error());
     SendJson(res, CollectionJson(*added), 201);
   });
 
@@ -1172,7 +1197,7 @@ void Server::RegisterRoutes() {
 
   http_->Post("/v1/humble/setup", [this](const Request&, Response& res) {
     auto releases = runner::ListReleases(config_, "humble");
-    if (!releases) return SendError(res, 502, releases.error().code, releases.error().message);
+    if (!releases) return SendError(res, 502, releases.error());
     if (releases->empty()) return SendError(res, 404, "no_release_found", "no matching humble-cli release found");
 
     const runner::ReleaseAsset asset = releases->front();
@@ -1196,14 +1221,14 @@ void Server::RegisterRoutes() {
       return SendError(res, 400, "invalid_body", R"(expected {"session_key": "..."})");
     }
     if (auto logged_in = humble::Login(config_, body["session_key"]); !logged_in) {
-      return SendError(res, 400, logged_in.error().code, logged_in.error().message);
+      return SendError(res, 400, logged_in.error());
     }
     SendJson(res, {{"authenticated", true}});
   });
 
   http_->Get("/v1/humble/library", [this](const Request&, Response& res) {
     auto bundles = humble::ListBundles(config_);
-    if (!bundles) return SendError(res, 400, bundles.error().code, bundles.error().message);
+    if (!bundles) return SendError(res, 400, bundles.error());
     json out = json::array();
     for (const humble::BundleSummary& bundle : *bundles) {
       out.push_back({{"key", bundle.key}, {"name", bundle.name}, {"claimed", bundle.claimed}});
@@ -1252,7 +1277,7 @@ void Server::RegisterRoutes() {
   http_->Get("/v1/library", [this](const Request& req, Response& res) {
     const std::string source = req.has_param("source") ? req.get_param_value("source") : "";
     auto entries = library::ListCatalog(config_, games_, source);
-    if (!entries) return SendError(res, 400, entries.error().code, entries.error().message);
+    if (!entries) return SendError(res, 400, entries.error());
     json out = json::array();
     for (const library::CatalogEntry& entry : *entries) {
       out.push_back({{"source", entry.source},
@@ -1350,7 +1375,7 @@ void Server::RegisterRoutes() {
   http_->Get("/v1/desktop-entries/candidates", [this](const Request&, Response& res) {
     desktop::DesktopEntryScanner scanner(config_, games_, events_);
     auto candidates = scanner.ListCandidates();
-    if (!candidates) return SendError(res, 404, candidates.error().code, candidates.error().message);
+    if (!candidates) return SendError(res, 404, candidates.error());
     json out = json::array();
     for (const auto& c : *candidates) out.push_back({{"id", c.id}, {"name", c.name}, {"icon", c.icon}});
     SendJson(res, std::move(out));
@@ -1365,7 +1390,7 @@ void Server::RegisterRoutes() {
 
     desktop::DesktopEntryScanner scanner(config_, games_, events_);
     auto summary = scanner.Import(ids);
-    if (!summary) return SendError(res, 404, summary.error().code, summary.error().message);
+    if (!summary) return SendError(res, 404, summary.error());
     SyncDesktopEntries(config_, games_);
     for (const model::Game& game : summary->added_games) metadata_fetches_.Enqueue(config_, events_, game);
     SendJson(res, {{"added", summary->added}, {"updated", summary->updated}});
@@ -1427,7 +1452,7 @@ void Server::RegisterRoutes() {
     }
 
     auto result = games_.Upsert(game);
-    if (!result) return SendError(res, 500, result.error().code, result.error().message);
+    if (!result) return SendError(res, 500, result.error());
 
     if (game.status == model::GameStatus::Ready && game.platform == model::Platform::Windows) {
       const runner::RunnerRegistry provisioner(config_);
@@ -1476,13 +1501,13 @@ void Server::RegisterRoutes() {
         return SendError(res, 409, "already_running", std::format("\"{}\" is already running", game->id));
       }
       auto command = launchers::BuildCommand(config_, games_, *game);
-      if (!command) return SendError(res, 409, command.error().code, command.error().message);
+      if (!command) return SendError(res, 409, command.error());
       if (auto ran = RunPreScriptInline(pre_script); !ran) {
-        return SendError(res, 409, ran.error().code, ran.error().message);
+        return SendError(res, 409, ran.error());
       }
       ApplyLaunchEnv(*command, resolver.GetStringArray("launch.env"));
       if (auto spawned = runner::SpawnDetached(*command); !spawned) {
-        return SendError(res, 500, spawned.error().code, spawned.error().message);
+        return SendError(res, 500, spawned.error());
       }
       [[maybe_unused]] auto _ =
           games_.Update(game->id, [](model::Game& g) { g.last_played_at = model::NowSeconds(); });
@@ -1500,13 +1525,13 @@ void Server::RegisterRoutes() {
     if (game->runner_ref.starts_with("steam:")) {
       if (resolver.GetString("steam.launch_mode") == "steam") {
         if (auto ran = RunPreScriptInline(pre_script); !ran) {
-          return SendError(res, 409, ran.error().code, ran.error().message);
+          return SendError(res, 409, ran.error());
         }
         const std::string appid = game->runner_ref.substr(std::string_view("steam:").size());
         Command command;
         command.argv = {"steam", std::format("steam://rungameid/{}", appid)};
         if (auto spawned = runner::SpawnDetached(command); !spawned) {
-          return SendError(res, 500, spawned.error().code, spawned.error().message);
+          return SendError(res, 500, spawned.error());
         }
         [[maybe_unused]] auto _ =
             games_.Update(game->id, [](model::Game& g) { g.last_played_at = model::NowSeconds(); });
@@ -1524,7 +1549,7 @@ void Server::RegisterRoutes() {
 
     const runner::RunnerRegistry registry(config_);
     auto resolved = registry.Resolve(registry.ResolveRef(*game));
-    if (!resolved) return SendError(res, 400, resolved.error().code, resolved.error().message);
+    if (!resolved) return SendError(res, 400, resolved.error());
 
     if (game->runner_ref.empty() && resolved->build && config_.GetBool("launch.pin_runner")) {
       const std::string pinned = std::format("{}:{}", resolved->runner->kind(), resolved->build->name);
@@ -1533,11 +1558,11 @@ void Server::RegisterRoutes() {
     }
 
     auto command = resolved->runner->BuildCommand(*game, resolved->build);
-    if (!command) return SendError(res, 400, command.error().code, command.error().message);
+    if (!command) return SendError(res, 400, command.error());
 
     const std::vector<std::string> wrappers = resolver.GetStringArray("command_wrappers");
     if (auto checked = CheckCommandWrappers(wrappers); !checked) {
-      return SendError(res, 400, checked.error().code, checked.error().message);
+      return SendError(res, 400, checked.error());
     }
     ApplyLaunchEnv(*command, resolver.GetStringArray("launch.env"));
     ApplyCommandWrappers(*command, wrappers);
@@ -1548,10 +1573,10 @@ void Server::RegisterRoutes() {
     if (!mira_run) {
       log::Warn("mira-run not found; launching {} directly with no session recording", game->id);
       if (auto ran = RunPreScriptInline(pre_script); !ran) {
-        return SendError(res, 409, ran.error().code, ran.error().message);
+        return SendError(res, 409, ran.error());
       }
       if (auto launched = supervisor_.Launch(*game, *command, post_script); !launched) {
-        return SendError(res, 409, launched.error().code, launched.error().message);
+        return SendError(res, 409, launched.error());
       }
       return SendJson(res, {{"status", "running"}, {"tracked", true}});
     }
@@ -1582,7 +1607,7 @@ void Server::RegisterRoutes() {
 
     int status_fd = -1;
     auto wrapper_pid = runner::SpawnDetachedWithStatus(wrapped, status_fd);
-    if (!wrapper_pid) return SendError(res, 500, wrapper_pid.error().code, wrapper_pid.error().message);
+    if (!wrapper_pid) return SendError(res, 500, wrapper_pid.error());
 
     const WrapperStatus status = ReadWrapperStatus(status_fd, pre_timeout_s + 10);
     ::close(status_fd);
@@ -1595,11 +1620,16 @@ void Server::RegisterRoutes() {
       return SendError(res, 500, "wrapper_unresponsive", "mira-run did not respond in time");
     }
     if (status.code == "pre_failed") {
-      return SendError(res, 409, "pre_launch_failed", status.detail);
+      return SendError(res, 409,
+                       Error{"pre_launch_failed", "the pre-launch script failed: " + status.detail,
+                             "Its output is in the game's log.", Fix::Game(game->id, "log")});
     }
     if (status.code == "pre_timeout") {
-      return SendError(res, 409, "pre_launch_timeout",
-                       std::format("launch.pre_script did not finish within {}s", pre_timeout_s));
+      return SendError(res, 409,
+                       Error{"pre_launch_timeout",
+                             std::format("the pre-launch script didn't finish within {}s", pre_timeout_s),
+                             "Make the script finish sooner, or allow it more time.",
+                             Fix::Setting("launch.pre_timeout_s")});
     }
     if (!status.ok) {
       return SendError(res, 500, "wrapper_failed", std::format("unexpected mira-run status: {}", status.code));
@@ -1607,7 +1637,7 @@ void Server::RegisterRoutes() {
 
     if (auto launched = supervisor_.LaunchWrapped(*game, *wrapper_pid, std::filesystem::path(status.detail));
         !launched) {
-      return SendError(res, 409, launched.error().code, launched.error().message);
+      return SendError(res, 409, launched.error());
     }
     SendJson(res, {{"status", "running"}, {"tracked", true}});  // always true: Mira spawned it
   });
@@ -1623,7 +1653,7 @@ void Server::RegisterRoutes() {
           return SendJson(res, {{"status", "not_running"}});
         }
       }
-      return SendError(res, 409, stopped.error().code, stopped.error().message);
+      return SendError(res, 409, stopped.error());
     }
     SendJson(res, {{"status", "stopping"}});
   });
@@ -1655,16 +1685,18 @@ void Server::RegisterRoutes() {
           g.last_error.clear();
         }
       });
-      if (!saved) return SendError(res, 404, saved.error().code, saved.error().message);
+      if (!saved) return SendError(res, 404, saved.error());
       game = *saved;
       if (game->status == model::GameStatus::Broken) {
-        return SendError(res, 409, "provision_failed", game->last_error);
+        return SendError(res, 409,
+                         Error{"provision_failed", "couldn't set up this game's Wine prefix: " + game->last_error,
+                               "The runner may be broken. Try a different one.", Fix::Runners()});
       }
     }
 
     const runner::RunnerRegistry registry(config_);
     auto resolved = registry.Resolve(registry.ResolveRef(*game));
-    if (!resolved) return SendError(res, 400, resolved.error().code, resolved.error().message);
+    if (!resolved) return SendError(res, 400, resolved.error());
 
     if (game->runner_ref.empty() && resolved->build && config_.GetBool("launch.pin_runner")) {
       const std::string pinned = std::format("{}:{}", resolved->runner->kind(), resolved->build->name);
@@ -1677,17 +1709,17 @@ void Server::RegisterRoutes() {
     run_as.args = args;
 
     auto command = resolved->runner->BuildCommand(run_as, resolved->build);
-    if (!command) return SendError(res, 400, command.error().code, command.error().message);
+    if (!command) return SendError(res, 400, command.error());
     const config::Resolver resolver(config_, game->overrides);
     const std::vector<std::string> wrappers = resolver.GetStringArray("command_wrappers");
     if (auto checked = CheckCommandWrappers(wrappers); !checked) {
-      return SendError(res, 400, checked.error().code, checked.error().message);
+      return SendError(res, 400, checked.error());
     }
     ApplyLaunchEnv(*command, resolver.GetStringArray("launch.env"));
     ApplyCommandWrappers(*command, wrappers);
 
     if (auto launched = supervisor_.Launch(*game, *command); !launched) {
-      return SendError(res, 409, launched.error().code, launched.error().message);
+      return SendError(res, 409, launched.error());
     }
     SendJson(res, {{"status", "running"}});
   });
@@ -1698,7 +1730,7 @@ void Server::RegisterRoutes() {
     if (!game) return SendError(res, 404, "game_not_found", "no such game");
     if (req.has_param("path")) game->exe_path = req.get_param_value("path");
     const auto info = library::DescribeInstaller(config_, *game);
-    if (!info) return SendError(res, 404, info.error().code, info.error().message);
+    if (!info) return SendError(res, 404, info.error());
     SendJson(res, {{"path", info->path.string()},
                    {"size_bytes", info->size_bytes},
                    {"format", library::ToString(info->format)},
@@ -1731,7 +1763,9 @@ void Server::RegisterRoutes() {
       installer = std::filesystem::path(game->install_path) / body["installer"].get<std::string>();
       std::error_code ec;
       if (!std::filesystem::is_regular_file(*installer, ec)) {
-        return SendError(res, 404, "installer_missing", std::format("no installer at {}", installer->string()));
+        return SendError(res, 404,
+                         Error{"installer_missing", std::format("there's no installer at {}", installer->string()),
+                               "Pick the installer again."});
       }
     }
     const bool installable = game->status == model::GameStatus::NeedsInstall ||
@@ -1752,7 +1786,9 @@ void Server::RegisterRoutes() {
         events_.Publish("game.install.finished", {{"id", id}});
       } else {
         if (const auto stored = games_.Find(id)) events_.Publish("game.updated", GameJson(*stored, supervisor_));
-        events_.Publish("game.install.failed", {{"id", id}, {"error", done.error().message}});
+        json failed = {{"id", id}, {"error", done.error().message}};
+        AddHintAndFix(failed, done.error());
+        events_.Publish("game.install.failed", std::move(failed));
       }
     }).detach();
     SendJson(res, {{"status", "installing"}, {"id", game->id}}, 202);
@@ -1761,27 +1797,26 @@ void Server::RegisterRoutes() {
   http_->Post(R"(/v1/games/([^/]+)/finish-install)", [this](const Request& req, Response& res) {
     auto game = games_.Find(req.matches[1]);
     if (!game) return SendError(res, 404, "game_not_found", "no such game");
-    if (game->exe_path.empty()) {
-      return SendError(res, 409, "no_executable",
-                       "PATCH exe_path to the installed game's real executable first");
-    }
+    const auto needs_exe = [&](std::string message) {
+      SendError(res, 409,
+                Error{"no_executable", std::move(message),
+                      "Choose the installed game's executable, then mark it installed again.",
+                      Fix::Game(game->id, "exe")});
+    };
+    if (game->exe_path.empty()) return needs_exe("this game has no executable set");
     const bool still_installer = std::ranges::any_of(game->candidates, [&](const model::Candidate& c) {
       return c.is_installer && c.rel_path == game->exe_path;
     });
-    if (still_installer) {
-      return SendError(res, 409, "no_executable",
-                       "exe_path still points at the installer — PATCH it to the installed game's real "
-                       "executable first");
-    }
+    if (still_installer) return needs_exe("the game's executable is still the installer");
     std::error_code ec;
     if (!std::filesystem::exists(std::filesystem::path(game->install_path) / game->exe_path, ec)) {
-      return SendError(res, 409, "no_executable", "exe_path doesn't exist under install_path");
+      return needs_exe("the game's executable isn't in its install folder");
     }
     auto result = games_.Update(game->id, [](model::Game& g) {
       g.status = model::GameStatus::Ready;
       g.last_error.clear();
     });
-    if (!result) return SendError(res, 404, result.error().code, result.error().message);
+    if (!result) return SendStoreError(res, result.error());
     SyncDesktopEntries(config_, games_);
     events_.Publish("game.updated", GameJson(*result, supervisor_));
     SendJson(res, GameJson(*result, supervisor_));
@@ -1806,14 +1841,14 @@ void Server::RegisterRoutes() {
     }
 
     auto relocated = library::Relocate(config_, *game, request);
-    if (!relocated) return SendError(res, 400, relocated.error().code, relocated.error().message);
+    if (!relocated) return SendError(res, 400, relocated.error());
 
     auto saved = games_.Update(game->id, [&](model::Game& g) {
       g.install_path = relocated->install_path;
       g.data_dir = relocated->data_dir;
       g.updated_at = model::NowSeconds();
     });
-    if (!saved) return SendError(res, 404, saved.error().code, saved.error().message);
+    if (!saved) return SendError(res, 404, saved.error());
     SyncDesktopEntries(config_, games_);
     events_.Publish("game.updated", GameJson(*saved, supervisor_));
     SendJson(res, GameJson(*saved, supervisor_));
@@ -1976,7 +2011,7 @@ void Server::RegisterRoutes() {
     if (!game) return SendError(res, 404, "game_not_found", "no such game");
     const std::string query = req.has_param("q") ? req.get_param_value("q") : game->name;
     auto matches = metadata::SearchSteamGridDb(config_, query);
-    if (!matches) return SendError(res, 502, matches.error().code, matches.error().message);
+    if (!matches) return SendError(res, 502, matches.error());
     const std::int64_t chosen = config::Resolver(config_, game->overrides).GetInt("metadata.steamgriddb_id");
     SendJson(res, {{"query", query}, {"chosen", chosen}, {"matches", *matches}});
   });
@@ -1985,7 +2020,7 @@ void Server::RegisterRoutes() {
     auto game = games_.Find(req.matches[1]);
     if (!game) return SendError(res, 404, "game_not_found", "no such game");
     auto matches = metadata::SearchSteamGridDb(config_, game->name);
-    if (!matches) return SendError(res, 502, matches.error().code, matches.error().message);
+    if (!matches) return SendError(res, 502, matches.error());
     const std::int64_t current = config::Resolver(config_, game->overrides).GetInt("metadata.steamgriddb_id");
     std::size_t next = 1;  // no choice yet: the top match was in use
     for (std::size_t i = 0; i < matches->size(); ++i) {
@@ -1998,7 +2033,7 @@ void Server::RegisterRoutes() {
     const json& match = (*matches)[next];
     const json patch = {{"metadata.steamgriddb_id", match.value("id", std::int64_t{0})}};
     auto updated = games_.Update(game->id, [&](model::Game& g) { ApplyOverridesPatch(g, patch); });
-    if (!updated) return SendError(res, 500, updated.error().code, updated.error().message);
+    if (!updated) return SendError(res, 500, updated.error());
     metadata_fetches_.Enqueue(config_, events_, *updated, /*force=*/true, /*announce=*/true);
     SendJson(res, {{"status", "fetching"}, {"match", match}}, 202);
   });
@@ -2012,7 +2047,7 @@ void Server::RegisterRoutes() {
     const std::int64_t id = body["steamgriddb_id"];
     const json patch = {{"metadata.steamgriddb_id", id == 0 ? json(nullptr) : json(id)}};
     auto game = games_.Update(req.matches[1], [&](model::Game& g) { ApplyOverridesPatch(g, patch); });
-    if (!game) return SendError(res, 404, game.error().code, game.error().message);
+    if (!game) return SendError(res, 404, game.error());
     metadata_fetches_.Enqueue(config_, events_, *game, /*force=*/true, /*announce=*/true);
     SendJson(res, {{"status", "fetching"}, {"steamgriddb_id", id}}, 202);
   });
@@ -2058,9 +2093,9 @@ void Server::RegisterRoutes() {
   http_->Get("/v1/runners/catalog", [this](const Request& req, Response& res) {
     const std::string kind = req.has_param("kind") ? req.get_param_value("kind") : "proton";
     auto family = FamilyFor(config_, kind, req.has_param("source") ? req.get_param_value("source") : "");
-    if (!family) return SendError(res, 404, family.error().code, family.error().message);
+    if (!family) return SendError(res, 404, family.error());
     auto releases = runner::ListFamilyReleases(*family);
-    if (!releases) return SendError(res, 502, releases.error().code, releases.error().message);
+    if (!releases) return SendError(res, 502, releases.error());
     const runner::RunnerRegistry registry(config_);
     const std::vector<model::RunnerBuild> installed = BuildsOfKind(registry, kind);
     json out = json::array();
@@ -2083,10 +2118,10 @@ void Server::RegisterRoutes() {
     const std::string kind = body["kind"];
     const std::string tag = body["tag"];
     auto family = FamilyFor(config_, kind, body.value("source", std::string()));
-    if (!family) return SendError(res, 404, family.error().code, family.error().message);
+    if (!family) return SendError(res, 404, family.error());
 
     auto releases = runner::ListFamilyReleases(*family);
-    if (!releases) return SendError(res, 502, releases.error().code, releases.error().message);
+    if (!releases) return SendError(res, 502, releases.error());
     const auto match = std::ranges::find(*releases, tag, &runner::ReleaseAsset::tag);
     if (match == releases->end()) {
       return SendError(res, 404, "release_not_found", std::format("no {} release tagged \"{}\"", family->label, tag));
@@ -2142,7 +2177,7 @@ void Server::RegisterRoutes() {
     std::optional<runner::ReleaseAsset> asset;
     if (id == "umu") {
       auto releases = runner::ListReleases(config_, "umu");
-      if (!releases) return SendError(res, 502, releases.error().code, releases.error().message);
+      if (!releases) return SendError(res, 502, releases.error());
       if (releases->empty()) return SendError(res, 404, "no_release_found", "no umu-launcher release found");
       asset = releases->front();
     }
@@ -2182,13 +2217,13 @@ void Server::RegisterRoutes() {
 
     const runner::RunnerRegistry registry(config_);
     auto resolved = registry.Resolve(kind + ":" + name);
-    if (!resolved) return SendError(res, 404, resolved.error().code, resolved.error().message);
+    if (!resolved) return SendError(res, 404, resolved.error());
     if (!resolved->build) {
       return SendError(res, 400, "not_a_build", std::format("\"{}\" has no separate installed builds", kind));
     }
 
     if (auto deleted = DeleteUnderRoot(BuildDir(*resolved->build).string(), RunnerRoots(config_, kind)); !deleted) {
-      return SendError(res, 400, deleted.error().code, deleted.error().message);
+      return SendError(res, 400, deleted.error());
     }
     events_.Publish("runners.removed", {{"kind", kind}, {"name", name}});
     SendJson(res, json::object());
@@ -2198,16 +2233,27 @@ void Server::RegisterRoutes() {
 
   http_->Get("/v1/events", [this](const Request& req, Response& res) {
     std::int64_t after_id = 0;
+    bool resuming = false;
     if (auto it = req.headers.find("Last-Event-ID"); it != req.headers.end()) {
       after_id = std::atoll(it->second.c_str());
+      resuming = true;
     }
+    // A new client gets the buffer replayed, then `stream.live` so it can tell
+    // history (show it) from news (announce it). A resuming one only missed news.
+    const std::int64_t replay_end = resuming ? 0 : events_.LatestId();
+    bool live_sent = resuming;
 
     res.set_header("Cache-Control", "no-cache");
     // The 20s wait only checks whether this client went away.
     res.set_chunked_content_provider(
         "text/event-stream",
-        [this, after_id](size_t, httplib::DataSink& sink) mutable -> bool {
+        [this, after_id, replay_end, live_sent](size_t, httplib::DataSink& sink) mutable -> bool {
           if (stopping_.load(std::memory_order_relaxed)) return false;
+          if (!live_sent && after_id >= replay_end) {
+            live_sent = true;
+            static constexpr std::string_view kLive = "event: stream.live\ndata: {}\n\n";
+            return sink.write(kLive.data(), kLive.size());
+          }
           auto event = events_.WaitNext(after_id, stopping_, std::chrono::milliseconds(20000));
           if (!event) return sink.is_writable() && !stopping_.load(std::memory_order_relaxed);
           after_id = event->id;

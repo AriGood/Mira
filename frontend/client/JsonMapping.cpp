@@ -22,6 +22,19 @@ std::vector<std::string> ReadTags(const json& entry) {
 }
 }  // namespace
 
+ApiError ToApiError(const json& error) {
+  ApiError out;
+  out.message = error.contains("message") ? error.value("message", std::string())
+                                          : error.value("error", std::string());
+  out.code = error.value("code", std::string());
+  out.hint = error.value("hint", std::string());
+  if (error.contains("fix") && error["fix"].is_object()) {
+    const json& fix = error["fix"];
+    out.fix = {fix.value("kind", std::string()), fix.value("target", std::string()), fix.value("step", std::string())};
+  }
+  return out;
+}
+
 GameSummary ToGameSummary(const json& entry) {
   GameSummary game;
   game.id = entry.value("id", std::string());

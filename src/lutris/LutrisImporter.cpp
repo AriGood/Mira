@@ -195,7 +195,10 @@ Result<LutrisImportSummary> LutrisImporter::Import() {
   if (!config_.GetBool("lutris.enabled")) return summary;
 
   const auto data_dir = FindLutrisDataDir(config_);
-  if (!data_dir) return Err("lutris_not_found", "no Lutris installation found");
+  if (!data_dir) {
+    return Err("lutris_not_found", "Mira couldn't find a Lutris installation",
+               "If Lutris is installed somewhere unusual, set its data folder.", Fix::Setting("lutris.data_dir"));
+  }
 
   const auto sqlite3 = runner::FindOnPath("sqlite3");
   if (!sqlite3) {

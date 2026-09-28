@@ -3,6 +3,8 @@
 #include <functional>
 #include <string>
 
+#include <QString>
+
 #include "../client/Types.h"
 
 class QCheckBox;
@@ -27,7 +29,9 @@ struct SettingEditor {
 
   // Builds the row into `parent`. `on_reset` backs the Reset button; empty leaves it out.
   QWidget* Build(QWidget* parent, std::function<void()> on_reset);
-  QWidget* Input() const;  // the widget to focus
+  QWidget* BuildLabel(QWidget* parent) const;  // the label, with a [?] for the doc
+  QString SearchText() const;                  // what the settings search matches on
+  QWidget* Input() const;                      // the widget to focus
   std::string Text() const;
   void SetText(const std::string& text);
 };

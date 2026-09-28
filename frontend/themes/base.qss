@@ -688,3 +688,20 @@ QFrame#runners_card QProgressBar::chunk {
   background: @accent;
   border-radius: 2px;
 }
+
+/* ui/HelpButton: a setting's [?]. */
+QToolButton#help_button {
+  background: transparent;
+  color: @text_muted;
+  border: 1px solid @border;
+  border-radius: 9px;
+  padding: 0;
+  font-size: @font_size_small;
+  font-weight: 600;
+}
+
+QToolButton#help_button:hover,
+QToolButton#help_button:focus {
+  color: @accent;
+  border-color: @accent;
+}

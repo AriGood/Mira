@@ -12,6 +12,7 @@
 #include <utility>
 
 #include "../client/MiradClient.h"
+#include "../ui/ErrorHelp.h"
 
 namespace mira_gui {
 
@@ -107,7 +108,7 @@ void InstallGameDialog::Install(bool interactive) {
                                   shown_->setEnabled(true);
                                   quiet_->setEnabled(true);
                                   error_->setText("Could not start the install: " +
-                                                  QString::fromStdString(result.error));
+                                                  error_help::Describe(result.error));
                                   error_->setVisible(true);
                                 });
 }

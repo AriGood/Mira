@@ -10,7 +10,9 @@ The **table** (`views/MainWindow`) shows every field of every game. The top bar'
 
 ### Sidebar
 
-From top to bottom: the Mira header, the Library, Runners and Settings rows, search with the filter and sort menu, the sources, recently played games, and the Add games button.
+From top to bottom: the Mira header, the Library, Runners and Settings rows, search with the filter and sort menu, pinned games, the sources, recently played games, and the Add games button.
+
+Pinning a game (game menu, or several at once from the batch menu, which offers Pin/Unpin and Hide/Unhide for whichever selected games each would change) adds the `favorite` tag, the same one Lutris imports its favorites under. Pinned games list by name under PINNED and get a pin badge on their tile. PINNED follows the grid's filter: hidden pinned games show only under the Hidden filter, and only they do.
 
 Only sources that are set up show in the sidebar. *Manage sources* (`dialogs/ManageSourcesDialog`) lists every source, sets which ones show and their order, and opens the page of one that isn't set up yet.
 
@@ -91,7 +93,7 @@ Only `game.added` and `game.updated` carry a game record, so views check the eve
 
 ## Settings
 
-- **`settings.toml`** holds backend settings. `ui/SettingsPanel` is generated from `GET /v1/config/schema`: sections, order, labels, dividers and runner pickers (`is_runner_ref`) all come from the schema, so a new backend setting needs no frontend change. Each row's editor comes from `ui/SettingEditor`, which the source settings card shares.
+- **`settings.toml`** holds backend settings. `ui/SettingsPanel` is generated from `GET /v1/config/schema`: sections, order, labels, dividers and runner pickers (`is_runner_ref`) all come from the schema, so a new backend setting needs no frontend change. Each row's editor comes from `ui/SettingEditor`, which the source settings card shares. A setting's doc opens from the `ui/HelpButton` [?] beside its label on click, not on hover, and a `link` shows as a web link next to the field. Search (`ui/SettingsSearch`) matches every typed word in any order against the key, label, category, doc and `keywords`.
 - **`frontend.toml`** holds GUI state and preferences (`FrontendPrefs` in `client/Types.h`), read and written as the `frontend` key of `/v1/config`. The backend never validates it.
 
 | Key | Meaning |
@@ -121,6 +123,12 @@ Success that already shows on screen gets no message. A notice only goes out whe
 Notifications use `org.freedesktop.Notifications` (`ui/SystemNotifier`) with a `desktop-entry` hint of `mira`. `FailedWithAction` adds a button that raises the window and runs the action. Without a notification service, failures become popups and notices become cards in the window's corner.
 
 Messages are plain text, since `mirad`'s errors quote paths and commands. Failures show `mirad`'s message under a sentence naming what failed.
+
+Every request result carries an `ApiError`: `mirad`'s message, code, `hint` and `fix` (see the error envelope in [`api.md`](api.md)). `notify::FailedRequest` shows the hint under the message and turns the fix into a button through `ui/ErrorHelp`: the setting to fill in, the Runners page, the game's settings or log, or the store's page. What to say and where to point is `mirad`'s knowledge, so a new error needs no frontend change. The one case `ErrorHelp` words itself is `mirad_unreachable`, set by the transport when a request never reaches `mirad`, which gets a *Start mirad* button. Status lines use `error_help::Describe` for the same text inline. `LibraryWindow` registers the routes with `error_help::SetNavigator`.
+
+A game that crashes within 30 seconds of launch gets a failure with a *View log* button. Later crashes only change the game's status, since many games exit non-zero on a normal quit.
+
+On connect, `mirad` replays its event buffer and then sends `stream.live`. Windows apply replayed events but only announce (notifications, install results, crashes) what comes after it, so a restart doesn't repeat old messages.
 
 ## Cover art
 

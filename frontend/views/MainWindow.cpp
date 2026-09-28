@@ -225,8 +225,7 @@ void MainWindow::RefreshGames() {
       this,
       [this](mira_gui::GamesResult result) {
         if (!result.ok) {
-          mira_gui::notify::Failed(this, "Could not list games.",
-                                   QString::fromStdString(result.error));
+          mira_gui::notify::FailedRequest(this, "Could not list games.", result.error);
           games_table_->setRowCount(0);
           return;
         }
@@ -349,9 +348,15 @@ void MainWindow::RemoveRow(const std::string& id) {
 }
 
 void MainWindow::HandleGameEvent(const std::string& type, const std::string& data) {
+  // Before this, events are mirad's replayed history: apply them, announce nothing.
+  if (type == "stream.live") {
+    events_live_ = true;
+    return;
+  }
+
   if (type == "notification") {
     mira_gui::NotificationEvent event;
-    if (mira_gui::MiradClient::ParseNotification(data, &event)) {
+    if (events_live_ && mira_gui::MiradClient::ParseNotification(data, &event)) {
       const QString message = QString::fromStdString(event.message);
       const auto level = mira_gui::notify::LevelFromString(QString::fromStdString(event.level));
       if (level == mira_gui::notify::Level::Warning || level == mira_gui::notify::Level::Error) {

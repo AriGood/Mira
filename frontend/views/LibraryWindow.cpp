@@ -61,6 +61,7 @@
 
 #include "../ui/AboutPanel.h"
 #include "../ui/CoverArt.h"
+#include "../ui/DaemonSupervisor.h"
 #include "../ui/DownloadTracker.h"
 #include "../ui/DownloadsPanel.h"
 #include "../ui/GameActions.h"
@@ -292,6 +293,12 @@ const FilterEntry kFilters[] = {
     {"Hidden", "hidden", mira_gui::icons::Glyph::EyeSlash},
 };
 
+// A crash within this many seconds of launch reads as "failed to start".
+constexpr std::int64_t kFailedStartSeconds = 30;
+
+// A pinned game's tag. "favorite" because Lutris imports its favorites under it.
+constexpr const char* kPinnedTag = "favorite";
+
 bool HasTag(const mira_gui::GameSummary& game, const std::string& tag) {
   return std::find(game.tags.begin(), game.tags.end(), tag) != game.tags.end();
 }
@@ -486,6 +493,8 @@ LibraryWindow::LibraryWindow(QWidget* parent) : QMainWindow(parent) {
   // Before the panel and the grid, because both ask it for covers.
   artwork_ = new mira_gui::ArtworkStore(this);
   connect(artwork_, &mira_gui::ArtworkStore::CoverChanged, this, &LibraryWindow::UpdateTileCover);
+
+  InstallErrorNavigator();
 
   // Before the top bar, which shows its count.
   downloads_ = new mira_gui::DownloadTracker(this);
@@ -789,7 +798,7 @@ void LibraryWindow::LoadPrefs() {
     recent_count_ = prefs.sidebar_recent_count.value_or(kDefaultRecentCount);
     show_source_counts_ = prefs.sidebar_source_counts.value_or(true);
     UpdateSourceNavs();
-    RefreshRecentlyPlayed();
+    RefreshSidebarGames();
     grid_->SetDragSelectEnabled(prefs.drag_select.value_or(true));
   });
 }
@@ -1070,8 +1079,7 @@ void LibraryWindow::OpenGameDetailPage(const std::string& id) {
 void LibraryWindow::ScanLibrary() {
   mira_gui::MiradClient::ScanLibraryAsync(this, [this](mira_gui::ScanResult result) {
     if (!result.ok) {
-      mira_gui::notify::Failed(this, "Could not scan the library.",
-                               QString::fromStdString(result.error));
+      mira_gui::notify::FailedRequest(this, "Could not scan the library.", result.error);
       return;
     }
     // New games show up in the grid on their own; only "nothing happened"
@@ -1086,8 +1094,7 @@ void LibraryWindow::ScanLibrary() {
 void LibraryWindow::ImportSteamLibrary() {
   mira_gui::MiradClient::ScanSteamAsync(this, [this](mira_gui::SteamScanResult result) {
     if (!result.ok) {
-      mira_gui::notify::Failed(this, "Could not import from Steam.",
-                               QString::fromStdString(result.error));
+      mira_gui::notify::FailedRequest(this, "Could not import from Steam.", result.error);
       return;
     }
     if (result.added == 0) mira_gui::notify::Notice(this, "No new Steam games found.");
@@ -1098,10 +1105,7 @@ void LibraryWindow::ImportSteamLibrary() {
 void LibraryWindow::ImportLutrisLibrary() {
   mira_gui::MiradClient::ImportLutrisAsync(this, [this](mira_gui::LutrisImportResult result) {
     if (!result.ok) {
-      mira_gui::notify::FailedWithHint(
-          this, "Could not import from Lutris.", QString::fromStdString(result.error),
-          "Lutris keeps its library in an sqlite database Mira reads with the sqlite3 command. "
-          "If Lutris is installed somewhere unusual, point lutris.data_dir at it in settings.");
+      mira_gui::notify::FailedRequest(this, "Could not import from Lutris.", result.error);
       return;
     }
     if (result.added == 0) mira_gui::notify::Notice(this, "No new Lutris games found.");
@@ -1122,8 +1126,7 @@ void LibraryWindow::AddGameManually() {
 void LibraryWindow::SyncDesktopEntries() {
   mira_gui::MiradClient::SyncDesktopEntriesAsync(this, [this](mira_gui::DesktopEntrySyncResult result) {
     if (!result.ok) {
-      mira_gui::notify::Failed(this, "Could not regenerate desktop entries.",
-                               QString::fromStdString(result.error));
+      mira_gui::notify::FailedRequest(this, "Could not regenerate desktop entries.", result.error);
       return;
     }
     mira_gui::notify::Notice(this, "Desktop entries regenerated.");
@@ -1146,15 +1149,14 @@ void LibraryWindow::RemoveAllDesktopEntries() {
   mira_gui::MiradClient::PatchConfigAsync(
       this, {edit}, [this](mira_gui::PatchConfigResult patch_result) {
         if (!patch_result.ok) {
-          mira_gui::notify::Failed(this, "Could not turn off desktop entries.",
-                                   QString::fromStdString(patch_result.error));
+          mira_gui::notify::FailedRequest(this, "Could not turn off desktop entries.", patch_result.error);
           return;
         }
         mira_gui::MiradClient::SyncDesktopEntriesAsync(
             this, [this](mira_gui::DesktopEntrySyncResult sync_result) {
               if (!sync_result.ok) {
-                mira_gui::notify::Failed(this, "Could not remove the desktop entries.",
-                                         QString::fromStdString(sync_result.error));
+                mira_gui::notify::FailedRequest(this, "Could not remove the desktop entries.",
+                                                sync_result.error);
                 return;
               }
               mira_gui::notify::Notice(this, "Desktop entries removed.");
@@ -1510,6 +1512,13 @@ QWidget* LibraryWindow::BuildSidebar() {
   nav_layout->setContentsMargins(0, 0, 0, 0);
   nav_layout->setSpacing(2);
 
+  pinned_heading_ = SidebarHeading(nav_content, "PINNED");
+  pinned_heading_->setVisible(false);
+  nav_layout->addWidget(pinned_heading_);
+  pinned_layout_ = new QVBoxLayout();
+  pinned_layout_->setSpacing(2);
+  nav_layout->addLayout(pinned_layout_);
+
   auto* sources_heading = new QWidget(nav_content);
   auto* sources_heading_layout = new QHBoxLayout(sources_heading);
   sources_heading_layout->setContentsMargins(0, 0, 0, 0);
@@ -1706,6 +1715,53 @@ void LibraryWindow::UpdateTileCover(const QString& id) {
   }
 }
 
+void LibraryWindow::InstallErrorNavigator() {
+  const auto find_source = [](const std::string& id) -> const mira_gui::SourceInfo* {
+    const auto& sources = mira_gui::AllSources();
+    const auto it = std::ranges::find(sources, QString::fromStdString(id), &mira_gui::SourceInfo::id);
+    return it != sources.end() ? &*it : nullptr;
+  };
+  QPointer<LibraryWindow> self(this);
+  mira_gui::error_help::Navigator nav;
+  nav.open_setting = [self](const QString& key) {
+    if (self) self->OpenSettings(key);
+  };
+  nav.open_runners = [self] {
+    if (self) self->OpenRunners();
+  };
+  nav.open_source = [self, find_source](const std::string& id) {
+    if (const mira_gui::SourceInfo* source = find_source(id); self && source != nullptr) self->OpenSource(*source);
+  };
+  nav.open_game_settings = [self](const std::string& id) {
+    if (self) self->OpenGameDialog(id);
+  };
+  nav.view_log = [self](const std::string& id) {
+    if (!self) return;
+    const mira_gui::GameSummary* game = self->FindGame(id);
+    mira_gui::actions::ViewLog(self, id, game != nullptr ? QString::fromStdString(game->name) : QString());
+  };
+  nav.start_daemon = [self] {
+    if (!self) return;
+    // Kept, not deleted after Ready: its destructor stops a mirad it started.
+    if (self->daemon_supervisor_ == nullptr) {
+      self->daemon_supervisor_ = new mira_gui::DaemonSupervisor(self);
+      connect(self->daemon_supervisor_, &mira_gui::DaemonSupervisor::Ready, self,
+              [self] { self->RefreshHealth(/*force_scan=*/false); });
+      connect(self->daemon_supervisor_, &mira_gui::DaemonSupervisor::Failed, self,
+              [self](const QString& error) {
+                mira_gui::notify::FailedWithHint(self, "Could not start mirad.", error,
+                                                 "Mira looks for mirad next to itself, then on PATH.");
+              });
+    }
+    self->daemon_supervisor_->EnsureRunning();
+  };
+  nav.source_name = [find_source](const std::string& id) {
+    const mira_gui::SourceInfo* source = find_source(id);
+    return source != nullptr ? source->name : QString();
+  };
+  mira_gui::error_help::SetNavigator(std::move(nav));
+}
+
 void LibraryWindow::ShowSteamGridDbNotice(bool asked_for) {
   // Only when the user actually asked for art — a background fetch after a
   // scan hitting this would otherwise nag on every launch. Once per session,
@@ -1725,8 +1781,7 @@ void LibraryWindow::FetchMissingArtwork() {
   mira_gui::MiradClient::RefreshMissingArtworkAsync(
       this, [this](mira_gui::RefreshMissingArtworkResult result) {
         if (!result.ok) {
-          mira_gui::notify::Failed(this, "Could not fetch missing cover art.",
-                                   QString::fromStdString(result.error));
+          mira_gui::notify::FailedRequest(this, "Could not fetch missing cover art.", result.error);
           return;
         }
         if (result.count == 0) {
@@ -1744,8 +1799,7 @@ void LibraryWindow::RefreshMetadata(const std::string& id, bool announce) {
       this, id, announce, [this, id, announce](mira_gui::MetadataRefreshResult result) {
         if (!result.ok) {
           if (announce) {
-            mira_gui::notify::Failed(this, "Could not refresh metadata.",
-                                     QString::fromStdString(result.error));
+            mira_gui::notify::FailedRequest(this, "Could not refresh metadata.", result.error);
           }
           return;
         }
@@ -1757,17 +1811,14 @@ void LibraryWindow::RefreshMetadata(const std::string& id, bool announce) {
 
 void LibraryWindow::RefreshHealth(bool force_scan) {
   mira_gui::MiradClient::CheckHealthAsync(this, [this, force_scan](mira_gui::HealthStatus status) {
+    mirad_reachable_ = status.reachable;
     if (status.reachable) {
       RescanAndRefreshGames(force_scan);
     } else {
       games_.clear();
       ApplyFilter();
-      mira_gui::notify::FailedWithHint(
-          this, "Could not reach mirad.", QString::fromStdString(status.detail),
-          "It was reachable when this window opened, so something stopped it. If you started "
-          "it yourself, run \"mirad\" again in a terminal. If systemd manages it: "
-          "systemctl --user restart mirad — and journalctl --user -u mirad to see why it "
-          "stopped.");
+      mira_gui::notify::FailedRequest(this, "Mira lost its connection to mirad.",
+                                      mira_gui::ApiError(status.detail, mira_gui::ApiError::kUnreachable));
     }
   });
 }
@@ -1795,8 +1846,7 @@ void LibraryWindow::RefreshGames() {
   // front so Ctrl+H is a client-side filter switch, not a round trip.
   mira_gui::MiradClient::ListGamesAsync(this, [this](mira_gui::GamesResult visible) {
     if (!visible.ok) {
-      mira_gui::notify::Failed(this, "Could not list games.",
-                               QString::fromStdString(visible.error));
+      mira_gui::notify::FailedRequest(this, "Could not list games.", visible.error);
       games_.clear();
       ApplyFilter();
       return;
@@ -1872,37 +1922,52 @@ void LibraryWindow::ApplyFilter() {
   // not a round trip.
   mira_gui::SortGames(games_, sort_key_, sort_descending_);
 
-  // grid_->clear() deletes every item; a stale last_hover_item_/pending
-  // dwell timer pointing at one of them would be a use-after-free the next
-  // time it fires.
-  grid_->ForgetItems();
-  ShowHoverCard(nullptr);
-
-  grid_->blockSignals(true);
-  grid_->clear();
-
-  int shown = 0;
-  QListWidgetItem* to_select = nullptr;
+  std::vector<const mira_gui::GameSummary*> visible;
   for (const mira_gui::GameSummary& game : games_) {
-    if (!MatchesFilter(game)) continue;
-    ++shown;
-
-    auto* item = new QListWidgetItem(grid_);
-    item->setData(mira_gui::GameTileDelegate::IdRole, QString::fromStdString(game.id));
-    item->setData(mira_gui::GameTileDelegate::NameRole, QString::fromStdString(game.name));
-    item->setData(mira_gui::GameTileDelegate::StatusRole, QString::fromStdString(game.status));
-    item->setData(mira_gui::GameTileDelegate::RunningRole, running_ids_.contains(game.id));
-    item->setData(mira_gui::GameTileDelegate::StatusTextRole, InstallText(game.id));
-    item->setData(Qt::DecorationRole, CoverFor(game));
-    if (game.id == previously_selected) to_select = item;
+    if (MatchesFilter(game)) visible.push_back(&game);
   }
-  grid_->blockSignals(false);
+  const int shown = static_cast<int>(visible.size());
 
-  if (to_select != nullptr) {
-    grid_->setCurrentItem(to_select);
-  } else if (!previously_selected.empty()) {
-    // Selected game was filtered away or removed — don't keep showing it.
-    selected_id_.clear();
+  bool same_tiles = grid_->count() == shown;
+  for (int i = 0; same_tiles && i < shown; ++i) {
+    same_tiles = grid_->item(i)->data(mira_gui::GameTileDelegate::IdRole).toString().toStdString() ==
+                 visible[i]->id;
+  }
+
+  if (same_tiles) {
+    // Same games in the same order (most game.updated events): refresh the
+    // tiles in place, keeping selection, scroll and hover.
+    for (int i = 0; i < shown; ++i) FillTile(grid_->item(i), *visible[i]);
+  } else {
+    QSet<QString> selected;
+    for (const QListWidgetItem* item : grid_->selectedItems()) {
+      selected.insert(item->data(mira_gui::GameTileDelegate::IdRole).toString());
+    }
+    // grid_->clear() deletes every item; a stale last_hover_item_/pending
+    // dwell timer pointing at one of them would be a use-after-free the next
+    // time it fires.
+    grid_->ForgetItems();
+    ShowHoverCard(nullptr);
+
+    grid_->blockSignals(true);
+    grid_->clear();
+    QListWidgetItem* to_select = nullptr;
+    for (const mira_gui::GameSummary* game : visible) {
+      auto* item = new QListWidgetItem(grid_);
+      item->setData(mira_gui::GameTileDelegate::IdRole, QString::fromStdString(game->id));
+      FillTile(item, *game);
+      if (game->id == previously_selected) to_select = item;
+      if (selected.contains(QString::fromStdString(game->id))) item->setSelected(true);
+    }
+    grid_->blockSignals(false);
+
+    if (to_select != nullptr) {
+      grid_->setCurrentItem(to_select, QItemSelectionModel::NoUpdate);
+      to_select->setSelected(true);
+    } else if (!previously_selected.empty()) {
+      // Selected game was filtered away or removed — don't keep showing it.
+      selected_id_.clear();
+    }
   }
 
   empty_hint_->setVisible(shown == 0);
@@ -1912,20 +1977,29 @@ void LibraryWindow::ApplyFilter() {
   }
 
   // Two lines: count first (what you're looking at), connection status
-  // second (background fact, muted further by the dot standing in for a
-  // word). Only reached after a successful fetch, so the dot is always
-  // the "connected" color -- there's no "shown, but not connected" state.
-  footer_->setText(QString("%1 of %2 games shown<br><span style='color:%3'>●</span> Connected via %4")
+  // second (background fact, muted further by the dot standing in for a word).
+  const mira_gui::theme::Tokens& tokens = mira_gui::theme::Current();
+  footer_->setText(QString("%1 of %2 games shown<br><span style='color:%3'>●</span> %4 %5")
                        .arg(shown)
                        .arg(games_.size())
-                       .arg(mira_gui::theme::Current().success.name())
-                       .arg(QString::fromStdString(mira_gui::MiradClient::ResolveSocketPath())));
+                       .arg((mirad_reachable_ ? tokens.success : tokens.error).name(),
+                            mirad_reachable_ ? QString("Connected via") : QString("Not connected to"),
+                            QString::fromStdString(mira_gui::MiradClient::ResolveSocketPath())));
 
   RefreshClassicTable();
   if (source_page_ != nullptr) source_page_->SetGames(games_, running_ids_);
   if (runners_page_ != nullptr) runners_page_->SetGames(games_);
   UpdateSourceNavs();
-  RefreshRecentlyPlayed();
+  RefreshSidebarGames();
+}
+
+void LibraryWindow::FillTile(QListWidgetItem* item, const mira_gui::GameSummary& game) {
+  item->setData(mira_gui::GameTileDelegate::NameRole, QString::fromStdString(game.name));
+  item->setData(mira_gui::GameTileDelegate::StatusRole, QString::fromStdString(game.status));
+  item->setData(mira_gui::GameTileDelegate::RunningRole, running_ids_.contains(game.id));
+  item->setData(mira_gui::GameTileDelegate::PinnedRole, HasTag(game, kPinnedTag));
+  item->setData(mira_gui::GameTileDelegate::StatusTextRole, InstallText(game.id));
+  item->setData(Qt::DecorationRole, CoverFor(game));
 }
 
 const mira_gui::GameSummary* LibraryWindow::FindGame(const std::string& id) const {
@@ -2007,7 +2081,9 @@ void LibraryWindow::ShowContextMenu(const QPoint& pos) {
     grid_->clearSelection();
     item->setSelected(true);
   }
-  grid_->setCurrentItem(item);
+  // NoUpdate: the default ClearAndSelect would drop a drag or Ctrl+A selection
+  // whenever the right-clicked tile isn't already the current one.
+  grid_->setCurrentItem(item, QItemSelectionModel::NoUpdate);
 
   if (grid_->selectedItems().size() > 1) {
     ShowBatchContextMenu(grid_->selectedItems(), pos);
@@ -2033,6 +2109,8 @@ void LibraryWindow::ShowGameMenu(const std::string& id, const QPoint& global_pos
   QAction* details = menu.addAction("Game settings…");
   QAction* folder = menu.addAction("Open install folder");
   QAction* more_details = menu.addAction("More details…");
+  const bool pinned = current_game != nullptr && HasTag(*current_game, kPinnedTag);
+  QAction* toggle_pinned = menu.addAction(pinned ? "Unpin" : "Pin to sidebar");
   menu.addSeparator();
   // Both halves of the needs_install escape hatch: run the installer inside
   // this game's prefix, then say it worked. "Run in prefix" is offered for
@@ -2118,8 +2196,10 @@ void LibraryWindow::ShowGameMenu(const std::string& id, const QPoint& global_pos
     mira_gui::actions::RunWinetricks(this, id, name);
   } else if (chosen == desktop_entry) {
     mira_gui::actions::ToggleDesktopEntry(this, id, desktop_entry_enabled);
+  } else if (chosen == toggle_pinned) {
+    ToggleTag(id, kPinnedTag);
   } else if (chosen == toggle_hidden) {
-    ToggleHidden(id);
+    ToggleTag(id, "hidden");
   } else if (chosen == remove) {
     mira_gui::actions::Delete(this, id, name, [this] { RefreshGames(); });
   }
@@ -2128,11 +2208,24 @@ void LibraryWindow::ShowGameMenu(const std::string& id, const QPoint& global_pos
 void LibraryWindow::ShowBatchContextMenu(const QList<QListWidgetItem*>& items, const QPoint& pos) {
   const int count = items.size();
 
+  int pinned = 0;
+  int hidden = 0;
+  for (const QListWidgetItem* item : items) {
+    const mira_gui::GameSummary* game = FindGame(item->data(mira_gui::GameTileDelegate::IdRole).toString().toStdString());
+    if (game != nullptr && HasTag(*game, kPinnedTag)) ++pinned;
+    if (game != nullptr && HasTag(*game, "hidden")) ++hidden;
+  }
+
+  // Each offered for the games it would change, so a mixed selection gets both.
   QMenu menu(this);
   QAction* refresh_metadata = menu.addAction(QString("Refresh metadata && cover art (%1)").arg(count));
-  QAction* hide = menu.addAction(QString("Hide (%1)").arg(count));
-  hide->setToolTip(
-      "Keep these games out of the library until asked for (Ctrl+H, or the Hidden filter)");
+  QAction* pin = pinned < count ? menu.addAction(QString("Pin to sidebar (%1)").arg(count - pinned)) : nullptr;
+  QAction* unpin = pinned > 0 ? menu.addAction(QString("Unpin (%1)").arg(pinned)) : nullptr;
+  QAction* hide = hidden < count ? menu.addAction(QString("Hide (%1)").arg(count - hidden)) : nullptr;
+  if (hide != nullptr) {
+    hide->setToolTip("Keep these games out of the library until asked for (Ctrl+H, or the Hidden filter)");
+  }
+  QAction* unhide = hidden > 0 ? menu.addAction(QString("Unhide (%1)").arg(hidden)) : nullptr;
   auto* desktop_menu = menu.addMenu("Desktop entry");
   QAction* add_desktop_entry = desktop_menu->addAction("Add to application menu");
   QAction* remove_desktop_entry = desktop_menu->addAction("Remove from application menu");
@@ -2151,11 +2244,14 @@ void LibraryWindow::ShowBatchContextMenu(const QList<QListWidgetItem*>& items, c
     named.emplace_back(ids.back(), item->data(mira_gui::GameTileDelegate::NameRole).toString());
   }
 
+  if (chosen == nullptr) return;  // dismissed; also keeps it from matching an action left out above
   if (chosen == refresh_metadata) {
     // No notice: covers visibly update as each fetch lands.
     for (const std::string& game_id : ids) RefreshMetadata(game_id, /*announce=*/false);
-  } else if (chosen == hide) {
-    BatchHide(ids);
+  } else if (chosen == pin || chosen == unpin) {
+    BatchSetTag(ids, kPinnedTag, chosen == pin);
+  } else if (chosen == hide || chosen == unhide) {
+    BatchSetTag(ids, "hidden", chosen == hide);
   } else if (chosen == add_desktop_entry) {
     mira_gui::actions::BatchSetDesktopEntry(this, ids, /*enabled=*/true);
   } else if (chosen == remove_desktop_entry) {
@@ -2167,20 +2263,26 @@ void LibraryWindow::ShowBatchContextMenu(const QList<QListWidgetItem*>& items, c
   }
 }
 
-void LibraryWindow::BatchHide(const std::vector<std::string>& ids) {
+void LibraryWindow::BatchSetTag(const std::vector<std::string>& ids, const std::string& tag, bool present) {
   for (const std::string& id : ids) {
     const mira_gui::GameSummary* game = FindGame(id);
-    if (game == nullptr || HasTag(*game, "hidden")) continue;
+    if (game == nullptr || HasTag(*game, tag) == present) continue;
 
     std::vector<std::string> tags = game->tags;
-    tags.push_back("hidden");
+    if (present) {
+      tags.push_back(tag);
+    } else {
+      std::erase(tags, tag);
+    }
     mira_gui::GamePatch patch;
     patch.tags = tags;
     mira_gui::MiradClient::PatchGameAsync(
-        this, id, patch, [this, id, tags](mira_gui::PatchGameResult result) {
+        this, id, patch, [this, id, tags, tag](mira_gui::PatchGameResult result) {
           if (!result.ok) {
-            mira_gui::notify::Failed(this, "Could not hide a game.",
-                                     QString::fromStdString(result.error));
+            mira_gui::notify::FailedRequest(this,
+                                            tag == "hidden" ? "Could not change a game's visibility."
+                                                            : "Could not change whether a game is pinned.",
+                                            result.error);
             return;
           }
           for (mira_gui::GameSummary& stored : games_) {
@@ -2194,30 +2296,30 @@ void LibraryWindow::BatchHide(const std::vector<std::string>& ids) {
   }
 }
 
-void LibraryWindow::ToggleHidden(const std::string& id) {
+void LibraryWindow::ToggleTag(const std::string& id, const std::string& tag) {
   const mira_gui::GameSummary* game = FindGame(id);
   if (game == nullptr) return;
 
   std::vector<std::string> tags = game->tags;
-  const bool was_hidden = HasTag(*game, "hidden");
-  if (was_hidden) {
-    tags.erase(std::remove(tags.begin(), tags.end(), "hidden"), tags.end());
+  if (HasTag(*game, tag)) {
+    tags.erase(std::remove(tags.begin(), tags.end(), tag), tags.end());
   } else {
-    tags.push_back("hidden");
+    tags.push_back(tag);
   }
 
   mira_gui::GamePatch patch;
   patch.tags = tags;
-  mira_gui::MiradClient::PatchGameAsync(this, id, patch, [this, id, tags](mira_gui::PatchGameResult result) {
+  mira_gui::MiradClient::PatchGameAsync(this, id, patch, [this, id, tags, tag](mira_gui::PatchGameResult result) {
     if (!result.ok) {
-      mira_gui::notify::Failed(this, "Could not change this game's visibility.",
-                               QString::fromStdString(result.error));
+      mira_gui::notify::FailedRequest(this,
+                                      tag == "hidden" ? "Could not change this game's visibility."
+                                                      : "Could not change whether this game is pinned.",
+                                      result.error);
       return;
     }
     // Patched in place rather than waiting for the game.updated event, so
-    // Hide/Unhide feels instant. No toast: the game already visibly
-    // vanishing from (or appearing in) the grid is the feedback -- a
-    // notification on top of that would just be noise.
+    // the toggle feels instant. No toast: the game visibly moving in the
+    // grid and sidebar is the feedback.
     for (mira_gui::GameSummary& stored : games_) {
       if (stored.id == id) {
         stored.tags = tags;
@@ -2888,7 +2990,7 @@ void LibraryWindow::RelocateLibrary() {
   mira_gui::notify::Notice(this, "Moving games into Mira's folders…");
   mira_gui::MiradClient::RelocateLibraryAsync(this, [this](mira_gui::RelocateLibraryResult result) {
     if (!result.ok) {
-      mira_gui::notify::Failed(this, "Could not move the games.", QString::fromStdString(result.error));
+      mira_gui::notify::FailedRequest(this, "Could not move the games.", result.error);
       return;
     }
     if (result.failed > 0) {
@@ -3029,7 +3131,7 @@ void LibraryWindow::OpenManageSources() {
     refresh();
     const mira_gui::ConfigEdit edit{(id + ".enabled").toStdString(), "a boolean", on ? "true" : "false"};
     mira_gui::MiradClient::PatchConfigAsync(this, {edit}, [this](mira_gui::PatchConfigResult result) {
-      if (!result.ok) mira_gui::notify::Failed(this, "Could not change that source.", QString::fromStdString(result.error));
+      if (!result.ok) mira_gui::notify::FailedRequest(this, "Could not change that source.", result.error);
       RefreshSourceNavs();
     });
   });
@@ -3127,13 +3229,21 @@ void LibraryWindow::SetSourceHidden(const QString& id, bool hidden) {
   mira_gui::MiradClient::SaveFrontendPrefsAsync(this, prefs, [](mira_gui::PatchConfigResult) {});
 }
 
-void LibraryWindow::RefreshRecentlyPlayed() {
+void LibraryWindow::RefreshSidebarGames() {
   if (recent_layout_ == nullptr) return;
-  // deleteLater: a row's own click or menu may be what got us here.
-  while (QLayoutItem* item = recent_layout_->takeAt(0)) {
-    if (item->widget() != nullptr) item->widget()->deleteLater();
-    delete item;
+
+  // Pinned games by name, matching the grid: hidden pins only under the Hidden filter.
+  const bool showing_hidden = CurrentFilterKey() == "hidden";
+  std::vector<const mira_gui::GameSummary*> pinned;
+  for (const mira_gui::GameSummary& game : games_) {
+    if (HasTag(game, kPinnedTag) && HasTag(game, "hidden") == showing_hidden) pinned.push_back(&game);
   }
+  std::ranges::sort(pinned, [](const mira_gui::GameSummary* a, const mira_gui::GameSummary* b) {
+    return QString::compare(QString::fromStdString(a->name), QString::fromStdString(b->name),
+                            Qt::CaseInsensitive) < 0;
+  });
+  FillSidebarSection(pinned_heading_, pinned_layout_, pinned, pinned_signature_);
+
   // Every running game, then up to recent_count_ others by last played. A
   // hidden game shows only while it runs, so it can still be stopped.
   std::vector<const mira_gui::GameSummary*> running;
@@ -3150,28 +3260,57 @@ void LibraryWindow::RefreshRecentlyPlayed() {
   });
   if (played.size() > static_cast<size_t>(recent_count_)) played.resize(recent_count_);
   played.insert(played.begin(), running.begin(), running.end());
-  recent_heading_->setVisible(!played.empty());
+  FillSidebarSection(recent_heading_, recent_layout_, played, recent_signature_);
+}
 
-  const mira_gui::theme::Tokens& tokens = mira_gui::theme::Current();
-  QWidget* parent = recent_heading_->parentWidget();
-  for (const mira_gui::GameSummary* game : played) {
-    const bool is_running = running_ids_.contains(game->id);
-    auto* row = new QPushButton(QString::fromStdString(game->name), parent);
-    row->setFlat(true);
-    row->setIcon(mira_gui::icons::For(mira_gui::icons::Glyph::Dot, is_running ? tokens.running : tokens.border));
-    const std::string id = game->id;
-    if (is_running) {
-      AddTrailingLabel(row)->setText("Playing");
-    } else if (game->status == "ready") {
-      connect(row, &QPushButton::clicked, this, [this, id] { LaunchGame(id); });
-    }
-    row->setProperty("hover_game", QString::fromStdString(id));
-    row->installEventFilter(this);
-    row->setContextMenuPolicy(Qt::CustomContextMenu);
-    connect(row, &QWidget::customContextMenuRequested, this,
-            [this, row, id](const QPoint& pos) { ShowGameMenu(id, row->mapToGlobal(pos)); });
-    recent_layout_->addWidget(row);
+void LibraryWindow::FillSidebarSection(QLabel* heading, QVBoxLayout* layout,
+                                       const std::vector<const mira_gui::GameSummary*>& games,
+                                       QString& signature) {
+  // Most refreshes (every game.updated) change nothing shown here; rebuilding
+  // anyway makes the rows flicker.
+  QString wanted = mira_gui::theme::Current().running.name();
+  for (const mira_gui::GameSummary* game : games) {
+    wanted += QString("\n%1\t%2\t%3\t%4")
+                  .arg(QString::fromStdString(game->id), QString::fromStdString(game->name),
+                       QString::fromStdString(game->status), running_ids_.contains(game->id) ? "1" : "0");
   }
+  if (wanted == signature) return;
+  signature = wanted;
+
+  QWidget* parent = heading->parentWidget();
+  parent->setUpdatesEnabled(false);
+  // deleteLater: a row's own click or menu may be what got us here. Hidden
+  // first: a popup's nested event loop would otherwise keep it painted.
+  while (QLayoutItem* item = layout->takeAt(0)) {
+    if (QWidget* row = item->widget()) {
+      row->hide();
+      row->deleteLater();
+    }
+    delete item;
+  }
+  heading->setVisible(!games.empty());
+  for (const mira_gui::GameSummary* game : games) layout->addWidget(MakeSidebarGameRow(*game, parent));
+  parent->setUpdatesEnabled(true);
+}
+
+QPushButton* LibraryWindow::MakeSidebarGameRow(const mira_gui::GameSummary& game, QWidget* parent) {
+  const mira_gui::theme::Tokens& tokens = mira_gui::theme::Current();
+  const bool is_running = running_ids_.contains(game.id);
+  auto* row = new QPushButton(QString::fromStdString(game.name), parent);
+  row->setFlat(true);
+  row->setIcon(mira_gui::icons::For(mira_gui::icons::Glyph::Dot, is_running ? tokens.running : tokens.border));
+  const std::string id = game.id;
+  if (is_running) {
+    AddTrailingLabel(row)->setText("Playing");
+  } else if (game.status == "ready") {
+    connect(row, &QPushButton::clicked, this, [this, id] { LaunchGame(id); });
+  }
+  row->setProperty("hover_game", QString::fromStdString(id));
+  row->installEventFilter(this);
+  row->setContextMenuPolicy(Qt::CustomContextMenu);
+  connect(row, &QWidget::customContextMenuRequested, this,
+          [this, row, id](const QPoint& pos) { ShowGameMenu(id, row->mapToGlobal(pos)); });
+  return row;
 }
 
 void LibraryWindow::ShowSourceMenu(const mira_gui::SourceInfo& source, const QPoint& global_pos) {
@@ -3356,9 +3495,15 @@ void LibraryWindow::RefreshClassicTable() {
 }
 
 void LibraryWindow::HandleGameEvent(const std::string& type, const std::string& data) {
+  // Before this, events are mirad's replayed history: apply them, announce nothing.
+  if (type == "stream.live") {
+    events_live_ = true;
+    return;
+  }
+
   if (type == "notification") {
     mira_gui::NotificationEvent event;
-    if (mira_gui::MiradClient::ParseNotification(data, &event)) {
+    if (events_live_ && mira_gui::MiradClient::ParseNotification(data, &event)) {
       const QString message = QString::fromStdString(event.message);
       const auto level = mira_gui::notify::LevelFromString(QString::fromStdString(event.level));
       if (level == mira_gui::notify::Level::Warning || level == mira_gui::notify::Level::Error) {
@@ -3381,8 +3526,10 @@ void LibraryWindow::HandleGameEvent(const std::string& type, const std::string& 
   if (mira_gui::InstallEvent install; mira_gui::MiradClient::ParseInstallEvent(type, data, &install)) {
     const mira_gui::GameSummary* game = FindGame(install.id);
     const QString name = game != nullptr ? QString::fromStdString(game->name) : QString("A game");
-    if (install.state == "failed") {
-      mira_gui::notify::Failed(this, "Could not install " + name + ".", QString::fromStdString(install.error));
+    if (!events_live_) {
+      // History: the grid below still picks up the result.
+    } else if (install.state == "failed") {
+      mira_gui::notify::FailedRequest(this, "Could not install " + name + ".", install.error);
     } else if (install.state == "finished") {
       mira_gui::notify::Notice(this, name + " is installed.");
     }
@@ -3410,6 +3557,17 @@ void LibraryWindow::HandleGameEvent(const std::string& type, const std::string& 
       UpsertGame(game);
     } else {
       RefreshGames();
+    }
+    // A crash soon after launch is a game that failed to start. A later one is
+    // left to the game's status: plenty of games exit non-zero on a normal quit.
+    if (events_live_ && state.state == "crashed" && state.played_seconds < kFailedStartSeconds) {
+      const mira_gui::GameSummary* crashed = FindGame(state.id);
+      const QString name = crashed != nullptr ? QString::fromStdString(crashed->name) : QString("The game");
+      const std::string id = state.id;
+      mira_gui::notify::FailedWithAction(
+          this, name + " closed right after starting.", QString::fromStdString(state.error),
+          "Its log usually says why. A different runner in the game's settings often helps.", "View log",
+          [this, id, name] { mira_gui::actions::ViewLog(this, id, name); });
     }
     return;
   }

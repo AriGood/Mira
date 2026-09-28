@@ -12,6 +12,8 @@
 #include <QVBoxLayout>
 
 #include "../client/MiradClient.h"
+#include "../ui/ErrorHelp.h"
+#include "../ui/HelpButton.h"
 #include "../ui/Theme.h"
 
 namespace mira_gui {
@@ -104,11 +106,11 @@ void SourceSettingsCard::BuildRunnerRow(QFormLayout* form) {
   note_row->addWidget(runner_apply_, 0, Qt::AlignTop);
   column_layout->addLayout(note_row);
 
-  auto* label = new QLabel("Runner", this);
-  label->setToolTip(source_.kind == SourceInfo::Kind::Launcher
-                        ? "The Wine or Proton build " + source_.name + " and its games run with."
-                        : "The Wine or Proton build for " + source_.name + " games that have none of their own.");
-  form->addRow(label, column);
+  const QString runner_doc =
+      source_.kind == SourceInfo::Kind::Launcher
+          ? "The Wine or Proton build " + source_.name + " and its games run with."
+          : "The Wine or Proton build for " + source_.name + " games that have none of their own.";
+  form->addRow(LabelWithHelp("Runner", runner_doc, this), column);
   LoadRunner();
 }
 
@@ -174,7 +176,7 @@ void SourceSettingsCard::SetRunner(const QString& runner_ref, bool apply_to_game
       this, id_, runner_ref.toStdString(), apply_to_games, [this](SourceRunnerResult result) {
         runner_apply_->setEnabled(true);
         if (!result.ok) {
-          ShowStatus("Could not change the runner: " + QString::fromStdString(result.error), true);
+          ShowStatus("Could not change the runner: " + error_help::Describe(result.error), true);
           LoadRunner();
           return;
         }
@@ -210,11 +212,7 @@ void SourceSettingsCard::LoadSettings() {
           }
         }
         if (editor.line != nullptr) connect(editor.line, &QLineEdit::editingFinished, this, [this, i] { Commit(i); });
-        auto* label = new QLabel(QString::fromStdString(editor.entry.label.empty() ? editor.entry.key
-                                                                                   : editor.entry.label),
-                                 this);
-        label->setToolTip(QString::fromStdString(editor.entry.doc));
-        form_->addRow(label, row);
+        form_->addRow(editor.BuildLabel(this), row);
       }
       MiradClient::ListRunnersAsync(this, [this](RunnersResult runners) {
         for (SettingEditor& editor : settings_) {
@@ -250,7 +248,7 @@ void SourceSettingsCard::Commit(size_t index) {
                                     loading_ = true;
                                     done.SetText(done.original);
                                     loading_ = false;
-                                    ShowStatus(QString::fromStdString(result.error), true);
+                                    ShowStatus(error_help::Describe(result.error), true);
                                     return;
                                   }
                                   done.original = value;
@@ -261,7 +259,7 @@ void SourceSettingsCard::Commit(size_t index) {
 void SourceSettingsCard::ResetSetting(size_t index) {
   MiradClient::ResetConfigKeyAsync(this, settings_[index].entry.key, [this, index](PatchConfigResult result) {
     if (!result.ok) {
-      ShowStatus(QString::fromStdString(result.error), true);
+      ShowStatus(error_help::Describe(result.error), true);
       return;
     }
     SettingEditor& editor = settings_[index];

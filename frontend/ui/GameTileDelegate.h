@@ -26,6 +26,8 @@ public:
     ActionEnabledRole,
     // Optional: replaces the status line's text ("Installing… 1.2 GB").
     StatusTextRole,
+    // Pinned by the user: a pin badge in the tile's top-left corner.
+    PinnedRole,
   };
 
   // Where the ActionRole pill sits inside a tile's cell.

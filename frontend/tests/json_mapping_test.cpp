@@ -224,3 +224,24 @@ TEST_CASE("ParseRunnerDownload reads the state from the event type") {
   CHECK_FALSE(MiradClient::ParseRunnerDownload("game.updated", R"({"id": "x"})", &event));
   CHECK_FALSE(MiradClient::ParseRunnerDownload("runners.download.finished", "not json", &event));
 }
+
+TEST_CASE("ToApiError reads mirad's error envelope and a failure event alike") {
+  const ApiError envelope = mapping::ToApiError(json::parse(
+      R"({"code": "no_steamgriddb_key", "message": "needs a key", "hint": "Add one.",
+          "fix": {"kind": "setting", "target": "steamgriddb.api_key"}})"));
+  CHECK(envelope.message == "needs a key");
+  CHECK(envelope.hint == "Add one.");
+  CHECK(envelope.fix.kind == "setting");
+  CHECK(envelope.fix.target == "steamgriddb.api_key");
+
+  // game.install.failed carries the message as "error".
+  const ApiError event = mapping::ToApiError(json::parse(
+      R"({"id": "g", "error": "no installer", "fix": {"kind": "game", "target": "g", "step": "exe"}})"));
+  CHECK(event.message == "no installer");
+  CHECK(event.fix.step == "exe");
+
+  // Both are optional.
+  const ApiError bare = mapping::ToApiError(json::parse(R"({"code": "x", "message": "y", "fix": "junk"})"));
+  CHECK(bare.hint.empty());
+  CHECK(bare.fix.kind.empty());
+}

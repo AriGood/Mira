@@ -102,12 +102,12 @@ std::vector<model::RunnerBuild> ProtonRunner::Discover(const config::Config& con
 
 Result<void> ProtonRunner::Provision(const model::Game& game,
                                   const std::optional<model::RunnerBuild>& build) const {
-  if (!build) return Err("no_runner_build", "no Proton build resolved for this game");
-  if (game.data_dir.empty()) return Err("no_data_dir", "game has no data_dir set");
+  if (!build) return NoBuild("Proton");
+  if (game.data_dir.empty()) return NoPrefix(game);
 
   std::error_code ec;
   fs::create_directories(game.data_dir, ec);
-  if (ec) return Err("prefix_create_failed", ec.message());
+  if (ec) return PrefixCreateFailed(game, ec);
 
   // "" as the exe is umu's documented way to initialise a prefix with no
   // game to run (see `man umu`, Example 4).
@@ -126,16 +126,17 @@ Result<void> ProtonRunner::Provision(const model::Game& game,
   // signal is whether the prefix actually appeared on disk.
   if (!fs::exists(fs::path(game.data_dir) / "drive_c", ec)) {
     return Err("provision_failed",
-              std::format("umu-run produced no prefix (exit {}): {}", result->exit_code, result->output));
+              std::format("umu-run produced no prefix (exit {}): {}", result->exit_code, result->output),
+              "The Proton build may be broken. Try a different one.", Fix::Runners());
   }
   return {};
 }
 
 Result<Command> ProtonRunner::BuildCommand(const model::Game& game,
                                         const std::optional<model::RunnerBuild>& build) const {
-  if (!build) return Err("no_runner_build", "no Proton build resolved for this game");
-  if (game.exe_path.empty()) return Err("no_executable", "no exe_path set for this game");
-  if (game.data_dir.empty()) return Err("no_data_dir", "game has no data_dir set");
+  if (!build) return NoBuild("Proton");
+  if (game.exe_path.empty()) return NoExecutable(game);
+  if (game.data_dir.empty()) return NoPrefix(game);
 
   const fs::path install_path = game.install_path;
   const fs::path exe = install_path / game.exe_path;

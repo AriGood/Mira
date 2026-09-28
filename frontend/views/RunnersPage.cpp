@@ -128,7 +128,7 @@ RunnersPage::RunnersPage(DownloadTracker* downloads, QWidget* parent) : QWidget(
   connect(default_note_, &QLabel::linkActivated, this, [this] {
     MiradClient::ResetConfigKeyAsync(this, kDefaultKey, [this](PatchConfigResult result) {
       if (!result.ok) {
-        SetStatus("Could not reset the default: " + QString::fromStdString(result.error), true);
+        SetStatus("Could not reset the default: " + error_help::Describe(result.error), true);
         return;
       }
       RefreshInstalled();
@@ -205,7 +205,7 @@ void RunnersPage::RefreshSources() {
   if (sources_.contains(kind)) return fill();
   MiradClient::ListRunnerSourcesAsync(this, kind, [this, kind, fill](RunnerSourcesResult result) {
     if (!result.ok) {
-      SetStatus("Could not list sources: " + QString::fromStdString(result.error), true);
+      SetStatus("Could not list sources: " + error_help::Describe(result.error), true);
       return;
     }
     sources_[kind] = result.sources;
@@ -247,7 +247,7 @@ void RunnersPage::RefreshInstalled() {
   });
   MiradClient::ListRunnersAsync(this, [this](RunnersResult result) {
     if (!result.ok) {
-      SetStatus(QString::fromStdString(result.error), true);
+      SetStatus(error_help::Describe(result.error), true);
       return;
     }
     runners_ = result.runners;
@@ -265,7 +265,7 @@ void RunnersPage::RefreshCatalog() {
   MiradClient::GetRunnerCatalogAsync(this, kind, source, [this, kind, source](RunnerCatalogResult result) {
     if (kind != CurrentKind() || source != source_->currentData().toString().toStdString()) return;
     if (!result.ok) {
-      SetStatus("Could not list builds: " + QString::fromStdString(result.error), true);
+      SetStatus("Could not list builds: " + error_help::Describe(result.error), true);
       return;
     }
     releases_ = result.releases;
@@ -472,7 +472,7 @@ void RunnersPage::Update(const RunnerInfo& runner, const RunnerUpdate& update) {
   MiradClient::UpdateRunnerAsync(this, runner.reference, [this, name = update.name](RunnerDownloadResult result) {
     if (!result.ok) {
       replacing_.erase(name);
-      SetStatus("Could not start the update: " + QString::fromStdString(result.error), true);
+      SetStatus("Could not start the update: " + error_help::Describe(result.error), true);
       RebuildInstalled();
     }
   });
@@ -481,7 +481,7 @@ void RunnersPage::Update(const RunnerInfo& runner, const RunnerUpdate& update) {
 void RunnersPage::SetupTool(const RunnerTool& tool) {
   MiradClient::SetupRunnerToolAsync(this, tool.id, [this, label = tool.label](RunnerDownloadResult result) {
     if (!result.ok) {
-      SetStatus(QString("Could not install %1: %2").arg(QString::fromStdString(label), QString::fromStdString(result.error)),
+      SetStatus(QString("Could not install %1: %2").arg(QString::fromStdString(label), error_help::Describe(result.error)),
                 true);
       RefreshTools();
     }
@@ -493,7 +493,7 @@ void RunnersPage::SetDefault(const std::string& reference) {
                                 [this](PatchConfigResult result) {
                                   if (!result.ok) {
                                     SetStatus("Could not set the default: " +
-                                                  QString::fromStdString(result.error),
+                                                  error_help::Describe(result.error),
                                               true);
                                     return;
                                   }
@@ -509,7 +509,7 @@ void RunnersPage::Remove(const RunnerInfo& runner) {
   }
   MiradClient::DeleteRunnerAsync(this, runner.kind, runner.name, [this](RunnerRemoveResult result) {
     if (!result.ok) {
-      SetStatus("Could not remove that runner: " + QString::fromStdString(result.error), true);
+      SetStatus("Could not remove that runner: " + error_help::Describe(result.error), true);
       return;
     }
     RefreshInstalled();
@@ -521,7 +521,7 @@ void RunnersPage::Download(const std::string& tag) {
   const std::string source = source_->currentData().toString().toStdString();
   MiradClient::DownloadRunnerAsync(this, kind, tag, source, [this](RunnerDownloadResult result) {
     // The tracker hears the rest on the event stream.
-    if (!result.ok) SetStatus("Could not start the download: " + QString::fromStdString(result.error), true);
+    if (!result.ok) SetStatus("Could not start the download: " + error_help::Describe(result.error), true);
   });
 }
 
@@ -565,7 +565,7 @@ void RunnersPage::DownloadChanged(const QString& key) {
                               .arg(QString::fromStdString(old->label), downloads_->NameFor(*entry)),
                           "Remove", /*destructive=*/true)) {
         MiradClient::DeleteRunnerAsync(this, old->kind, old->name, [this](RunnerRemoveResult result) {
-          if (!result.ok) SetStatus("Could not remove the old build: " + QString::fromStdString(result.error), true);
+          if (!result.ok) SetStatus("Could not remove the old build: " + error_help::Describe(result.error), true);
           RefreshInstalled();
         });
       }

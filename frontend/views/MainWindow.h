@@ -57,4 +57,5 @@ private:
   // Whether RefreshGames() has ever completed successfully.
   bool loaded_ = false;
   mira_gui::EventStream event_stream_;
+  bool events_live_ = false;  // past mirad's replay (`stream.live`)
 };

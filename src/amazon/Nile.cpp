@@ -10,6 +10,7 @@
 #include <ranges>
 
 #include "core/Json.h"
+#include "core/StoreErrors.h"
 #include "runner/Exec.h"
 
 namespace mira::amazon {
@@ -80,9 +81,7 @@ json ReadNileFile(const std::string& name) {
 Result<std::string> RunNile(const config::Config& config, std::vector<std::string> args) {
   const NileStatus status = DetectNile(config);
   if (!status.installed) {
-    return Err("nile_missing",
-               "nile isn't installed — run \"mira amazon setup\" to download it, or install it yourself "
-               "and set amazon.nile_bin");
+    return StoreToolMissing("amazon", "Amazon Games", "nile");
   }
   Command command;
   command.argv = {status.path};
@@ -123,7 +122,10 @@ Result<void> FinishLogin(const config::Config& config, const std::string& redire
   json pending;
   {
     const std::lock_guard lock(pending_mutex);
-    if (!pending_login) return Err("no_login_pending", "start a login first (mira amazon login)");
+    if (!pending_login) {
+      return Err("no_login_pending", "no Amazon Games sign-in is in progress", "Start signing in again.",
+                 Fix::Source("amazon", "login"));
+    }
     pending = *pending_login;
   }
   constexpr std::string_view kMarker = "openid.oa2.authorization_code=";

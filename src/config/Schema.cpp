@@ -225,14 +225,17 @@ Schema::Schema() {
                 "there is no other free source for one. Steam-owned games never need it. Left empty, "
                 "fetching metadata for a non-Steam game fails with no_steamgriddb_key rather than "
                 "appearing to succeed.",
-         .is_secret = true});
+         .is_secret = true,
+         .link = "https://www.steamgriddb.com/profile/preferences/api",
+         .keywords = "sgdb cover art token"});
 
   s.Add({.key = "steamgriddb.nsfw",
          .label = "Include Adult Art",
          .type = Type::Bool,
          .default_value = false,
          .doc = "Also list art SteamGridDB marks as adult (NSFW) in the art picker, where it's "
-                "labelled. It's never picked as a game's art on its own."});
+                "labelled. It's never picked as a game's art on its own.",
+         .keywords = "sgdb"});
 
   s.Add({.key = "metadata.steamgriddb_id",
          .label = "SteamGridDB Game",
@@ -241,7 +244,8 @@ Schema::Schema() {
          .scope = Scope::PerGame,
          .doc = "Which SteamGridDB game this game's art comes from. 0 uses the top search result for "
                 "its name; set it when that picks the wrong game (see `mira metadata <id> --matches`).",
-         .constraint = Range(0, 1e12)});
+         .constraint = Range(0, 1e12),
+         .keywords = "sgdb"});
 
   s.Add({.key = "metadata.steam_art_by_name",
          .label = "Steam Art by Name",
@@ -288,7 +292,10 @@ Schema::Schema() {
                 "describe games that are actually installed, so listing everything the account "
                 "owns (GET /v1/library) and importing Steam's own playtime totals both need this "
                 "plus steam.steamid64. Left empty, Steam simply contributes nothing to the "
-                "library listing and playtime stays whatever Mira itself measured."});
+                "library listing and playtime stays whatever Mira itself measured.",
+         .is_secret = true,
+         .link = "https://steamcommunity.com/dev/apikey",
+         .keywords = "token owned games"});
 
   s.Add({.key = "steam.steamid64",
          .label = "Steam ID (64-bit)",
@@ -296,7 +303,9 @@ Schema::Schema() {
          .default_value = "",
          .doc = "The account's 64-bit Steam ID (steamcommunity.com profile URL, or a lookup "
                 "site). Needed alongside steam.web_api_key — Steam's Web API identifies the "
-                "account by this, not by the key."});
+                "account by this, not by the key.",
+         .link = "https://store.steampowered.com/account/",
+         .keywords = "steamid account user number"});
 
   // --- Sources ---------------------------------------------------------------
   s.Section("Sources");

@@ -40,12 +40,29 @@ httplib::Client Connect() {
   return client;
 }
 
+// The command that does an error's `fix` (docs/api.md), or "" when there isn't one.
+std::string FixCommand(const json& fix) {
+  const std::string kind = fix.value("kind", std::string());
+  const std::string target = fix.value("target", std::string());
+  const std::string step = fix.value("step", std::string());
+  if (kind == "setting") return std::format("mira config set {} <value>", target);
+  if (kind == "runners") return target.empty() ? "mira runners catalog" : "mira runners tools install " + target;
+  if (kind == "source") return step == "install" ? "mira launcher install " + target : std::format("mira {} {}", target, step);
+  if (kind == "game" && step == "exe") return std::format("mira set {} --exe <path>", target);
+  if (kind == "game" && step == "data_dir") return std::format("mira set {} --data-dir <path>", target);
+  return "";
+}
+
 void PrintError(const httplib::Result& res) {
   if (res) {
-    json body = json::parse(res->body, nullptr, false);
-    const std::string message =
-        body.is_discarded() ? res->body : body.value("error", json::object()).value("message", res->body);
+    const json body = json::parse(res->body, nullptr, false);
+    const json error = body.is_object() ? body.value("error", json::object()) : json::object();
+    const std::string message = error.value("message", res->body);
     std::fprintf(stderr, "mira: %s (HTTP %d)\n", message.c_str(), res->status);
+    const std::string hint = error.value("hint", std::string());
+    const std::string command = error.contains("fix") ? FixCommand(error["fix"]) : std::string();
+    if (!hint.empty()) std::fprintf(stderr, "      %s\n", hint.c_str());
+    if (!command.empty()) std::fprintf(stderr, "      Try: %s\n", command.c_str());
   } else {
     std::fprintf(stderr,
                  "mira: cannot reach mirad at %s (%s) — is it running? "

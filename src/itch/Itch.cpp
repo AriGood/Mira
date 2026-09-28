@@ -9,6 +9,7 @@
 #include <json.hpp>
 
 #include "itch/Butlerd.h"
+#include "core/StoreErrors.h"
 #include "runner/Exec.h"
 
 namespace mira::itch {
@@ -108,7 +109,7 @@ Result<void> Logout(const config::Config& config) {
 
 Result<std::int64_t> CurrentProfileId(const config::Config& config) {
   std::ifstream file(ApiKeyFile(config));
-  if (!file) return Err("not_authenticated", "run \"mira itch login\" first");
+  if (!file) return StoreNotSignedIn("itch", "itch.io");
   const std::string api_key((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
 
   // No separate persisted profile id (see this function's header comment)

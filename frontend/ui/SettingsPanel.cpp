@@ -12,6 +12,7 @@
 #include <QSpinBox>
 
 #include "../views/SourcePage.h"
+#include "HelpButton.h"
 #include "KeyBindings.h"
 #include "Notify.h"
 #include "SettingsNav.h"
@@ -53,21 +54,26 @@ void SettingsPanel::BuildSidebarGroup() {
   recent_count_->setRange(0, 10);
   recent_count_->setValue(recent_count_original_);
   recent_count_->setSpecialValueText("Off");
-  recent_count_->setToolTip("How many recently played games to list. Running games always show.");
-  form->addRow("Recently played", recent_count_);
+  form->addRow(LabelWithHelp("Recently played",
+                             "How many recently played games to list. Running games always show.", box),
+               recent_count_);
   nav_->RegisterRow(form, recent_count_, "sidebar recently played recent games count");
 
   source_counts_ = new QCheckBox(box);
   source_counts_->setChecked(source_counts_original_);
-  source_counts_->setToolTip("Show how many games each source has next to its name.");
-  form->addRow("Show game counts", source_counts_);
+  form->addRow(
+      LabelWithHelp("Show game counts", "Show how many games each source has next to its name.", box),
+      source_counts_);
   nav_->RegisterRow(form, source_counts_, "sidebar source game counts number");
 
   nav_->AddDivider(form);
+  auto* sources_note = new QLabel("Only sources that are set up are listed in the sidebar.", box);
+  sources_note->setWordWrap(true);
+  sources_note->setProperty("role", "muted");
+  form->addRow(sources_note);
   for (const mira_gui::SourceInfo& source : mira_gui::AllSources()) {
     auto* check = new QCheckBox(box);
     check->setChecked(true);
-    check->setToolTip("Only sources that are set up are listed in the sidebar.");
     form->addRow(QString("Show %1").arg(source.name), check);
     nav_->RegisterRow(form, check, QString("sidebar show source %1").arg(source.name));
     source_checks_.emplace_back(source.id, check);
@@ -94,34 +100,38 @@ void SettingsPanel::BuildInterfaceGroup() {
 
   scan_on_startup_ = new QCheckBox(box);
   scan_on_startup_->setChecked(true);
-  scan_on_startup_->setToolTip(
-      "Run a library scan when the frontend opens. mirad's own watcher keeps the library current "
-      "while it runs, so this only matters for changes made while it was stopped.");
-  form->addRow("Scan the library on startup", scan_on_startup_);
+  form->addRow(LabelWithHelp("Scan the library on startup",
+                             "Run a library scan when the frontend opens. mirad's own watcher keeps the "
+                             "library current while it runs, so this only matters for changes made while "
+                             "it was stopped.",
+                             box),
+               scan_on_startup_);
   nav_->RegisterRow(form, scan_on_startup_, "scan the library on startup");
 
   theme_ = new QComboBox(box);
   theme_->addItem("Follow the desktop", "auto");
   for (const QString& name : mira_gui::theme::Available()) theme_->addItem(name, name);
-  theme_->setToolTip(
-      "Drop a .toml of your own into ~/.config/mira/themes to add to this list — see any "
-      "bundled theme for the keys it can set.");
-  form->addRow("Theme", theme_);
+  form->addRow(LabelWithHelp("Theme",
+                             "Drop a .toml of your own into ~/.config/mira/themes to add to this list — "
+                             "see any bundled theme for the keys it can set.",
+                             box),
+               theme_);
   nav_->RegisterRow(form, theme_, "theme appearance dark light");
-
 
   game_settings_in_sidebar_ = new QCheckBox(box);
   game_settings_in_sidebar_->setChecked(true);
-  game_settings_in_sidebar_->setToolTip(
-      "\"Details & settings\" edits a game in a card over the library instead of a separate "
-      "window.");
-  form->addRow("Edit a game in the sidebar", game_settings_in_sidebar_);
+  form->addRow(LabelWithHelp("Edit a game in the sidebar",
+                             "\"Details & settings\" edits a game in a card over the library instead of "
+                             "a separate window.",
+                             box),
+               game_settings_in_sidebar_);
   nav_->RegisterRow(form, game_settings_in_sidebar_, "edit a game in the sidebar");
 
   drag_select_ = new QCheckBox(box);
   drag_select_->setChecked(true);
-  drag_select_->setToolTip("Drag across the library to select several games at once.");
-  form->addRow("Drag to select", drag_select_);
+  form->addRow(
+      LabelWithHelp("Drag to select", "Drag across the library to select several games at once.", box),
+      drag_select_);
   nav_->RegisterRow(form, drag_select_, "drag to select rubber band multiple");
 
   auto* shapes = new QLabel("Layout", box);
@@ -175,14 +185,11 @@ void SettingsPanel::BuildInterfaceGroup() {
 QWidget* SettingsPanel::MakeShapeControl(ShapeField& field, const QString& label, int maximum,
                                          const QString& tip) {
   auto* row = new QWidget(this);
-  row->setToolTip(tip);
   auto* row_layout = new QHBoxLayout(row);
   row_layout->setContentsMargins(0, 0, 0, 0);
   row_layout->setSpacing(8);
 
-  auto* text = new QLabel(label, row);
-  row_layout->addWidget(text);
-  row_layout->addStretch(1);
+  row_layout->addWidget(LabelWithHelp(label, tip, row), /*stretch=*/1);
 
   field.spin = new QSpinBox(row);
   // -1 rather than 0: 0 is a real radius, and "no rounding at all" has to
@@ -193,7 +200,6 @@ QWidget* SettingsPanel::MakeShapeControl(ShapeField& field, const QString& label
   // Wide enough for the special-value text (e.g. "60 px (theme default)"),
   // not just a couple of digits.
   field.spin->setFixedWidth(190);
-  field.spin->setToolTip(tip);
   row_layout->addWidget(field.spin);
 
   return row;
@@ -379,14 +385,8 @@ void SettingsPanel::BuildRows() {
       field.owner_form = form;
       QWidget* row_widget = field.Build(this, [this, i] { ResetField(i); });
 
-      const QString label_text = QString::fromStdString(
-          field.entry.label.empty() ? field.entry.key : field.entry.label);
-      auto* label = new QLabel(label_text, this);
-      label->setToolTip(QString::fromStdString(field.entry.doc));
-      form->addRow(label, row_widget);
-      nav_->RegisterRow(form, row_widget,
-                        QString("%1 %2 %3 %4").arg(QString::fromStdString(field.entry.key), label_text,
-                                                    category, QString::fromStdString(field.entry.doc)));
+      form->addRow(field.BuildLabel(this), row_widget);
+      nav_->RegisterRow(form, row_widget, field.SearchText());
     }
 
     if (category == "Launching") {
@@ -415,12 +415,9 @@ void SettingsPanel::AppendSectionAction(const SectionAction& action) {
     categories_with_actions_.insert(action.category);
   }
   auto* button = new QPushButton(action.button_text, this);
-  button->setToolTip(action.doc);
   button->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Fixed);
   connect(button, &QPushButton::clicked, this, action.activated);
-  auto* label = new QLabel(action.label, this);
-  label->setToolTip(action.doc);
-  form->addRow(label, button);
+  form->addRow(LabelWithHelp(action.label, action.doc, this), button);
   nav_->RegisterRow(form, button, QString("%1 %2 %3").arg(action.label, action.category, action.doc));
 }
 

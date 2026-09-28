@@ -51,7 +51,7 @@ void DesktopEntryImportDialog::Load() {
   MiradClient::GetDesktopEntryCandidatesAsync(this, [this](DesktopEntryCandidatesResult result) {
     list_->clear();
     if (!result.ok) {
-      notify::Failed(this, "Could not list desktop entries.", QString::fromStdString(result.error));
+      notify::FailedRequest(this, "Could not list desktop entries.", result.error);
       return;
     }
     if (result.candidates.empty()) {
@@ -94,7 +94,7 @@ void DesktopEntryImportDialog::Import() {
     setEnabled(true);
     import_->setText("Import selected");
     if (!result.ok) {
-      notify::Failed(this, "Could not import.", QString::fromStdString(result.error));
+      notify::FailedRequest(this, "Could not import.", result.error);
       return;
     }
     accept();  // the imported games appearing in the grid is the feedback

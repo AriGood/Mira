@@ -12,6 +12,10 @@
 // Not in the endpoints because these are meanings, not I/O.
 namespace mira_gui::mapping {
 
+// An error object: {"code", "message", "hint"?, "fix"?} as in mirad's error
+// envelope, or the same fields on a failure event (with "error" for the message).
+ApiError ToApiError(const nlohmann::json& error);
+
 GameSummary ToGameSummary(const nlohmann::json& entry);
 GameDetail ToGameDetail(const nlohmann::json& entry);
 

@@ -5,6 +5,8 @@
 
 #include <functional>
 
+#include "ErrorHelp.h"
+
 class QWidget;
 
 namespace mira_gui::notify {
@@ -39,6 +41,10 @@ void FailedWithHint(QWidget* parent, const QString& what, const QString& detail,
 void FailedWithAction(QWidget* parent, const QString& what, const QString& detail,
                       const QString& hint, const QString& action,
                       std::function<void()> activate);
+
+// A failed mirad request: its message and hint, plus a button for its fix
+// (ui/ErrorHelp). Prefer this over Failed for any result.error.
+void FailedRequest(QWidget* parent, const QString& what, const ApiError& error);
 
 // A persistent one-liner with no separate detail — mirad's own warnings.
 void Warn(QWidget* parent, const QString& text);

@@ -57,6 +57,7 @@ Result<void> GameStore::Save() {
   // both touched the same GameStore around the same time). Copied under the
   // lock, then serialized/written from the copy so a slow disk write never
   // holds mutex_ and blocks an unrelated Find()/Update() the whole time.
+  std::lock_guard save_lock(save_mutex_);
   std::vector<model::Game> games_copy;
   {
     std::lock_guard lock(mutex_);
@@ -73,11 +74,11 @@ Result<void> GameStore::Save() {
   const auto temp = file_.string() + ".tmp";
   {
     std::ofstream out(temp);
-    if (!out) return Err("games_write_failed", std::format("cannot write {}", temp));
+    if (!out) return Err("games_write_failed", std::format("couldn't write {}", temp), kDiskHint);
     out << tomljson::ToToml(whole);
   }
   std::filesystem::rename(temp, file_, ec);
-  if (ec) return Err("games_write_failed", ec.message());
+  if (ec) return Err("games_write_failed", std::format("couldn't save {}: {}", file_.string(), ec.message()), kDiskHint);
   return {};
 }
 

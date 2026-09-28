@@ -251,6 +251,12 @@ void FailedWithAction(QWidget* parent, const QString& what, const QString& detai
   FailedPopup(parent, what, body, action, std::move(activate));
 }
 
+void FailedRequest(QWidget* parent, const QString& what, const ApiError& error) {
+  const std::optional<error_help::Action> action = error_help::ActionFor(error);
+  FailedWithAction(parent, what, QString::fromStdString(error.message), error_help::HintFor(error),
+                   action ? action->label : QString(), action ? action->run : std::function<void()>());
+}
+
 void Warn(QWidget* parent, const QString& text) {
   if (system_notifier::Send(Urgency::Persistent, "Mira", text)) return;
   ShowCard(parent, Level::Warning, text, /*persistent=*/true);

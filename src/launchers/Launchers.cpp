@@ -12,6 +12,7 @@
 #include <thread>
 
 #include "core/Log.h"
+#include "core/StoreErrors.h"
 #include "proc/ProcessSupervisor.h"
 #include "core/Paths.h"
 #include "core/Strings.h"
@@ -87,7 +88,9 @@ Result<void> RunInstaller(config::Config& config, const Launcher& launcher, cons
   download.argv = {"curl", "-sSLf", "--max-time", "600", "-o", setup.string(), launcher.installer_url};
   const auto fetched = runner::RunAndWait(download);
   if (!fetched) return std::unexpected(fetched.error());
-  if (fetched->exit_code != 0) return Err("download_failed", std::format("couldn't download {}", launcher.installer_url));
+  if (fetched->exit_code != 0) {
+    return Err("download_failed", std::format("couldn't download the {} installer", launcher.name), kConnectionHint);
+  }
 
   const runner::RunnerRegistry runners(config);
   const auto resolved = runners.Resolve(game.runner_ref);
@@ -145,7 +148,10 @@ Result<model::Game> InstallInto(config::Config& config, store::GameStore& games,
   // as the launcher itself.
   if (game.runner_ref.empty() || !fs::exists(fs::path(game.data_dir) / "drive_c", ec)) {
     const model::Game provisioned = runners.ProvisionGame(game);
-    if (provisioned.status == model::GameStatus::Broken) return Err("provision_failed", provisioned.last_error);
+    if (provisioned.status == model::GameStatus::Broken) {
+      return Err("provision_failed", "couldn't set up the launcher's Wine prefix: " + provisioned.last_error,
+                 "The runner may be broken. Try a different one.", Fix::Runners());
+    }
     game.runner_ref = provisioned.runner_ref;
     game.data_dir = provisioned.data_dir;
   }
@@ -260,8 +266,7 @@ Result<Command> BuildCommand(config::Config& config, const store::GameStore& gam
   if (!launcher) return Err("not_launcher_game", "not a store launcher game");
   const auto host = game.source == "launcher" ? std::optional(game) : games.Find(GameId(*launcher));
   if (!host || host->status != model::GameStatus::Ready) {
-    return Err("launcher_not_installed",
-               std::format("{} isn't installed -- run `mira launcher install {}`", launcher->name, launcher->id));
+    return LauncherNotInstalled(launcher->id, launcher->name);
   }
 
   const runner::RunnerRegistry runners(config);

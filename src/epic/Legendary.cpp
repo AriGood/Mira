@@ -10,6 +10,7 @@
 
 #include "core/Json.h"
 #include "core/Log.h"
+#include "core/StoreErrors.h"
 #include "runner/Exec.h"
 
 namespace mira::epic {
@@ -97,9 +98,7 @@ Result<void> InstallLegendaryBinary(const config::Config& config, const runner::
 Result<std::string> RunLegendary(const config::Config& config, std::vector<std::string> args) {
   const LegendaryStatus status = DetectLegendary(config);
   if (!status.installed) {
-    return Err("legendary_missing",
-               "legendary isn't installed — run \"mira epic setup\" to download it, or install it "
-               "yourself and set epic.legendary_bin");
+    return StoreToolMissing("epic", "Epic Games", "legendary");
   }
 
   Command command;

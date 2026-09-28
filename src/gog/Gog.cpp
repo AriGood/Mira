@@ -12,6 +12,7 @@
 
 #include "core/Json.h"
 #include "core/Log.h"
+#include "core/StoreErrors.h"
 #include "runner/Exec.h"
 
 namespace mira::gog {
@@ -95,9 +96,7 @@ std::filesystem::path AuthConfigPath(const config::Config& config) {
 Result<std::string> RunGogdl(const config::Config& config, std::vector<std::string> args) {
   const GogStatus status = DetectGog(config);
   if (!status.installed) {
-    return Err("gogdl_missing",
-               "gogdl isn't installed — run \"mira gog setup\" to download it, or install it yourself "
-               "and set gog.gogdl_bin");
+    return StoreToolMissing("gog", "GOG", "gogdl");
   }
 
   Command command;
@@ -172,7 +171,7 @@ Result<std::string> AccessToken(const config::Config& config) {
   }
 
   if (!stored || !stored->contains("access_token") || !(*stored)["access_token"].is_string()) {
-    return Err("not_authenticated", "run \"mira gog login\" first");
+    return StoreNotSignedIn("gog", "GOG");
   }
   return (*stored)["access_token"].get<std::string>();
 }

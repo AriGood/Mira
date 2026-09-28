@@ -25,7 +25,7 @@ HealthStatus GetHealthSync() {
   HealthStatus status;
   const transport::Reply reply = transport::Get("/v1/health");
   status.reachable = reply.ok;
-  status.detail = reply.ok ? reply.body.value("status", std::string("ok")) : reply.error;
+  status.detail = reply.ok ? reply.body.value("status", std::string("ok")) : reply.error.message;
   return status;
 }
 
@@ -183,6 +183,8 @@ ConfigSchemaResult GetConfigSchemaSync() {
     e.per_game = entry.value("scope", std::string()) == "per_game";
     e.is_secret = entry.value("is_secret", false);
     e.is_runner_ref = entry.value("is_runner_ref", false);
+    e.link = entry.value("link", std::string());
+    e.keywords = entry.value("keywords", std::string());
     if (entry.contains("default")) e.default_display = mapping::ToDisplayString(entry["default"]);
     if (entry.contains("one_of") && entry["one_of"].is_array()) {
       for (const json& option : entry["one_of"]) {
@@ -1583,6 +1585,8 @@ bool MiradClient::ParseGameState(const std::string& data, GameStateEvent* out) {
   if (entry.is_discarded() || !entry.is_object()) return false;
   out->id = entry.value("id", std::string());
   out->state = entry.value("state", std::string());
+  out->played_seconds = entry.value("played_seconds", std::int64_t{0});
+  out->error = entry.value("error", std::string());
   return !out->id.empty();
 }
 
@@ -1834,7 +1838,7 @@ bool MiradClient::ParseInstallEvent(const std::string& event_type, const std::st
   if (entry.is_discarded() || !entry.is_object()) return false;
   out->state = event_type.substr(kPrefix.size());
   out->id = entry.value("id", std::string());
-  out->error = entry.value("error", std::string());
+  out->error = mapping::ToApiError(entry);
   return !out->id.empty();
 }
 

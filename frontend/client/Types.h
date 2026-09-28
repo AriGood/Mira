@@ -7,6 +7,8 @@
 #include <utility>
 #include <vector>
 
+#include "ApiError.h"
+
 // The plain data mirad's REST API speaks, as C++ structs.
 //
 // Deliberately free of Qt and of httplib: these are what the endpoints in
@@ -45,7 +47,7 @@ struct GameSummary {
 
 struct GamesResult {
   bool ok = false;
-  std::string error;
+  ApiError error;
   std::vector<GameSummary> games;
 };
 
@@ -54,11 +56,14 @@ struct GamesResult {
 struct GameStateEvent {
   std::string id;
   std::string state;  // "running" | "exited" | "crashed"
+  // After an exit: how long it ran, and for a crash what went wrong.
+  std::int64_t played_seconds = 0;
+  std::string error;
 };
 
 struct DeleteResult {
   bool ok = false;
-  std::string error;
+  ApiError error;
 };
 
 // POST /v1/games/{id}/launch. The actual outcome (running, exited,
@@ -78,7 +83,7 @@ struct DeleteResult {
 // assumes none when there is marks it stopped while it runs.
 struct LaunchResult {
   bool ok = false;
-  std::string error;
+  ApiError error;
   bool tracked = true;
 };
 
@@ -99,7 +104,7 @@ struct GameLaunchedEvent {
 struct ArtworkResult {
   bool ok = false;
   bool missing = false;
-  std::string error;
+  ApiError error;
   std::string bytes;
   std::string content_type;
 };
@@ -128,7 +133,7 @@ struct ArtThumbsEvent {
   std::string slot;
   std::vector<std::int64_t> ready;
   std::vector<std::int64_t> failed;
-  std::string error;
+  ApiError error;
 };
 
 // game.artwork_candidates_ready: one page of SteamGridDB's art for a slot
@@ -141,7 +146,7 @@ struct ArtCandidatesEvent {
   std::string request;  // as passed to FetchArtCandidatesAsync
   std::vector<ArtCandidate> candidates;
   std::string code;
-  std::string error;
+  ApiError error;
 };
 
 // GET .../artwork/thumb for each id of a batch; an id without a cached
@@ -191,7 +196,7 @@ struct GameMetadata {
 struct GameMetadataResult {
   bool ok = false;
   bool missing = false;  // never fetched, or fetched and found nothing
-  std::string error;
+  ApiError error;
   GameMetadata metadata;
 };
 
@@ -200,13 +205,13 @@ struct GameMetadataResult {
 // game.metadata_failed on the event stream (docs/api.md).
 struct MetadataRefreshResult {
   bool ok = false;
-  std::string error;
+  ApiError error;
 };
 
 // POST /v1/games/metadata/refresh-missing. `count` is how many were enqueued.
 struct RefreshMissingArtworkResult {
   bool ok = false;
-  std::string error;
+  ApiError error;
   int count = 0;
 };
 
@@ -217,7 +222,7 @@ struct MetadataEvent {
   // Both only on .metadata_failed. Branch on `code`, never on `error`:
   // `error` is a sentence written for a human to read.
   std::string code;
-  std::string error;
+  ApiError error;
 };
 
 // game.artwork_selected / .artwork_select_failed — the outcome of
@@ -232,7 +237,7 @@ struct ArtworkSelectEvent {
 // "done". The outcome is ArtworkSelectEvent on the event stream.
 struct ArtworkSelectResult {
   bool ok = false;
-  std::string error;
+  ApiError error;
 };
 
 // A `notification` event — mirad's own decision that this is worth telling
@@ -245,12 +250,12 @@ struct NotificationEvent {
 
 struct StopResult {
   bool ok = false;
-  std::string error;
+  ApiError error;
 };
 
 struct ScanResult {
   bool ok = false;
-  std::string error;
+  ApiError error;
   int added = 0;
   int missing = 0;
   int restored = 0;
@@ -298,7 +303,7 @@ struct GameDetail {
 
 struct GameDetailResult {
   bool ok = false;
-  std::string error;
+  ApiError error;
   GameDetail game;
 };
 
@@ -321,7 +326,7 @@ struct GamePatch {
 
 struct PatchGameResult {
   bool ok = false;
-  std::string error;
+  ApiError error;
 };
 
 // One GET /v1/config/schema entry (docs/api.md): every backend setting
@@ -351,17 +356,19 @@ struct ConfigSchemaEntry {
   bool per_game = false;       // also overridable per game (scope "per_game")
   bool is_secret = false;      // mask this value's field
   bool is_runner_ref = false;  // offer a runner picker (GET /v1/runners) instead of free text
+  std::string link;            // web page where the user gets the value; empty if none
+  std::string keywords;        // extra search terms, space-separated
 };
 
 struct ConfigSchemaResult {
   bool ok = false;
-  std::string error;
+  ApiError error;
   std::vector<ConfigSchemaEntry> entries;
 };
 
 struct ConfigResult {
   bool ok = false;
-  std::string error;
+  ApiError error;
   // Every leaf of GET /v1/config's document, flattened to dotted keys
   // matching Schema entries' own `key` (e.g. "scan.debounce_ms"), each
   // stringified for display/editing: a bool as "true"/"false", a number in
@@ -382,7 +389,7 @@ struct ConfigEdit {
 
 struct PatchConfigResult {
   bool ok = false;
-  std::string error;
+  ApiError error;
 };
 
 // One entry from GET /v1/runners (docs/api.md): an installed build of one
@@ -403,7 +410,7 @@ struct RunnerInfo {
 
 struct RunnersResult {
   bool ok = false;
-  std::string error;
+  ApiError error;
   std::vector<RunnerInfo> runners;
 };
 
@@ -422,7 +429,7 @@ struct GameConfigEntry {
 
 struct GameConfigResult {
   bool ok = false;
-  std::string error;
+  ApiError error;
   std::vector<GameConfigEntry> entries;
 };
 
@@ -439,7 +446,7 @@ struct GameConfigEdit {
 
 struct PatchGameConfigResult {
   bool ok = false;
-  std::string error;
+  ApiError error;
 };
 
 // One release from GET /v1/runners/catalog (docs/api.md): a runner build
@@ -459,7 +466,7 @@ struct RunnerRelease {
 
 struct RunnerCatalogResult {
   bool ok = false;
-  std::string error;
+  ApiError error;
   std::vector<RunnerRelease> releases;
 };
 
@@ -471,7 +478,7 @@ struct RunnerSourceInfo {
 
 struct RunnerSourcesResult {
   bool ok = false;
-  std::string error;
+  ApiError error;
   std::vector<RunnerSourceInfo> sources;
 };
 
@@ -486,7 +493,7 @@ struct RunnerUpdate {
 
 struct RunnerUpdatesResult {
   bool ok = false;
-  std::string error;
+  ApiError error;
   std::vector<RunnerUpdate> updates;
 };
 
@@ -501,7 +508,7 @@ struct RunnerTool {
 
 struct RunnerToolsResult {
   bool ok = false;
-  std::string error;
+  ApiError error;
   std::vector<RunnerTool> tools;
 };
 
@@ -509,7 +516,7 @@ struct RunnerToolsResult {
 // the event stream, so "ok" here only means the download started.
 struct RunnerDownloadResult {
   bool ok = false;
-  std::string error;
+  ApiError error;
 };
 
 // A `runners.download.started` / `.finished` / `.failed` payload.
@@ -527,7 +534,7 @@ struct RunnerDownloadEvent {
 // POST /v1/steam/scan.
 struct SteamScanResult {
   bool ok = false;
-  std::string error;
+  ApiError error;
   int added = 0;
   int updated = 0;
 };
@@ -535,7 +542,7 @@ struct SteamScanResult {
 // POST /v1/lutris/import.
 struct LutrisImportResult {
   bool ok = false;
-  std::string error;
+  ApiError error;
   int added = 0;
   int updated = 0;
 };
@@ -544,13 +551,13 @@ struct LutrisImportResult {
 // prefix, tracked like a normal launch.
 struct RunInPrefixResult {
   bool ok = false;
-  std::string error;
+  ApiError error;
 };
 
 // POST /v1/games/{id}/finish-install.
 struct FinishInstallResult {
   bool ok = false;
-  std::string error;
+  ApiError error;
 };
 
 // The frontend's own preferences, which live in frontend.toml — the sibling
@@ -611,14 +618,14 @@ struct FrontendPrefs {
 
 struct FrontendPrefsResult {
   bool ok = false;
-  std::string error;
+  ApiError error;
   FrontendPrefs prefs;
 };
 
 // GET /v1/games/{id}/installer[?path=].
 struct InstallerInfoResult {
   bool ok = false;
-  std::string error;
+  ApiError error;
   std::string path;
   std::int64_t size_bytes = 0;
   std::string format;  // "inno" | "nsis" | "msi" | "unknown"
@@ -628,7 +635,7 @@ struct InstallerInfoResult {
 // GET /v1/games/{id}/install/progress.
 struct InstallProgressResult {
   bool ok = false;
-  std::string error;
+  ApiError error;
   std::string state;  // "idle" | "queued" | "running" | "finished" | "failed"
   std::int64_t bytes_written = 0;
 };
@@ -637,14 +644,14 @@ struct InstallProgressResult {
 struct InstallEvent {
   std::string id;
   std::string state;
-  std::string error;  // only on "failed"
+  ApiError error;  // only on "failed"
 };
 
 // POST /v1/games/{id}/relocate, /v1/games/{id}/install, and the like:
 // success only means mirad accepted or finished it.
 struct GameActionResult {
   bool ok = false;
-  std::string error;
+  ApiError error;
 };
 
 // GET /v1/games/{id}/metadata/matches: SteamGridDB games whose art could
@@ -657,7 +664,7 @@ struct GriddbMatch {
 
 struct GriddbMatchesResult {
   bool ok = false;
-  std::string error;
+  ApiError error;
   std::string query;
   std::int64_t chosen = 0;  // 0: the top match, nothing chosen
   std::vector<GriddbMatch> matches;
@@ -666,7 +673,7 @@ struct GriddbMatchesResult {
 // POST /v1/library/relocate.
 struct RelocateLibraryResult {
   bool ok = false;
-  std::string error;
+  ApiError error;
   int moved = 0;
   int failed = 0;
 };
@@ -675,7 +682,7 @@ struct RelocateLibraryResult {
 // `lines` means nothing was ever logged, not an error.
 struct GameLogResult {
   bool ok = false;
-  std::string error;
+  ApiError error;
   std::vector<std::string> lines;
 };
 
@@ -683,7 +690,7 @@ struct GameLogResult {
 // Purely informational; `launch.gamemode` (a plain config key) is the toggle.
 struct GameModeStatusResult {
   bool ok = false;
-  std::string error;
+  ApiError error;
   bool installed = false;
   bool daemon_running = false;
 };
@@ -692,7 +699,7 @@ struct GameModeStatusResult {
 // outcome arrives as a tricks.started/.finished/.failed event.
 struct TricksResult {
   bool ok = false;
-  std::string error;
+  ApiError error;
 };
 
 // A tricks.started / .finished / .failed payload.
@@ -713,14 +720,14 @@ struct RunnerSchemaEntry {
 
 struct RunnerSchemaResult {
   bool ok = false;
-  std::string error;
+  ApiError error;
   std::vector<RunnerSchemaEntry> entries;
 };
 
 // DELETE /v1/runners/{kind}:{name} — synchronous, 200 on success.
 struct RunnerRemoveResult {
   bool ok = false;
-  std::string error;
+  ApiError error;
 };
 
 // GET /v1/desktop-entries/candidates — an already-installed .desktop entry
@@ -734,14 +741,14 @@ struct DesktopEntryCandidate {
 
 struct DesktopEntryCandidatesResult {
   bool ok = false;
-  std::string error;
+  ApiError error;
   std::vector<DesktopEntryCandidate> candidates;
 };
 
 // POST /v1/desktop-entries/import.
 struct DesktopEntryImportResult {
   bool ok = false;
-  std::string error;
+  ApiError error;
   int added = 0;
   int updated = 0;
 };
@@ -749,7 +756,7 @@ struct DesktopEntryImportResult {
 // POST /v1/desktop-entries/sync — regenerates Mira's own desktop entries.
 struct DesktopEntrySyncResult {
   bool ok = false;
-  std::string error;
+  ApiError error;
 };
 
 // GET /v1/<store>/status for "epic", "gog", "itch" and "humble". `tool` is
@@ -757,7 +764,7 @@ struct DesktopEntrySyncResult {
 // humble-cli).
 struct StoreStatusResult {
   bool ok = false;
-  std::string error;
+  ApiError error;
   bool tool_installed = false;
   std::string tool_version;
   bool authenticated = false;
@@ -769,13 +776,13 @@ struct StoreStatusResult {
 // success only means mirad accepted it.
 struct StoreActionResult {
   bool ok = false;
-  std::string error;
+  ApiError error;
 };
 
 // POST /v1/<store>/import.
 struct StoreImportResult {
   bool ok = false;
-  std::string error;
+  ApiError error;
   int added = 0;
   int updated = 0;
 };
@@ -791,7 +798,7 @@ struct StoreTitle {
 // GET /v1/sources/{id}/removal.
 struct RemovalPlanResult {
   bool ok = false;
-  std::string error;
+  ApiError error;
   struct Game {
     std::string id;
     std::string name;
@@ -806,7 +813,7 @@ struct RemovalPlanResult {
 // POST /v1/sources/{id}/remove.
 struct RemoveSourceResult {
   bool ok = false;
-  std::string error;
+  ApiError error;
   int removed = 0;
   std::vector<std::string> problems;
 };
@@ -814,7 +821,7 @@ struct RemoveSourceResult {
 // GET/POST /v1/sources/{id}/runner.
 struct SourceRunnerResult {
   bool ok = false;
-  std::string error;
+  ApiError error;
   std::string runner_ref;  // empty: the default runner
   int games = 0;           // the source's Windows games
   int differing = 0;       // of those, the ones on another runner
@@ -830,13 +837,13 @@ struct ItchCollection {
 
 struct ItchCollectionsResult {
   bool ok = false;
-  std::string error;
+  ApiError error;
   std::vector<ItchCollection> collections;
 };
 
 struct StoreLibraryResult {
   bool ok = false;
-  std::string error;
+  ApiError error;
   std::vector<StoreTitle> titles;
 };
 
@@ -848,7 +855,7 @@ struct HumbleBundle {
 
 struct HumbleLibraryResult {
   bool ok = false;
-  std::string error;
+  ApiError error;
   std::vector<HumbleBundle> bundles;
 };
 
@@ -862,19 +869,19 @@ struct LauncherInfo {
   bool interactive_install = false;
   std::string prefix;
   std::string runner_ref;
-  std::string error;
+  ApiError error;
 };
 
 struct LaunchersResult {
   bool ok = false;
-  std::string error;
+  ApiError error;
   std::vector<LauncherInfo> launchers;
 };
 
 // POST /v1/amazon/login: the login page to open, made fresh each time.
 struct LoginUrlResult {
   bool ok = false;
-  std::string error;
+  ApiError error;
   std::string url;
 };
 

@@ -5,6 +5,7 @@
 #include <QWidget>
 
 #include <string>
+#include <utility>
 #include <vector>
 
 class QFormLayout;
@@ -46,8 +47,8 @@ public:
   // Call once per row, right after form->addRow(label, row_widget) — lets
   // the search box find it later. searchable_text should already contain
   // everything the row should match on (key, doc, category, hand-picked
-  // synonyms for non-schema rows); matching is a plain case-insensitive
-  // substring test, no tokenizing.
+  // synonyms for non-schema rows). Every query word must appear, in any
+  // order (ui/SettingsSearch).
   void RegisterRow(QFormLayout* form, QWidget* row_widget, const QString& searchable_text);
 
   // A second, independent visibility gate under the search filter, e.g. the
@@ -88,7 +89,7 @@ private:
   struct RowEntry {
     QFormLayout* form = nullptr;
     QWidget* row_widget = nullptr;
-    QString search_text;  // pre-lowercased
+    QString search_text;  // settings_search::Normalize'd
     bool gate_visible = true;
     int category_index = -1;
   };
@@ -106,6 +107,7 @@ private:
 
   std::vector<Category> categories_;
   std::vector<RowEntry> rows_;
+  std::vector<std::pair<QFormLayout*, QWidget*>> dividers_;
   QHash<QWidget*, int> row_index_by_widget_;   // row_widget -> index into rows_
   QHash<QFormLayout*, int> category_by_form_;  // form -> index into categories_
 };
