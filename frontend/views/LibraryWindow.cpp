@@ -2008,19 +2008,20 @@ const mira_gui::GameSummary* LibraryWindow::FindGame(const std::string& id) cons
   return nullptr;
 }
 
-void LibraryWindow::UpsertGame(const mira_gui::GameSummary& game) {
-  // A rename changes the placeholder's initials, so the rendered tile is
-  // stale even though the fetched artwork behind it isn't.
-  artwork_->InvalidateRendering(game.id);
+void LibraryWindow::UpsertGame(const mira_gui::GameSummary& game) { UpsertGames({game}); }
 
-  for (mira_gui::GameSummary& existing : games_) {
-    if (existing.id == game.id) {
-      existing = game;
-      ApplyFilter();
-      return;
+void LibraryWindow::UpsertGames(const std::vector<mira_gui::GameSummary>& games) {
+  for (const mira_gui::GameSummary& game : games) {
+    // A rename changes the placeholder's initials, so the rendered tile is
+    // stale even though the fetched artwork behind it isn't.
+    artwork_->InvalidateRendering(game.id);
+    const auto existing = std::ranges::find(games_, game.id, &mira_gui::GameSummary::id);
+    if (existing != games_.end()) {
+      *existing = game;
+    } else {
+      games_.push_back(game);
     }
   }
-  games_.push_back(game);
   ApplyFilter();
 }
 
@@ -2262,70 +2263,34 @@ void LibraryWindow::ShowBatchContextMenu(const QList<QListWidgetItem*>& items, c
 }
 
 void LibraryWindow::BatchSetTag(const std::vector<std::string>& ids, const std::string& tag, bool present) {
+  mira_gui::GamesPatch patch;
   for (const std::string& id : ids) {
     const mira_gui::GameSummary* game = FindGame(id);
-    if (game == nullptr || HasTag(*game, tag) == present) continue;
-
-    std::vector<std::string> tags = game->tags;
-    if (present) {
-      tags.push_back(tag);
-    } else {
-      std::erase(tags, tag);
-    }
-    mira_gui::GamePatch patch;
-    patch.tags = tags;
-    mira_gui::MiradClient::PatchGameAsync(
-        this, id, patch, [this, id, tags, tag](mira_gui::PatchGameResult result) {
-          if (!result.ok) {
-            mira_gui::notify::FailedRequest(this,
-                                            tag == "hidden" ? "Could not change a game's visibility."
-                                                            : "Could not change whether a game is pinned.",
-                                            result.error);
-            return;
-          }
-          for (mira_gui::GameSummary& stored : games_) {
-            if (stored.id == id) {
-              stored.tags = tags;
-              break;
-            }
-          }
-          ApplyFilter();
-        });
+    if (game != nullptr && HasTag(*game, tag) != present) patch.ids.push_back(id);
   }
+  if (patch.ids.empty()) return;
+  (present ? patch.add_tags : patch.remove_tags).push_back(tag);
+
+  const bool one = patch.ids.size() == 1;
+  mira_gui::MiradClient::PatchGamesAsync(this, patch, [this, tag, one](mira_gui::PatchGamesResult result) {
+    if (!result.ok) {
+      const QString games = one ? "this game's" : "these games'";
+      mira_gui::notify::FailedRequest(this,
+                                      tag == "hidden" ? QString("Could not change %1 visibility.").arg(games)
+                                                      : QString("Could not change whether %1 pinned.")
+                                                            .arg(one ? "this game is" : "these games are"),
+                                      result.error);
+      return;
+    }
+    // Applied from the reply rather than waiting for games.updated, so the
+    // change feels instant. No toast: the games visibly moving is the feedback.
+    UpsertGames(result.games);
+  });
 }
 
 void LibraryWindow::ToggleTag(const std::string& id, const std::string& tag) {
   const mira_gui::GameSummary* game = FindGame(id);
-  if (game == nullptr) return;
-
-  std::vector<std::string> tags = game->tags;
-  if (HasTag(*game, tag)) {
-    tags.erase(std::remove(tags.begin(), tags.end(), tag), tags.end());
-  } else {
-    tags.push_back(tag);
-  }
-
-  mira_gui::GamePatch patch;
-  patch.tags = tags;
-  mira_gui::MiradClient::PatchGameAsync(this, id, patch, [this, id, tags, tag](mira_gui::PatchGameResult result) {
-    if (!result.ok) {
-      mira_gui::notify::FailedRequest(this,
-                                      tag == "hidden" ? "Could not change this game's visibility."
-                                                      : "Could not change whether this game is pinned.",
-                                      result.error);
-      return;
-    }
-    // Patched in place rather than waiting for the game.updated event, so
-    // the toggle feels instant. No toast: the game visibly moving in the
-    // grid and sidebar is the feedback.
-    for (mira_gui::GameSummary& stored : games_) {
-      if (stored.id == id) {
-        stored.tags = tags;
-        break;
-      }
-    }
-    ApplyFilter();
-  });
+  if (game != nullptr) BatchSetTag({id}, tag, !HasTag(*game, tag));
 }
 
 void LibraryWindow::ToggleRunning(const std::string& id) {
@@ -3612,6 +3577,11 @@ void LibraryWindow::HandleGameEvent(const std::string& type, const std::string& 
 
   // Explicitly the two event types that carry a game record, not "anything
   // left over": mirad also publishes runners.download.* and tricks.* here.
+  if (type == "games.updated") {
+    std::vector<mira_gui::GameSummary> games;
+    if (mira_gui::MiradClient::ParseGameSummaries(data, &games)) UpsertGames(games);
+    return;
+  }
   if (type != "game.added" && type != "game.updated") return;
 
   mira_gui::GameSummary game;

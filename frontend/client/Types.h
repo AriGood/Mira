@@ -451,6 +451,20 @@ struct PatchGameConfigResult {
   ApiError error;
 };
 
+// PATCH /v1/games: one request for many games.
+struct GamesPatch {
+  std::vector<std::string> ids;
+  std::vector<std::string> add_tags;
+  std::vector<std::string> remove_tags;
+  std::vector<GameConfigEdit> config;
+};
+
+struct PatchGamesResult {
+  bool ok = false;
+  ApiError error;
+  std::vector<GameSummary> games;  // only the ones that changed
+};
+
 // One release from GET /v1/runners/catalog (docs/api.md): a runner build
 // that is *available to install*, as opposed to RunnerInfo, which is one
 // already installed. `tag` is what POST /v1/runners/download takes.

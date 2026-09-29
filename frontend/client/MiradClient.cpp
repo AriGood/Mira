@@ -741,6 +741,28 @@ PatchGameConfigResult PatchGameConfigSync(const std::string& id,
   return {reply.ok, reply.error};
 }
 
+PatchGamesResult PatchGamesSync(const GamesPatch& patch) {
+  PatchGamesResult result;
+  json config = json::object();
+  for (const GameConfigEdit& edit : patch.config) {
+    config[edit.key] = edit.clear ? json(nullptr) : mapping::TypedValueFromText(edit.type, edit.value);
+  }
+  const json body = {{"ids", patch.ids},
+                     {"add_tags", patch.add_tags},
+                     {"remove_tags", patch.remove_tags},
+                     {"config", config}};
+  const transport::Reply reply = transport::Patch("/v1/games", body);
+  if (!reply.ok) {
+    result.error = reply.error;
+    return result;
+  }
+  result.ok = true;
+  if (reply.body.is_object() && reply.body.contains("games") && reply.body["games"].is_array()) {
+    for (const json& entry : reply.body["games"]) result.games.push_back(mapping::ToGameSummary(entry));
+  }
+  return result;
+}
+
 GameLogResult GetGameLogSync(const std::string& id, int lines) {
   GameLogResult result;
   const transport::Reply reply =
@@ -1513,6 +1535,11 @@ void MiradClient::PatchGameConfigAsync(QObject* context, const std::string& id,
   async::Run(context, [id, edits] { return PatchGameConfigSync(id, edits); }, std::move(callback));
 }
 
+void MiradClient::PatchGamesAsync(QObject* context, const GamesPatch& patch,
+                                  std::function<void(PatchGamesResult)> callback) {
+  async::Run(context, [patch] { return PatchGamesSync(patch); }, std::move(callback));
+}
+
 void MiradClient::GetGameLogAsync(QObject* context, const std::string& id, int lines,
                                   std::function<void(GameLogResult)> callback) {
   async::Run(context, [id, lines] { return GetGameLogSync(id, lines); }, std::move(callback));
@@ -1576,6 +1603,18 @@ bool MiradClient::ParseGameSummary(const std::string& data, GameSummary* out) {
     return false;
   }
   *out = mapping::ToGameSummary(entry);
+  return true;
+}
+
+bool MiradClient::ParseGameSummaries(const std::string& data, std::vector<GameSummary>* out) {
+  const json entry = json::parse(data, nullptr, false);
+  if (entry.is_discarded() || !entry.is_object() || !entry.contains("games") || !entry["games"].is_array()) {
+    return false;
+  }
+  out->clear();
+  for (const json& game : entry["games"]) {
+    if (game.is_object() && !game.value("id", std::string()).empty()) out->push_back(mapping::ToGameSummary(game));
+  }
   return true;
 }
 

@@ -39,6 +39,19 @@ TEST_CASE("ParseGameSummary rejects a payload from a different event") {
   CHECK_FALSE(MiradClient::ParseGameSummary(R"({"id": 42})", &game));
 }
 
+TEST_CASE("ParseGameSummaries reads every game a batch changed, skipping entries without an id") {
+  std::vector<GameSummary> games;
+  REQUIRE(MiradClient::ParseGameSummaries(
+      R"({"games": [{"id": "a", "tags": ["hidden"]}, {"name": "no id"}, {"id": "b", "tags": []}]})", &games));
+  REQUIRE(games.size() == 2);
+  CHECK(games[0].id == "a");
+  CHECK(games[0].tags == std::vector<std::string>{"hidden"});
+  CHECK(games[1].id == "b");
+
+  CHECK_FALSE(MiradClient::ParseGameSummaries(R"({"id": "a"})", &games));
+  CHECK_FALSE(MiradClient::ParseGameSummaries("not json", &games));
+}
+
 TEST_CASE("ParseArtThumbsEvent reads which previews are ready and which failed") {
   ArtThumbsEvent event;
   REQUIRE(MiradClient::ParseArtThumbsEvent(

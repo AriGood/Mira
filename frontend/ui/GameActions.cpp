@@ -203,25 +203,16 @@ void Relocate(QWidget* parent, const std::vector<std::pair<std::string, QString>
 
 void BatchSetDesktopEntry(QWidget* parent, const std::vector<std::string>& ids, bool enabled) {
   if (ids.empty()) return;
-  const GameConfigEdit edit{"desktop_entries.enabled", "a boolean", enabled ? "true" : "false",
-                            false};
-  auto remaining = std::make_shared<int>(static_cast<int>(ids.size()));
-  auto failures = std::make_shared<int>(0);
-
-  for (const std::string& id : ids) {
-    MiradClient::PatchGameConfigAsync(
-        parent, id, {edit}, [parent, enabled, remaining, failures](PatchGameConfigResult result) {
-          if (!result.ok) ++*failures;
-          if (--*remaining > 0) return;
-          if (*failures > 0) {
-            notify::Failed(parent, QString("Could not update %1 game(s).").arg(*failures),
-                           "See each game's own Advanced settings to retry.");
-          } else {
-            notify::Notice(parent, enabled ? "Added to the application menu."
-                                           : "Removed from the application menu.");
-          }
-        });
-  }
+  GamesPatch patch;
+  patch.ids = ids;
+  patch.config = {{"desktop_entries.enabled", "a boolean", enabled ? "true" : "false", false}};
+  MiradClient::PatchGamesAsync(parent, patch, [parent, enabled](PatchGamesResult result) {
+    if (!result.ok) {
+      notify::FailedRequest(parent, "Could not update the application menu.", result.error);
+      return;
+    }
+    notify::Notice(parent, enabled ? "Added to the application menu." : "Removed from the application menu.");
+  });
 }
 
 }  // namespace mira_gui::actions

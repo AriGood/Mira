@@ -128,6 +128,8 @@ private:
   void UpdateFilterCounts();
   QString CurrentFilterKey() const;
   void UpsertGame(const mira_gui::GameSummary& game);
+  // Many games, one grid rebuild.
+  void UpsertGames(const std::vector<mira_gui::GameSummary>& games);
   void RemoveGame(const std::string& id);
   const mira_gui::GameSummary* FindGame(const std::string& id) const;
 
@@ -154,7 +156,7 @@ private:
   void ToggleRunning(const std::string& id);
   // Adds or removes `tag` ("hidden", "favorite") on one game.
   void ToggleTag(const std::string& id, const std::string& tag);
-  // Adds (`present`) or removes `tag` on each id, skipping those already that way.
+  // Adds (`present`) or removes `tag` on each id in one request.
   void BatchSetTag(const std::vector<std::string>& ids, const std::string& tag, bool present);
   void LaunchGame(const std::string& id);
   void OpenGameDialog(const std::string& id);

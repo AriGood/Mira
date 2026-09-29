@@ -239,6 +239,10 @@ public:
                                    const std::vector<GameConfigEdit>& edits,
                                    std::function<void(PatchGameConfigResult)> callback);
 
+  // PATCH /v1/games: tags and overrides for many games in one request.
+  static void PatchGamesAsync(QObject* context, const GamesPatch& patch,
+                              std::function<void(PatchGamesResult)> callback);
+
   // GET /v1/games/{id}/log?lines=. `lines` is how many trailing lines to ask
   // for; an empty result means nothing has ever been logged, not a failure.
   static void GetGameLogAsync(QObject* context, const std::string& id, int lines,
@@ -384,6 +388,8 @@ public:
                                      StoreEvent* out);
 
   static bool ParseGameSummary(const std::string& data, GameSummary* out);
+  // A games.updated payload's `games`.
+  static bool ParseGameSummaries(const std::string& data, std::vector<GameSummary>* out);
 
   // A game.added payload's `open_config` (open_config_on_add).
   static bool ParseOpenConfig(const std::string& data);
