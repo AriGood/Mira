@@ -421,7 +421,7 @@ Entries from `$XDG_DATA_HOME/applications`, `$XDG_DATA_DIRS`, the Flatpak export
 `id` is the desktop file ID. Skipped: non-applications, `NoDisplay` or `Hidden` entries, Mira's own entries, Steam game shortcuts, and entries already in the library.
 
 ### `POST /v1/desktop-entries/import`
-Body `{"ids": [...]}`. A Flatpak entry becomes `flatpak run <app-id>`. Anything else uses its `Exec=` line with field codes removed. Imported games are native. Importing the same entry again updates it. Returns `{"added": 1, "updated": 0}`.
+Body `{"ids": [...]}`. A Flatpak entry becomes `flatpak run <app-id>`. Anything else uses its `Exec=` line with field codes removed. The command is stored as an absolute `exe_path`: a bare one is looked up on `PATH` when importing, and an entry whose command isn't installed isn't offered. Imported games are native, keep the entry's id in `source_ref`, and get a `desktop_entries.enabled: false` override, since the app already has a menu entry. Importing the same entry again updates it and keeps that override if it's set. Returns `{"added": 1, "updated": 0}`.
 
 ### `POST /v1/desktop-entries/sync`
 Rewrites Mira's own desktop entries now.

@@ -305,7 +305,9 @@ int main(int argc, char** argv) {
       ::dup2(log_fd, STDERR_FILENO);
     }
     ::execvp(game_argv[0], game_argv.data());
-    _exit(127);  // only reached if exec itself failed
+    // Only reached if exec itself failed; the log is the one place that can say why.
+    WriteLogLine(log_fd, std::format("[mira-run] could not start \"{}\": {}\n", game_argv[0], std::strerror(errno)));
+    _exit(127);
   }
 
   record.game_pid = game_pid;

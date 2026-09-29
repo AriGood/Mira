@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "core/Log.h"
+#include "core/Paths.h"
 #include "library/ArchiveExtractor.h"
 #include "library/Scanner.h"
 
@@ -113,11 +114,28 @@ void Watcher::ReloadRoots() {
   }
 }
 
+void CreateMissingRoots(const config::Config& config) {
+  const fs::path home = paths::Home().lexically_normal();
+  for (const fs::path& root : config.GetPathArray("library_roots")) {
+    const fs::path normal = root.lexically_normal();
+    const fs::path relative = normal.lexically_relative(home);
+    if (relative.empty() || relative == "." || *relative.begin() == "..") continue;
+    std::error_code ec;
+    if (fs::exists(normal, ec) || !fs::is_directory(normal.parent_path(), ec)) continue;
+    if (fs::create_directory(normal, ec)) {
+      log::Info("created library root {}", normal.string());
+    } else if (ec) {
+      log::Warn("could not create library root {}: {}", normal.string(), ec.message());
+    }
+  }
+}
+
 void Watcher::WatchRoots() {
   for (const auto& [wd, root] : watch_to_root_) inotify_rm_watch(inotify_fd_, wd);
   watch_to_root_.clear();
   pending_.clear();
   RearmTimer();
+  CreateMissingRoots(config_);
 
   for (const fs::path& root : config_.GetPathArray("library_roots")) {
     std::error_code ec;

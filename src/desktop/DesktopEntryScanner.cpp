@@ -8,6 +8,7 @@
 
 #include "core/Log.h"
 #include "core/Paths.h"
+#include "runner/Exec.h"
 
 namespace mira::desktop {
 namespace {
@@ -183,14 +184,25 @@ struct Resolved {
   model::Platform platform = model::Platform::Native;
 };
 
+// An absolute path for `command`: as given if already absolute, else looked up on PATH.
+std::optional<fs::path> AbsoluteCommand(const std::string& command) {
+  if (fs::path(command).is_absolute()) return fs::path(command);
+  if (command.find('/') != std::string::npos) return std::nullopt;
+  if (const auto found = runner::FindOnPath(command)) return fs::path(*found);
+  return std::nullopt;
+}
+
+// exe_path is always absolute, so it launches the same whatever install_path is.
 std::optional<Resolved> ResolveCandidate(const DesktopFile& file) {
   if (const std::string app_id = file.Get("X-Flatpak"); !app_id.empty()) {
     // Ignore Exec= entirely -- Flatpak's own Exec line is a mess of
     // "flatpak run --branch=... --command=... <app-id> @@u %u @@" that isn't
     // worth parsing when the app id alone is enough to relaunch it exactly.
+    const auto flatpak = AbsoluteCommand("flatpak");
+    if (!flatpak) return std::nullopt;
     Resolved resolved;
     resolved.install_path = (paths::Home() / ".var" / "app" / app_id).string();
-    resolved.exe_path = "flatpak";
+    resolved.exe_path = flatpak->string();
     resolved.args = "run " + app_id;
     resolved.platform = model::Platform::Native;
     return resolved;
@@ -202,19 +214,11 @@ std::optional<Resolved> ResolveCandidate(const DesktopFile& file) {
   const std::vector<std::string> tokens = TokenizeExec(exec);
   if (tokens.empty()) return std::nullopt;
 
-  const fs::path exe = tokens.front();
+  const auto exe = AbsoluteCommand(tokens.front());
+  if (!exe) return std::nullopt;  // not installed, so it couldn't launch
   Resolved resolved;
-  if (exe.is_absolute()) {
-    resolved.install_path = exe.parent_path().string();
-    resolved.exe_path = exe.filename().string();
-  } else {
-    // A bare name with no '/' -- install_path stays empty, exe_path is the
-    // name itself. NativeRunner's install_path / exe_path join and
-    // execvpe's own PATH search already resolve this correctly with zero
-    // new runner code.
-    resolved.install_path.clear();
-    resolved.exe_path = exe.string();
-  }
+  resolved.install_path = exe->parent_path().string();
+  resolved.exe_path = exe->string();
   for (size_t i = 1; i < tokens.size(); ++i) {
     if (i > 1) resolved.args += ' ';
     resolved.args += tokens[i];
@@ -259,6 +263,22 @@ std::vector<ScannedEntry> ScanAll(const config::Config& config) {
   return out;
 }
 
+// The game imported from this entry, by desktop file id. Imports from before
+// source_ref was set stored a bare or relative command, so they're matched by
+// command name and args instead.
+std::optional<model::Game> FindImported(const store::GameStore& games, const ScannedEntry& entry) {
+  const std::string command = fs::path(entry.resolved.exe_path).filename().string();
+  for (const model::Game& game : games.All()) {
+    if (game.source != "desktop-entry") continue;
+    if (game.source_ref == entry.id) return game;
+    if (game.source_ref.empty() && fs::path(game.exe_path).filename() == command &&
+        game.args == entry.resolved.args) {
+      return game;
+    }
+  }
+  return std::nullopt;
+}
+
 }  // namespace
 
 DesktopEntryScanner::DesktopEntryScanner(config::Config& config, store::GameStore& games, api::EventBus& events)
@@ -271,7 +291,7 @@ Result<std::vector<DesktopEntryCandidate>> DesktopEntryScanner::ListCandidates()
   for (const ScannedEntry& entry : ScanAll(config_)) {
     // No reason to list something already in the library as a candidate to
     // add again.
-    if (games_.FindByInstallPath(entry.resolved.install_path)) continue;
+    if (FindImported(games_, entry)) continue;
     candidates.push_back(DesktopEntryCandidate{
         .id = entry.id,
         .name = entry.file.Get("Name"),
@@ -292,10 +312,14 @@ Result<DesktopEntryImportSummary> DesktopEntryScanner::Import(const std::vector<
   for (const ScannedEntry& entry : ScanAll(config_)) {
     if (!wanted.contains(entry.id)) continue;
 
-    const auto existing = games_.FindByInstallPath(entry.resolved.install_path);
+    const auto existing = FindImported(games_, entry);
     model::Game game = existing.value_or(model::Game{});
     game.id = existing ? game.id : games_.NextId(entry.file.Get("Name"));
     game.source = "desktop-entry";
+    game.source_ref = entry.id;
+    // The app already has its own menu entry; a Mira one would duplicate it.
+    // Still an override, so the user can turn it back on for this game.
+    if (!game.overrides.contains("desktop_entries.enabled")) game.overrides["desktop_entries.enabled"] = false;
     game.name = entry.file.Get("Name");
     game.install_path = entry.resolved.install_path;
     game.exe_path = entry.resolved.exe_path;

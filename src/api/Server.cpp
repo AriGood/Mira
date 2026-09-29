@@ -1606,6 +1606,14 @@ void Server::RegisterRoutes() {
 
     auto command = resolved->runner->BuildCommand(*game, resolved->build);
     if (!command) return SendError(res, 400, command.error());
+    // Otherwise the spawned child's chdir fails and it exits 127 before anything is logged.
+    if (std::error_code ec; !command->cwd.empty() && !std::filesystem::is_directory(command->cwd, ec)) {
+      return SendError(res, 409,
+                       Error{"working_dir_missing",
+                             std::format("the folder the game starts in, \"{}\", doesn't exist", command->cwd.string()),
+                             "Check the game's folder is still there, or choose its executable again.",
+                             Fix::Game(game->id, "exe")});
+    }
 
     const std::vector<std::string> wrappers = resolver.GetStringArray("command_wrappers");
     if (auto checked = CheckCommandWrappers(wrappers); !checked) {
