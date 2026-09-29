@@ -2025,14 +2025,11 @@ void LibraryWindow::UpsertGames(const std::vector<mira_gui::GameSummary>& games)
   ApplyFilter();
 }
 
-void LibraryWindow::RemoveGame(const std::string& id) {
-  for (auto it = games_.begin(); it != games_.end(); ++it) {
-    if (it->id == id) {
-      games_.erase(it);
-      break;
-    }
-  }
-  if (selected_id_ == id) selected_id_.clear();
+void LibraryWindow::RemoveGame(const std::string& id) { RemoveGames({id}); }
+
+void LibraryWindow::RemoveGames(const std::vector<std::string>& ids) {
+  std::erase_if(games_, [&](const mira_gui::GameSummary& game) { return std::ranges::contains(ids, game.id); });
+  if (std::ranges::contains(ids, selected_id_)) selected_id_.clear();
   ApplyFilter();
 }
 
@@ -3495,6 +3492,11 @@ void LibraryWindow::HandleGameEvent(const std::string& type, const std::string& 
   if (type == "game.removed") {
     const std::string id = mira_gui::MiradClient::ParseRemovedId(data);
     if (!id.empty()) RemoveGame(id);
+    return;
+  }
+  if (type == "games.removed") {
+    const std::vector<std::string> ids = mira_gui::MiradClient::ParseRemovedIds(data);
+    if (!ids.empty()) RemoveGames(ids);
     return;
   }
 

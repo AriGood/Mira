@@ -161,6 +161,22 @@ Result<std::vector<model::Game>> GameStore::UpdateMany(const std::vector<std::st
   return updated;
 }
 
+Result<std::vector<std::string>> GameStore::RemoveMany(const std::vector<std::string>& ids) {
+  std::vector<std::string> removed;
+  {
+    std::lock_guard lock(mutex_);
+    const std::set<std::string> wanted(ids.begin(), ids.end());
+    std::erase_if(games_, [&](const model::Game& game) {
+      if (!wanted.contains(game.id)) return false;
+      removed.push_back(game.id);
+      return true;
+    });
+  }
+  if (removed.empty()) return removed;
+  if (auto result = Save(); !result) return std::unexpected(result.error());
+  return removed;
+}
+
 Result<void> GameStore::Remove(const std::string& id) {
   {
     std::lock_guard lock(mutex_);

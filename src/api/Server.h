@@ -58,6 +58,8 @@ private:
   // With `replacing` ("kind:name"), games and the default using it move over.
   void InstallRunnerAsync(const std::string& kind, const std::string& source, const runner::ReleaseAsset& asset,
                           const std::string& replacing);
+  // Deletes what DELETE /v1/games/{id} was asked to, before the game itself is removed.
+  Result<void> DeleteGameData(const model::Game& game, bool files, bool prefix, bool metadata);
 
   config::Config& config_;
   store::GameStore& games_;

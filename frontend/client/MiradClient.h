@@ -40,6 +40,10 @@ public:
   static void DeleteGameAsync(QObject* context, const std::string& id, bool delete_files,
                               bool delete_prefix, bool delete_metadata,
                               std::function<void(DeleteResult)> callback);
+  // POST /v1/games/delete: the same for many games in one request.
+  static void DeleteGamesAsync(QObject* context, const std::vector<std::string>& ids, bool delete_files,
+                               bool delete_prefix, bool delete_metadata,
+                               std::function<void(DeleteGamesResult)> callback);
 
   // POST /v1/games/manual: adds a game record directly, for an installer or
   // a folder outside every library root. Response mirrors GetGameAsync.
@@ -306,11 +310,12 @@ public:
                                std::function<void(GameActionResult)> callback);
   static void GetInstallProgressAsync(QObject* context, const std::string& id,
                                       std::function<void(InstallProgressResult)> callback);
-  // Moves the game's files and prefix into Mira's own layout.
-  static void RelocateGameAsync(QObject* context, const std::string& id,
-                                std::function<void(GameActionResult)> callback);
   static void RelocateLibraryAsync(QObject* context,
                                    std::function<void(RelocateLibraryResult)> callback);
+  // POST /v1/library/relocate for just `ids`: moves their files and prefixes
+  // into Mira's own layout, one game at a time.
+  static void RelocateGamesAsync(QObject* context, const std::vector<std::string>& ids,
+                                 std::function<void(RelocateLibraryResult)> callback);
   static bool ParseInstallEvent(const std::string& event_type, const std::string& data,
                                 InstallEvent* out);
 
@@ -409,6 +414,8 @@ public:
 
   // Parses `game.removed`'s payload (`{"id": "..."}`, Server.cpp).
   static std::string ParseRemovedId(const std::string& data);
+  // Parses `games.removed`'s payload (`{"ids": [...]}`).
+  static std::vector<std::string> ParseRemovedIds(const std::string& data);
 
   // Parses a `game.metadata_ready`/`.metadata_failed` payload. `state` is
   // the event type, which the payload does not repeat; false if `data` is

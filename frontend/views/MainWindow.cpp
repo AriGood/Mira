@@ -373,6 +373,10 @@ void MainWindow::HandleGameEvent(const std::string& type, const std::string& dat
     if (!id.empty()) RemoveRow(id);
     return;
   }
+  if (type == "games.removed") {
+    for (const std::string& id : mira_gui::MiradClient::ParseRemovedIds(data)) RemoveRow(id);
+    return;
+  }
 
   if (type == "game.state") {
     mira_gui::GameStateEvent state;

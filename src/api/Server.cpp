@@ -88,6 +88,26 @@ void SendError(Response& res, int status, const Error& error) {
   res.set_content(body.dump(), "application/json");
 }
 
+// body[key] as strings: empty if absent, nullopt if not an array of strings.
+std::optional<std::vector<std::string>> StringList(const json& body, const char* key) {
+  if (!body.contains(key)) return std::vector<std::string>{};
+  if (!body[key].is_array()) return std::nullopt;
+  std::vector<std::string> out;
+  for (const json& item : body[key]) {
+    if (!item.is_string()) return std::nullopt;
+    out.push_back(item.get<std::string>());
+  }
+  return out;
+}
+
+// One game's failure inside a batch reply: {id, error: {code, message, hint?, fix?}}.
+json BatchFailure(const std::string& id, const Error& error) {
+  json body = ErrorBody(error.code, error.message);
+  AddHintAndFix(body["error"], error);
+  body["id"] = id;
+  return body;
+}
+
 // A GameStore failure: an unknown id is 404, a failed save is the daemon's fault.
 void SendStoreError(Response& res, const Error& error) {
   SendError(res, error.code == "game_not_found" ? 404 : 500, error);
@@ -658,19 +678,9 @@ void Server::RegisterRoutes() {
   // multi-select doesn't cost a request (and a full rewrite) per game.
   http_->Patch("/v1/games", [this](const Request& req, Response& res) {
     const json body = json::parse(req.body, nullptr, false);
-    const auto string_list = [&](const char* key) -> std::optional<std::vector<std::string>> {
-      if (!body.contains(key)) return std::vector<std::string>{};
-      if (!body[key].is_array()) return std::nullopt;
-      std::vector<std::string> out;
-      for (const json& item : body[key]) {
-        if (!item.is_string()) return std::nullopt;
-        out.push_back(item.get<std::string>());
-      }
-      return out;
-    };
-    const auto ids = body.is_object() ? string_list("ids") : std::nullopt;
-    const auto add_tags = body.is_object() ? string_list("add_tags") : std::nullopt;
-    const auto remove_tags = body.is_object() ? string_list("remove_tags") : std::nullopt;
+    const auto ids = body.is_object() ? StringList(body, "ids") : std::nullopt;
+    const auto add_tags = body.is_object() ? StringList(body, "add_tags") : std::nullopt;
+    const auto remove_tags = body.is_object() ? StringList(body, "remove_tags") : std::nullopt;
     const json config = body.is_object() ? body.value("config", json::object()) : json();
     if (!ids || !add_tags || !remove_tags || !config.is_object()) {
       return SendError(res, 400, "invalid_body",
@@ -729,35 +739,13 @@ void Server::RegisterRoutes() {
     if (!game) return SendError(res, 404, "game_not_found", "no such game");
 
     const bool purge = req.has_param("purge") && req.get_param_value("purge") == "true";
-    const bool delete_files =
-        purge || (req.has_param("delete_files") && req.get_param_value("delete_files") == "true");
-    const bool delete_prefix =
-        purge || (req.has_param("delete_prefix") && req.get_param_value("delete_prefix") == "true");
-    const bool delete_metadata =
-        purge || (req.has_param("delete_metadata") && req.get_param_value("delete_metadata") == "true");
-
-    if (delete_files && game->source == "epic" && !game->source_ref.empty()) {
-      // Uninstall through Legendary so its manifest stays in sync.
-      if (auto uninstalled = epic::RunLegendary(config_, {"uninstall", game->source_ref, "-y"}); !uninstalled) {
-        return SendError(res, 400, uninstalled.error());
-      }
-    } else if (delete_files) {
-      if (auto deleted = DeleteUnderRoot(game->install_path, config_.GetPathArray("library_roots")); !deleted) {
-        return SendError(res, 400, deleted.error());
-      }
-    }
-    if (delete_prefix) {
-      if (auto deleted = DeleteUnderRoot(game->data_dir, {config_.GetPath("prefix_root")}); !deleted) {
-        return SendError(res, 400, deleted.error());
-      }
-    }
-    if (delete_metadata) {
-      // Metadata lives in Mira's own folder, keyed by id, so no root check is needed.
-      std::error_code ec;
-      std::filesystem::remove(metadata::MetadataFile(config_, game->id), ec);
-      if (ec) log::Warn("could not remove metadata for {}: {}", game->id, ec.message());
-      std::filesystem::remove_all(metadata::ArtworkDir(config_, game->id), ec);
-      if (ec) log::Warn("could not remove artwork for {}: {}", game->id, ec.message());
+    const auto flag = [&](const char* name) {
+      return purge || (req.has_param(name) && req.get_param_value(name) == "true");
+    };
+    const auto folders_lock = games_.LockFolders();
+    if (auto deleted = DeleteGameData(*game, flag("delete_files"), flag("delete_prefix"), flag("delete_metadata"));
+        !deleted) {
+      return SendError(res, 400, deleted.error());
     }
 
     auto result = games_.Remove(req.matches[1]);
@@ -765,6 +753,43 @@ void Server::RegisterRoutes() {
     SyncDesktopEntries(config_, games_);
     events_.Publish("game.removed", {{"id", req.matches[1].str()}});
     SendJson(res, json::object());
+  });
+
+  // DELETE /v1/games/{id} for many games, with one save, menu sync and event.
+  // A game whose files can't be deleted stays in the library.
+  http_->Post("/v1/games/delete", [this](const Request& req, Response& res) {
+    const json body = json::parse(req.body, nullptr, false);
+    const auto ids = body.is_object() ? StringList(body, "ids") : std::nullopt;
+    if (!ids) {
+      return SendError(res, 400, "invalid_body",
+                       R"(expected {"ids": [...], "delete_files"?, "delete_prefix"?, "delete_metadata"?})");
+    }
+    const bool purge = body.value("purge", false);
+    const bool files = purge || body.value("delete_files", false);
+    const bool prefix = purge || body.value("delete_prefix", false);
+    const bool metadata = purge || body.value("delete_metadata", false);
+
+    std::vector<std::string> deletable;
+    json failed = json::array();
+    auto folders_lock = games_.LockFolders();
+    for (const std::string& id : *ids) {
+      const auto game = games_.Find(id);
+      if (!game) continue;
+      if (auto deleted = DeleteGameData(*game, files, prefix, metadata); !deleted) {
+        failed.push_back(BatchFailure(id, deleted.error()));
+        continue;
+      }
+      deletable.push_back(id);
+    }
+
+    auto removed = games_.RemoveMany(deletable);
+    folders_lock.unlock();
+    if (!removed) return SendStoreError(res, removed.error());
+    if (!removed->empty()) {
+      SyncDesktopEntries(config_, games_);
+      events_.Publish("games.removed", {{"ids", *removed}});
+    }
+    SendJson(res, {{"removed", *removed}, {"failed", std::move(failed)}});
   });
 
   // --- library ------------------------------------------------------------
@@ -777,14 +802,26 @@ void Server::RegisterRoutes() {
                    {"restored", summary.restored}});
   });
 
-  http_->Post("/v1/library/relocate", [this](const Request&, Response& res) {
+  // One game at a time, since a move can copy a whole game. Each moved game
+  // publishes its own game.updated, so a client sees progress.
+  http_->Post("/v1/library/relocate", [this](const Request& req, Response& res) {
+    const json body = req.body.empty() ? json::object() : json::parse(req.body, nullptr, false);
+    const auto ids = body.is_object() ? StringList(body, "ids") : std::nullopt;
+    if (!ids) return SendError(res, 400, "invalid_body", R"(expected no body, or {"ids": [...]})");
+
+    std::vector<model::Game> games = games_.All();
+    if (body.contains("ids")) {
+      std::erase_if(games, [&](const model::Game& game) { return !std::ranges::contains(*ids, game.id); });
+    }
     int moved = 0;
-    int failed = 0;
-    for (const model::Game& game : games_.All()) {
+    json errors = json::array();
+    for (const model::Game& game : games) {
+      // Per game, so scans can run between moves.
+      auto folders_lock = games_.LockFolders();
       auto relocated = library::Relocate(config_, game);
       if (!relocated) {
-        ++failed;
         log::Warn("relocate failed for {}: {}", game.id, relocated.error().message);
+        errors.push_back(BatchFailure(game.id, relocated.error()));
         continue;
       }
       if (relocated->install_path == game.install_path && relocated->data_dir == game.data_dir) continue;
@@ -794,14 +831,15 @@ void Server::RegisterRoutes() {
         g.updated_at = model::NowSeconds();
       });
       if (!saved) {
-        ++failed;
+        errors.push_back(BatchFailure(game.id, saved.error()));
         continue;
       }
       events_.Publish("game.updated", GameJson(*saved, supervisor_));
       ++moved;
     }
     SyncDesktopEntries(config_, games_);
-    SendJson(res, {{"moved", moved}, {"failed", failed}});
+    const int failed = static_cast<int>(errors.size());
+    SendJson(res, {{"moved", moved}, {"failed", failed}, {"errors", std::move(errors)}});
   });
 
   // --- steam ------------------------------------------------------------
@@ -1895,6 +1933,7 @@ void Server::RegisterRoutes() {
       }
     }
 
+    auto folders_lock = games_.LockFolders();
     auto relocated = library::Relocate(config_, *game, request);
     if (!relocated) return SendError(res, 400, relocated.error());
 
@@ -1903,6 +1942,7 @@ void Server::RegisterRoutes() {
       g.data_dir = relocated->data_dir;
       g.updated_at = model::NowSeconds();
     });
+    folders_lock.unlock();
     if (!saved) return SendError(res, 404, saved.error());
     SyncDesktopEntries(config_, games_);
     events_.Publish("game.updated", GameJson(*saved, supervisor_));
@@ -2318,6 +2358,33 @@ void Server::RegisterRoutes() {
           return sink.write(frame.data(), frame.size());
         });
   });
+}
+
+Result<void> Server::DeleteGameData(const model::Game& game, bool files, bool prefix, bool metadata) {
+  // A desktop-entry import only links to another app's own files.
+  if (game.source == "desktop-entry") files = prefix = false;
+  if (files && game.source == "epic" && !game.source_ref.empty()) {
+    // Uninstall through Legendary so its manifest stays in sync.
+    if (auto uninstalled = epic::RunLegendary(config_, {"uninstall", game.source_ref, "-y"}); !uninstalled) {
+      return std::unexpected(uninstalled.error());
+    }
+  } else if (files) {
+    if (auto deleted = DeleteUnderRoot(game.install_path, config_.GetPathArray("library_roots")); !deleted) {
+      return deleted;
+    }
+  }
+  if (prefix) {
+    if (auto deleted = DeleteUnderRoot(game.data_dir, {config_.GetPath("prefix_root")}); !deleted) return deleted;
+  }
+  if (metadata) {
+    // Metadata lives in Mira's own folder, keyed by id, so no root check is needed.
+    std::error_code ec;
+    std::filesystem::remove(metadata::MetadataFile(config_, game.id), ec);
+    if (ec) log::Warn("could not remove metadata for {}: {}", game.id, ec.message());
+    std::filesystem::remove_all(metadata::ArtworkDir(config_, game.id), ec);
+    if (ec) log::Warn("could not remove artwork for {}: {}", game.id, ec.message());
+  }
+  return {};
 }
 
 void Server::InstallRunnerAsync(const std::string& kind, const std::string& source,

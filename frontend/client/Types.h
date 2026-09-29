@@ -684,11 +684,26 @@ struct GriddbMatchesResult {
 };
 
 // POST /v1/library/relocate.
+// One game's failure inside a batch reply.
+struct GameFailure {
+  std::string id;
+  ApiError error;
+};
+
 struct RelocateLibraryResult {
   bool ok = false;
   ApiError error;
   int moved = 0;
   int failed = 0;
+  std::vector<GameFailure> errors;
+};
+
+// POST /v1/games/delete.
+struct DeleteGamesResult {
+  bool ok = false;
+  ApiError error;
+  std::vector<std::string> removed;
+  std::vector<GameFailure> failed;
 };
 
 // GET /v1/games/{id}/log?lines=: the game's own log tail. An empty

@@ -131,6 +131,7 @@ private:
   // Many games, one grid rebuild.
   void UpsertGames(const std::vector<mira_gui::GameSummary>& games);
   void RemoveGame(const std::string& id);
+  void RemoveGames(const std::vector<std::string>& ids);
   const mira_gui::GameSummary* FindGame(const std::string& id) const;
 
   QPixmap CoverFor(const mira_gui::GameSummary& game);

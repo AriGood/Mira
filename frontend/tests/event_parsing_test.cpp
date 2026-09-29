@@ -124,6 +124,13 @@ TEST_CASE("ParseGameState requires an id") {
   CHECK_FALSE(MiradClient::ParseGameState("not json", &state));
 }
 
+TEST_CASE("ParseRemovedIds reads games.removed and ignores anything malformed") {
+  CHECK(MiradClient::ParseRemovedIds(R"({"ids": ["a", "b"]})") == std::vector<std::string>{"a", "b"});
+  CHECK(MiradClient::ParseRemovedIds(R"({"ids": ["a", 3, ""]})") == std::vector<std::string>{"a"});
+  CHECK(MiradClient::ParseRemovedIds(R"({"id": "a"})").empty());
+  CHECK(MiradClient::ParseRemovedIds("not json").empty());
+}
+
 TEST_CASE("ParseRemovedId returns an empty id rather than throwing") {
   CHECK(MiradClient::ParseRemovedId(R"({"id": "wandering-sword"})") == "wandering-sword");
   CHECK(MiradClient::ParseRemovedId(R"({})").empty());

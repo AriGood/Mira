@@ -5,6 +5,7 @@
 #include <QUrl>
 #include <QWidget>
 
+#include <map>
 #include <memory>
 #include <utility>
 
@@ -17,6 +18,31 @@
 #include "Notify.h"
 
 namespace mira_gui::actions {
+namespace {
+
+using NamedGames = std::vector<std::pair<std::string, QString>>;
+
+std::vector<std::string> Ids(const NamedGames& games) {
+  std::vector<std::string> ids;
+  for (const auto& [id, name] : games) ids.push_back(id);
+  return ids;
+}
+
+std::map<std::string, QString> NamesById(const NamedGames& games) { return {games.begin(), games.end()}; }
+
+// One notice naming every failed game, with the first failure's reason, hint and fix.
+void NotifyFailures(QWidget* parent, const std::vector<GameFailure>& failures,
+                    const std::map<std::string, QString>& names, const QString& verb) {
+  if (failures.empty()) return;
+  QStringList failed;
+  for (const GameFailure& failure : failures) {
+    const auto it = names.find(failure.id);
+    failed << (it != names.end() ? it->second : QString::fromStdString(failure.id));
+  }
+  notify::FailedRequest(parent, QString("%1 %2.").arg(verb, failed.join(", ")), failures.front().error);
+}
+
+}  // namespace
 
 void Launch(QWidget* parent, const std::string& id, std::function<void(bool tracked)> on_launched) {
   MiradClient::LaunchGameAsync(parent, id, [parent, id, on_launched](LaunchResult result) {
@@ -132,27 +158,18 @@ void BatchDelete(QWidget* parent, const std::vector<std::pair<std::string, QStri
   const DeleteChoice choice = AskDeleteGames(parent, static_cast<int>(games.size()));
   if (!choice.confirmed) return;
 
-  auto remaining = std::make_shared<int>(static_cast<int>(games.size()));
-  auto failed = std::make_shared<QStringList>();
-
-  for (const auto& [id, name] : games) {
-    MiradClient::GetGameAsync(parent, id, [parent, id, name, choice, remaining, failed,
-                                           on_done](GameDetailResult detail) {
-      const bool linked_only = detail.ok && detail.game.source == "desktop-entry";
-      MiradClient::DeleteGameAsync(
-          parent, id, choice.delete_files && !linked_only, choice.delete_prefix && !linked_only,
-          choice.delete_metadata, [parent, name, remaining, failed, on_done](DeleteResult result) {
-            if (!result.ok) *failed << name;
-            if (--*remaining > 0) return;
-            // Success needs no notice: the games leave the grid.
-            if (!failed->isEmpty()) {
-              notify::Failed(parent, QString("Could not remove %1 game(s).").arg(failed->size()),
-                             failed->join(", "));
-            }
-            if (on_done) on_done();
-          });
-    });
-  }
+  // mirad itself never deletes a desktop-entry game's files or prefix.
+  MiradClient::DeleteGamesAsync(
+      parent, Ids(games), choice.delete_files, choice.delete_prefix, choice.delete_metadata,
+      [parent, names = NamesById(games), on_done](DeleteGamesResult result) {
+        if (!result.ok) {
+          notify::FailedRequest(parent, "Could not remove the games.", result.error);
+        } else if (!result.failed.empty()) {
+          // Success needs no notice: the games leave the grid.
+          NotifyFailures(parent, result.failed, names, "Could not remove");
+        }
+        if (on_done) on_done();
+      });
 }
 
 void Install(QWidget* parent, const std::string& id, const std::string& install_path,
@@ -179,26 +196,21 @@ void Relocate(QWidget* parent, const std::vector<std::pair<std::string, QString>
     return;
   }
 
-  auto remaining = std::make_shared<int>(static_cast<int>(games.size()));
-  auto failed = std::make_shared<QStringList>();
-  auto first_error = std::make_shared<QString>();
-  for (const auto& [id, name] : games) {
-    MiradClient::RelocateGameAsync(parent, id, [parent, name, remaining, failed, first_error,
-                                                on_done, total = games.size()](GameActionResult result) {
-      if (!result.ok) {
-        *failed << name;
-        if (first_error->isEmpty()) *first_error = QString::fromStdString(result.error);
-      }
-      if (--*remaining > 0) return;
-      // Nothing on screen shows a path, so success gets a notice.
-      const int moved = static_cast<int>(total) - static_cast<int>(failed->size());
-      if (moved > 0) notify::Notice(parent, QString("Moved %1 game%2.").arg(moved).arg(moved == 1 ? "" : "s"));
-      if (!failed->isEmpty()) {
-        notify::Failed(parent, QString("Could not move %1.").arg(failed->join(", ")), *first_error);
-      }
-      if (on_done) on_done();
-    });
-  }
+  MiradClient::RelocateGamesAsync(
+      parent, Ids(games), [parent, names = NamesById(games), on_done](RelocateLibraryResult result) {
+        if (!result.ok) {
+          notify::FailedRequest(parent, "Could not move the games.", result.error);
+        } else {
+          // Nothing on screen shows a path, so success gets a notice.
+          if (result.moved > 0) {
+            notify::Notice(parent, QString("Moved %1 game%2.").arg(result.moved).arg(result.moved == 1 ? "" : "s"));
+          } else if (result.errors.empty()) {
+            notify::Notice(parent, "Already in Mira's folders.");
+          }
+          NotifyFailures(parent, result.errors, names, "Could not move");
+        }
+        if (on_done) on_done();
+      });
 }
 
 void BatchSetDesktopEntry(QWidget* parent, const std::vector<std::string>& ids, bool enabled) {
