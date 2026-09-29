@@ -741,6 +741,28 @@ PatchGameConfigResult PatchGameConfigSync(const std::string& id,
   return {reply.ok, reply.error};
 }
 
+PatchGamesResult PatchGamesSync(const GamesPatch& patch) {
+  PatchGamesResult result;
+  json config = json::object();
+  for (const GameConfigEdit& edit : patch.config) {
+    config[edit.key] = edit.clear ? json(nullptr) : mapping::TypedValueFromText(edit.type, edit.value);
+  }
+  const json body = {{"ids", patch.ids},
+                     {"add_tags", patch.add_tags},
+                     {"remove_tags", patch.remove_tags},
+                     {"config", config}};
+  const transport::Reply reply = transport::Patch("/v1/games", body);
+  if (!reply.ok) {
+    result.error = reply.error;
+    return result;
+  }
+  result.ok = true;
+  if (reply.body.is_object() && reply.body.contains("games") && reply.body["games"].is_array()) {
+    for (const json& entry : reply.body["games"]) result.games.push_back(mapping::ToGameSummary(entry));
+  }
+  return result;
+}
+
 GameLogResult GetGameLogSync(const std::string& id, int lines) {
   GameLogResult result;
   const transport::Reply reply =
@@ -1218,16 +1240,23 @@ InstallProgressResult GetInstallProgressSync(const std::string& id) {
   return result;
 }
 
-GameActionResult RelocateGameSync(const std::string& id) {
-  // Can copy a whole game across filesystems.
-  const transport::Reply reply =
-      transport::PostJson("/v1/games/" + id + "/relocate", json::object(), {.read_timeout = std::chrono::hours(2)});
-  return {reply.ok, reply.error};
+std::vector<GameFailure> ToGameFailures(const json& reply, const char* key) {
+  std::vector<GameFailure> out;
+  if (!reply.is_object() || !reply.contains(key) || !reply[key].is_array()) return out;
+  for (const json& entry : reply[key]) {
+    if (!entry.is_object()) continue;
+    out.push_back({entry.value("id", std::string()), mapping::ToApiError(entry.value("error", json::object()))});
+  }
+  return out;
 }
 
-RelocateLibraryResult RelocateLibrarySync() {
+// No `ids` relocates every game.
+RelocateLibraryResult RelocateLibrarySync(const std::optional<std::vector<std::string>>& ids) {
   RelocateLibraryResult result;
-  const transport::Reply reply = transport::Post("/v1/library/relocate", {.read_timeout = std::chrono::hours(12)});
+  // Can copy many whole games across filesystems.
+  const transport::Options options{.read_timeout = std::chrono::hours(12)};
+  const transport::Reply reply = ids ? transport::PostJson("/v1/library/relocate", {{"ids", *ids}}, options)
+                                     : transport::Post("/v1/library/relocate", options);
   if (!reply.ok) {
     result.error = reply.error;
     return result;
@@ -1235,6 +1264,30 @@ RelocateLibraryResult RelocateLibrarySync() {
   result.ok = true;
   result.moved = reply.body.value("moved", 0);
   result.failed = reply.body.value("failed", 0);
+  result.errors = ToGameFailures(reply.body, "errors");
+  return result;
+}
+
+DeleteGamesResult DeleteGamesSync(const std::vector<std::string>& ids, bool delete_files, bool delete_prefix,
+                                  bool delete_metadata) {
+  DeleteGamesResult result;
+  const json body = {{"ids", ids},
+                     {"delete_files", delete_files},
+                     {"delete_prefix", delete_prefix},
+                     {"delete_metadata", delete_metadata}};
+  // Deleting many games' files can take a while.
+  const transport::Reply reply = transport::PostJson("/v1/games/delete", body, {.read_timeout = std::chrono::hours(2)});
+  if (!reply.ok) {
+    result.error = reply.error;
+    return result;
+  }
+  result.ok = true;
+  if (reply.body.is_object() && reply.body.contains("removed") && reply.body["removed"].is_array()) {
+    for (const json& id : reply.body["removed"]) {
+      if (id.is_string()) result.removed.push_back(id.get<std::string>());
+    }
+  }
+  result.failed = ToGameFailures(reply.body, "failed");
   return result;
 }
 
@@ -1513,6 +1566,11 @@ void MiradClient::PatchGameConfigAsync(QObject* context, const std::string& id,
   async::Run(context, [id, edits] { return PatchGameConfigSync(id, edits); }, std::move(callback));
 }
 
+void MiradClient::PatchGamesAsync(QObject* context, const GamesPatch& patch,
+                                  std::function<void(PatchGamesResult)> callback) {
+  async::Run(context, [patch] { return PatchGamesSync(patch); }, std::move(callback));
+}
+
 void MiradClient::GetGameLogAsync(QObject* context, const std::string& id, int lines,
                                   std::function<void(GameLogResult)> callback) {
   async::Run(context, [id, lines] { return GetGameLogSync(id, lines); }, std::move(callback));
@@ -1579,6 +1637,18 @@ bool MiradClient::ParseGameSummary(const std::string& data, GameSummary* out) {
   return true;
 }
 
+bool MiradClient::ParseGameSummaries(const std::string& data, std::vector<GameSummary>* out) {
+  const json entry = json::parse(data, nullptr, false);
+  if (entry.is_discarded() || !entry.is_object() || !entry.contains("games") || !entry["games"].is_array()) {
+    return false;
+  }
+  out->clear();
+  for (const json& game : entry["games"]) {
+    if (game.is_object() && !game.value("id", std::string()).empty()) out->push_back(mapping::ToGameSummary(game));
+  }
+  return true;
+}
+
 bool MiradClient::ParseGameState(const std::string& data, GameStateEvent* out) {
   const json entry = json::parse(data, nullptr, false);
   if (entry.is_discarded() || !entry.is_object()) return false;
@@ -1602,6 +1672,16 @@ std::string MiradClient::ParseRemovedId(const std::string& data) {
   const json entry = json::parse(data, nullptr, false);
   if (entry.is_discarded() || !entry.is_object()) return {};
   return entry.value("id", std::string());
+}
+
+std::vector<std::string> MiradClient::ParseRemovedIds(const std::string& data) {
+  const json entry = json::parse(data, nullptr, false);
+  std::vector<std::string> ids;
+  if (entry.is_discarded() || !entry.is_object() || !entry.contains("ids") || !entry["ids"].is_array()) return ids;
+  for (const json& id : entry["ids"]) {
+    if (id.is_string() && !id.get<std::string>().empty()) ids.push_back(id.get<std::string>());
+  }
+  return ids;
 }
 
 bool MiradClient::ParseMetadataEvent(const std::string& data, MetadataEvent* out) {
@@ -1814,14 +1894,25 @@ void MiradClient::GetInstallProgressAsync(QObject* context, const std::string& i
   async::Run(context, [id] { return GetInstallProgressSync(id); }, std::move(callback));
 }
 
-void MiradClient::RelocateGameAsync(QObject* context, const std::string& id,
-                                    std::function<void(GameActionResult)> callback) {
-  async::Run(context, [id] { return RelocateGameSync(id); }, std::move(callback));
-}
-
 void MiradClient::RelocateLibraryAsync(QObject* context,
                                        std::function<void(RelocateLibraryResult)> callback) {
-  async::Run(context, [] { return RelocateLibrarySync(); }, std::move(callback));
+  async::Run(context, [] { return RelocateLibrarySync(std::nullopt); }, std::move(callback));
+}
+
+void MiradClient::RelocateGamesAsync(QObject* context, const std::vector<std::string>& ids,
+                                     std::function<void(RelocateLibraryResult)> callback) {
+  async::Run(context, [ids] { return RelocateLibrarySync(ids); }, std::move(callback));
+}
+
+void MiradClient::DeleteGamesAsync(QObject* context, const std::vector<std::string>& ids, bool delete_files,
+                                   bool delete_prefix, bool delete_metadata,
+                                   std::function<void(DeleteGamesResult)> callback) {
+  async::Run(
+      context,
+      [ids, delete_files, delete_prefix, delete_metadata] {
+        return DeleteGamesSync(ids, delete_files, delete_prefix, delete_metadata);
+      },
+      std::move(callback));
 }
 
 bool MiradClient::ParseOpenConfig(const std::string& data) {

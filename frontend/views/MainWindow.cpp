@@ -373,6 +373,10 @@ void MainWindow::HandleGameEvent(const std::string& type, const std::string& dat
     if (!id.empty()) RemoveRow(id);
     return;
   }
+  if (type == "games.removed") {
+    for (const std::string& id : mira_gui::MiradClient::ParseRemovedIds(data)) RemoveRow(id);
+    return;
+  }
 
   if (type == "game.state") {
     mira_gui::GameStateEvent state;
@@ -406,6 +410,13 @@ void MainWindow::HandleGameEvent(const std::string& type, const std::string& dat
 
   // Explicitly the two event types that carry a game record, not "anything
   // left over": mirad also publishes runners.download.* and tricks.* here.
+  if (type == "games.updated") {
+    std::vector<mira_gui::GameSummary> games;
+    if (mira_gui::MiradClient::ParseGameSummaries(data, &games)) {
+      for (const mira_gui::GameSummary& game : games) UpsertRow(game);
+    }
+    return;
+  }
   if (type != "game.added" && type != "game.updated") return;
 
   mira_gui::GameSummary game;

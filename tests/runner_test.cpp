@@ -303,3 +303,16 @@ TEST_CASE("the old proton_umu: runner_ref spelling still resolves after the rena
   REQUIRE(legacy.has_value());
   CHECK(legacy->runner->kind() == "proton");
 }
+
+TEST_CASE("NativeRunner runs an absolute exe_path as-is, in its own folder, whatever install_path is") {
+  model::Game game;
+  game.install_path = "/nonexistent/.var/app/com.example.App";
+  game.exe_path = "/usr/bin/flatpak";
+  game.args = "run com.example.App";
+
+  runner::NativeRunner native;
+  auto command = native.BuildCommand(game, std::nullopt);
+  REQUIRE(command.has_value());
+  CHECK(command->argv == std::vector<std::string>{"/usr/bin/flatpak", "run", "com.example.App"});
+  CHECK(command->cwd == "/usr/bin");
+}

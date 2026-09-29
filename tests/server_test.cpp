@@ -339,6 +339,61 @@ TEST_CASE("PATCH /v1/games/{id} tags replaces the array wholesale") {
   CHECK(server.games().Find("celeste")->tags.empty());
 }
 
+TEST_CASE("PATCH /v1/games adds and removes tags on many games, keeping their other tags") {
+  LiveServer server(TempDir("server-batch-tags"));
+  for (const char* id : {"a", "b", "c"}) {
+    model::Game game;
+    game.id = id;
+    game.name = id;
+    game.tags = {"indie"};
+    if (std::string(id) == "b") game.tags.push_back("favorite");
+    REQUIRE(server.games().Upsert(game).has_value());
+  }
+
+  httplib::Client client = server.Client();
+  auto res = client.Patch("/v1/games", R"({"ids": ["a", "b", "nope"], "add_tags": ["hidden"], "remove_tags": ["favorite"]})",
+                          "application/json");
+  REQUIRE(res != nullptr);
+  REQUIRE(res->status == 200);
+  const nlohmann::json body = nlohmann::json::parse(res->body);
+  CHECK(body["games"].size() == 2);
+
+  CHECK(server.games().Find("a")->tags == std::vector<std::string>{"indie", "hidden"});
+  CHECK(server.games().Find("b")->tags == std::vector<std::string>{"indie", "hidden"});
+  CHECK(server.games().Find("c")->tags == std::vector<std::string>{"indie"});
+
+  // Already in that state: nothing changes, nothing is reported.
+  auto again = client.Patch("/v1/games", R"({"ids": ["a"], "add_tags": ["hidden"]})", "application/json");
+  REQUIRE(again != nullptr);
+  CHECK(nlohmann::json::parse(again->body)["games"].empty());
+}
+
+TEST_CASE("PATCH /v1/games sets per-game overrides, and rejects the whole batch on a bad key") {
+  LiveServer server(TempDir("server-batch-config"));
+  for (const char* id : {"a", "b"}) {
+    model::Game game;
+    game.id = id;
+    game.name = id;
+    REQUIRE(server.games().Upsert(game).has_value());
+  }
+
+  httplib::Client client = server.Client();
+  auto res = client.Patch("/v1/games", R"({"ids": ["a", "b"], "config": {"desktop_entries.enabled": false}})",
+                          "application/json");
+  REQUIRE(res != nullptr);
+  REQUIRE(res->status == 200);
+  CHECK(server.games().Find("a")->overrides["desktop_entries.enabled"] == false);
+  CHECK(server.games().Find("b")->overrides["desktop_entries.enabled"] == false);
+
+  auto bad = client.Patch("/v1/games", R"({"ids": ["a"], "config": {"library_roots": []}})", "application/json");
+  REQUIRE(bad != nullptr);
+  CHECK(bad->status == 400);
+
+  auto malformed = client.Patch("/v1/games", R"({"ids": "a"})", "application/json");
+  REQUIRE(malformed != nullptr);
+  CHECK(malformed->status == 400);
+}
+
 TEST_CASE("GET /v1/games/{id}/artwork?type= serves the requested slot, 404s for an unknown one") {
   LiveServer server(TempDir("server-artwork-type"));
 
@@ -629,6 +684,84 @@ TEST_CASE("DELETE /v1/games/{id}?purge=true removes files, prefix, and metadata 
   CHECK_FALSE(fs::exists(data_dir));
   CHECK_FALSE(fs::exists(metadata_file));
   CHECK_FALSE(server.games().Find("celeste").has_value());
+}
+
+TEST_CASE("POST /v1/games/delete removes many games, deletes files only where allowed, and keeps a failed one") {
+  LiveServer server(TempDir("server-batch-delete-state"));
+  const fs::path library_root = TempDir("server-batch-delete-library");
+  const fs::path outside = TempDir("server-batch-delete-outside");
+  REQUIRE(server.MutableConfig().Set("library_roots", nlohmann::json::array({library_root.string()})).has_value());
+
+  const auto add = [&](const std::string& id, const fs::path& install_path, const std::string& source) {
+    fs::create_directories(install_path);
+    model::Game game;
+    game.id = id;
+    game.name = id;
+    game.source = source;
+    game.install_path = install_path.string();
+    REQUIRE(server.games().Upsert(game).has_value());
+  };
+  add("inside", library_root / "Inside", "scan");
+  add("linked", library_root / "Linked", "desktop-entry");  // another app's files, never deleted
+  add("outside", outside / "Outside", "manual");            // outside every root: refused
+  add("kept", library_root / "Kept", "scan");
+
+  httplib::Client client = server.Client();
+  auto res = client.Post("/v1/games/delete",
+                         R"({"ids": ["inside", "linked", "outside", "nope"], "delete_files": true})",
+                         "application/json");
+  REQUIRE(res != nullptr);
+  CHECK(res->status == 200);
+  const auto body = nlohmann::json::parse(res->body);
+  CHECK(body["removed"] == nlohmann::json::array({"inside", "linked"}));
+  REQUIRE(body["failed"].size() == 1);
+  CHECK(body["failed"][0]["id"] == "outside");
+  CHECK_FALSE(body["failed"][0]["error"]["code"].get<std::string>().empty());
+
+  CHECK_FALSE(fs::exists(library_root / "Inside"));
+  CHECK(fs::exists(library_root / "Linked"));
+  CHECK(fs::exists(outside / "Outside"));
+  CHECK(server.games().Find("outside").has_value());
+  CHECK(server.games().Find("kept").has_value());
+  CHECK_FALSE(server.games().Find("inside").has_value());
+  CHECK_FALSE(server.games().Find("linked").has_value());
+
+  auto bad = client.Post("/v1/games/delete", R"({"ids": "inside"})", "application/json");
+  REQUIRE(bad != nullptr);
+  CHECK(bad->status == 400);
+}
+
+TEST_CASE("POST /v1/library/relocate with ids moves only those games") {
+  LiveServer server(TempDir("server-relocate-ids-state"));
+  const fs::path library_root = TempDir("server-relocate-ids-library");
+  const fs::path elsewhere = TempDir("server-relocate-ids-elsewhere");
+  REQUIRE(server.MutableConfig().Set("library_roots", nlohmann::json::array({library_root.string()})).has_value());
+
+  for (const char* id : {"picked", "left"}) {
+    fs::create_directories(elsewhere / id);
+    std::ofstream(elsewhere / id / "run.sh") << "#!/bin/sh\n";
+    model::Game game;
+    game.id = id;
+    game.name = id;
+    game.source = "manual";
+    game.platform = model::Platform::Native;
+    game.install_path = (elsewhere / id).string();
+    game.exe_path = "run.sh";
+    REQUIRE(server.games().Upsert(game).has_value());
+  }
+
+  httplib::Client client = server.Client();
+  client.set_read_timeout(std::chrono::seconds(30));
+  auto res = client.Post("/v1/library/relocate", R"({"ids": ["picked"]})", "application/json");
+  REQUIRE(res != nullptr);
+  CHECK(res->status == 200);
+  const auto body = nlohmann::json::parse(res->body);
+  CHECK(body["moved"] == 1);
+  CHECK(body["failed"] == 0);
+
+  CHECK(fs::path(server.games().Find("picked")->install_path).parent_path() == library_root);
+  CHECK(server.games().Find("left")->install_path == (elsewhere / "left").string());
+  CHECK(fs::exists(elsewhere / "left" / "run.sh"));
 }
 
 TEST_CASE("DELETE /v1/runners/{reference} refuses a path outside every configured search root") {

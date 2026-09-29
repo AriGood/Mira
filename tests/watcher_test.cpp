@@ -271,3 +271,25 @@ TEST_CASE("Watcher never extracts or scans anything under a configured runner_se
   CHECK(fs::exists(root / "Fake-Proton-1" / "proton"));  // untouched, not treated as a game
   CHECK(games.All().empty());
 }
+
+TEST_CASE("CreateMissingRoots creates a missing root under home, but not one outside it or with no parent") {
+  test::TestEnv env("watcher-create-roots");
+  const fs::path home = env.dir / "home";
+  const fs::path outside = env.dir / "outside";
+  fs::create_directories(home);
+  fs::create_directories(outside);
+  REQUIRE(env.config
+              .Set("library_roots", nlohmann::json::array({(home / "Games").string(),
+                                                            (home / "no-parent" / "Games").string(),
+                                                            (outside / "Games").string()}))
+              .has_value());
+
+  const std::string old_home = std::getenv("HOME") != nullptr ? std::getenv("HOME") : "";
+  setenv("HOME", home.c_str(), 1);
+  library::CreateMissingRoots(env.config);
+  setenv("HOME", old_home.c_str(), 1);
+
+  CHECK(fs::is_directory(home / "Games"));
+  CHECK_FALSE(fs::exists(home / "no-parent"));
+  CHECK_FALSE(fs::exists(outside / "Games"));
+}

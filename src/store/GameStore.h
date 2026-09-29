@@ -49,13 +49,25 @@ public:
   // acquisitions.
   Result<model::Game> Update(const std::string& id, std::function<void(model::Game&)> mutator);
 
+  // Update for many games with one save. `mutator` returns false to leave a
+  // game untouched. Returns the changed games; unknown ids are skipped.
+  Result<std::vector<model::Game>> UpdateMany(const std::vector<std::string>& ids,
+                                              std::function<bool(model::Game&)> mutator);
+
+  // Held while scanning a library root and while moving or deleting a game's
+  // folders, so a scan never sees a folder mid-move and adds it as a new game.
+  [[nodiscard]] std::unique_lock<std::mutex> LockFolders() { return std::unique_lock(folders_mutex_); }
+
   Result<void> Remove(const std::string& id);
+  // Removes every known id with one save and returns those removed.
+  Result<std::vector<std::string>> RemoveMany(const std::vector<std::string>& ids);
 
 private:
   mutable std::mutex mutex_;
   // Held for a whole Save: concurrent saves share one temp file, and the last
   // one to finish must also be the one holding the newest games_.
   std::mutex save_mutex_;
+  std::mutex folders_mutex_;
   std::filesystem::path file_;
   std::vector<model::Game> games_;
 };

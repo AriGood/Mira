@@ -110,6 +110,7 @@ int main(int argc, char** argv) {
   // inotify event: inotify only reports changes from here on, not existing
   // state, so a full reconcile has to run once before the watcher takes
   // over. Also catches a folder that appeared while the daemon was down.
+  mira::library::CreateMissingRoots(config);
   {
     mira::library::Scanner startup_scan(config, games, events);
     const mira::library::ScanSummary summary = startup_scan.ScanAll();

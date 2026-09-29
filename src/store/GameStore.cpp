@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <format>
 #include <fstream>
+#include <set>
 
 #include <toml.hpp>
 
@@ -141,6 +142,39 @@ Result<model::Game> GameStore::Update(const std::string& id,
   }
   if (auto result = Save(); !result) return std::unexpected(result.error());
   return updated;
+}
+
+Result<std::vector<model::Game>> GameStore::UpdateMany(const std::vector<std::string>& ids,
+                                                       std::function<bool(model::Game&)> mutator) {
+  std::vector<model::Game> updated;
+  {
+    std::lock_guard lock(mutex_);
+    const std::set<std::string> wanted(ids.begin(), ids.end());
+    for (model::Game& game : games_) {
+      if (!wanted.contains(game.id) || !mutator(game)) continue;
+      game.updated_at = model::NowSeconds();
+      updated.push_back(game);
+    }
+  }
+  if (updated.empty()) return updated;
+  if (auto result = Save(); !result) return std::unexpected(result.error());
+  return updated;
+}
+
+Result<std::vector<std::string>> GameStore::RemoveMany(const std::vector<std::string>& ids) {
+  std::vector<std::string> removed;
+  {
+    std::lock_guard lock(mutex_);
+    const std::set<std::string> wanted(ids.begin(), ids.end());
+    std::erase_if(games_, [&](const model::Game& game) {
+      if (!wanted.contains(game.id)) return false;
+      removed.push_back(game.id);
+      return true;
+    });
+  }
+  if (removed.empty()) return removed;
+  if (auto result = Save(); !result) return std::unexpected(result.error());
+  return removed;
 }
 
 Result<void> GameStore::Remove(const std::string& id) {

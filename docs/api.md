@@ -86,6 +86,16 @@ Lists games, optionally filtered by `status` (`setting_up`, `ready`, `broken`, `
 ### `PATCH /v1/games/{id}`
 Changes any of `name`, `exe_path`, `args`, `working_dir`, `runner_ref`, `data_dir`, `runner_config` (merged), `env` (merged, `null` removes a key) and `tags` (replaced). Any change marks the game `reviewed`. Overrides go through `/config` below. Publishes `game.updated`.
 
+### `PATCH /v1/games`
+Changes many games in one request, for a multi-select:
+
+```json
+{ "ids": ["celeste", "hades"], "add_tags": ["hidden"], "remove_tags": ["favorite"],
+  "config": { "desktop_entries.enabled": false } }
+```
+
+`ids` is required; the rest are optional. `config` takes the same overrides as `PATCH /v1/games/{id}/config`, and a bad key rejects the whole batch. Unknown ids are skipped. Returns `{"games": [...]}` with only the games that changed, and publishes one `games.updated` event for them all. Unlike `PATCH /v1/games/{id}`, it doesn't mark games `reviewed`.
+
 ### `POST /v1/games/manual`
 Adds a game from any path:
 
@@ -104,7 +114,10 @@ Removes the game from the library. Nothing on disk is touched unless asked:
 - `delete_metadata` removes cached metadata and art.
 - `purge` does all three.
 
-Files and prefixes are only deleted when they resolve inside a library root or `prefix_root`. For Epic games, `delete_files` runs `legendary uninstall` so Legendary's records stay correct. Publishes `game.removed`.
+Files and prefixes are only deleted when they resolve inside a library root or `prefix_root`, and never for a `desktop-entry` game, whose files belong to another app. For Epic games, `delete_files` runs `legendary uninstall` so Legendary's records stay correct. Publishes `game.removed`.
+
+### `POST /v1/games/delete`
+The same for many games: `{"ids": [...], "delete_files"?, "delete_prefix"?, "delete_metadata"?, "purge"?}`, flags as above. A game whose files or prefix can't be deleted stays in the library. Unknown ids are skipped. Returns `{"removed": [ids], "failed": [{"id", "error": {...}}]}`, with each error shaped like the error envelope, and publishes one `games.removed` event with the removed `ids`.
 
 ### `GET /v1/games/{id}/config`
 Every setting as it resolves for this game, with the layer it came from:
@@ -167,7 +180,7 @@ Body `{"verb": "corefonts"}`. Runs `winetricks --unattended <verb>` in the game'
 Scans every library root now: adds new games, marks vanished ones `missing` (or removes them with `library.remove_missing`), restores ones that came back, and provisions games still waiting on a runner. Each change publishes its own event. Returns `{"added": 1, "missing": 0, "restored": 0}`. The watcher runs the same scan on its own when a root changes, but only for new arrivals.
 
 ### `POST /v1/library/relocate`
-Relocates every game into Mira's layout. Returns `{"moved": N, "failed": N}`.
+Body (optional) `{"ids": [...]}`. Relocates those games, or every game without a body, into Mira's layout, one at a time, publishing `game.updated` as each one moves. Returns `{"moved": N, "failed": N, "errors": [{"id", "error": {...}}]}`.
 
 ### `GET /v1/library[?source=epic|steam|gog|itch|amazon]`
 What each account owns, whether or not it's installed:
@@ -411,7 +424,7 @@ Entries from `$XDG_DATA_HOME/applications`, `$XDG_DATA_DIRS`, the Flatpak export
 `id` is the desktop file ID. Skipped: non-applications, `NoDisplay` or `Hidden` entries, Mira's own entries, Steam game shortcuts, and entries already in the library.
 
 ### `POST /v1/desktop-entries/import`
-Body `{"ids": [...]}`. A Flatpak entry becomes `flatpak run <app-id>`. Anything else uses its `Exec=` line with field codes removed. Imported games are native. Importing the same entry again updates it. Returns `{"added": 1, "updated": 0}`.
+Body `{"ids": [...]}`. A Flatpak entry becomes `flatpak run <app-id>`. Anything else uses its `Exec=` line with field codes removed. The command is stored as an absolute `exe_path`: a bare one is looked up on `PATH` when importing, and an entry whose command isn't installed isn't offered. Imported games are native, keep the entry's id in `source_ref`, and get a `desktop_entries.enabled: false` override, since the app already has a menu entry. Importing the same entry again updates it and keeps that override if it's set. Returns `{"added": 1, "updated": 0}`.
 
 ### `POST /v1/desktop-entries/sync`
 Rewrites Mira's own desktop entries now.
@@ -486,7 +499,9 @@ A new connection (no `Last-Event-ID`) first gets the buffered events replayed, t
 |---|---|
 | `game.added` | The game, plus `open_config` from the `open_config_on_add` setting. |
 | `game.updated` | The game. |
+| `games.updated` | `{games}`: every game a `PATCH /v1/games` changed. |
 | `game.removed` | `{id}`. |
+| `games.removed` | `{ids}`, from `POST /v1/games/delete`. |
 | `game.state` | The game plus `state` (`running`, `exited`, `crashed`, `idle`) and, after an exit, `exit_code`, `signal`, `played_seconds` and `error`. |
 | `game.launched` | `{id, via, tracked}` for launches handed to Steam or a store launcher. |
 | `game.install.*` | See `POST /v1/games/{id}/install`. |

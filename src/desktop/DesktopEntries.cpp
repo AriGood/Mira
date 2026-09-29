@@ -43,6 +43,12 @@ std::optional<fs::path> CachedArtwork(const config::Config& config, const std::s
   return std::ifstream(file, std::ios::binary).good() ? std::make_optional(file) : std::nullopt;
 }
 
+std::optional<std::string> ReadFile(const fs::path& path) {
+  std::ifstream in(path, std::ios::binary);
+  if (!in) return std::nullopt;
+  return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+}
+
 }  // namespace
 
 DesktopEntries::DesktopEntries(config::Config& config) : config_(config) {}
@@ -116,12 +122,15 @@ Result<void> DesktopEntries::Sync(const std::vector<model::Game>& games) {
   for (const model::Game& game : games) {
     if (!wanted.contains(game.id)) continue;
     const fs::path path = EntryPath(game.id);
+    // Unchanged entries are left alone: every write makes the desktop re-index its menu.
+    const std::string content = Render(game);
+    if (ReadFile(path) == content) continue;
     std::ofstream out(path);
     if (!out) {
       log::Warn("could not write desktop entry {}", path.string());
       continue;
     }
-    out << Render(game);
+    out << content;
   }
 
   // Remove ours that are no longer wanted: a game deleted, gone missing, or

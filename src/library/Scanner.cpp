@@ -101,6 +101,7 @@ ScanSummary Scanner::ScanAll() {
 }
 
 ScanSummary Scanner::ScanRoot(const fs::path& root) {
+  const auto folders_lock = games_.LockFolders();
   ScanSummary summary;
   std::error_code ec;
   if (!fs::is_directory(root, ec)) {

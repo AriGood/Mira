@@ -181,6 +181,7 @@ Result<RemovalResult> RemoveSource(config::Config& config, store::GameStore& gam
   };
 
   for (const RemovalGame& planned : plan->games) {
+    const auto folders_lock = games.LockFolders();
     const std::optional<model::Game> game = games.Find(planned.id);
     if (!game) continue;
     if (auto done = UninstallGame(config, *game, source); !done) {

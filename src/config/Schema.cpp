@@ -116,7 +116,8 @@ Schema::Schema() {
          .label = "Library Folders",
          .type = Type::StringArray,
          .default_value = json::array({"~/Games"}),
-         .doc = "Folders Mira watches for new games. Drop a game folder into one to add it."});
+         .doc = "Folders Mira watches for new games. Drop a game folder into one to add it. A missing "
+                "folder in your home folder is created."});
 
   s.Add({.key = "prefix_root",
          .label = "Prefix Folder",

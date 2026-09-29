@@ -10,6 +10,11 @@
 
 namespace mira::library {
 
+// Creates each missing library root that is inside $HOME and whose parent
+// exists, so the default ~/Games works on a fresh install. A root elsewhere
+// may be an unmounted drive, so it's left missing.
+void CreateMissingRoots(const config::Config& config);
+
 // Watches every enabled library root and rescans automatically: "drop a
 // folder in and it's picked up" without running `mira scan` by hand.
 //
