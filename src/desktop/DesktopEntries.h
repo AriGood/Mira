@@ -18,7 +18,7 @@ namespace mira::desktop {
 // start the game fine and record nothing, so playtime and game.state events
 // would silently be wrong for every menu launch.
 //
-// Only ever touches files it created — `mira-<id>.desktop` — never anything
+// Only ever touches files it created (`mira-<id>.desktop`), never anything
 // else in the directory.
 class DesktopEntries {
 public:

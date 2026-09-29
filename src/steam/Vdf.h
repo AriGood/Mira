@@ -10,7 +10,7 @@
 
 namespace mira::steam {
 
-// A node in Valve's KeyValues/VDF text format — either a leaf string or an
+// A node in Valve's KeyValues/VDF text format: either a leaf string or an
 // object of child nodes, exactly like the format itself has no separate
 // array type: everything is nested objects and strings. Used for
 // libraryfolders.vdf, appmanifest_*.acf, and localconfig.vdf, all the same

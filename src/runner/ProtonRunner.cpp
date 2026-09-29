@@ -82,7 +82,7 @@ std::vector<model::RunnerBuild> ProtonRunner::Discover(const config::Config& con
       build.path = dir.string();
 
       // The version file is "<unix timestamp> <name>", e.g.
-      // "1789520217 GE-Proton11-7" — timestamp for sorting "latest", name
+      // "1789520217 GE-Proton11-7": timestamp for sorting "latest", name
       // for the human-facing "kind:name" reference.
       std::ifstream version_file(dir / "version");
       std::string line;
@@ -121,7 +121,7 @@ Result<void> ProtonRunner::Provision(const model::Game& game,
   if (!result) return std::unexpected(result.error());
 
   // umu-run's exit code conflates "prefix init failed" with "no game to
-  // launch" — it's 1 even on a fully successful run here, since we
+  // launch". It's 1 even on a fully successful run here, since we
   // deliberately gave it nothing to launch. The only reliable success
   // signal is whether the prefix actually appeared on disk.
   if (!fs::exists(fs::path(game.data_dir) / "drive_c", ec)) {
@@ -161,9 +161,9 @@ nlohmann::json ProtonRunner::SettingsSchema() const {
   return nlohmann::json::array({
       {{"key", "gameid"},
        {"type", "string"},
-       {"doc", "Steam AppID umu should report via the GAMEID env var — affects which "
-               "protonfixes/compat-DB entry Proton applies. Optional; umu falls back to a "
-               "generic default (\"umu-default\") without it."}},
+       {"doc", "Steam AppID umu reports through the GAMEID environment variable. It decides which "
+               "protonfixes entry Proton applies. Optional: without it umu uses a generic "
+               "default (\"umu-default\")."}},
       {{"key", "store"},
        {"type", "string"},
        {"doc", "Store umu should report via the STORE env var (e.g. \"ubisoft\", \"battlenet\", \"ea\"), "

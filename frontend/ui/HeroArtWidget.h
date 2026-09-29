@@ -54,7 +54,7 @@ private:
   void UpdateImageVisibility();
 
   QLabel* banner_ = nullptr;
-  // Shown only while it's genuinely unknown whether this game has a hero —
+  // Shown only while it's genuinely unknown whether this game has a hero,
   // never cover, so a game that turns out to have one never flashes its
   // cover first. See UpdateImageVisibility.
   QLabel* placeholder_ = nullptr;

@@ -85,7 +85,7 @@ Result<void> InstallLegendaryBinary(const config::Config& config, const runner::
   }
 
   // Legendary's releases ship no checksum, so it's installed unverified.
-  log::Warn("no checksum available for legendary {} — installing unverified", asset.tag);
+  log::Warn("no checksum available for legendary {}, installing unverified", asset.tag);
 
   fs::permissions(target,
                   fs::perms::owner_all | fs::perms::group_read | fs::perms::group_exec | fs::perms::others_read |
@@ -128,7 +128,7 @@ EpicAuthStatus Status(const config::Config& config) {
   if (!status.legendary.installed) return status;  // authenticated=false, no subprocess needed
 
   // Not RunLegendaryJson: "not logged in" is an ordinary result of this
-  // specific call, not an error to propagate — a failed/unparseable run
+  // specific call, not an error to propagate. A failed/unparseable run
   // just leaves authenticated=false rather than failing the whole status
   // call the way every other legendary invocation here does.
   Command command;
@@ -167,7 +167,7 @@ Result<void> Login(const config::Config& config, const std::string& pasted) {
     return std::unexpected(output.error());
   }
   if (const EpicAuthStatus status = Status(config); !status.authenticated) {
-    return Err("login_failed", "legendary didn't accept that code — it may be wrong, expired, or already used");
+    return Err("login_failed", "legendary didn't accept that code. It may be wrong, expired, or already used");
   }
   return {};
 }

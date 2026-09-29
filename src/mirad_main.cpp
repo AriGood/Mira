@@ -1,11 +1,11 @@
-// mirad — the Mira backend daemon.
+// mirad: the Mira backend daemon.
 //
 // Owns settings.toml and games.toml, serves the REST API described in
 // docs/api.md over a Unix domain socket, and watches every enabled library
 // root so a dropped-in game folder is picked up automatically (see
 // library/Watcher.h). This binary does not daemonize itself (no
 // double-fork): run it under `systemctl --user`, or let the frontend spawn
-// and supervise it — both are first-class per the plan in
+// and supervise it. Both are first-class per the plan in
 // docs/architecture.md, and neither needs mirad to background itself.
 
 #include <csignal>
@@ -33,7 +33,7 @@ void PrintUsage() {
       "service manager's normal stop).");
 }
 
-// Blocks the calling thread until SIGINT or SIGTERM arrives — no polling,
+// Blocks the calling thread until SIGINT or SIGTERM arrives, with no polling,
 // just a single blocking syscall, which is what lets the main thread cost
 // nothing while the server thread does the real work.
 void WaitForShutdownSignal() {
@@ -87,7 +87,7 @@ int main(int argc, char** argv) {
   mira::api::Server server(config, games, events);
 
   // Before anything else: close out any session a previous mirad (crashed,
-  // killed, or just restarted) left behind — see
+  // killed, or just restarted) left behind; see
   // proc::ProcessSupervisor::Reconcile and docs/architecture.md. Must run
   // before Serve() so a re-adopted still-running game is already tracked by
   // the time the very first client request arrives.
@@ -107,8 +107,8 @@ int main(int argc, char** argv) {
   pthread_sigmask(SIG_BLOCK, &block_set, nullptr);
 
   // A game folder that already existed before mirad started produces no
-  // inotify event — inotify only reports changes from here on, not existing
-  // state — so a full reconcile has to run once before the watcher takes
+  // inotify event: inotify only reports changes from here on, not existing
+  // state, so a full reconcile has to run once before the watcher takes
   // over. Also catches a folder that appeared while the daemon was down.
   {
     mira::library::Scanner startup_scan(config, games, events);

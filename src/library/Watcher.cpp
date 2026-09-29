@@ -29,7 +29,7 @@ std::int64_t NowMs() {
 
 // Sum of file sizes under `dir`, used only to tell whether a directory is
 // still being written to. Errors on individual entries (permission, a file
-// vanishing mid-walk) are skipped rather than failing the whole check — this
+// vanishing mid-walk) are skipped rather than failing the whole check. This
 // only has to be approximately right, not exact.
 std::uintmax_t TotalSize(const fs::path& dir) {
   std::uintmax_t total = 0;
@@ -78,7 +78,7 @@ Watcher::Watcher(config::Config& config, store::GameStore& games, api::EventBus&
     : config_(config), games_(games), events_(events) {
   // Created here, before Run() ever starts on another thread, specifically
   // because Stop() (called from whatever thread owns the Watcher object) must
-  // never race Run()'s own setup — thread creation is a happens-before point
+  // never race Run()'s own setup: thread creation is a happens-before point
   // for anything written beforehand, so this is the one fd that cannot be
   // deferred to Run() like the other three. TSan caught this exact race
   // during development (see tests/watcher_test.cpp).
@@ -122,7 +122,7 @@ void Watcher::WatchRoots() {
   for (const fs::path& root : config_.GetPathArray("library_roots")) {
     std::error_code ec;
     if (!fs::is_directory(root, ec)) {
-      log::Warn("Watcher: library root {} does not exist yet — not watched until it does", root.string());
+      log::Warn("Watcher: library root {} does not exist yet, so it is not watched until it does", root.string());
       continue;
     }
     const int wd = inotify_add_watch(inotify_fd_, root.c_str(), kWatchMask);
@@ -141,7 +141,7 @@ void Watcher::RearmTimer() {
     timerfd_settime(timer_fd_, 0, &spec, nullptr);  // all-zero disarms it
     return;
   }
-  // A fixed short poll interval while anything is pending — not an idle
+  // A fixed short poll interval while anything is pending, not an idle
   // wakeup (see the class comment): it only runs while a directory is
   // actively being watched for size stability, and disarms the instant
   // pending_ empties.
@@ -222,7 +222,7 @@ void Watcher::HandleInotify() {
   // Computed once per call, not per event: a runner build being downloaded
   // (runner/Downloader.cpp) into runner_search_paths/wine_search_paths must
   // never also be treated as a new game folder or a droppable archive here
-  // — see IsUnderAnyRoot's comment for why this matters even though the
+  // See IsUnderAnyRoot's comment for why this matters even though the
   // defaults never overlap.
   std::vector<fs::path> runner_roots;
   for (const fs::path& p : config_.GetPathArray("runner_search_paths")) runner_roots.push_back(p);
@@ -257,7 +257,7 @@ void Watcher::HandleInotify() {
         }
       } else if (event->mask & (IN_DELETE | IN_MOVED_FROM)) {
         pending_.erase(path.string());  // no point finishing a debounce for a path that's gone
-        // A deletion needs no debounce — rescan this root now so a removed
+        // A deletion needs no debounce: rescan this root now so a removed
         // game is marked missing promptly.
         const ScanSummary summary = scanner.ScanRoot(root_it->second);
         for (const model::Game& game : summary.added_games) metadata_fetches_.Enqueue(config_, events_, game);

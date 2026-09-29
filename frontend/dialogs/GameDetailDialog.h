@@ -11,11 +11,9 @@ class GameEditForm;
 
 class QPushButton;
 
-// A thin QDialog shell around ui/GameEditForm — the modal route to editing
-// a game (MainWindow's classic view, or LibraryWindow's fallback when
-// game_settings_in_sidebar is off). The embedded route is LibraryWindow
-// swapping GameEditForm in full-width instead; both share the one form
-// implementation.
+// A thin QDialog shell around ui/GameEditForm, the modal route to editing
+// a game (MainWindow's classic view). LibraryWindow embeds GameEditForm in
+// an overlay card instead; both share the one form implementation.
 class GameDetailDialog : public QDialog {
   Q_OBJECT
 
@@ -25,7 +23,7 @@ public:
   // shows placeholders in that case.
   GameDetailDialog(std::string id, QWidget* parent = nullptr, mira_gui::ArtworkStore* artwork = nullptr);
 
-  // Warns before discarding unsaved changes — covers Cancel, Esc, and the
+  // Warns before discarding unsaved changes; covers Cancel, Esc, and the
   // titlebar close button, which all route through reject().
   void reject() override;
 

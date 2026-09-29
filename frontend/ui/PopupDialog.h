@@ -13,7 +13,7 @@ class QHBoxLayout;
 namespace mira_gui {
 
 // Themed QMessageBox replacement. A native QDialog gets WM decorations of
-// its own on top of a window that has none (LibraryWindow is frameless) —
+// its own on top of a window that has none (LibraryWindow is frameless),
 // two window styles stacked, the "popup inside a popup" look. This draws
 // its own frameless, rounded, themed card instead.
 //
@@ -42,7 +42,7 @@ public:
   // unless a later one passes `default_button`. Closes the dialog on click;
   // exec() then returns QDialog::Accepted or ::Rejected per `accept`.
   QPushButton* AddButton(const QString& text, bool accept, bool default_button = false);
-  // Same, but exec() returns `result` verbatim — for a caller with more than
+  // Same, but exec() returns `result` verbatim, for a caller with more than
   // two outcomes (see notify::ConfirmUnsaved).
   QPushButton* AddButton(const QString& text, int result, bool default_button = false);
 

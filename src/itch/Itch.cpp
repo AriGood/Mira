@@ -148,7 +148,7 @@ Result<ItchCollection> FetchCollection(const config::Config& config, std::int64_
     Call(config, "Fetch.Collection", {{"profileId", profile_id}, {"collectionId", id}, {"fresh", true}});
   if (!fetched || !fetched->contains("collection") || !(*fetched)["collection"].is_object()) {
     return Err("collection_unreadable",
-               "couldn't read that collection — check the link, or it may be another account's private collection");
+               "couldn't read that collection. Check the link, or it may be another account's private collection");
   }
   return FromButler((*fetched)["collection"], false);
 }

@@ -16,7 +16,7 @@ namespace mira::metadata {
 // Steam-owned games use Steam's store API + ProtonDB + Steam's CDN, all
 // keyless; everything else uses SteamGridDB (needs steamgriddb.api_key, or
 // fails with no_steamgriddb_key). Shells out to curl rather than linking
-// libcurl, same as runner/Downloader.cpp. Synchronous — see
+// libcurl, same as runner/Downloader.cpp. Synchronous; see
 // metadata/FetchQueue.h for the background-safe wrapper.
 Result<void> Fetch(const config::Config& config, const model::Game& game);
 
@@ -38,7 +38,7 @@ Result<void> SelectArtwork(const config::Config& config, const std::string& game
 
 // Absolute paths to a game's cached files, whether or not they exist yet.
 // Siblings of settings.toml (config.File().parent_path()/metadata,
-// .../artwork) rather than a global XDG_CONFIG_HOME lookup of their own —
+// .../artwork) rather than a global XDG_CONFIG_HOME lookup of their own,
 // same reasoning as frontend.toml living next to settings.toml: it follows
 // wherever this particular Config was actually opened from, real daemon or
 // an isolated test instance, instead of re-resolving the environment itself

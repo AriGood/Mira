@@ -27,7 +27,7 @@ namespace mira_gui {
 
 class SettingsNavWidget;
 
-// The settings screen's content, with no QDialog machinery — embeddable in
+// The settings screen's content, with no QDialog machinery, embeddable in
 // a dialog shell (dialogs/SettingsDialog) or directly in a window (the
 // library grid, taking over its body). Owns loading the schema, building
 // one form per category, and saving both the backend config and the
@@ -59,11 +59,11 @@ public:
                         const QString& button_text, std::function<void()> activated);
 
   // True if anything differs from what Load() last fetched or Save() last
-  // confirmed — the signal a caller uses to warn before discarding.
+  // confirmed; the signal a caller uses to warn before discarding.
   bool IsDirty() const;
 
   // Reverts every field to what Load() last fetched or Save() last
-  // confirmed, without touching the daemon or re-fetching anything —
+  // confirmed, without touching the daemon or re-fetching anything,
   // nothing here applies live before Save() runs, so there is no already-
   // applied state to undo, just widgets to set back.
   void DiscardChanges();
@@ -101,7 +101,7 @@ private:
   QWidget* MakeShapeControl(ShapeField& field, const QString& label, int maximum,
                             const QString& tip);
   // Shows each shape spinbox's special "unset" value as the actual number
-  // the current theme resolves it to, not a placeholder — refreshed on
+  // the current theme resolves it to, not a placeholder, refreshed on
   // theme::Notifier::Changed so it never goes stale.
   void RefreshShapeDefaults();
   void BuildRows();
@@ -122,8 +122,6 @@ private:
   bool scan_on_startup_original_ = true;
   QComboBox* theme_ = nullptr;
   QString theme_original_;
-  QCheckBox* game_settings_in_sidebar_ = nullptr;
-  bool game_settings_in_sidebar_original_ = true;
   QCheckBox* drag_select_ = nullptr;
   bool drag_select_original_ = true;
   QSpinBox* recent_count_ = nullptr;
@@ -145,7 +143,7 @@ private:
   QSet<QString> categories_with_actions_;
   bool rows_built_ = false;
   // Read-only "is Feral GameMode installed/running" indicator on the
-  // Launching category — not tied to any Field, since it isn't a config key.
+  // Launching category, not tied to any Field, since it isn't a config key.
   QLabel* gamemode_status_ = nullptr;
 };
 

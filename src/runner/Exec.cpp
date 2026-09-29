@@ -46,7 +46,7 @@ std::optional<std::string> ResolveSiblingBinary(const std::filesystem::path& own
 namespace {
 
 // Command.env is an overlay on the daemon's own environment, not a
-// replacement — merge them for the child process.
+// replacement, so merge them for the child process.
 std::vector<std::string> MergedEnv(const Command& command) {
   std::vector<std::string> merged;
   for (char** e = environ; *e != nullptr; ++e) merged.emplace_back(*e);
@@ -54,7 +54,7 @@ std::vector<std::string> MergedEnv(const Command& command) {
   return merged;
 }
 
-// argv/envp built before fork() and only indexed into afterwards — see the
+// argv/envp built before fork() and only indexed into afterwards; see the
 // deadlock note in RunAndWait.
 struct PreparedCommand {
   std::vector<std::string> env_strings;

@@ -13,7 +13,7 @@
 // Wraps humble-cli (github.com/smbl64/humble-cli, unofficial). Not built
 // on library::ILibrarySource like epic/steam/gog/itch: Humble Bundle has
 // no "installed" concept, just purchased bundles of downloadable files,
-// so there's no catalog/install/update lifecycle to wrap — GET
+// so there's no catalog/install/update lifecycle to wrap: GET
 // /v1/humble/library lists what's purchased, POST /v1/humble/download
 // fetches files from one bundle into a plain directory.
 namespace mira::humble {
@@ -41,7 +41,7 @@ struct HumbleAuthStatus {
   bool authenticated = false;
 };
 
-// Unlike epic/gog, there's no separate "is a token stored" file to check —
+// Unlike epic/gog, there's no separate "is a token stored" file to check:
 // humble-cli owns its own config file entirely. The only way to know if
 // it's authenticated is to actually ask it something (`list`), so this
 // one *does* shell out, unlike epic::Status/gog::Status's "installed
@@ -49,8 +49,8 @@ struct HumbleAuthStatus {
 HumbleAuthStatus Status(const config::Config& config);
 
 // `session_key` is the _simpleauth_sess cookie value, copied from a
-// logged-in browser session (documented in humble-cli's own README —
-// there's no login URL/code flow the way Epic/GOG have).
+// logged-in browser session (documented in humble-cli's own README).
+// There's no login URL/code flow the way Epic/GOG have).
 Result<void> Login(const config::Config& config, const std::string& session_key);
 
 struct BundleSummary {

@@ -17,12 +17,12 @@ struct ScanSummary {
   int restored = 0; // a previously-missing game's folder reappeared
 
   // The games behind `added`, for callers that want to react per-game (e.g.
-  // triggering a metadata fetch) — deliberately not done inside Scanner
+  // triggering a metadata fetch), deliberately not done inside Scanner
   // itself; see the comment on metadata::FetchAsync's call sites for why.
   std::vector<model::Game> added_games;
 };
 
-// Walks every enabled library root one level deep — each immediate
+// Walks every enabled library root one level deep: each immediate
 // subdirectory is treated as one game, matching "drop a game folder in and
 // it's picked up". Recursing further is Detector's job, scoped to inside a
 // single already-identified game folder.

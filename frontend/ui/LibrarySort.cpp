@@ -8,7 +8,7 @@ namespace mira_gui {
 namespace {
 
 // Case-insensitive, so "blue prince" sorts next to "Blue Prince" rather
-// than after every capitalised title — game names come from folder names
+// than after every capitalised title: game names come from folder names
 // and their capitalisation is not meaningful.
 int CompareNames(const std::string& left, const std::string& right) {
   const size_t shared = std::min(left.size(), right.size());
@@ -22,7 +22,7 @@ int CompareNames(const std::string& left, const std::string& right) {
 }
 
 // A game that has never been played sorts as older than any that has, in
-// both directions — "never" is not a date, and treating it as 0 would put
+// both directions: "never" is not a date, and treating it as 0 would put
 // it next to 1970 rather than at the end.
 std::int64_t LastPlayedRank(const GameSummary& game) {
   return game.last_played_at.value_or(std::numeric_limits<std::int64_t>::min());

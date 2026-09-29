@@ -55,7 +55,7 @@ fs::path DesktopEntries::EntryPath(const std::string& game_id) const {
 bool DesktopEntries::IsWanted(const model::Game& game) const {
   if (game.status != model::GameStatus::Ready) return false;
   // Steam already puts every game in your Steam library into the desktop
-  // menu itself (via its own Linux integration) — a second, Mira-owned
+  // menu itself (via its own Linux integration), a second, Mira-owned
   // entry for the same game is redundant clutter, not a missing feature,
   // regardless of steam.launch_mode. Sync() below removes any mira-<id>
   // entry that stops being "wanted", so this also cleans up an entry a
@@ -124,7 +124,7 @@ Result<void> DesktopEntries::Sync(const std::vector<model::Game>& games) {
     out << Render(game);
   }
 
-  // Remove ours that are no longer wanted — a game deleted, gone missing, or
+  // Remove ours that are no longer wanted: a game deleted, gone missing, or
   // now needing an install. Anything not named mira-<id>.desktop is left
   // strictly alone.
   for (const auto& entry : fs::directory_iterator(dir, fs::directory_options::skip_permission_denied, ec)) {

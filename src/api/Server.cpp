@@ -551,6 +551,7 @@ void Server::RegisterRoutes() {
       if (!entry.constraint.one_of.empty()) entries.back()["one_of"] = entry.constraint.one_of;
       if (entry.constraint.minimum) entries.back()["minimum"] = *entry.constraint.minimum;
       if (entry.constraint.maximum) entries.back()["maximum"] = *entry.constraint.maximum;
+      if (!entry.game_doc.empty()) entries.back()["game_doc"] = entry.game_doc;
       if (entry.is_secret) entries.back()["is_secret"] = true;
       if (entry.is_runner_ref) entries.back()["is_runner_ref"] = true;
       if (!entry.link.empty()) entries.back()["link"] = entry.link;
@@ -1439,7 +1440,7 @@ void Server::RegisterRoutes() {
     if (is_installer) {
       // An installer isn't the game, so it isn't provisioned or launchable yet.
       game.status = model::GameStatus::NeedsInstall;
-      game.last_error = "This is an installer, not the game itself — run it first, then point Mira at the "
+      game.last_error = "This is an installer, not the game itself. Run it first, then point Mira at the "
                         "installed game.";
     } else {
       if (platform != model::Platform::Windows) {

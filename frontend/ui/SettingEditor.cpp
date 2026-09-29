@@ -70,7 +70,9 @@ QWidget* SettingEditor::Build(QWidget* parent, std::function<void()> on_reset) {
 
 QWidget* SettingEditor::BuildLabel(QWidget* parent) const {
   const std::string& text = entry.label.empty() ? entry.key : entry.label;
-  return LabelWithHelp(QString::fromStdString(text), QString::fromStdString(entry.doc), parent);
+  QString doc = QString::fromStdString(entry.doc);
+  if (entry.per_game && !doc.isEmpty()) doc += " Each game can override this in its own settings.";
+  return LabelWithHelp(QString::fromStdString(text), doc, parent);
 }
 
 QString SettingEditor::SearchText() const {

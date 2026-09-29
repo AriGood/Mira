@@ -28,7 +28,7 @@ fs::path TempDir(const char* name) {
 
 // Everything here deliberately exercises only the non-Steam path with no
 // steamgriddb.api_key set: that's the one branch that's fully offline (see
-// MetadataFetcher.cpp's FetchNonSteam — metadata.protondb_for_non_steam
+// MetadataFetcher.cpp's FetchNonSteam: metadata.protondb_for_non_steam
 // defaults to false for the same reason, so it adds no network call here
 // either), so these stay hermetic without mocking curl. The
 // Steam/ProtonDB/SteamGridDB paths themselves were verified live against
@@ -38,7 +38,7 @@ TEST_CASE("Fetch on a non-Steam game with no SteamGridDB key fails, and caches n
   // SteamGridDB is the only free cover source for a non-Steam game, so with
   // no key there is nothing this could have tried. Reporting success left a
   // cache file and a game.metadata_ready event behind, which reads as
-  // "looked and found nothing" — and the next attempt then looked answered.
+  // "looked and found nothing", and the next attempt then looked answered.
   const fs::path dir = TempDir("metadata-nonsteam");
   config::Config config(dir / "settings.toml");
   config.Load();
@@ -234,7 +234,7 @@ TEST_CASE("FetchQueue::Enqueue force=true bypasses metadata.enabled") {
     queue.WaitIdle();
   }
 
-  // The fetch ran, which with no key means it ran and failed — the event is
+  // The fetch ran, which with no key means it ran and failed, so the event is
   // the observable, since a failed fetch deliberately writes no cache file.
   const std::vector<model::Event> published = events.Since(0);
   REQUIRE(published.size() == 1);

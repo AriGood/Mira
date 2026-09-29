@@ -88,18 +88,19 @@ void OverridesEditor::BuildRows(const ConfigSchemaResult& schema) {
       field.layer_label->setMinimumWidth(56);
       row_layout->addWidget(field.layer_label);
 
-      // Only meaningful once this game actually has an override to remove —
+      // Only meaningful once this game actually has an override to remove,
       // disabled until ApplyValues confirms layer == "game", since there's
       // nothing to clear otherwise.
       field.reset_button = new QPushButton("Clear", row_widget);
       field.reset_button->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
       field.reset_button->setEnabled(false);
-      field.reset_button->setToolTip("No per-game override set for this key");
+      field.reset_button->setToolTip("This game has no override for this setting");
       row_layout->addWidget(field.reset_button);
 
       const QString label_text =
           QString::fromStdString(entry.label.empty() ? entry.key : entry.label);
-      QWidget* label = LabelWithHelp(label_text, QString::fromStdString(entry.doc), this);
+      const std::string& doc = entry.game_doc.empty() ? entry.doc : entry.game_doc;
+      QWidget* label = LabelWithHelp(label_text, QString::fromStdString(doc), this);
 
       field.row_widget = row_widget;
       fields_.push_back(field);
@@ -116,7 +117,7 @@ void OverridesEditor::BuildRows(const ConfigSchemaResult& schema) {
 
 void OverridesEditor::ApplyValues(const GameConfigResult& config) {
   // BuildRows makes one row per schema key, since only this per-game
-  // response says which are overridable — daemon-only keys are hidden here
+  // response says which are overridable, so daemon-only keys are hidden here
   // rather than never built.
   for (const GameConfigEntry& entry : config.entries) {
     const auto it = std::ranges::find(fields_, entry.key,
@@ -131,8 +132,8 @@ void OverridesEditor::ApplyValues(const GameConfigResult& config) {
     field.layer_label->setText(QString("(%1)").arg(QString::fromStdString(entry.layer)));
     field.reset_button->setEnabled(entry.layer == "game");
     field.reset_button->setToolTip(
-        entry.layer == "game" ? "Remove this game's override, falling back to the setting below it"
-                              : "No per-game override set for this key");
+        entry.layer == "game" ? "Remove this game's override and use the global setting again"
+                              : "This game has no override for this setting");
     if (field.check) {
       field.check->setChecked(entry.value_display == "true");
     } else {

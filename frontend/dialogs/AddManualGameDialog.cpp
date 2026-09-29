@@ -81,8 +81,8 @@ AddManualGameDialog::AddManualGameDialog(QWidget* parent) : QDialog(parent) {
 
   is_installer_ = new QCheckBox("This is an installer, not the game itself", this);
   is_installer_->setToolTip(
-      "Adds it as needs-install instead of ready — run it, then Finish Install once the real "
-      "game is in place.");
+      "Adds it as needing install instead of ready. Run the installer, then mark the game as "
+      "installed once it is in place.");
   form->addRow(QString(), is_installer_);
 
   layout->addLayout(form);
@@ -102,7 +102,7 @@ void AddManualGameDialog::BrowseExe() {
   if (selected.isEmpty()) return;
 
   // Picking the exe before the install path says which folder is the game's
-  // own — filling install_path_ from it beats making the user go browse a
+  // own, so filling install_path_ from it beats making the user go browse a
   // second time for what BrowseExe just showed them.
   if (install_path_->text().trimmed().isEmpty()) {
     const QFileInfo info(selected);

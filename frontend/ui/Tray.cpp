@@ -60,7 +60,7 @@ void Attach(QMainWindow* window) {
   menu->addAction("&Quit", &RequestQuit);
   g_icon->setContextMenu(menu);
 
-  // Relabelled on each open — "Show/Hide" alone reads as unfinished.
+  // Relabelled on each open: "Show/Hide" alone reads as unfinished.
   QObject::connect(menu, &QMenu::aboutToShow, toggle, [toggle] {
     toggle->setText(g_window != nullptr && g_window->isVisible() ? "Hide Mira" : "Show Mira");
   });

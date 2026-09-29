@@ -7,7 +7,7 @@ namespace mira::paths {
 
 // Everything the user might want to back up or put under version control lives
 // in one directory: $XDG_CONFIG_HOME/mira (default ~/.config/mira). This is a
-// deliberate departure from the usual XDG three-way config/data/cache split —
+// deliberate departure from the usual XDG three-way config/data/cache split:
 // backup-friendliness was asked for explicitly, and a single folder of TOML
 // files serves that better than state scattered across three directories.
 std::filesystem::path UserDir();

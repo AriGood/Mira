@@ -18,7 +18,7 @@ namespace mira_gui::transport {
 struct Reply {
   bool ok = false;
   // 0 when the request never reached mirad. Carried for the endpoints where
-  // a 404 is a normal answer rather than a failure — GET
+  // a 404 is a normal answer rather than a failure: GET
   // /v1/games/{id}/metadata, for a game nothing has been fetched for.
   int status = 0;
   ApiError error;       // set when ok is false; the message is already human-readable
@@ -27,12 +27,12 @@ struct Reply {
 
 struct Options {
   // Left unset, httplib's own default applies. Set it for an endpoint that
-  // does real work while the request is open — POST /v1/library/scan walks
+  // does real work while the request is open: POST /v1/library/scan walks
   // every library root synchronously.
   std::optional<std::chrono::seconds> read_timeout;
 };
 
-// $MIRA_SOCKET if set — the same override `mirad --socket` accepts on the
+// $MIRA_SOCKET if set, the same override `mirad --socket` accepts on the
 // daemon side, so `MIRA_SOCKET=/path/to.sock mirad --socket /path/to.sock`
 // and `MIRA_SOCKET=/path/to.sock mira-gui` unambiguously talk to each other
 // regardless of what else is running. Without it, mirrors core/Paths.h's
@@ -42,7 +42,7 @@ std::string SocketPath();
 
 Reply Get(const std::string& path, const Options& options = {});
 
-// A response that isn't JSON — today only GET /v1/games/{id}/artwork, which
+// A response that isn't JSON: today only GET /v1/games/{id}/artwork, which
 // answers with the image bytes themselves.
 //
 // `status` is carried out separately because 404 is a normal answer here,
@@ -64,7 +64,7 @@ Reply Patch(const std::string& path, const nlohmann::json& body, const Options& 
 Reply Delete(const std::string& path, const Options& options = {});
 
 // The message for a reply that arrived intact but isn't the JSON kind the
-// endpoint promises — a protocol mismatch rather than a transport failure,
+// endpoint promises, a protocol mismatch rather than a transport failure,
 // so it names the endpoint instead of the socket.
 std::string UnexpectedResponse(const std::string& endpoint);
 

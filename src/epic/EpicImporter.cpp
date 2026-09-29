@@ -57,7 +57,7 @@ Result<EpicImportSummary> EpicImporter::Import() {
     const std::string id = "epic-" + title.app_name;
     const auto existing = games_.Find(id);
 
-    // Preserve anything the user already configured across a re-import —
+    // Preserve anything the user already configured across a re-import,
     // only the fields Legendary itself owns get overwritten, same contract
     // as SteamScanner::Scan/LutrisImporter::Import.
     model::Game game = existing.value_or(model::Game{});
@@ -73,8 +73,8 @@ Result<EpicImportSummary> EpicImporter::Import() {
     if (!existing) game.created_at = game.updated_at;
     AddTag(game.tags, "epic");
 
-    // Unlike Steam/Lutris, Legendary never creates a Wine prefix of its own
-    // — an already-installed Epic title still needs Mira's own
+    // Unlike Steam/Lutris, Legendary never creates a Wine prefix of its own,
+    // so an already-installed Epic title still needs Mira's own
     // RunnerRegistry to provision one before it's launchable (see this
     // class's header comment). Only on first sight, or if a previous
     // provisioning attempt never actually finished: re-provisioning a
@@ -112,7 +112,7 @@ Result<EpicImportSummary> EpicImporter::Import() {
   // upserted here: an entitlement isn't a tracked game, and persisting all
   // of them turned games.toml into 120 rows of placeholders carrying a
   // meaningless data_dir/runner_ref/play_seconds each. They're served
-  // read-through from Legendary's own cache instead — see
+  // read-through from Legendary's own cache instead; see
   // library::ListCatalog, GET /v1/library.
   return summary;
 }

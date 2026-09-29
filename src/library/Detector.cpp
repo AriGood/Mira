@@ -26,7 +26,7 @@ bool MatchesAny(const std::vector<std::string>& globs, std::string_view text) {
   });
 }
 
-// True for a regular file whose first four bytes are the ELF magic number —
+// True for a regular file whose first four bytes are the ELF magic number:
 // used instead of relying solely on the executable bit, which extraction
 // tools frequently drop or set inconsistently.
 bool LooksLikeElf(const fs::path& path) {
@@ -50,7 +50,7 @@ std::uintmax_t MinInstallerBytes(const DetectorSettings& settings) {
 // True if any file directly in `dir` meets the size floor. Installers are
 // frequently a small stub .exe plus a much larger separate payload (a
 // classic InstallShield/Inno Setup split: a few-MB launcher next to a
-// multi-hundred-MB .bin/.cab) — checking only the exe's own size misses
+// multi-hundred-MB .bin/.cab), so checking only the exe's own size misses
 // this real, common packaging shape entirely.
 bool DirectoryHasLargeFile(const fs::path& dir, std::uintmax_t min_bytes) {
   std::error_code ec;
@@ -61,7 +61,7 @@ bool DirectoryHasLargeFile(const fs::path& dir, std::uintmax_t min_bytes) {
   return false;
 }
 
-// Name-pattern match plus a size signal — either the exe itself is large
+// Name-pattern match plus a size signal: either the exe itself is large
 // (a monolithic installer), or it shares a directory with a large payload
 // file (a split installer). Name alone would flag legitimate small helpers
 // too readily; size alone would miss both real packaging shapes above.
@@ -86,7 +86,7 @@ std::vector<RawCandidate> WalkForExecutables(const fs::path& folder, const Detec
     if (depth > settings.max_depth) return;
     // Computed once per directory rather than per candidate: every
     // name-matching file in the same folder shares this signal. Skipped
-    // entirely when no installer patterns are configured — it costs a second
+    // entirely when no installer patterns are configured, since it costs a second
     // full directory pass plus a stat per entry, which for an asset-heavy
     // game folder roughly doubles scan I/O for nothing.
     const bool dir_has_large_file = !settings.installer_name_patterns.empty() &&
@@ -99,7 +99,7 @@ std::vector<RawCandidate> WalkForExecutables(const fs::path& folder, const Detec
 
       if (entry.is_directory(ec)) {
         // A wrapper folder can hold its actual prefix one level below itself
-        // (umu's own layout: <root>/umu/umu-default/) — never descend into
+        // (umu's own layout: <root>/umu/umu-default/), and never descend into
         // one, or its own drive_c full of .exe files gets read as candidates.
         if (LooksLikeWinePrefix(entry.path())) continue;
         walk(entry.path(), depth + 1);
@@ -185,7 +185,7 @@ Detector::Result Detector::Detect(const fs::path& folder) const {
   // the runner-up, and a close name match to the folder, both raise it; a
   // single unopposed candidate gets a moderate baseline rather than full
   // confidence, since "the only thing found" is not the same guarantee as
-  // "clearly the right one". These weights are deliberately simple — they
+  // "clearly the right one". These weights are deliberately simple: they
   // are meant to be retuned via detect.* config, not treated as final.
   if (result.candidates.empty()) {
     result.confidence = 0.0;

@@ -38,7 +38,7 @@ void Stop(QWidget* parent, const std::string& id) {
 
 void Delete(QWidget* parent, const std::string& id, const QString& name,
             std::function<void()> on_deleted) {
-  // Paths come from a detail fetch — the list summary carries neither
+  // Paths come from a detail fetch; the list summary carries neither
   // install_path nor data_dir. A failed fetch still offers the plain
   // remove, with both options disabled.
   MiradClient::GetGameAsync(parent, id, [parent, id, name, on_deleted](GameDetailResult detail) {
@@ -120,7 +120,7 @@ void ToggleDesktopEntry(QWidget* parent, const std::string& id, bool currently_e
           notify::FailedRequest(parent, "Could not update the desktop entry.", result.error);
           return;
         }
-        // The only feedback there is — nothing in Mira's own window changes.
+        // The only feedback there is: nothing in Mira's own window changes.
         notify::Notice(parent, currently_enabled ? "Removed from the application menu."
                                                  : "Added to the application menu.");
       });

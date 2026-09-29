@@ -12,7 +12,7 @@ namespace mira::steam {
 namespace {
 namespace fs = std::filesystem;
 
-// Fixed across every Steam installation — Valve's own redistributable
+// Fixed across every Steam installation: Valve's own redistributable
 // bundler, not a game.
 constexpr std::string_view kRedistAppId = "228980";
 
@@ -55,7 +55,7 @@ std::optional<fs::path> FindSteamRoot(const config::Config& config) {
 std::vector<fs::path> LibraryFolders(const fs::path& steam_root) {
   // steam_root is very commonly a symlink to one of the paths
   // libraryfolders.vdf itself lists (~/.steam/steam -> ~/.local/share/Steam
-  // is the standard layout) — de-duplicated by what they resolve to on
+  // is the standard layout), de-duplicated by what they resolve to on
   // disk, not by string equality, or every app in the default library gets
   // listed twice.
   std::error_code ec;
@@ -87,20 +87,20 @@ std::optional<ProtonCompatInfo> ResolveProtonCompatInfo(const fs::path& compat_d
   if (!text) return std::nullopt;
 
   // config_info is line-oriented, not VDF. Line 2 (0-indexed 1) is the
-  // compat tool's own "files/share/fonts/" directory — three parent_path()
+  // compat tool's own "files/share/fonts/" directory: three parent_path()
   // calls off of it (fonts -> share -> files -> the tool's own root, where
   // its "proton" script lives) is the same resolution Proton-adjacent tools
   // (protontricks and others) use, since Steam doesn't expose this any other
   // way short of parsing its own C++ source. Line 4 (0-indexed 3) is the
   // Steam client install path Steam itself passed as
-  // STEAM_COMPAT_CLIENT_INSTALL_PATH — reusing it verbatim means Proton
+  // STEAM_COMPAT_CLIENT_INSTALL_PATH, and reusing it verbatim means Proton
   // sees exactly the same environment Steam gave it.
   const std::vector<std::string> lines = strings::Split(*text, '\n');
   if (lines.size() < 4) return std::nullopt;
 
   // A trailing '/' makes std::filesystem::path treat the last component as
   // an empty pseudo-element, so parent_path() needs one extra call to get
-  // past it — stripped explicitly instead, so "fonts -> share -> files ->
+  // past it, so it is stripped explicitly instead, so "fonts -> share -> files ->
   // tool root" is exactly three parent_path() calls, not a fragile four.
   std::string trimmed = strings::Trim(lines[1]);
   while (!trimmed.empty() && trimmed.back() == '/') trimmed.pop_back();

@@ -5,7 +5,7 @@
 using namespace mira_gui;
 
 // The SSE payload parsers. These decide what a live event does to the
-// library on screen, and they run on data the frontend never requested — so
+// library on screen, and they run on data the frontend never requested, so
 // a malformed or unexpected payload has to be a no-op, never a crash and
 // never a half-applied update.
 
@@ -32,7 +32,7 @@ TEST_CASE("ParseGameSummary rejects anything that isn't a JSON object") {
 TEST_CASE("ParseGameSummary rejects a payload from a different event") {
   // The real case: runners.download.started shares the event stream with
   // game.added, and without an id check its payload parsed into a game with
-  // every field empty — one blank tile in the library per runner download.
+  // every field empty, one blank tile in the library per runner download.
   GameSummary game;
   CHECK_FALSE(MiradClient::ParseGameSummary(R"({"kind": "proton", "tag": "GE-Proton11-7"})", &game));
   CHECK_FALSE(MiradClient::ParseGameSummary(R"({"id": ""})", &game));

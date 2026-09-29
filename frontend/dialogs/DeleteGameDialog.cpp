@@ -34,18 +34,18 @@ QCheckBox* AddPathOption(QVBoxLayout* layout, QWidget* parent, const QString& la
   return check;
 }
 
-// The metadata checkbox, destructive warning, and button box — identical
+// The metadata checkbox, destructive warning, and button box, identical
 // whether one game or a batch is being asked about.
 DeleteChoice FinishDeleteDialog(QDialog& dialog, QVBoxLayout* layout, QCheckBox* files_check,
                                 QCheckBox* prefix_check) {
   auto* metadata_check = new QCheckBox("Also delete cached metadata && cover art", &dialog);
   metadata_check->setToolTip(
-      "Otherwise this stays on disk forever, orphaned under an id nothing points at anymore.");
+      "Otherwise the cached data stays on disk, unused.");
   layout->addWidget(metadata_check);
 
   auto* warning = new QLabel(
-      "⚠ Deleting files cannot be undone. mirad will refuse any path that isn't inside a "
-      "configured library root or prefix root.",
+      "⚠ Deleting files cannot be undone. Mira refuses to delete any path outside your "
+      "library folders and prefix folder.",
       &dialog);
   warning->setWordWrap(true);
   warning->setProperty("role", "error");
@@ -105,17 +105,17 @@ DeleteChoice AskDeleteGame(QWidget* parent, const QString& name, const QString& 
   explanation->setWordWrap(true);
   layout->addWidget(explanation);
 
-  // A desktop-entry import only ever linked to another app's own files —
+  // A desktop-entry import only ever linked to another app's own files:
   // Mira never owned install_path/data_dir for it, so offering to delete
   // them would delete someone else's install.
   const bool linked_only = source == "desktop-entry";
   QCheckBox* files_check = AddPathOption(
       layout, &dialog, "Also delete the game's files", linked_only ? QString() : install_path,
-      linked_only ? "This game links to another app's own files — Mira doesn't own them."
+      linked_only ? "This game links to another app's own files, which Mira doesn't own."
                   : "This game has no install path on record.");
   QCheckBox* prefix_check = AddPathOption(
       layout, &dialog, "Also delete its Wine/Proton prefix", linked_only ? QString() : data_dir,
-      linked_only ? "This game links to another app's own files — Mira doesn't own them."
+      linked_only ? "This game links to another app's own files, which Mira doesn't own."
                   : "This game has no prefix (native games don't need one).");
 
   return FinishDeleteDialog(dialog, layout, files_check, prefix_check);
@@ -136,8 +136,8 @@ DeleteChoice AskDeleteGames(QWidget* parent, int count) {
 
   auto* explanation = new QLabel(
       "Mira forgets each game. Nothing on disk is touched unless you tick an option below. A "
-      "game added via desktop-entry import skips file/prefix deletion automatically — Mira "
-      "never owned those files.",
+      "game added via desktop-entry import skips file and prefix deletion automatically, "
+      "because Mira never owned those files.",
       &dialog);
   explanation->setWordWrap(true);
   layout->addWidget(explanation);

@@ -236,7 +236,7 @@ void FailedWithAction(QWidget* parent, const QString& what, const QString& detai
   std::function<void()> on_action;
   if (activate) {
     // The click lands with Mira possibly hidden in the tray or behind other
-    // windows — bring it forward before routing anywhere inside it.
+    // windows, so bring it forward before routing anywhere inside it.
     QPointer<QWidget> window = parent != nullptr ? parent->window() : nullptr;
     on_action = [window, activate] {
       if (window) {
@@ -278,7 +278,7 @@ bool Confirm(QWidget* parent, const QString& title, const QString& question, con
              bool destructive) {
   PopupDialog dialog(parent, destructive ? Level::Warning : Level::Info, title);
   dialog.SetMessage(question);
-  // Cancel keeps focus on anything destructive — a stray Return should
+  // Cancel keeps focus on anything destructive: a stray Return should
   // never pick the dangerous answer.
   QPushButton* go = dialog.AddButton(accept, /*accept_role=*/true, !destructive);
   dialog.AddButton("Cancel", /*accept_role=*/false, destructive);

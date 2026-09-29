@@ -15,7 +15,7 @@
 
 namespace mira::runner {
 
-// Collapses builds that are the same runner found more than once — the same
+// Collapses builds that are the same runner found more than once, the same
 // directory reached through a symlinked search path, or two entries sharing
 // a "kind:name" reference, which no client can tell apart. Order is
 // preserved and the first occurrence wins. Exposed for its own test; every
@@ -36,7 +36,7 @@ public:
 
   std::vector<model::RunnerBuild> DiscoverAll() const;
 
-  // Looks up a runner by kind alone, with no build resolution — for
+  // Looks up a runner by kind alone, with no build resolution, for
   // anything that only needs the runner itself (e.g. its SettingsSchema()),
   // not a "kind:name" reference. nullptr if no runner of that kind exists.
   const IRunner* FindByKind(const std::string& kind) const;
@@ -57,7 +57,7 @@ public:
 
   // Resolves game.runner_ref (or, if unset, default_runner.<platform>),
   // pins the concrete reference onto the returned copy, and provisions it.
-  // Can't fail in the Result sense — "no runner found" or "provisioning
+  // Can't fail in the Result sense: "no runner found" or "provisioning
   // failed" are both normal outcomes, reflected as status=broken with
   // last_error set, same as AutoSetup does for "no executable found".
   // Doesn't persist anything; the caller saves the result via GameStore.

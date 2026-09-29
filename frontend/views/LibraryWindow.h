@@ -39,7 +39,7 @@ class QListWidgetItem;
 class QTableWidget;
 class QTimer;
 
-// QListWidget with setViewportMargins made public — Qt keeps it protected on
+// QListWidget with setViewportMargins made public: Qt keeps it protected on
 // QAbstractScrollArea. Defined in LibraryWindow.cpp; this file only ever
 // holds a pointer to it.
 class LibraryGrid;
@@ -71,7 +71,7 @@ struct SourceInfo;
 //
 // Selection model: one click selects a tile, a second (double) click
 // launches, right-click opens the per-game menu. Hovering a tile shows a
-// HoverCard after a short dwell — the tile itself plus the right-click menu
+// HoverCard after a short dwell: the tile itself plus the right-click menu
 // and the per-game edit page cover everything the old right sidebar used to.
 class LibraryWindow : public QMainWindow {
   Q_OBJECT
@@ -85,11 +85,11 @@ private:
   QWidget* BuildGrid();
   QWidget* BuildSettingsPage();
   // The sidebar's single filter+sort control, a Qt::Popup so it dismisses
-  // itself on an outside click or Escape — no manual close-on-click-away
+  // itself on an outside click or Escape, so no manual close-on-click-away
   // wiring needed. Built once; filters_ and the sort buttons live inside it.
   QWidget* BuildFilterSortPopover();
   // Refreshes the pill's own summary text/icons after a filter, sort, or
-  // theme change — the popover's own rows restyle themselves separately.
+  // theme change; the popover's own rows restyle themselves separately.
   void UpdateFilterSortSummary();
   // Library-only actions as vertical icon+label rows. Refresh/Shortcuts/
   // About moved to the top bar; Close window/Quit dropped (the frameless ×
@@ -121,7 +121,7 @@ private:
   // lets "Playing now"/"Never played" be filters at all.
   void ApplyFilter();
   bool MatchesFilter(const mira_gui::GameSummary& game) const;
-  // The part of MatchesFilter that doesn't depend on the search box — shared
+  // The part of MatchesFilter that doesn't depend on the search box, shared
   // with UpdateFilterCounts, which needs every key's count, not just the
   // active one's.
   bool MatchesFilterKey(const mira_gui::GameSummary& game, const QString& key) const;
@@ -148,7 +148,7 @@ private:
                     const std::function<void(QMenu&)>& extra = nullptr);
   void ShowSidebarMenu(const QPoint& global_pos);
   void ShowSourceMenu(const mira_gui::SourceInfo& source, const QPoint& global_pos);
-  // More than one tile selected — a reduced set of actions applied to all
+  // More than one tile selected: a reduced set of actions applied to all
   // of them at once, chosen at the pos the right-click landed on.
   void ShowBatchContextMenu(const QList<QListWidgetItem*>& items, const QPoint& pos);
   void ToggleRunning(const std::string& id);
@@ -162,19 +162,19 @@ private:
   // than swapped into content_stack_, so the grid and sidebar stay live
   // underneath it.
   QWidget* BuildGameEditOverlay();
-  // The card's own content, rebuilt fresh on every open — same reasoning as
+  // The card's own content, rebuilt fresh on every open, for the same reasoning as
   // settings_page_: starts synced to what's actually saved, not stale edits
   // from a discarded previous open.
   QWidget* BuildGameEditCard(const std::string& id);
   void CloseGameEdit();
-  // Confirms first if game_edit_form_ is dirty — the card's own Back
+  // Confirms first if game_edit_form_ is dirty; the card's own Back
   // button, the sidebar's Library nav row, and a click on the scrim.
   void RequestCloseGameEdit();
   bool GameEditOpen() const;
   // `focus_key` jumps straight to that schema field once loaded.
   void OpenSettings(const QString& focus_key = QString());
   void CloseSettings();
-  // Confirms first if settings_panel_ is dirty — the settings page's own
+  // Confirms first if settings_panel_ is dirty; the settings page's own
   // Back button.
   void RequestCloseSettings();
   bool SettingsOpen() const;
@@ -218,7 +218,7 @@ private:
   void AddGameManually();
   QWidget* BuildClassicPage();
   // Repopulates classic_table_ from the same filtered games_ the grid just
-  // rebuilt — called at the end of ApplyFilter so the two views never drift.
+  // rebuilt, called at the end of ApplyFilter so the two views never drift.
   void RefreshClassicTable();
   void OpenClassicView();
   void CloseClassicView();
@@ -262,7 +262,7 @@ private:
   QWidget* sidebar_header_ = nullptr;  // Mira badge + name; drags the window
   QLineEdit* search_ = nullptr;
   // One row per kFilters entry, each carrying its key in Qt::UserRole and a
-  // live count via a custom row widget (see UpdateFilterCounts) — lives
+  // live count via a custom row widget (see UpdateFilterCounts), which lives
   // inside filter_sort_popover_, not directly in the sidebar layout.
   QListWidget* filters_ = nullptr;
   // The sidebar's always-visible filter+sort pill; concrete type (a small
@@ -275,7 +275,7 @@ private:
   QLabel* sort_summary_label_ = nullptr;
   QLabel* filter_sort_chevron_ = nullptr;
   QWidget* filter_sort_popover_ = nullptr;
-  // One button per mira_gui::SortOptions() entry, exclusive selection —
+  // One button per mira_gui::SortOptions() entry, exclusive selection,
   // replaces the old QComboBox with a vertical list of full-width rows.
   QList<QPushButton*> sort_buttons_;
   LibraryGrid* grid_ = nullptr;
@@ -288,7 +288,7 @@ private:
   // Back/Reset/Save row lives on the settings page itself (BuildSettingsPage),
   // rebuilt fresh alongside settings_panel_ on each open.
   QPushButton* settings_button_ = nullptr;
-  // Moved here from the sidebar's old hamburger menu — see BuildTopBar.
+  // Moved here from the sidebar's old hamburger menu; see BuildTopBar.
   QToolButton* downloads_button_ = nullptr;
   QToolButton* refresh_button_ = nullptr;
   QToolButton* shortcuts_button_ = nullptr;
@@ -348,8 +348,8 @@ private:
   // saved, not stale edits left over from a discarded previous open.
   QWidget* settings_page_ = nullptr;
   mira_gui::SettingsPanel* settings_panel_ = nullptr;
-  // A game's editable form, in a centered overlay card (game_settings_in_sidebar_)
-  // or a modal dialog — see OpenGameDialog. The overlay is a chrome sibling,
+  // A game's editable form, in a centered overlay card; see OpenGameDialog.
+  // The overlay is a chrome sibling,
   // not a content_stack_ page, so the grid stays visible (dimmed) underneath.
   QWidget* game_edit_overlay_ = nullptr;
   QGridLayout* game_edit_overlay_layout_ = nullptr;
@@ -369,9 +369,8 @@ private:
   QPushButton* game_edit_back_ = nullptr;
   QPushButton* game_edit_advanced_ = nullptr;
   QPushButton* game_edit_save_ = nullptr;
-  bool game_settings_in_sidebar_ = true;
   // Built once at startup, not per-open like settings_page_/game_edit_card_
-  // — it has no per-session state to go stale, so it just stays synced via
+  // since it has no per-session state to go stale, so it just stays synced via
   // RefreshClassicTable().
   QWidget* classic_page_ = nullptr;
   QTableWidget* classic_table_ = nullptr;
@@ -395,7 +394,7 @@ private:
   QTimer* added_timer_ = nullptr;
   // Whether RefreshGames() has ever completed successfully.
   bool loaded_ = false;
-  // Games the user explicitly asked to refresh — a metadata failure for one
+  // Games the user explicitly asked to refresh: a metadata failure for one
   // of these is worth a toast; the dozens from an automatic scan are not.
   std::set<std::string> awaiting_metadata_;
   bool steamgriddb_notice_shown_ = false;
@@ -410,7 +409,7 @@ private:
   std::string sort_key_ = "name";
   bool sort_descending_ = false;
   bool scan_on_startup_ = true;
-  // Keyed by "<id>@<tile width>" — a generated cover is cheap but not free,
+  // Keyed by "<id>@<tile width>". A generated cover is cheap but not free,
   // and ApplyFilter() rebuilds every visible tile on each keystroke.
   mira_gui::ArtworkStore* artwork_ = nullptr;
   mira_gui::shortcuts::Common common_;

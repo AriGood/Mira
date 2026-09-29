@@ -36,17 +36,17 @@ model::Game AutoSetup::CreateGame(const fs::path& install_path, const Detector::
   if (detected.candidates.empty()) {
     game.status = model::GameStatus::Broken;
     game.platform = model::Platform::Unknown;
-    game.last_error = "No executable found automatically — set one manually.";
+    game.last_error = "No executable found automatically. Set one manually.";
   } else {
     const model::Candidate& top = detected.candidates.front();
     game.platform = top.kind;
     game.exe_path = top.rel_path;
     if (top.is_installer) {
-      // Running an installer isn't running the game — flag it rather than
+      // Running an installer isn't running the game: flag it rather than
       // silently provisioning/launching a setup wizard as if it were.
       game.status = model::GameStatus::NeedsInstall;
       game.last_error = "This looks like an installer (" + top.rel_path +
-                        "), not the game itself — run it first, then point Mira at the "
+                        "), not the game itself. Run it first, then point Mira at the "
                         "installed game.";
     } else if (top.kind == model::Platform::Native) {
       game.status = model::GameStatus::Ready;  // native needs no provisioning

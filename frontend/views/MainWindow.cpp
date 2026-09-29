@@ -28,7 +28,7 @@
 namespace {
 
 // A table cell that sorts on a stashed numeric value instead of its display
-// text — needed for Confidence ("70%" vs "100%" sorts wrong as text),
+// text, needed for Confidence ("70%" vs "100%" sorts wrong as text),
 // Last Played (a formatted date), and Playtime ("1h 5m" vs "45m").
 class NumericTableWidgetItem : public QTableWidgetItem {
 public:
@@ -122,7 +122,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 }
 
 void MainWindow::closeEvent(QCloseEvent* event) {
-  // Only when main.cpp made this the primary window (--classic) — opened
+  // Only when main.cpp made this the primary window (--classic), opened
   // as a secondary window from the grid's Tools menu, it closes for real
   // either way, since nothing would bring it back.
   if (mira_gui::tray::IsManaged(this) && !mira_gui::tray::Quitting()) {
@@ -135,7 +135,7 @@ void MainWindow::closeEvent(QCloseEvent* event) {
 
 void MainWindow::BuildShortcuts() {
   // The classic view has no menu bar, so these keys are only reachable
-  // through the reference dialog F1 opens — which is why it lists them.
+  // through the reference dialog F1 opens, which is why it lists them.
   mira_gui::shortcuts::Install(this, {
                                         {"F5, Ctrl+R", "Refresh the library"},
                                         {"Enter", "Details && settings for the selected row"},
@@ -292,7 +292,7 @@ void MainWindow::PopulateRow(int row, const mira_gui::GameSummary& game) {
 
   auto* launch_button = new QPushButton(running ? "Stop" : "Launch", games_table_);
   // Mirrors the launch endpoint's own guard so a doomed request never
-  // leaves this process — the button is disabled instead of round-tripping
+  // leaves this process, so the button is disabled instead of round-tripping
   // to find out.
   const bool can_launch = game.status == "ready";
   launch_button->setEnabled(running || can_launch);
@@ -321,7 +321,7 @@ void MainWindow::UpsertRow(const mira_gui::GameSummary& game) {
   int row = FindRow(game.id);
 
   if (!filter.empty() && filter != game.status) {
-    // No longer matches the active filter — drop it from view without
+    // No longer matches the active filter, so drop it from view without
     // touching the daemon's own record.
     if (row >= 0) games_table_->removeRow(row);
     return;
@@ -405,7 +405,7 @@ void MainWindow::HandleGameEvent(const std::string& type, const std::string& dat
   }
 
   // Explicitly the two event types that carry a game record, not "anything
-  // left over" — mirad also publishes runners.download.* and tricks.* here.
+  // left over": mirad also publishes runners.download.* and tricks.* here.
   if (type != "game.added" && type != "game.updated") return;
 
   mira_gui::GameSummary game;
@@ -427,7 +427,7 @@ void MainWindow::LaunchGame(const std::string& id) {
 }
 
 void MainWindow::StopGame(const std::string& id) {
-  // Left in running_ids_ either way — Stop only sends SIGTERM and returns;
+  // Left in running_ids_ either way: Stop only sends SIGTERM and returns;
   // the real state change arrives later as game.state "exited"/"crashed".
   mira_gui::actions::Stop(this, id);
 }

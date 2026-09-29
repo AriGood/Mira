@@ -74,15 +74,15 @@ GogStatus DetectGog(const config::Config& config) {
 
 Result<void> InstallGogBinary(const config::Config& config, const runner::ReleaseAsset& asset) {
   // gogdl is a Python zipapp ("#!/usr/bin/env python3" shebang), not a
-  // self-contained binary — a system
+  // self-contained binary, so a system
   // python3 has to actually be there for it to run at all, unlike
   // Legendary. Checked here rather than only at first use, so
   // "mira gog setup" fails with a clear, actionable error immediately
   // instead of leaving a binary that can't execute.
   if (!runner::FindOnPath("python3")) {
     return Err("python3_missing",
-              "gogdl needs a system python3 to run (it's a Python zipapp, not a standalone binary) — "
-              "install python3 first");
+              "gogdl needs a system python3 to run (it's a Python zipapp, not a standalone binary). "
+              "Install python3 first");
   }
   auto installed = runner::InstallToolBinary(config, "gog", asset, "gogdl");
   if (!installed) return std::unexpected(installed.error());
@@ -130,13 +130,13 @@ Result<void> Login(const config::Config& config, const std::string& pasted) {
   }
   if (code.empty()) return Err("invalid_code", "no code entered");
   // Same posture as epic::Login: verify by re-reading what gogdl actually
-  // wrote, not by trusting a nonzero/zero exit code — gogdl's own `auth`
+  // wrote, not by trusting a nonzero/zero exit code: gogdl's own `auth`
   // handler prints {"error": true} on a rejected code but still exits 0.
   if (auto output = RunGogdl(config, {"auth", "--code", code}); !output) {
     return std::unexpected(output.error());
   }
   if (const GogAuthStatus status = Status(config); !status.authenticated) {
-    return Err("login_failed", "gogdl didn't accept that code — it may be wrong, expired, or already used");
+    return Err("login_failed", "gogdl didn't accept that code. It may be wrong, expired, or already used");
   }
   return {};
 }
@@ -163,8 +163,8 @@ Result<std::string> AccessToken(const config::Config& config) {
     // gogdl's own load path refreshes an expired token using its stored
     // refresh_token as a side effect of loading --auth-config-path at all
     // (confirmed in heroic-gogdl's auth.py: is_credential_expired/
-    // refresh_credentials run before any subcommand does its own work) —
-    // triggering that is as simple as invoking gogdl with no real work to
+    // refresh_credentials run before any subcommand does its own work),
+    // so triggering that is as simple as invoking gogdl with no real work to
     // do.
     if (auto refreshed = RunGogdl(config, {"auth"}); !refreshed) return std::unexpected(refreshed.error());
     stored = ReadAuthConfig(config);

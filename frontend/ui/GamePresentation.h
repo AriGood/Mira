@@ -29,7 +29,7 @@ inline QColor StatusColor(const std::string& status) {
 // ProtonDB's own tier colors, read out of their production site's own
 // bundle (head.protondb.pages.dev/static/js/main.*.js, theme.colors.medals)
 // rather than approximated. "native" is deliberately not part of that
-// `medals` map on their side either — it lives as its own top-level
+// `medals` map on their side either: it lives as its own top-level
 // `native: "green"` entry in the same object, because it means "doesn't
 // touch Proton at all" rather than grading how well Proton runs it, which
 // is the distinction ProtonDbTierIsNative below exists to carry into ours.
@@ -69,7 +69,7 @@ inline QString FormatLastPlayed(const std::optional<std::int64_t>& last_played_a
 }
 
 inline QString FormatPlaytime(std::int64_t play_seconds) {
-  if (play_seconds <= 0) return "—";
+  if (play_seconds <= 0) return "0m";
   const std::int64_t hours = play_seconds / 3600;
   const std::int64_t minutes = (play_seconds % 3600) / 60;
   if (hours > 0) return QString("%1h %2m").arg(hours).arg(minutes);

@@ -35,7 +35,7 @@ struct ExternalMatch {
   std::int64_t detect_timeout_s = 60;
 };
 
-// Tracks the games currently running. One watcher thread per running game —
+// Tracks the games currently running. One watcher thread per running game,
 // fine at launcher scale, and unlike a blanket waitpid(-1) reaper it can't
 // steal the exit status of runner::RunAndWait's own provisioning children.
 //
@@ -76,7 +76,7 @@ public:
   // sits under a steam -> reaper -> pressure-vessel -> proton chain with no
   // fixed pid. Reports running/exited like Launch(), minus a real exit
   // code/signal. Gives up quietly if nothing matches within a startup
-  // window — Steam may still be launching, or the player cancelled.
+  // window: Steam may still be launching, or the player cancelled.
   Result<void> TrackSteamLaunch(const model::Game& game, const std::string& appid,
                                 std::string post_script = "");
 

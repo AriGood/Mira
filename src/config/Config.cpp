@@ -64,7 +64,7 @@ void Config::Load() {
   }
 
   // frontend.toml is opaque (no schema, nothing to validate) and entirely
-  // optional — nothing has necessarily ever written to it yet.
+  // optional: nothing has necessarily ever written to it yet.
   if (std::filesystem::exists(frontend_file_, ec)) {
     toml::parse_result parsed = toml::parse_file(frontend_file_.string());
     if (!parsed) {

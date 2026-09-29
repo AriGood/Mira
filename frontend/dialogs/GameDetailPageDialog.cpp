@@ -73,7 +73,7 @@ GameDetailPageDialog::GameDetailPageDialog(std::string game_id, QString game_nam
 
     if (!result.ok || result.missing) {
       // `missing` (a 404) is the ordinary "never fetched, or fetched and
-      // found nothing" case, not a failure — result.error is only set for
+      // found nothing" case, not a failure: result.error is only set for
       // an actual transport/server failure, and is empty here otherwise.
       const QString text = result.missing ? "No store info cached for this game yet."
                                           : QString::fromStdString(result.error);
@@ -161,7 +161,7 @@ GameDetailPageDialog::GameDetailPageDialog(std::string game_id, QString game_nam
     if (row == 0) {
       // The caller already filtered out non-Steam games before making this
       // call, so a genuinely Steam-owned game reaching here just has none of
-      // these fields cached — a sparse appdetails response, not a wrong game.
+      // these fields cached: a sparse appdetails response, not a wrong game.
       auto* empty = new QLabel("No extra store info cached for this game yet.", body);
       empty->setWordWrap(true);
       empty->setProperty("role", "muted");

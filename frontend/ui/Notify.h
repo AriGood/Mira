@@ -46,7 +46,7 @@ void FailedWithAction(QWidget* parent, const QString& what, const QString& detai
 // (ui/ErrorHelp). Prefer this over Failed for any result.error.
 void FailedRequest(QWidget* parent, const QString& what, const ApiError& error);
 
-// A persistent one-liner with no separate detail — mirad's own warnings.
+// A persistent one-liner with no separate detail, used for mirad's own warnings.
 void Warn(QWidget* parent, const QString& text);
 
 // A transient one-liner.
@@ -54,7 +54,7 @@ void Notice(QWidget* parent, const QString& text);
 
 // --- Popups ------------------------------------------------------------------
 
-// Content the user asked to see (e.g. a runner kind's config keys) — not a
+// Content the user asked to see (e.g. a runner kind's config keys), not a
 // notification, the answer to a button.
 void Info(QWidget* parent, const QString& title, const QString& message);
 
@@ -69,7 +69,7 @@ enum class UnsavedAction { Cancel, SaveAndExit, DiscardAndExit };
 
 // The unsaved-edits prompt every Back/Close/Quit path shares. `what` names
 // what's unsaved, as a sentence ("This game's edits aren't saved."). No
-// separate Cancel button — the popup's own top-right X is that answer.
+// separate Cancel button: the popup's own top-right X is that answer.
 UnsavedAction ConfirmUnsaved(QWidget* parent, const QString& what);
 
 }  // namespace mira_gui::notify

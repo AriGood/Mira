@@ -17,7 +17,7 @@ namespace mira_gui {
 
 namespace {
 
-// No catalog endpoint exists — just a shortlist of common verbs, alongside
+// No catalog endpoint exists, just a shortlist of common verbs, alongside
 // the free-text field.
 constexpr const char* kCommonVerbs[] = {
     "corefonts", "vcrun2019", "vcrun2017", "dotnet48", "dotnet6",
@@ -28,7 +28,7 @@ constexpr const char* kCommonVerbs[] = {
 
 WinetricksDialog::WinetricksDialog(std::string game_id, QString game_name, QWidget* parent)
     : QDialog(parent), game_id_(std::move(game_id)) {
-  setWindowTitle(QString("Winetricks — %1").arg(game_name));
+  setWindowTitle(QString("Winetricks: %1").arg(game_name));
   setMinimumWidth(480);
 
   auto* layout = new QVBoxLayout(this);

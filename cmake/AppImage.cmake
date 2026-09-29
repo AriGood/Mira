@@ -1,13 +1,13 @@
 # `cmake --build <preset> --target appimage` -> build/<preset>/Mira-x86_64.AppImage
 #
-# Bundles mirad + mira + mira-gui into a single self-contained AppImage —
+# Bundles mirad + mira + mira-gui into a single self-contained AppImage,
 # the non-Arch install path the AUR PKGBUILD doesn't cover. Only defined
 # when mira-gui itself was built (see the guard at the include site in the
 # root CMakeLists.txt): an AppImage with nothing to launch isn't useful.
 #
 # The packaging tools (linuxdeploy, linuxdeploy-plugin-qt) are fetched via
-# curl into build/<preset>/appimage-tools/ on first use and cached there —
-# same shell-out-to-curl-rather-than-link pattern already used for
+# curl into build/<preset>/appimage-tools/ on first use and cached there,
+# the same shell-out-to-curl-rather-than-link pattern already used for
 # Proton-GE/Wine-GE downloads (see src/runner/Downloader.cpp), applied here
 # to a build-time tool instead of a runtime one. Nothing is installed
 # system-wide and nothing is required beyond curl, which the backend already
@@ -40,7 +40,7 @@ add_custom_command(
   VERBATIM)
 
 # linuxdeploy-plugin-qt needs QMAKE pointed at this Qt's own qmake to bundle
-# the right Qt libs/plugins version — Qt6's CMake package doesn't reliably
+# the right Qt libs/plugins version. Qt6's CMake package doesn't reliably
 # expose an importable qmake target across Qt versions, so this is resolved
 # the same way a shell script would: search next to where Qt6Config.cmake
 # itself was found, then fall back to PATH.
@@ -48,20 +48,20 @@ find_program(MIRA_QMAKE_EXECUTABLE
   NAMES qmake6 qmake
   HINTS "${Qt6_DIR}/../../../bin" "${Qt6_DIR}/../../../../bin")
 if(NOT MIRA_QMAKE_EXECUTABLE)
-  message(WARNING "qmake6 not found near Qt6_DIR (${Qt6_DIR}) or on PATH — "
+  message(WARNING "qmake6 not found near Qt6_DIR (${Qt6_DIR}) or on PATH, "
                   "skipping the 'appimage' target; install qmake6 or set "
                   "MIRA_QMAKE_EXECUTABLE manually and reconfigure.")
 else()
   # linuxdeploy-plugin-qt deploys every plugin it finds under
   # `qmake -query QT_INSTALL_PLUGINS`, including third-party ones from the
   # system's kimageformats package (HEIF/EXR/AVIF/... support Mira's blank
-  # window has no use for) — and on at least one real machine, kimg_heif.so
+  # window has no use for), and on at least one real machine, kimg_heif.so
   # depends on a libheif.so.1 linuxdeploy can't resolve, which fails the
   # whole deploy. There's no include/exclude flag for this, so the fix is a
   # filtered copy of the real plugins tree (missing only the offending
   # kimg_*.so files) plus a qmake wrapper that answers
   # `-query QT_INSTALL_PLUGINS` with that copy and delegates every other
-  # query to the real qmake6 — redirecting linuxdeploy-plugin-qt's own
+  # query to the real qmake6, redirecting linuxdeploy-plugin-qt's own
   # discovery without touching the system's actual Qt install.
   execute_process(
     COMMAND "${MIRA_QMAKE_EXECUTABLE}" -query QT_INSTALL_PLUGINS
@@ -98,7 +98,7 @@ fi
        OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
 
   # linuxdeploy-plugin-qt only ever bundles the xcb platform plugin, not
-  # wayland (confirmed by reading its deploy log — no patchelf here to fix
+  # wayland (confirmed by reading its deploy log; no patchelf here to fix
   # up a manually-added Wayland plugin's rpath either). mira-gui runs fine
   # through XWayland, so this makes that the deliberate, quiet default
   # instead of a logged "Could not find the Qt platform plugin wayland".
@@ -120,7 +120,7 @@ exec \"\$HERE/usr/bin/mira-gui\" \"$@\"
   # Guarded by the same `if(MIRA_QMAKE_EXECUTABLE)` as the wrapper script
   # above: without qmake, MIRA_QT_FILTERED_PLUGINS_DIR/MIRA_QMAKE_WRAPPER
   # are unset, and defining this target anyway would substitute empty
-  # strings into the commands below — a confusing failure deep inside the
+  # strings into the commands below, which is a confusing failure deep inside the
   # build instead of the clear one-line warning above. No target beats a
   # broken one.
   add_custom_target(appimage

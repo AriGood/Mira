@@ -31,7 +31,7 @@ fs::path TempDir(const char* name) {
 }
 
 // Waits up to `timeout` for `predicate()` to become true, polling rather
-// than sleeping the whole timeout — these tests spawn real subprocesses, so
+// than sleeping the whole timeout. These tests spawn real subprocesses, so
 // exact timing isn't guaranteed.
 bool WaitFor(std::function<bool()> predicate, std::chrono::milliseconds timeout) {
   const auto deadline = std::chrono::steady_clock::now() + timeout;
@@ -171,7 +171,7 @@ TEST_CASE("ProcessSupervisor::Stop refuses a not-yet-confirmed TrackSteamLaunch 
 TEST_CASE("FindPrefixProcesses finds a process that left its process group") {
   const fs::path prefix = TempDir("proc-prefix-escaped");
 
-  // setsid(), like wineserver does — the env var is all that's left tying
+  // setsid(), like wineserver does, the env var is all that's left tying
   // this process to the game.
   Command command;
   command.argv = {"sh", "-c", "setsid sleep 30 & sleep 30"};
@@ -226,7 +226,7 @@ TEST_CASE("Reconcile archives a finished session a previous mirad never got to s
 
   proc::SessionRecord record;
   record.game_id = "celeste";
-  record.wrapper_pid = 999999;  // long dead / never existed — irrelevant, record is already finished
+  record.wrapper_pid = 999999;  // long dead / never existed, irrelevant since the record is already finished
   record.started_at = 1700000000;
   record.finished = true;
   record.ended_at = 1700000042;

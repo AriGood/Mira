@@ -25,7 +25,7 @@ RunInPrefixDialog::RunInPrefixDialog(std::string game_id, const std::string& ins
   // 680, not the old 520, for a real install path next to the Browse
   // button. setMinimumWidth, not resize(680, 0): resize() marks the widget
   // explicitly sized, clamping it to the layout's bare minimum instead of
-  // its sizeHint() on first show — that's what clipped the button's text.
+  // its sizeHint() on first show, which is what clipped the button's text.
   setMinimumWidth(680);
 
   auto* layout = new QVBoxLayout(this);
@@ -33,7 +33,7 @@ RunInPrefixDialog::RunInPrefixDialog(std::string game_id, const std::string& ins
 
   auto* explanation = new QLabel(
       QString("Runs an executable inside \"%1\"'s own Wine/Proton prefix. If the game has no "
-              "prefix yet, one is created first — which is how an installer gets run for a game "
+              "prefix yet, one is created first. This is how you run an installer for a game "
               "that needs installing.")
           .arg(name),
       this);
@@ -78,7 +78,7 @@ RunInPrefixDialog::RunInPrefixDialog(std::string game_id, const std::string& ins
 
   auto* buttons = new QDialogButtonBox(QDialogButtonBox::Cancel, this);
   run_ = buttons->addButton("Run", QDialogButtonBox::AcceptRole);
-  // Nothing to run until a path is picked — disabling this says so, instead
+  // Nothing to run until a path is picked, so disabling this says so, instead
   // of a popup only reachable by clicking Run first to find out.
   run_->setEnabled(false);
   connect(run_, &QPushButton::clicked, this, &RunInPrefixDialog::Run);

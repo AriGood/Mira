@@ -1,5 +1,5 @@
 # clang-tidy config for mira. Scoped to what this codebase actually needs
-# rather than every check LLVM ships — see docs/architecture.md on the
+# rather than every check LLVM ships; see docs/architecture.md on the
 # guardrails a resident, multi-threaded C++ daemon needs (TSan/ASan in CI
 # matter more here than most of these; this catches what sanitizers can't:
 # things visible from the source alone).
@@ -47,7 +47,7 @@ WarningsAsErrors: ''
 # Everything above catches an actual bug class; nothing above is a style
 # opinion this codebase already made a different, consistent choice about.
 
-# third_party/ is vendored, unowned code — never lint it. tests/ trades some
+# third_party/ is vendored, unowned code, so never lint it. tests/ trades some
 # strictness for directness (see the CMakeLists.txt comment on mira_tests'
 # relaxed compiler warnings) so its own bar is lower too.
 HeaderFilterRegex: '^(?!.*third_party).*$'
@@ -80,6 +80,6 @@ CheckOptions:
     value: 'NULL'
   # This codebase's whole error-handling convention is Result<T> (see
   # core/Result.h) precisely to keep exceptions out of cross-module
-  # interfaces — flag any that show up.
+  # interfaces. Flag any that show up.
   - key: bugprone-exception-escape.IgnoredExceptions
     value: ''

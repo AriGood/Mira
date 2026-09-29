@@ -53,7 +53,7 @@ packaging/*.pkg.tar.zst
 *.swp
 .cache/
 
-# AI coding assistants — never committed
+# AI coding assistants, never committed
 CLAUDE.md
 .claude/
 .cursor/

@@ -12,7 +12,9 @@ namespace mira::config {
 
 // Global: one value for the whole daemon. PerGame: the same value, but a game
 // can also override it (games.toml overrides, PATCH /v1/games/{id}/config).
-enum class Scope { Global, PerGame };
+// GameOnly: only meaningful for a single game, so a settings screen lists it
+// per game and not globally.
+enum class Scope { Global, PerGame, GameOnly };
 
 enum class Type { Bool, Int, Double, String, StringArray, Object };
 
@@ -41,6 +43,7 @@ struct Entry {
   nlohmann::json default_value;
   Scope scope = Scope::Global;
   std::string doc;
+  std::string game_doc = {};  // help shown instead of `doc` in a game's own settings; optional
   Constraint constraint = {};  // optional
 
   bool is_secret = false;      // a credential: mask it

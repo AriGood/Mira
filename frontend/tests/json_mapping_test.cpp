@@ -35,7 +35,7 @@ TEST_CASE("ToGameSummary reads the fields a library row shows") {
 
 TEST_CASE("ToGameSummary tolerates a record missing every optional field") {
   // mirad omits nothing today, but a summary is also built from an SSE
-  // payload, and a trimmed event must not produce garbage — every absent
+  // payload, and a trimmed event must not produce garbage: every absent
   // field falls back rather than throwing.
   const GameSummary game = mapping::ToGameSummary(json::parse(R"({"id": "x"})"));
   CHECK(game.id == "x");
@@ -49,7 +49,7 @@ TEST_CASE("ToGameSummary tolerates a record missing every optional field") {
 
 TEST_CASE("ToGameSummary treats a null last_played_at as never played") {
   // mirad sends null (not a missing key, not 0) for never played, and
-  // "Never" has to survive that. A 0 is a real timestamp — 1970 — so these
+  // "Never" has to survive that. A 0 is a real timestamp (1970), so these
   // must not collapse into each other.
   const GameSummary never =
       mapping::ToGameSummary(json::parse(R"({"id": "x", "last_played_at": null})"));
@@ -63,7 +63,7 @@ TEST_CASE("ToGameSummary treats a null last_played_at as never played") {
 
 TEST_CASE("ToGameDetail keeps runner_config and env as JSON text") {
   // They are arbitrary objects with no fixed shape to build widgets for, so
-  // the dialog round-trips them as text — which means an absent one has to
+  // the dialog round-trips them as text, which means an absent one has to
   // become "{}" and not an empty string, or saving an untouched game would
   // send an unparsable body.
   const GameDetail detail = mapping::ToGameDetail(json::parse(R"({"id": "x"})"));
@@ -205,7 +205,7 @@ TEST_CASE("AssignDottedKey merges two keys sharing a prefix") {
 }
 
 TEST_CASE("ParseRunnerDownload reads the state from the event type") {
-  // The payload doesn't repeat which of started/finished/failed it is —
+  // The payload doesn't repeat which of started/finished/failed it is,
   // that only exists in the SSE `event:` line.
   RunnerDownloadEvent event;
   REQUIRE(MiradClient::ParseRunnerDownload(

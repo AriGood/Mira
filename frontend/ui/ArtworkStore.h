@@ -52,7 +52,7 @@ public:
   bool HasArtwork(const std::string& id) const;
 
   // The unscaled artwork for this id, for a caller that wants to fit it
-  // itself rather than Cover()'s tile-shaped crop. Null until fetched —
+  // itself rather than Cover()'s tile-shaped crop. Null until fetched,
   // call EnsureRequested() first.
   QPixmap RawArtwork(const std::string& id) const;
 
@@ -68,7 +68,7 @@ public:
   // asked for it and got nothing yet; otherwise the first ask gets it.
   void TitleArtworkReady(const std::string& id);
 
-  // Drop the scaled copies only — the originals are still good. For a
+  // Drop the scaled copies only; the originals are still good. For a
   // rename, which changes the placeholder's initials but not the artwork.
   void InvalidateRendering(const std::string& id);
 

@@ -19,7 +19,7 @@ namespace {
 constexpr char kService[] = "org.freedesktop.Notifications";
 constexpr char kPath[] = "/org/freedesktop/Notifications";
 
-// Matches packaging/mira.desktop's basename — lets the shell show Mira's own
+// Matches packaging/mira.desktop's basename, which lets the shell show Mira's own
 // name and icon, and list it in per-application notification settings.
 constexpr char kDesktopEntry[] = "mira";
 

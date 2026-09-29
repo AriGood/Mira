@@ -36,12 +36,12 @@ public:
 
   // DELETE /v1/games/{id}[?delete_files=true][?delete_prefix=true][?delete_metadata=true].
   // All opt-in; false/omitted never touches disk. delete_metadata alone has
-  // no library/prefix-root restriction — it's keyed by id under Mira's own state dir.
+  // no library/prefix-root restriction: it's keyed by id under Mira's own state dir.
   static void DeleteGameAsync(QObject* context, const std::string& id, bool delete_files,
                               bool delete_prefix, bool delete_metadata,
                               std::function<void(DeleteResult)> callback);
 
-  // POST /v1/games/manual — adds a game record directly, for an installer or
+  // POST /v1/games/manual: adds a game record directly, for an installer or
   // a folder outside every library root. Response mirrors GetGameAsync.
   static void AddManualGameAsync(QObject* context, const std::string& install_path,
                                  const std::string& exe_path, const std::string& name,
@@ -49,7 +49,7 @@ public:
                                  std::function<void(GameDetailResult)> callback);
 
   // POST /v1/games/{id}/launch. Returns once the process exists, not once
-  // it exits — 409 if the game isn't `ready` (message explains why, e.g.
+  // it exits. 409 if the game isn't `ready` (message explains why, e.g.
   // needs_install) or 400 if the runner reference doesn't resolve.
   static void LaunchGameAsync(QObject* context, const std::string& id,
                               std::function<void(LaunchResult)> callback);
@@ -114,11 +114,11 @@ public:
   static FrontendPrefsResult GetFrontendPrefsBlocking();
 
   // GET /v1/games/{id}/artwork. Binary, not JSON, and a 404 is the ordinary
-  // answer for a game nothing has been fetched for yet — see ArtworkResult.
+  // answer for a game nothing has been fetched for yet; see ArtworkResult.
   static void GetArtworkAsync(QObject* context, const std::string& id,
                               std::function<void(ArtworkResult)> callback);
 
-  // One named art slot — "cover", "hero", "capsule", "header", "logo",
+  // One named art slot: "cover", "hero", "capsule", "header", "logo",
   // "icon". Which ones exist depends on the source; GetMetadataAsync's
   // art_slots says which were cached.
   static void GetArtworkSlotAsync(QObject* context, const std::string& id, const std::string& slot,
@@ -133,8 +133,8 @@ public:
   static void SetGriddbMatchAsync(QObject* context, const std::string& id, std::int64_t griddb_id,
                                   std::function<void(GameActionResult)> callback);
 
-  // GET /v1/games/{id}/metadata. A 404 is ordinary — nothing fetched yet, or
-  // fetched and nothing found — and comes back as missing, not as an error.
+  // GET /v1/games/{id}/metadata. A 404 is ordinary (nothing fetched yet, or
+  // fetched and nothing found) and comes back as missing, not as an error.
   static void GetMetadataAsync(QObject* context, const std::string& id,
                                std::function<void(GameMetadataResult)> callback);
 
@@ -145,7 +145,7 @@ public:
                                    std::function<void(MetadataRefreshResult)> callback);
 
   // POST /v1/games/{id}/artwork?type=. `candidate_id` must be one of the ids
-  // GetMetadataAsync's cover_candidates listed — mirad looks it up rather
+  // GetMetadataAsync's cover_candidates listed. mirad looks it up rather
   // than accepting a URL. Returns 202; watch for
   // game.artwork_selected/.artwork_select_failed.
   static void SelectArtworkAsync(QObject* context, const std::string& id, const std::string& slot,
@@ -174,7 +174,7 @@ public:
   // GET /v1/runners.
   static void ListRunnersAsync(QObject* context, std::function<void(RunnersResult)> callback);
 
-  // GET /v1/runners/catalog?kind=proton|wine&source= — what is available
+  // GET /v1/runners/catalog?kind=proton|wine&source=: what is available
   // to install from one source (empty: the kind's preferred one). Unlike
   // everything else here this goes out to the GitHub API, so it has real
   // network latency and its own longer timeout.
@@ -211,30 +211,30 @@ public:
   static void ScanSteamAsync(QObject* context, std::function<void(SteamScanResult)> callback);
 
   // Upserts every wine game Lutris has, reading Lutris's own database and
-  // configs. Nothing on disk moves — see docs/api.md, POST /v1/lutris/import.
+  // configs. Nothing on disk moves; see docs/api.md, POST /v1/lutris/import.
   static void ImportLutrisAsync(QObject* context,
                                 std::function<void(LutrisImportResult)> callback);
 
   // POST /v1/games/{id}/run. Runs `exe_path` inside this game's prefix,
-  // provisioning one on demand — which is how a needs_install game's
+  // provisioning one on demand, which is how a needs_install game's
   // installer actually gets run, since Scanner never auto-provisions one.
   static void RunInPrefixAsync(QObject* context, const std::string& id,
                                const std::string& exe_path, const std::string& args,
                                std::function<void(RunInPrefixResult)> callback);
 
-  // POST /v1/games/{id}/finish-install — flips a needs_install game to
+  // POST /v1/games/{id}/finish-install: flips a needs_install game to
   // ready once exe_path points at whatever the installer produced. 409 if
   // exe_path is still empty.
   static void FinishInstallAsync(QObject* context, const std::string& id,
                                  std::function<void(FinishInstallResult)> callback);
 
-  // GET /v1/games/{id}/config — this game's resolved settings, tagged by
+  // GET /v1/games/{id}/config: this game's resolved settings, tagged by
   // layer (see GameConfigEntry).
   static void GetGameConfigAsync(QObject* context, const std::string& id,
                                  std::function<void(GameConfigResult)> callback);
 
   // PATCH /v1/games/{id}/config. Same all-or-nothing validation as
-  // PATCH /v1/config (docs/api.md) — only send edits that actually changed.
+  // PATCH /v1/config (docs/api.md): only send edits that actually changed.
   static void PatchGameConfigAsync(QObject* context, const std::string& id,
                                    const std::vector<GameConfigEdit>& edits,
                                    std::function<void(PatchGameConfigResult)> callback);
@@ -244,7 +244,7 @@ public:
   static void GetGameLogAsync(QObject* context, const std::string& id, int lines,
                               std::function<void(GameLogResult)> callback);
 
-  // GET /v1/gamemode/status — whether the Feral GameMode daemon is installed
+  // GET /v1/gamemode/status: whether the Feral GameMode daemon is installed
   // and reachable. Purely a status check; see GameModeStatusResult.
   static void GetGameModeStatusAsync(QObject* context,
                                      std::function<void(GameModeStatusResult)> callback);
@@ -254,17 +254,17 @@ public:
   static void RunWinetricksAsync(QObject* context, const std::string& id, const std::string& verb,
                                  std::function<void(TricksResult)> callback);
 
-  // DELETE /v1/runners/{kind}:{name}. Synchronous — 200 once the build's
+  // DELETE /v1/runners/{kind}:{name}. Synchronous: 200 once the build's
   // files are actually gone.
   static void DeleteRunnerAsync(QObject* context, const std::string& kind, const std::string& name,
                                 std::function<void(RunnerRemoveResult)> callback);
 
-  // GET /v1/runners/{kind}/schema — the config keys that runner kind accepts
+  // GET /v1/runners/{kind}/schema: the config keys that runner kind accepts
   // in a game's runner_config. 404 for an unknown kind surfaces as !ok.
   static void GetRunnerSchemaAsync(QObject* context, const std::string& kind,
                                    std::function<void(RunnerSchemaResult)> callback);
 
-  // GET /v1/desktop-entries/candidates — already-installed .desktop entries
+  // GET /v1/desktop-entries/candidates: already-installed .desktop entries
   // (including Flatpak apps, via their X-Flatpak key) that could become
   // games. An empty list when desktop_import.enabled is off, not an error.
   static void GetDesktopEntryCandidatesAsync(
@@ -275,7 +275,7 @@ public:
   static void ImportDesktopEntriesAsync(QObject* context, const std::vector<std::string>& ids,
                                         std::function<void(DesktopEntryImportResult)> callback);
 
-  // POST /v1/desktop-entries/sync — regenerates Mira's own desktop entries
+  // POST /v1/desktop-entries/sync: regenerates Mira's own desktop entries
   // immediately, for right after changing desktop_entries.* settings.
   static void SyncDesktopEntriesAsync(QObject* context,
                                       std::function<void(DesktopEntrySyncResult)> callback);
@@ -288,7 +288,7 @@ public:
   // Parses a `game.added`/`game.updated` payload (Server.cpp publishes the
   // full model::ToJson(game) record for both) into the same summary
   // GET /v1/games returns. False unless `data` is a JSON object carrying a
-  // non-empty string id — callers dispatch on the event type first, and this
+  // non-empty string id: callers dispatch on the event type first, and this
   // is the second line of defence behind that.
   // --- Installers and relocation ---------------------------------------------
 
@@ -326,7 +326,7 @@ public:
                                 std::function<void(StoreActionResult)> callback);
   static void ImportStoreAsync(QObject* context, const std::string& source,
                                std::function<void(StoreImportResult)> callback);
-  // GET /v1/library?source= — owned titles, installed or not.
+  // GET /v1/library?source=: owned titles, installed or not.
   static void GetStoreLibraryAsync(QObject* context, const std::string& source,
                                    std::function<void(StoreLibraryResult)> callback);
   static void InstallStoreTitleAsync(QObject* context, const std::string& source,
@@ -389,7 +389,7 @@ public:
   static bool ParseOpenConfig(const std::string& data);
 
   // Parses a `game.state` payload (`{"id", "state": "running" | "exited" |
-  // "crashed", ...}`, docs/api.md) down to just id/state — enough to know
+  // "crashed", ...}`, docs/api.md) down to just id/state, enough to know
   // which row's Launch/Stop button to flip. Unlike game.added/updated this
   // carries no other game fields (not even play_seconds), so an
   // "exited"/"crashed" state is a signal to re-fetch, not something to patch

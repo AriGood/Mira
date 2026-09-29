@@ -8,7 +8,7 @@
 #
 # cmake_minimum_required + project() here are what let this directory also
 # be configured standalone (cmake -S frontend -B frontend/build), for
-# frontend-only iteration without touching the backend build at all — not
+# frontend-only iteration without touching the backend build at all, not
 # required when pulled in via the root's add_subdirectory(frontend), but
 # harmless there too (a nested project() just declares a sub-project).
 cmake_minimum_required(VERSION 3.20)
@@ -17,19 +17,19 @@ project(mira-gui LANGUAGES CXX)
 find_package(Qt6 6.5 QUIET COMPONENTS Widgets DBus Network)
 
 if(NOT Qt6_FOUND)
-  message(STATUS "Qt6 (>= 6.5, Widgets) not found — skipping mira-gui. "
+  message(STATUS "Qt6 (>= 6.5, Widgets) not found, skipping mira-gui. "
                  "The backend (mirad, mira) does not depend on it.")
   return()
 endif()
 
-message(STATUS "Qt6 ${Qt6_VERSION} found — building mira-gui")
+message(STATUS "Qt6 ${Qt6_VERSION} found, building mira-gui")
 
 qt_standard_project_setup()
 
 qt_add_executable(mira-gui
   main.cpp
 
-  # client/ — everything that talks to mirad, and nothing that draws.
+  # client/: everything that talks to mirad, and nothing that draws.
   client/Async.h
   client/EventStream.cpp
   client/EventStream.h
@@ -41,7 +41,7 @@ qt_add_executable(mira-gui
   client/Transport.h
   client/Types.h
 
-  # ui/ — presentation shared by more than one view or dialog.
+  # ui/: presentation shared by more than one view or dialog.
   ui/AboutPanel.cpp
   ui/AboutPanel.h
   ui/ArtPickerPanel.cpp
@@ -104,7 +104,7 @@ qt_add_executable(mira-gui
   ui/GameEditForm.cpp
   ui/GameEditForm.h
 
-  # views/ — the two top-level library windows, and LibraryWindow's full-page views.
+  # views/: the two top-level library windows, and LibraryWindow's full-page views.
   views/LibraryWindow.cpp
   views/LibraryWindow.h
   views/RunnersPage.cpp
@@ -147,7 +147,7 @@ qt_add_executable(mira-gui
 
 # The placeholder app icon, embedded so mira-gui has a window/taskbar icon
 # regardless of whether it's installed (packaging/mira.desktop's Icon=mira
-# is the separate, install-time path via the hicolor theme — see the root
+# is the separate, install-time path via the hicolor theme; see the root
 # CMakeLists.txt's install() rules for that copy).
 set(MIRA_ICON_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../packaging/icons/hicolor")
 qt_add_resources(mira-gui "icons"
@@ -176,7 +176,7 @@ qt_add_resources(mira-gui "themes"
 
 # mira_third_party is header-only (httplib.h, json.hpp) and carries no
 # backend code, so linking it does not violate the "never link mira_core"
-# rule in docs/architecture.md — it's the same REST-client toolkit `mira`
+# rule in docs/architecture.md: it's the same REST-client toolkit `mira`
 # uses, not a shortcut past the API.
 target_link_libraries(mira-gui PRIVATE Qt6::Widgets Qt6::DBus Qt6::Network mira_third_party Threads::Threads)
 target_compile_features(mira-gui PRIVATE cxx_std_20)
@@ -201,7 +201,7 @@ set_target_properties(mira-gui PROPERTIES
 # header-only third-party deps the client itself uses.
 #
 # Only the layers with no Qt event loop and no socket in them are covered
-# here — client/JsonMapping (JSON <-> Types.h) and the parts of the client
+# here: client/JsonMapping (JSON <-> Types.h) and the parts of the client
 # that are pure functions. Anything needing a live mirad is exercised
 # against the real daemon instead; see docs/architecture.md.
 file(GLOB MIRA_GUI_TEST_SOURCES CONFIGURE_DEPENDS tests/*.cpp)
@@ -218,7 +218,7 @@ add_executable(mira_gui_tests
 )
 target_include_directories(mira_gui_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 # Qt6::Core, not Widgets: the covered code needs QPointer and the queued-call
-# machinery to compile, but never a widget, a window or an event loop — a
+# machinery to compile, but never a widget, a window or an event loop: a
 # test that needed one of those would be testing the wrong layer.
 target_link_libraries(mira_gui_tests PRIVATE mira_third_party Qt6::Core)
 target_compile_features(mira_gui_tests PRIVATE cxx_std_20)

@@ -54,20 +54,16 @@ void SettingsPanel::BuildSidebarGroup() {
   recent_count_->setRange(0, 10);
   recent_count_->setValue(recent_count_original_);
   recent_count_->setSpecialValueText("Off");
-  form->addRow(LabelWithHelp("Recently played",
-                             "How many recently played games to list. Running games always show.", box),
-               recent_count_);
+  form->addRow("Recently Played Count", recent_count_);
   nav_->RegisterRow(form, recent_count_, "sidebar recently played recent games count");
 
   source_counts_ = new QCheckBox(box);
   source_counts_->setChecked(source_counts_original_);
-  form->addRow(
-      LabelWithHelp("Show game counts", "Show how many games each source has next to its name.", box),
-      source_counts_);
+  form->addRow("Show Game Count per Source", source_counts_);
   nav_->RegisterRow(form, source_counts_, "sidebar source game counts number");
 
-  nav_->AddDivider(form);
-  auto* sources_note = new QLabel("Only sources that are set up are listed in the sidebar.", box);
+  nav_->AddSubheading(form, "Sources");
+  auto* sources_note = new QLabel("Only sources that are set up appear in the sidebar.", box);
   sources_note->setWordWrap(true);
   sources_note->setProperty("role", "muted");
   form->addRow(sources_note);
@@ -100,10 +96,10 @@ void SettingsPanel::BuildInterfaceGroup() {
 
   scan_on_startup_ = new QCheckBox(box);
   scan_on_startup_->setChecked(true);
-  form->addRow(LabelWithHelp("Scan the library on startup",
-                             "Run a library scan when the frontend opens. mirad's own watcher keeps the "
-                             "library current while it runs, so this only matters for changes made while "
-                             "it was stopped.",
+  form->addRow(LabelWithHelp("Scan Library on Startup",
+                             "Scan the library each time Mira opens. The daemon already watches your "
+                             "folders while it runs, so this only catches changes made while it was "
+                             "stopped.",
                              box),
                scan_on_startup_);
   nav_->RegisterRow(form, scan_on_startup_, "scan the library on startup");
@@ -112,31 +108,18 @@ void SettingsPanel::BuildInterfaceGroup() {
   theme_->addItem("Follow the desktop", "auto");
   for (const QString& name : mira_gui::theme::Available()) theme_->addItem(name, name);
   form->addRow(LabelWithHelp("Theme",
-                             "Drop a .toml of your own into ~/.config/mira/themes to add to this list — "
-                             "see any bundled theme for the keys it can set.",
+                             "To add a theme, put a .toml file in ~/.config/mira/themes. The bundled "
+                             "themes show which keys you can set.",
                              box),
                theme_);
   nav_->RegisterRow(form, theme_, "theme appearance dark light");
 
-  game_settings_in_sidebar_ = new QCheckBox(box);
-  game_settings_in_sidebar_->setChecked(true);
-  form->addRow(LabelWithHelp("Edit a game in the sidebar",
-                             "\"Details & settings\" edits a game in a card over the library instead of "
-                             "a separate window.",
-                             box),
-               game_settings_in_sidebar_);
-  nav_->RegisterRow(form, game_settings_in_sidebar_, "edit a game in the sidebar");
-
   drag_select_ = new QCheckBox(box);
   drag_select_->setChecked(true);
-  form->addRow(
-      LabelWithHelp("Drag to select", "Drag across the library to select several games at once.", box),
-      drag_select_);
+  form->addRow("Drag to Select Games", drag_select_);
   nav_->RegisterRow(form, drag_select_, "drag to select rubber band multiple");
 
-  auto* shapes = new QLabel("Layout", box);
-  shapes->setProperty("role", "section");
-  form->addRow(shapes);
+  nav_->AddSubheading(form, "Layout");
 
   // A 2-column grid that hugs its own content, not five rows the form's
   // AllNonFixedFieldsGrow policy stretches edge to edge: a pixel count next
@@ -148,22 +131,22 @@ void SettingsPanel::BuildInterfaceGroup() {
   shape_grid->setHorizontalSpacing(20);
   shape_grid->setVerticalSpacing(8);
   shape_grid->addWidget(
-      MakeShapeControl(tile_spacing_, "Tile gap", 40,
-                       "Empty space around each tile — the top bar's zoom slider is what changes "
-                       "the cell itself."),
+      MakeShapeControl(tile_spacing_, "Tile Gap", 40,
+                       "Empty space around each tile. The zoom slider in the top bar changes the "
+                       "tile size."),
       0, 0);
   shape_grid->addWidget(
-      MakeShapeControl(grid_margin_, "Grid padding", 60,
-                       "Space between the grid and the window's edges and panels."),
+      MakeShapeControl(grid_margin_, "Grid Padding", 60,
+                       "Space between the grid and the window edges and side panels."),
       0, 1);
   shape_grid->addWidget(
-      MakeShapeControl(tile_radius_, "Cover rounding", 40, "Corner radius of a cover. 0 is square."),
+      MakeShapeControl(tile_radius_, "Cover Rounding", 40, "Corner radius of game covers. 0 is square."),
       1, 0);
   shape_grid->addWidget(
-      MakeShapeControl(panel_radius_, "Panel rounding", 24, "Corner radius of panels and toasts."),
+      MakeShapeControl(panel_radius_, "Panel Rounding", 24, "Corner radius of panels and toasts."),
       1, 1);
   shape_grid->addWidget(
-      MakeShapeControl(control_radius_, "Control rounding", 20,
+      MakeShapeControl(control_radius_, "Control Rounding", 20,
                        "Corner radius of buttons, inputs and dropdowns."),
       2, 0);
   form->addRow(shape_grid_widget);
@@ -174,7 +157,7 @@ void SettingsPanel::BuildInterfaceGroup() {
   connect(mira_gui::theme::Notifier::Instance(), &mira_gui::theme::Notifier::Changed, this,
           &SettingsPanel::RefreshShapeDefaults);
 
-  auto* note = new QLabel("Stored in frontend.toml, never interpreted by the daemon.", box);
+  auto* note = new QLabel("These settings are saved in frontend.toml and only affect this app.", box);
   note->setWordWrap(true);
   note->setProperty("role", "muted");
   form->addRow(note);
@@ -247,7 +230,7 @@ void SettingsPanel::BuildShortcutsGroup() {
       for (const QKeySequence& alias : binding.extra_aliases) {
         alias_text << alias.toString(QKeySequence::NativeText);
       }
-      tooltip += QString(" — %1 always works too, fixed").arg(alias_text.join(", "));
+      tooltip += QString(". %1 always works too and cannot be changed.").arg(alias_text.join(", "));
     }
     reset_button->setToolTip(tooltip);
     row_widget->setToolTip(tooltip);
@@ -280,10 +263,6 @@ void SettingsPanel::LoadFrontendPrefs() {
       theme_original_ = QString::fromStdString(*result.prefs.theme);
       const int index = theme_->findData(theme_original_);
       if (index >= 0) theme_->setCurrentIndex(index);
-    }
-    if (result.prefs.game_settings_in_sidebar) {
-      game_settings_in_sidebar_original_ = *result.prefs.game_settings_in_sidebar;
-      game_settings_in_sidebar_->setChecked(game_settings_in_sidebar_original_);
     }
     if (result.prefs.drag_select) {
       drag_select_original_ = *result.prefs.drag_select;
@@ -319,6 +298,7 @@ void SettingsPanel::Load() {
     }
 
     for (mira_gui::ConfigSchemaEntry& entry : schema.entries) {
+      if (entry.game_only) continue;
       Field field;
       field.entry = std::move(entry);
       fields_.push_back(std::move(field));
@@ -353,7 +333,7 @@ void SettingsPanel::FocusKey(const QString& key) {
   }
   const auto it = std::ranges::find(fields_, wanted, [](const Field& f) { return f.entry.key; });
   if (it == fields_.end()) {
-    // Schema not loaded yet, most likely — try again once it is.
+    // Schema not loaded yet, most likely. Try again once it is.
     pending_focus_key_ = key;
     return;
   }
@@ -430,7 +410,7 @@ void SettingsPanel::LoadGameModeStatus() {
       text = "Could not check (mirad unreachable).";
       error = true;
     } else if (!result.installed) {
-      text = "Not installed — gamemoded isn't on PATH.";
+      text = "Not installed: gamemoded isn't on PATH.";
       error = true;
     } else if (!result.daemon_running) {
       text = "Installed, but the daemon isn't running right now.";
@@ -467,7 +447,6 @@ void SettingsPanel::SetFooterActions(QWidget* actions) { nav_->AddFooterWidget(a
 bool SettingsPanel::IsDirty() const {
   if (scan_on_startup_->isChecked() != scan_on_startup_original_) return true;
   if (theme_->currentData().toString() != theme_original_) return true;
-  if (game_settings_in_sidebar_->isChecked() != game_settings_in_sidebar_original_) return true;
   if (drag_select_->isChecked() != drag_select_original_) return true;
   if (SidebarDirty()) return true;
   for (const ShapeField* field :
@@ -487,7 +466,6 @@ void SettingsPanel::DiscardChanges() {
   scan_on_startup_->setChecked(scan_on_startup_original_);
   const int theme_index = theme_->findData(theme_original_);
   if (theme_index >= 0) theme_->setCurrentIndex(theme_index);
-  game_settings_in_sidebar_->setChecked(game_settings_in_sidebar_original_);
   drag_select_->setChecked(drag_select_original_);
   recent_count_->setValue(recent_count_original_);
   source_counts_->setChecked(source_counts_original_);
@@ -502,7 +480,6 @@ void SettingsPanel::DiscardChanges() {
 
 void SettingsPanel::Save() {
   const QString theme_name = theme_->currentData().toString();
-  const bool game_settings_in_sidebar = game_settings_in_sidebar_->isChecked();
   bool shapes_changed = false;
   for (const ShapeField* field :
        {&tile_spacing_, &grid_margin_, &tile_radius_, &panel_radius_, &control_radius_}) {
@@ -514,7 +491,6 @@ void SettingsPanel::Save() {
   }
   if (scan_on_startup_->isChecked() != scan_on_startup_original_ ||
       theme_name != theme_original_ || shapes_changed || shortcuts_changed ||
-      game_settings_in_sidebar != game_settings_in_sidebar_original_ ||
       drag_select_->isChecked() != drag_select_original_ || SidebarDirty()) {
     mira_gui::FrontendPrefs prefs;
     prefs.sidebar_recent_count = recent_count_->value();
@@ -529,7 +505,6 @@ void SettingsPanel::Save() {
     hidden_sources_original_ = hidden;
     prefs.scan_on_startup = scan_on_startup_->isChecked();
     prefs.theme = theme_name.toStdString();
-    prefs.game_settings_in_sidebar = game_settings_in_sidebar;
     prefs.drag_select = drag_select_->isChecked();
     // Always written, including the -1 that means "theme default": the key
     // has to be able to go back to unset, and a merge-patch cannot drop one.
@@ -571,7 +546,6 @@ void SettingsPanel::Save() {
       prefs.shortcut_overrides = mira_gui::keybindings::Current();
     }
     scan_on_startup_original_ = *prefs.scan_on_startup;
-    game_settings_in_sidebar_original_ = game_settings_in_sidebar;
     drag_select_original_ = *prefs.drag_select;
     if (theme_name != theme_original_) {
       theme_original_ = theme_name;

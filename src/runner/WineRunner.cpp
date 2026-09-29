@@ -43,7 +43,7 @@ namespace {
 namespace fs = std::filesystem;
 
 // "wine wineboot" (rather than a separate wineboot binary) works uniformly
-// for the system wine and any custom build found under wine_search_paths —
+// for the system wine and any custom build found under wine_search_paths:
 // every full Wine install has an internal wineboot component reachable this
 // way, whether or not a standalone `wineboot` binary sits next to it.
 std::string VersionOf(const std::string& wine_binary) {
@@ -114,7 +114,7 @@ Result<void> WineRunner::Provision(const model::Game& game,
   if (!result) return std::unexpected(result.error());
 
   // Observed directly: `wine wineboot` reports exit 0 even when it failed
-  // outright (e.g. WINEPREFIX not pre-created) — the only reliable signal,
+  // outright (e.g. WINEPREFIX not pre-created), the only reliable signal,
   // same as ProtonRunner, is whether the prefix actually appeared on disk.
   if (!fs::exists(fs::path(game.data_dir) / "drive_c", ec)) {
     return Err("provision_failed",

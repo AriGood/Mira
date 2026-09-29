@@ -104,7 +104,6 @@ Only `game.added` and `game.updated` carry a game record, so views check the eve
 | `library_filter`, `sort_by`, `sort_descending` | Selected filter and sort. |
 | `scan_on_startup` | Run a library scan when the GUI opens. |
 | `theme` | Theme name or `auto`. |
-| `game_settings_in_sidebar` | Edit a game in the side panel instead of a dialog. |
 | `drag_select` | Drag across the grid to select. |
 | `tile_spacing`, `grid_margin`, `tile_radius`, `panel_radius`, `control_radius` | Shape overrides in pixels, `-1` for the theme's value. |
 | `shortcut_overrides` | Changed shortcuts by id. |

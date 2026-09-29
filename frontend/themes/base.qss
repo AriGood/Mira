@@ -1,4 +1,4 @@
-/* Mira's stylesheet. Not a theme — themes are the .toml token files, and
+/* Mira's stylesheet. Not a theme: themes are the .toml token files, and
  * every @name below is substituted from the one being applied (ui/Theme.cpp).
  *
  * Broad backgrounds are left to the palette, which Fusion already honours;
@@ -34,7 +34,7 @@ QLabel[role="keys"] {
 
 /* A game's lifecycle state, set as a "status" property so a theme change
  * recolors it without the widget having to be repopulated (ui/Theme.h's
- * SetStyleProperty). "running" is not a status mirad reports — it is the
+ * SetStyleProperty). "running" is not a status mirad reports; it is the
  * frontend's own "playing right now". */
 QLabel[status="ready"],
 QLabel[status="setting_up"],
@@ -468,7 +468,7 @@ QScrollBar::add-page, QScrollBar::sub-page {
 /* --- Lists, tables, menus ------------------------------------------------ */
 
 /* The grid paints its own tiles (ui/GameTileDelegate), so it wants a backdrop
- * and nothing else — a stylesheet selection here would draw underneath them. */
+ * and nothing else: a stylesheet selection here would draw underneath them. */
 QListWidget#library_grid {
   background: @window;
   border: none;

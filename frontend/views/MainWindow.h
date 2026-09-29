@@ -51,7 +51,7 @@ private:
   QPushButton* refresh_button_;
   QTableWidget* games_table_;
   QLabel* connection_footer_;
-  // Client-side only — derived from game.state events, not any GET response.
+  // Client-side only: derived from game.state events, not any GET response.
   // Consulted by PopulateRow to decide each row's Launch/Stop button.
   std::set<std::string> running_ids_;
   // Whether RefreshGames() has ever completed successfully.

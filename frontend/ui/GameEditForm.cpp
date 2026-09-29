@@ -64,7 +64,7 @@ GameEditForm::GameEditForm(std::string id, QWidget* parent) : QWidget(parent), i
   status_label_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
   install_path_label_ = new QLabel(this);
   // Also Ignored horizontally: a path has no spaces to word-wrap at, so its
-  // minimumSizeHint was the whole string — the sidebar's own floor.
+  // minimumSizeHint was the whole string, the sidebar's own floor.
   install_path_label_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
   install_path_label_->setTextInteractionFlags(Qt::TextSelectableByMouse);
   last_error_label_ = new QLabel(this);
@@ -83,10 +83,10 @@ GameEditForm::GameEditForm(std::string id, QWidget* parent) : QWidget(parent), i
   args_edit_ = new QLineEdit(this);
   working_dir_edit_ = new QLineEdit(this);
   tags_edit_ = new QLineEdit(this);
-  tags_edit_->setPlaceholderText("comma-separated — e.g. hidden, co-op");
+  tags_edit_->setPlaceholderText("Comma-separated, e.g. hidden, co-op");
   tags_edit_->setToolTip(
-      "Free-form labels. \"hidden\" keeps this game out of the library until asked for "
-      "(Ctrl+H, or the Hidden filter).");
+      "Labels of your choice. The \"hidden\" tag keeps this game out of the library until you "
+      "ask for it (Ctrl+H, or the Hidden filter).");
 
   exe_combo_ = new QComboBox(this);
   exe_combo_->setEditable(true);
@@ -120,18 +120,18 @@ GameEditForm::GameEditForm(std::string id, QWidget* parent) : QWidget(parent), i
   runner_row->addWidget(runner_combo_, /*stretch=*/1);
 
   data_dir_edit_ = new QLineEdit(this);
-  data_dir_edit_->setToolTip("Where this game's prefix/data directory lives.");
+  data_dir_edit_->setToolTip("The folder holding this game's Wine or Proton prefix and data.");
 
   runner_config_edit_ = new QPlainTextEdit(this);
   runner_config_edit_->setFixedHeight(70);
-  runner_config_edit_->setToolTip("Runner-specific settings, as a JSON object. Merged, not replaced.");
+  runner_config_edit_->setToolTip("Runner settings as a JSON object. They are merged with the defaults, not replacing them.");
 
   env_edit_ = new QPlainTextEdit(this);
   // Taller than runner_config_edit_'s 70: env vars are usually several
   // KEY=value-shaped entries, one per line, and 70px only showed two of
   // them at a time before scrolling took over.
   env_edit_->setFixedHeight(110);
-  env_edit_->setToolTip("Extra environment variables, as a JSON object of strings. Merged, not replaced.");
+  env_edit_->setToolTip("Extra environment variables as a JSON object of strings. They are added to the defaults, not replacing them.");
 
   // A caption above its field; the pair shows and hides together.
   auto add_field = [form, this](const QString& text, QWidget* field, int row, int column, int span) {
@@ -171,14 +171,14 @@ GameEditForm::GameEditForm(std::string id, QWidget* parent) : QWidget(parent), i
   // sitting in the middle of the form fields above it.
   advanced_button_ = new QPushButton("Advanced settings…", this);
   QPushButton* advanced_button = advanced_button_;
-  // QPushButton defaults to Fixed horizontal — same sidebar-floor bug as
+  // QPushButton defaults to Fixed horizontal, the same sidebar-floor bug as
   // install_path_label_ above, this time spilling the button's own text.
   advanced_button->setSizePolicy(QSizePolicy::Ignored, advanced_button->sizePolicy().verticalPolicy());
   advanced_button->setToolTip("Per-game overrides of the global settings.");
   connect(advanced_button, &QPushButton::clicked, this, &GameEditForm::OpenAdvanced);
   fields_layout->addWidget(advanced_button);
 
-  // Covers just the fields column when open — the art column stays on
+  // Covers just the fields column when open; the art column stays on
   // screen either side of it, unlike the separate dialog this used to be.
   fields_stack_ = new QStackedWidget(this);
   fields_stack_->addWidget(fields_column);
@@ -219,7 +219,7 @@ void GameEditForm::OpenAdvanced() {
 
 void GameEditForm::ResetScroll() {
   // Both host contexts (LibraryWindow's overlay card, GameDetailDialog)
-  // wrap this form in a QScrollArea it has no direct handle to — walking up
+  // wrap this form in a QScrollArea it has no direct handle to, so walking up
   // to find it beats each host remembering to reset scroll on page-switch.
   for (QWidget* ancestor = parentWidget(); ancestor != nullptr; ancestor = ancestor->parentWidget()) {
     if (auto* scroll_area = qobject_cast<QScrollArea*>(ancestor)) {
@@ -264,7 +264,7 @@ void GameEditForm::Populate(const mira_gui::GameDetail& game) {
   summary.tags = game.tags;
   hero_art_->ShowGame(summary);
 
-  // "Ready" is the common case and says nothing worth a line of its own —
+  // "Ready" is the common case and says nothing worth a line of its own,
   // only a state that needs attention earns one.
   status_box_->setVisible(game.status != "ready");
   status_label_->setText(QString::fromStdString(game.status));
@@ -277,7 +277,7 @@ void GameEditForm::Populate(const mira_gui::GameDetail& game) {
   if (game.source == "steam") {
     source_note_label_->setText(
         "Imported from Steam. Steam launches this game itself, using its own record of the "
-        "executable — the Executable field below isn't what runs it, and editing it won't "
+        "executable. The Executable field below isn't what runs it, and editing it won't "
         "change how it launches.");
   } else if (game.source == "lutris") {
     source_note_label_->setText(
@@ -322,7 +322,7 @@ void GameEditForm::PopulateExeCombo(const std::vector<mira_gui::GameDetail::Cand
   exe_combo_->blockSignals(true);
   exe_combo_->clear();
   for (const mira_gui::GameDetail::Candidate& candidate : sorted) {
-    QString label = QString("%1 — %2, score %3")
+    QString label = QString("%1 (%2, score %3)")
                         .arg(QString::fromStdString(candidate.rel_path),
                              QString::fromStdString(candidate.kind))
                         .arg(candidate.score, 0, 'f', 1);

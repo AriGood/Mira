@@ -21,7 +21,7 @@ class GameStore {
 public:
   explicit GameStore(std::filesystem::path file);
 
-  // The directory games.toml itself lives in — the natural base for sibling
+  // The directory games.toml itself lives in, the natural base for sibling
   // state (sessions/, stats.toml, logs/) so it follows wherever a caller
   // (including a test) points the store, rather than hardcoding paths::UserDir().
   std::filesystem::path Dir() const { return file_.parent_path(); }

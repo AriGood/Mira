@@ -9,7 +9,7 @@
 
 namespace mira::steam {
 
-// One installed Steam app, found by reading Steam's own files directly —
+// One installed Steam app, found by reading Steam's own files directly,
 // never by asking the Steam client, which may not even be running.
 struct SteamApp {
   std::string appid;
@@ -38,20 +38,20 @@ struct ProtonCompatInfo {
 // otherwise the two real locations in use across distros.
 std::optional<std::filesystem::path> FindSteamRoot(const config::Config& config);
 
-// Every library folder Steam knows about, including steam_root's own — read
+// Every library folder Steam knows about, including steam_root's own. Read
 // from libraryfolders.vdf, falling back to just steam_root if that file is
 // missing or unparseable rather than finding nothing at all.
 std::vector<std::filesystem::path> LibraryFolders(const std::filesystem::path& steam_root);
 
 // Every installed app across every library folder, minus Valve's own
-// tooling — compat tools (detected structurally: install_dir/proton
+// tooling: compat tools (detected structurally: install_dir/proton
 // exists), the fixed-appid Steamworks Common Redistributables, and Steam
 // Linux Runtime containers. Never game data, so nothing here needs pruning
 // by the caller.
 std::vector<SteamApp> ListApps(const std::filesystem::path& steam_root);
 
 // Resolves what a Windows app's compat_data_dir was actually set up with,
-// by reading its config_info file — the same mechanism Steam itself uses,
+// by reading its config_info file, the same mechanism Steam itself uses,
 // so it's exactly the build (and client path) that already provisioned the
 // prefix. Returns nullopt if compat_data_dir has no config_info yet (the
 // app has never actually been launched through Steam).
