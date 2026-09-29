@@ -339,6 +339,61 @@ TEST_CASE("PATCH /v1/games/{id} tags replaces the array wholesale") {
   CHECK(server.games().Find("celeste")->tags.empty());
 }
 
+TEST_CASE("PATCH /v1/games adds and removes tags on many games, keeping their other tags") {
+  LiveServer server(TempDir("server-batch-tags"));
+  for (const char* id : {"a", "b", "c"}) {
+    model::Game game;
+    game.id = id;
+    game.name = id;
+    game.tags = {"indie"};
+    if (std::string(id) == "b") game.tags.push_back("favorite");
+    REQUIRE(server.games().Upsert(game).has_value());
+  }
+
+  httplib::Client client = server.Client();
+  auto res = client.Patch("/v1/games", R"({"ids": ["a", "b", "nope"], "add_tags": ["hidden"], "remove_tags": ["favorite"]})",
+                          "application/json");
+  REQUIRE(res != nullptr);
+  REQUIRE(res->status == 200);
+  const nlohmann::json body = nlohmann::json::parse(res->body);
+  CHECK(body["games"].size() == 2);
+
+  CHECK(server.games().Find("a")->tags == std::vector<std::string>{"indie", "hidden"});
+  CHECK(server.games().Find("b")->tags == std::vector<std::string>{"indie", "hidden"});
+  CHECK(server.games().Find("c")->tags == std::vector<std::string>{"indie"});
+
+  // Already in that state: nothing changes, nothing is reported.
+  auto again = client.Patch("/v1/games", R"({"ids": ["a"], "add_tags": ["hidden"]})", "application/json");
+  REQUIRE(again != nullptr);
+  CHECK(nlohmann::json::parse(again->body)["games"].empty());
+}
+
+TEST_CASE("PATCH /v1/games sets per-game overrides, and rejects the whole batch on a bad key") {
+  LiveServer server(TempDir("server-batch-config"));
+  for (const char* id : {"a", "b"}) {
+    model::Game game;
+    game.id = id;
+    game.name = id;
+    REQUIRE(server.games().Upsert(game).has_value());
+  }
+
+  httplib::Client client = server.Client();
+  auto res = client.Patch("/v1/games", R"({"ids": ["a", "b"], "config": {"desktop_entries.enabled": false}})",
+                          "application/json");
+  REQUIRE(res != nullptr);
+  REQUIRE(res->status == 200);
+  CHECK(server.games().Find("a")->overrides["desktop_entries.enabled"] == false);
+  CHECK(server.games().Find("b")->overrides["desktop_entries.enabled"] == false);
+
+  auto bad = client.Patch("/v1/games", R"({"ids": ["a"], "config": {"library_roots": []}})", "application/json");
+  REQUIRE(bad != nullptr);
+  CHECK(bad->status == 400);
+
+  auto malformed = client.Patch("/v1/games", R"({"ids": "a"})", "application/json");
+  REQUIRE(malformed != nullptr);
+  CHECK(malformed->status == 400);
+}
+
 TEST_CASE("GET /v1/games/{id}/artwork?type= serves the requested slot, 404s for an unknown one") {
   LiveServer server(TempDir("server-artwork-type"));
 

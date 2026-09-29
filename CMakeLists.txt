@@ -40,7 +40,8 @@ if(MIRA_TSAN)
 endif()
 
 add_library(mira_third_party INTERFACE)
-target_compile_definitions(mira_third_party INTERFACE TOML_EXCEPTIONS=0)
+# httplib's default backlog of 5 refuses connections when a client sends a burst of requests.
+target_compile_definitions(mira_third_party INTERFACE TOML_EXCEPTIONS=0 CPPHTTPLIB_LISTEN_BACKLOG=128)
 target_include_directories(mira_third_party SYSTEM INTERFACE third_party)
 
 file(GLOB_RECURSE MIRA_CORE_SOURCES CONFIGURE_DEPENDS src/*.cpp)

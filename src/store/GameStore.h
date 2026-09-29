@@ -49,6 +49,11 @@ public:
   // acquisitions.
   Result<model::Game> Update(const std::string& id, std::function<void(model::Game&)> mutator);
 
+  // Update for many games with one save. `mutator` returns false to leave a
+  // game untouched. Returns the changed games; unknown ids are skipped.
+  Result<std::vector<model::Game>> UpdateMany(const std::vector<std::string>& ids,
+                                              std::function<bool(model::Game&)> mutator);
+
   Result<void> Remove(const std::string& id);
 
 private:

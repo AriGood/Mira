@@ -654,6 +654,52 @@ void Server::RegisterRoutes() {
     SendJson(res, GameJson(*result, supervisor_));
   });
 
+  // One save, one menu sync and one event for any number of games, so a
+  // multi-select doesn't cost a request (and a full rewrite) per game.
+  http_->Patch("/v1/games", [this](const Request& req, Response& res) {
+    const json body = json::parse(req.body, nullptr, false);
+    const auto string_list = [&](const char* key) -> std::optional<std::vector<std::string>> {
+      if (!body.contains(key)) return std::vector<std::string>{};
+      if (!body[key].is_array()) return std::nullopt;
+      std::vector<std::string> out;
+      for (const json& item : body[key]) {
+        if (!item.is_string()) return std::nullopt;
+        out.push_back(item.get<std::string>());
+      }
+      return out;
+    };
+    const auto ids = body.is_object() ? string_list("ids") : std::nullopt;
+    const auto add_tags = body.is_object() ? string_list("add_tags") : std::nullopt;
+    const auto remove_tags = body.is_object() ? string_list("remove_tags") : std::nullopt;
+    const json config = body.is_object() ? body.value("config", json::object()) : json();
+    if (!ids || !add_tags || !remove_tags || !config.is_object()) {
+      return SendError(res, 400, "invalid_body",
+                       R"(expected {"ids": [...], "add_tags"?: [...], "remove_tags"?: [...], "config"?: {...}})");
+    }
+    if (auto problem = ValidateOverridesPatch(config)) return SendError(res, 400, "invalid_setting", *problem);
+
+    auto updated = games_.UpdateMany(*ids, [&](model::Game& game) {
+      const std::vector<std::string> old_tags = game.tags;
+      const json old_overrides = game.overrides;
+      std::erase_if(game.tags, [&](const std::string& tag) { return std::ranges::contains(*remove_tags, tag); });
+      for (const std::string& tag : *add_tags) {
+        if (!std::ranges::contains(game.tags, tag)) game.tags.push_back(tag);
+      }
+      ApplyOverridesPatch(game, config);
+      return game.tags != old_tags || game.overrides != old_overrides;
+    });
+    if (!updated) return SendStoreError(res, updated.error());
+
+    json games = json::array();
+    for (const model::Game& game : *updated) games.push_back(GameJson(game, supervisor_));
+    if (!updated->empty()) {
+      // Tags never change a menu entry; only an override can.
+      if (!config.empty()) SyncDesktopEntries(config_, games_);
+      events_.Publish("games.updated", {{"games", games}});
+    }
+    SendJson(res, {{"games", std::move(games)}});
+  });
+
   http_->Get(R"(/v1/games/([^/]+)/config)", [this](const Request& req, Response& res) {
     auto game = games_.Find(req.matches[1]);
     if (!game) return SendError(res, 404, "game_not_found", "no such game");

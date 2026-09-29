@@ -1,5 +1,6 @@
 #include <doctest.h>
 
+#include <chrono>
 #include <filesystem>
 #include <format>
 #include <fstream>
@@ -80,6 +81,37 @@ TEST_CASE("DesktopEntries: a per-game desktop_entries.enabled=false override exc
 
   CHECK_FALSE(fs::exists(applications / "mira-excluded-game.desktop"));
   CHECK(fs::exists(applications / "mira-included-game.desktop"));
+}
+
+TEST_CASE("DesktopEntries: a sync leaves unchanged entries untouched but rewrites a changed one") {
+  const fs::path state = TempDir("desktop-entries-unchanged-state");
+  const fs::path applications = TempDir("desktop-entries-unchanged-apps");
+
+  config::Config config(state / "settings.toml");
+  config.Load();
+  REQUIRE(config.Set("desktop_entries.enabled", true).has_value());
+  REQUIRE(config.Set("desktop_entries.directory", applications.string()).has_value());
+
+  model::Game game;
+  game.id = "celeste";
+  game.name = "Celeste";
+  game.status = model::GameStatus::Ready;
+  game.exe_path = "Celeste";
+
+  desktop::DesktopEntries entries(config);
+  REQUIRE(entries.Sync({game}).has_value());
+  const fs::path file = applications / "mira-celeste.desktop";
+  const auto old_time = fs::file_time_type::clock::now() - std::chrono::hours(1);
+  fs::last_write_time(file, old_time);
+
+  REQUIRE(entries.Sync({game}).has_value());
+  CHECK(fs::last_write_time(file) == old_time);
+
+  game.name = "Celeste Classic";
+  REQUIRE(entries.Sync({game}).has_value());
+  std::ifstream in(file);
+  const std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  CHECK(content.find("Name=Celeste Classic\n") != std::string::npos);
 }
 
 TEST_CASE("DesktopEntries: uses cached artwork as Icon= when present, falls back otherwise") {

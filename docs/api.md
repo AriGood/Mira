@@ -86,6 +86,16 @@ Lists games, optionally filtered by `status` (`setting_up`, `ready`, `broken`, `
 ### `PATCH /v1/games/{id}`
 Changes any of `name`, `exe_path`, `args`, `working_dir`, `runner_ref`, `data_dir`, `runner_config` (merged), `env` (merged, `null` removes a key) and `tags` (replaced). Any change marks the game `reviewed`. Overrides go through `/config` below. Publishes `game.updated`.
 
+### `PATCH /v1/games`
+Changes many games in one request, for a multi-select:
+
+```json
+{ "ids": ["celeste", "hades"], "add_tags": ["hidden"], "remove_tags": ["favorite"],
+  "config": { "desktop_entries.enabled": false } }
+```
+
+`ids` is required; the rest are optional. `config` takes the same overrides as `PATCH /v1/games/{id}/config`, and a bad key rejects the whole batch. Unknown ids are skipped. Returns `{"games": [...]}` with only the games that changed, and publishes one `games.updated` event for them all. Unlike `PATCH /v1/games/{id}`, it doesn't mark games `reviewed`.
+
 ### `POST /v1/games/manual`
 Adds a game from any path:
 
@@ -486,6 +496,7 @@ A new connection (no `Last-Event-ID`) first gets the buffered events replayed, t
 |---|---|
 | `game.added` | The game, plus `open_config` from the `open_config_on_add` setting. |
 | `game.updated` | The game. |
+| `games.updated` | `{games}`: every game a `PATCH /v1/games` changed. |
 | `game.removed` | `{id}`. |
 | `game.state` | The game plus `state` (`running`, `exited`, `crashed`, `idle`) and, after an exit, `exit_code`, `signal`, `played_seconds` and `error`. |
 | `game.launched` | `{id, via, tracked}` for launches handed to Steam or a store launcher. |

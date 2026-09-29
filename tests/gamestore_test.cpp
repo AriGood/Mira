@@ -83,6 +83,30 @@ TEST_CASE("Update mutates under lock and reports the saved result") {
   CHECK_FALSE(missing.has_value());
 }
 
+TEST_CASE("UpdateMany saves every changed game and skips unknown or unchanged ones") {
+  const auto file = TempFile("games-update-many.toml");
+  store::GameStore store(file);
+  store.Load();
+  REQUIRE(store.Upsert(MakeGame("celeste", "Celeste")).has_value());
+  REQUIRE(store.Upsert(MakeGame("hades", "Hades")).has_value());
+  REQUIRE(store.Upsert(MakeGame("tunic", "Tunic")).has_value());
+
+  auto result = store.UpdateMany({"celeste", "hades", "no-such-id"}, [](model::Game& game) {
+    if (game.id == "hades") return false;
+    game.tags.push_back("hidden");
+    return true;
+  });
+  REQUIRE(result.has_value());
+  REQUIRE(result->size() == 1);
+  CHECK(result->front().id == "celeste");
+
+  store::GameStore reloaded(file);
+  reloaded.Load();
+  CHECK(reloaded.Find("celeste")->tags == std::vector<std::string>{"hidden"});
+  CHECK(reloaded.Find("hades")->tags.empty());
+  CHECK(reloaded.Find("tunic")->tags.empty());
+}
+
 TEST_CASE("Remove deletes a game and reports an error for an unknown id") {
   store::GameStore store(TempFile("games-remove.toml"));
   store.Load();
