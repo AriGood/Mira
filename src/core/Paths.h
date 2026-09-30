@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <string>
+#include <vector>
 
 namespace mira::paths {
 
@@ -24,5 +25,10 @@ std::filesystem::path GamesFile();     // <UserDir>/games.toml
 // Expands a leading "~" and any $VAR references, so config files can be
 // written the way a user would naturally type a path.
 std::filesystem::path Expand(std::string_view raw);
+
+// Whether `target` resolves (symlinks included) inside one of `roots`. A root
+// itself only counts with `allow_equal`. Empty roots never match.
+bool IsWithin(const std::filesystem::path& target, const std::vector<std::filesystem::path>& roots,
+              bool allow_equal = false);
 
 }  // namespace mira::paths

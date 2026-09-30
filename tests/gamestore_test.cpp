@@ -116,6 +116,22 @@ TEST_CASE("Remove deletes a game and reports an error for an unknown id") {
   CHECK_FALSE(store.Remove("celeste").has_value());
 }
 
+TEST_CASE("a SaveBatch holds saves back and writes them once when it ends") {
+  const fs::path file = TempFile("games-batch.toml");
+  store::GameStore store(file);
+  store.Load();
+  {
+    const auto batch = store.BatchSaves();
+    REQUIRE(store.Upsert(MakeGame("celeste", "Celeste")).has_value());
+    REQUIRE(store.Upsert(MakeGame("hades", "Hades")).has_value());
+    CHECK_FALSE(fs::exists(file));
+    CHECK(store.All().size() == 2);
+  }
+  store::GameStore reloaded(file);
+  reloaded.Load();
+  CHECK(reloaded.All().size() == 2);
+}
+
 TEST_CASE("a corrupt games.toml is quarantined and the library starts empty") {
   const fs::path file = TempFile("games-corrupt.toml");
   {

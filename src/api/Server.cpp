@@ -19,6 +19,7 @@
 #include "config/Resolver.h"
 #include "config/Schema.h"
 #include "core/Log.h"
+#include "core/Paths.h"
 #include "core/Strings.h"
 #include "desktop/DesktopEntries.h"
 #include "library/Catalog.h"
@@ -366,19 +367,6 @@ std::vector<std::filesystem::path> RunnerRoots(const config::Config& config, con
   return config.GetPathArray(kind == "wine" ? "wine_search_paths" : "runner_search_paths");
 }
 
-bool IsInsideAny(const std::filesystem::path& target, const std::vector<std::filesystem::path>& roots) {
-  std::error_code ec;
-  const std::filesystem::path resolved = std::filesystem::weakly_canonical(target, ec);
-  if (ec) return false;
-  return std::ranges::any_of(roots, [&](const std::filesystem::path& root) {
-    std::error_code root_ec;
-    const std::filesystem::path base = std::filesystem::weakly_canonical(root, root_ec);
-    if (root_ec || resolved == base) return false;
-    const auto [end, _] = std::ranges::mismatch(base, resolved);
-    return end == base.end();
-  });
-}
-
 // `source`, or the kind's preferred source when empty.
 Result<runner::RunnerFamily> FamilyFor(const config::Config& config, const std::string& kind,
                                        const std::string& source) {
@@ -419,7 +407,7 @@ std::vector<RunnerUpdate> FindRunnerUpdates(const config::Config& config, const 
     const std::vector<model::RunnerBuild> builds = BuildsOfKind(registry, kind);
     for (const model::RunnerBuild& build : builds) {
       const std::filesystem::path dir = BuildDir(build);
-      if (!IsInsideAny(dir, RunnerRoots(config, kind))) continue;
+      if (!paths::IsWithin(dir, RunnerRoots(config, kind))) continue;
       auto family = runner::FamilyOfBuild(config, kind, build.name, dir.filename().string());
       if (!family) continue;
       auto releases = runner::ListFamilyReleases(*family);
@@ -865,6 +853,43 @@ void Server::RegisterRoutes() {
     SendJson(res, {{"added", summary->added}, {"updated", summary->updated}, {"other_runner", summary->other_runner}, {"incomplete", summary->incomplete}});
   });
 
+  // --- store CLI setup ----------------------------------------------------
+
+  // POST <route> downloads the newest release of a store's CLI in the
+  // background. Re-running it fetches the latest release, which is also how
+  // updates work. Progress arrives as <event_prefix>.started/.finished/.failed.
+  using BinaryInstaller = Result<void> (*)(const config::Config&, const runner::ReleaseAsset&);
+  const auto register_cli_setup = [this](const char* route, const std::string& kind, const std::string& tool,
+                                         const std::string& event_prefix, BinaryInstaller install) {
+    http_->Post(route, [this, kind, tool, event_prefix, install](const Request&, Response& res) {
+      auto releases = runner::ListReleases(config_, kind);
+      if (!releases) return SendError(res, 502, releases.error());
+      if (releases->empty()) {
+        return SendError(res, 404, "no_release_found", std::format("no matching {} release found", tool));
+      }
+
+      const runner::ReleaseAsset asset = releases->front();  // newest first
+      events_.Publish(event_prefix + ".started", {{"tag", asset.tag}});
+      std::thread([this, asset, tool, event_prefix, install] {
+        if (auto installed = install(config_, asset); !installed) {
+          log::Error("{} install failed ({}): {}", tool, asset.tag, installed.error().message);
+          events_.Publish(event_prefix + ".failed", {{"tag", asset.tag}, {"error", installed.error().message}});
+        } else {
+          log::Info("installed {} {}", tool, asset.tag);
+          events_.Publish(event_prefix + ".finished", {{"tag", asset.tag}});
+        }
+      }).detach();
+
+      SendJson(res, {{"status", "downloading"}, {"tag", asset.tag}}, 202);
+    });
+  };
+  register_cli_setup("/v1/epic/legendary/install", "legendary", "legendary", "epic.legendary.install",
+                     epic::InstallLegendaryBinary);
+  register_cli_setup("/v1/gog/setup", "gog", "gogdl", "gog.setup", gog::InstallGogBinary);
+  register_cli_setup("/v1/amazon/setup", "amazon", "nile", "amazon.setup", amazon::InstallNileBinary);
+  register_cli_setup("/v1/itch/setup", "itch", "butler", "itch.setup", itch::InstallButlerBinary);
+  register_cli_setup("/v1/humble/setup", "humble", "humble-cli", "humble.setup", humble::InstallHumbleCliBinary);
+
   // --- epic -------------------------------------------------------------
 
   http_->Get("/v1/epic/legendary/status", [this](const Request&, Response& res) {
@@ -873,27 +898,6 @@ void Server::RegisterRoutes() {
                   {"source", status.source},
                   {"path", status.path},
                   {"version", status.version}});
-  });
-
-  // Re-running this fetches the latest release, which is also how updates work.
-  http_->Post("/v1/epic/legendary/install", [this](const Request&, Response& res) {
-    auto releases = runner::ListReleases(config_, "legendary");
-    if (!releases) return SendError(res, 502, releases.error());
-    if (releases->empty()) return SendError(res, 404, "no_release_found", "no matching legendary release found");
-
-    const runner::ReleaseAsset asset = releases->front();  // newest first
-    events_.Publish("epic.legendary.install.started", {{"tag", asset.tag}});
-    std::thread([this, asset] {
-      if (auto installed = epic::InstallLegendaryBinary(config_, asset); !installed) {
-        log::Error("legendary install failed ({}): {}", asset.tag, installed.error().message);
-        events_.Publish("epic.legendary.install.failed", {{"tag", asset.tag}, {"error", installed.error().message}});
-      } else {
-        log::Info("installed legendary {}", asset.tag);
-        events_.Publish("epic.legendary.install.finished", {{"tag", asset.tag}});
-      }
-    }).detach();
-
-    SendJson(res, {{"status", "downloading"}, {"tag", asset.tag}}, 202);
   });
 
   http_->Get("/v1/epic/status", [this](const Request&, Response& res) {
@@ -926,15 +930,6 @@ void Server::RegisterRoutes() {
     SendJson(res, {{"status", "logged_out"}});
   });
 
-  http_->Post("/v1/epic/import", [this](const Request&, Response& res) {
-    epic::EpicImporter importer(config_, games_, events_);
-    auto summary = importer.Import();
-    if (!summary) return SendError(res, 404, summary.error());
-    SyncDesktopEntries(config_, games_);
-    for (const model::Game& game : summary->added_games) metadata_fetches_.Enqueue(config_, events_, game);
-    SendJson(res, {{"added", summary->added}, {"updated", summary->updated}});
-  });
-
   // --- gog ----------------------------------------------------------------
 
   http_->Get("/v1/gog/status", [this](const Request&, Response& res) {
@@ -945,26 +940,6 @@ void Server::RegisterRoutes() {
                               {"version", status.gogdl.version}}},
                   {"authenticated", status.authenticated},
                   {"login_url", gog::kLoginUrl}});
-  });
-
-  http_->Post("/v1/gog/setup", [this](const Request&, Response& res) {
-    auto releases = runner::ListReleases(config_, "gog");
-    if (!releases) return SendError(res, 502, releases.error());
-    if (releases->empty()) return SendError(res, 404, "no_release_found", "no matching gogdl release found");
-
-    const runner::ReleaseAsset asset = releases->front();
-    events_.Publish("gog.setup.started", {{"tag", asset.tag}});
-    std::thread([this, asset] {
-      if (auto installed = gog::InstallGogBinary(config_, asset); !installed) {
-        log::Error("gogdl install failed ({}): {}", asset.tag, installed.error().message);
-        events_.Publish("gog.setup.failed", {{"tag", asset.tag}, {"error", installed.error().message}});
-      } else {
-        log::Info("installed gogdl {}", asset.tag);
-        events_.Publish("gog.setup.finished", {{"tag", asset.tag}});
-      }
-    }).detach();
-
-    SendJson(res, {{"status", "downloading"}, {"tag", asset.tag}}, 202);
   });
 
   http_->Post("/v1/gog/auth", [this](const Request& req, Response& res) {
@@ -986,16 +961,6 @@ void Server::RegisterRoutes() {
     SendJson(res, {{"status", "logged_out"}});
   });
 
-  // Only looks under gog.install_root; gogdl can't list installed games.
-  http_->Post("/v1/gog/import", [this](const Request&, Response& res) {
-    gog::GogImporter importer(config_, games_, events_);
-    auto summary = importer.Import();
-    if (!summary) return SendError(res, 404, summary.error());
-    SyncDesktopEntries(config_, games_);
-    for (const model::Game& game : summary->added_games) metadata_fetches_.Enqueue(config_, events_, game);
-    SendJson(res, {{"added", summary->added}, {"updated", summary->updated}});
-  });
-
   // --- amazon -------------------------------------------------------------
 
   http_->Get("/v1/amazon/status", [this](const Request&, Response& res) {
@@ -1005,25 +970,6 @@ void Server::RegisterRoutes() {
                              {"path", status.nile.path},
                              {"version", status.nile.version}}},
                   {"authenticated", status.authenticated}});
-  });
-
-  http_->Post("/v1/amazon/setup", [this](const Request&, Response& res) {
-    auto releases = runner::ListReleases(config_, "amazon");
-    if (!releases) return SendError(res, 502, releases.error());
-    if (releases->empty()) return SendError(res, 404, "no_release_found", "no matching nile release found");
-
-    const runner::ReleaseAsset asset = releases->front();
-    events_.Publish("amazon.setup.started", {{"tag", asset.tag}});
-    std::thread([this, asset] {
-      if (auto installed = amazon::InstallNileBinary(config_, asset); !installed) {
-        log::Error("nile install failed ({}): {}", asset.tag, installed.error().message);
-        events_.Publish("amazon.setup.failed", {{"tag", asset.tag}, {"error", installed.error().message}});
-      } else {
-        log::Info("installed nile {}", asset.tag);
-        events_.Publish("amazon.setup.finished", {{"tag", asset.tag}});
-      }
-    }).detach();
-    SendJson(res, {{"status", "downloading"}, {"tag", asset.tag}}, 202);
   });
 
   http_->Post("/v1/amazon/login", [this](const Request&, Response& res) {
@@ -1050,14 +996,22 @@ void Server::RegisterRoutes() {
     SendJson(res, {{"status", "logged_out"}});
   });
 
-  http_->Post("/v1/amazon/import", [this](const Request&, Response& res) {
-    amazon::AmazonImporter importer(config_, games_, events_);
-    auto summary = importer.Import();
-    if (!summary) return SendError(res, 404, summary.error());
-    SyncDesktopEntries(config_, games_);
-    for (const model::Game& game : summary->added_games) metadata_fetches_.Enqueue(config_, events_, game);
-    SendJson(res, {{"added", summary->added}, {"updated", summary->updated}});
-  });
+  // POST <route> imports what the store's own tool reports as installed.
+  // gog only looks under gog.install_root, since gogdl can't list installed games.
+  const auto register_import = [this](const char* route, auto make_importer) {
+    http_->Post(route, [this, make_importer](const Request&, Response& res) {
+      auto importer = make_importer();
+      auto summary = importer.Import();
+      if (!summary) return SendError(res, 404, summary.error());
+      SyncDesktopEntries(config_, games_);
+      for (const model::Game& game : summary->added_games) metadata_fetches_.Enqueue(config_, events_, game);
+      SendJson(res, {{"added", summary->added}, {"updated", summary->updated}});
+    });
+  };
+  register_import("/v1/epic/import", [this] { return epic::EpicImporter(config_, games_, events_); });
+  register_import("/v1/gog/import", [this] { return gog::GogImporter(config_, games_, events_); });
+  register_import("/v1/amazon/import", [this] { return amazon::AmazonImporter(config_, games_, events_); });
+  register_import("/v1/itch/import", [this] { return itch::ItchImporter(config_, games_, events_); });
 
   // --- store launchers --------------------------------------------------
 
@@ -1149,26 +1103,6 @@ void Server::RegisterRoutes() {
                   {"login_url", itch::kApiKeysUrl}});
   });
 
-  http_->Post("/v1/itch/setup", [this](const Request&, Response& res) {
-    auto releases = runner::ListReleases(config_, "itch");
-    if (!releases) return SendError(res, 502, releases.error());
-    if (releases->empty()) return SendError(res, 404, "no_release_found", "no matching butler release found");
-
-    const runner::ReleaseAsset asset = releases->front();
-    events_.Publish("itch.setup.started", {{"tag", asset.tag}});
-    std::thread([this, asset] {
-      if (auto installed = itch::InstallButlerBinary(config_, asset); !installed) {
-        log::Error("butler install failed ({}): {}", asset.tag, installed.error().message);
-        events_.Publish("itch.setup.failed", {{"tag", asset.tag}, {"error", installed.error().message}});
-      } else {
-        log::Info("installed butler {}", asset.tag);
-        events_.Publish("itch.setup.finished", {{"tag", asset.tag}});
-      }
-    }).detach();
-
-    SendJson(res, {{"status", "downloading"}, {"tag", asset.tag}}, 202);
-  });
-
   http_->Post("/v1/itch/auth", [this](const Request& req, Response& res) {
     json body = json::parse(req.body, nullptr, false);
     if (body.is_discarded() || !body.contains("api_key") || !body["api_key"].is_string()) {
@@ -1185,15 +1119,6 @@ void Server::RegisterRoutes() {
       return SendError(res, 400, logged_out.error());
     }
     SendJson(res, {{"status", "logged_out"}});
-  });
-
-  http_->Post("/v1/itch/import", [this](const Request&, Response& res) {
-    itch::ItchImporter importer(config_, games_, events_);
-    auto summary = importer.Import();
-    if (!summary) return SendError(res, 404, summary.error());
-    SyncDesktopEntries(config_, games_);
-    for (const model::Game& game : summary->added_games) metadata_fetches_.Enqueue(config_, events_, game);
-    SendJson(res, {{"added", summary->added}, {"updated", summary->updated}});
   });
 
   // --- sources --------------------------------------------------------------
@@ -1266,7 +1191,12 @@ void Server::RegisterRoutes() {
   });
 
   http_->Delete(R"(/v1/itch/collections/(\d+))", [this](const Request& req, Response& res) {
-    SendResult(res, itch::RemoveCollection(config_, std::stoll(req.matches[1].str())));
+    std::int64_t id = 0;
+    const std::string digits = req.matches[1].str();
+    if (std::from_chars(digits.data(), digits.data() + digits.size(), id).ec != std::errc()) {
+      return SendError(res, 400, "invalid_id", "that collection id is out of range");
+    }
+    SendResult(res, itch::RemoveCollection(config_, id));
   });
 
   // --- humble -------------------------------------------------------------
@@ -1279,26 +1209,6 @@ void Server::RegisterRoutes() {
                                    {"version", status.humble_cli.version}}},
                   {"authenticated", status.authenticated},
                   {"login_url", humble::kLoginUrl}});
-  });
-
-  http_->Post("/v1/humble/setup", [this](const Request&, Response& res) {
-    auto releases = runner::ListReleases(config_, "humble");
-    if (!releases) return SendError(res, 502, releases.error());
-    if (releases->empty()) return SendError(res, 404, "no_release_found", "no matching humble-cli release found");
-
-    const runner::ReleaseAsset asset = releases->front();
-    events_.Publish("humble.setup.started", {{"tag", asset.tag}});
-    std::thread([this, asset] {
-      if (auto installed = humble::InstallHumbleCliBinary(config_, asset); !installed) {
-        log::Error("humble-cli install failed ({}): {}", asset.tag, installed.error().message);
-        events_.Publish("humble.setup.failed", {{"tag", asset.tag}, {"error", installed.error().message}});
-      } else {
-        log::Info("installed humble-cli {}", asset.tag);
-        events_.Publish("humble.setup.finished", {{"tag", asset.tag}});
-      }
-    }).detach();
-
-    SendJson(res, {{"status", "downloading"}, {"tag", asset.tag}}, 202);
   });
 
   http_->Post("/v1/humble/auth", [this](const Request& req, Response& res) {
@@ -1469,11 +1379,10 @@ void Server::RegisterRoutes() {
   });
 
   http_->Post("/v1/desktop-entries/import", [this](const Request& req, Response& res) {
-    json body = json::parse(req.body, nullptr, false);
-    if (body.is_discarded() || !body.contains("ids") || !body["ids"].is_array()) {
-      return SendError(res, 400, "invalid_body", R"(expected {"ids": ["..."]})");
-    }
-    const std::vector<std::string> ids = body["ids"];
+    const json body = json::parse(req.body, nullptr, false);
+    const auto listed = body.is_object() && body.contains("ids") ? StringList(body, "ids") : std::nullopt;
+    if (!listed) return SendError(res, 400, "invalid_body", R"(expected {"ids": ["..."]})");
+    const std::vector<std::string>& ids = *listed;
 
     desktop::DesktopEntryScanner scanner(config_, games_, events_);
     auto summary = scanner.Import(ids);
@@ -2169,7 +2078,7 @@ void Server::RegisterRoutes() {
       entry["label"] = runner::BuildLabel(build.kind, build.name);
       if (build.kind == "proton" || build.kind == "wine") {
         const std::filesystem::path dir = BuildDir(build);
-        entry["removable"] = IsInsideAny(dir, RunnerRoots(config_, build.kind));
+        entry["removable"] = paths::IsWithin(dir, RunnerRoots(config_, build.kind));
         const auto family = runner::FamilyOfBuild(config_, build.kind, build.name, dir.filename().string());
         entry["source"] = family ? family->id : "";
       }

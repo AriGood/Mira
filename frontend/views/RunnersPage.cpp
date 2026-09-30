@@ -143,6 +143,7 @@ RunnersPage::RunnersPage(DownloadTracker* downloads, QWidget* parent) : QWidget(
   catalog_actions_layout->setSpacing(8);
   source_ = new QComboBox(catalog_actions);
   source_->setToolTip("Where builds are downloaded from");
+  source_->setSizeAdjustPolicy(QComboBox::AdjustToContents);
   connect(source_, &QComboBox::activated, this, [this] { RefreshCatalog(); });
   catalog_actions_layout->addWidget(source_);
   auto* refresh = new QPushButton("Refresh", catalog_actions);

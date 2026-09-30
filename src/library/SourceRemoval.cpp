@@ -6,6 +6,7 @@
 
 #include "amazon/Nile.h"
 #include "core/Log.h"
+#include "core/Paths.h"
 #include "epic/Legendary.h"
 #include "gog/Gog.h"
 #include "itch/Butlerd.h"
@@ -121,15 +122,7 @@ Result<void> DeleteInside(const std::string& target, const std::vector<fs::path>
   std::error_code ec;
   const fs::path resolved = fs::weakly_canonical(target, ec);
   if (ec) return Err("path_error", ec.message());
-  const bool contained = std::ranges::any_of(roots, [&](const fs::path& root) {
-    std::error_code root_ec;
-    const fs::path canon_root = fs::weakly_canonical(root, root_ec);
-    if (root_ec || root.empty()) return false;
-    const auto [root_end, inside] =
-        std::mismatch(canon_root.begin(), canon_root.end(), resolved.begin());
-    return root_end == canon_root.end() && inside != resolved.end();
-  });
-  if (!contained)
+  if (!paths::IsWithin(resolved, roots))
     return Err("path_outside_root",
                std::format("\"{}\" isn't inside a Mira folder, so it was left alone", target));
   fs::remove_all(resolved, ec);

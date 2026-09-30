@@ -1,5 +1,7 @@
 #include "core/TomlJson.h"
 
+#include <sstream>
+
 namespace mira::tomljson {
 namespace {
 using nlohmann::json;
@@ -78,6 +80,12 @@ toml::table ToToml(const json& document) {
     // null values are omitted rather than written as an empty key.
   }
   return out;
+}
+
+std::string ToTomlText(const json& document) {
+  std::ostringstream text;
+  text << ToToml(document);
+  return text.str();
 }
 
 }  // namespace mira::tomljson

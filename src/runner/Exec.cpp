@@ -1,6 +1,7 @@
 #include "runner/Exec.h"
 
 #include <fcntl.h>
+#include <signal.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -44,6 +45,15 @@ std::optional<std::string> ResolveSiblingBinary(const std::filesystem::path& own
 }
 
 namespace {
+
+// mirad blocks SIGINT/SIGTERM on every thread (see mirad_main.cpp), and a
+// child inherits the forking thread's mask across exec. Unblocked in the
+// child so a game can be stopped with SIGTERM. Async-signal-safe.
+void UnblockSignals() {
+  sigset_t none;
+  sigemptyset(&none);
+  sigprocmask(SIG_SETMASK, &none, nullptr);
+}
 
 // Command.env is an overlay on the daemon's own environment, not a
 // replacement, so merge them for the child process.
@@ -94,6 +104,7 @@ Result<pid_t> SpawnDetached(const Command& command) {
     // a real launch is umu -> proton -> wine -> game.exe, and signalling just
     // the direct child leaves the actual game running.
     setpgid(0, 0);
+    UnblockSignals();
     if (!prepared.cwd.empty() && chdir(prepared.cwd.c_str()) != 0) _exit(127);
     execvpe(prepared.argv[0], prepared.argv.data(), prepared.envp.data());
     _exit(127);
@@ -121,6 +132,7 @@ Result<pid_t> SpawnDetachedWithStatus(const Command& command, int& status_read_f
     // plain CLI flag (--status-fd 3) rather than needing to inherit an
     // unpredictable fd number.
     setpgid(0, 0);
+    UnblockSignals();
     dup2(pipe_fds[1], 3);
     close(pipe_fds[0]);
     if (pipe_fds[1] != 3) close(pipe_fds[1]);
@@ -171,6 +183,7 @@ Result<ExecResult> RunAndWait(const Command& command, const OutputFn& on_output)
     // Child: async-signal-safe calls only from here down. dup2 clears
     // O_CLOEXEC on the copies, so stdout/stderr survive exec while the
     // originals close themselves.
+    UnblockSignals();
     dup2(pipe_fds[1], STDOUT_FILENO);
     dup2(pipe_fds[1], STDERR_FILENO);
     if (!cwd.empty() && chdir(cwd.c_str()) != 0) _exit(127);

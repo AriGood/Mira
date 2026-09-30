@@ -33,33 +33,14 @@ Result<Source> SourceFor(const config::Config& config, const std::string& kind) 
     const RunnerFamily family = Families(config, kind).front();
     return Source{.repo = family.repo, .asset_pattern = family.asset_pattern, .exclude = family.exclude};
   }
-  // Not a runner kind: Legendary is the Epic Games Store CLI client
-  // (see src/epic/Legendary.h), but it shares the same "list a GitHub
-  // repo's releases, filter assets by glob" shape, so it reuses ListReleases
-  // rather than duplicating the GitHub API call.
-  if (kind == "legendary") {
-    return Source{.repo = config.GetString("runner_sources.legendary.repo"),
-                 .asset_pattern = config.GetString("runner_sources.legendary.asset_pattern"),
-                  .exclude = {}};
-  }
-  if (kind == "gog") {
-    return Source{.repo = config.GetString("runner_sources.gog.repo"),
-                 .asset_pattern = config.GetString("runner_sources.gog.asset_pattern"),
-                  .exclude = {}};
-  }
-  if (kind == "itch") {
-    return Source{.repo = config.GetString("runner_sources.itch.repo"),
-                 .asset_pattern = config.GetString("runner_sources.itch.asset_pattern"),
-                  .exclude = {}};
-  }
-  if (kind == "amazon") {
-    return Source{.repo = config.GetString("runner_sources.amazon.repo"),
-                 .asset_pattern = config.GetString("runner_sources.amazon.asset_pattern"),
-                  .exclude = {}};
-  }
-  if (kind == "humble") {
-    return Source{.repo = config.GetString("runner_sources.humble.repo"),
-                 .asset_pattern = config.GetString("runner_sources.humble.asset_pattern"),
+  // Not a runner kind: the store CLIs (legendary, gogdl, butler, nile,
+  // humble-cli) share the same "list a GitHub repo's releases, filter assets
+  // by glob" shape, so they reuse ListReleases rather than duplicating the
+  // GitHub API call. Each one's repo and pattern are settings.
+  if (kind == "legendary" || kind == "gog" || kind == "itch" || kind == "amazon" || kind == "humble") {
+    const std::string prefix = "runner_sources." + kind;
+    return Source{.repo = config.GetString(prefix + ".repo"),
+                  .asset_pattern = config.GetString(prefix + ".asset_pattern"),
                   .exclude = {}};
   }
   if (kind == "umu") {
@@ -157,7 +138,8 @@ Result<std::vector<ReleaseAsset>> FetchReleases(const std::string& repo, const s
 Result<void> DownloadVerified(const ReleaseAsset& asset, const fs::path& target) {
   std::error_code ec;
   Command download;
-  download.argv = {"curl", "-sSL", "-o", target.string(), asset.download_url};
+  // -f: an HTTP error must fail here, not get saved as the "archive".
+  download.argv = {"curl", "-sSLf", "-o", target.string(), asset.download_url};
   if (Result<ExecResult> result = RunAndWait(download); !result || result->exit_code != 0) {
     fs::remove(target, ec);
     return Err("download_failed",
@@ -175,7 +157,7 @@ Result<void> DownloadVerified(const ReleaseAsset& asset, const fs::path& target)
   const fs::path checksum_file =
       target.parent_path() / (asset.asset_name + (asset.checksum_is_sha256 ? ".sha256sum" : ".sha512sum"));
   Command fetch_checksum;
-  fetch_checksum.argv = {"curl", "-sSL", "-o", checksum_file.string(), asset.checksum_url};
+  fetch_checksum.argv = {"curl", "-sSLf", "-o", checksum_file.string(), asset.checksum_url};
   if (Result<ExecResult> result = RunAndWait(fetch_checksum); !result || result->exit_code != 0) {
     fs::remove(target, ec);
     fs::remove(checksum_file, ec);

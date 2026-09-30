@@ -18,6 +18,11 @@ QLabel[role="heading"] {
   font-weight: 600;
 }
 
+/* Muted color at the label's own size, for text inside a control. */
+QLabel[role="subtle"] {
+  color: @text_muted;
+}
+
 QLabel[role="section"] {
   font-weight: 600;
 }
@@ -88,7 +93,7 @@ QWidget#top_bar QToolButton#close_button:hover {
 /* --- Filter/sort pill, its popover, and the sidebar's icon-button tools -- */
 
 QWidget#filter_sort_button {
-  background: @surface_alt;
+  background: @surface;
   border: 1px solid @border;
   border-radius: @radius_control;
 }

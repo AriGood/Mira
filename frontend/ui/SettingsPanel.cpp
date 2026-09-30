@@ -92,6 +92,7 @@ QSpinBox* SettingsPanel::AddCount(QFormLayout* form, const QString& label, const
   spin->setRange(minimum, maximum);
   if (minimum == 0) spin->setSpecialValueText("Off");
   spin->setValue(fallback);
+  spin->setMaximumWidth(120);  // a count, not a text field
   form->addRow(LabelWithHelp(label, tip, form->parentWidget()), spin);
   nav_->RegisterRow(form, spin, search);
   counts_.push_back({spin, member, fallback, fallback});
@@ -147,9 +148,7 @@ void SettingsPanel::BuildInterfaceGroup() {
   AddToggle(form, "Drag to Select Games", "Drag across the library to select several games at once.",
             "drag to select rubber band multiple", &FrontendPrefs::drag_select, true);
 
-  auto* library = new QLabel("Library", box);
-  library->setProperty("role", "section");
-  form->addRow(library);
+  nav_->AddSubheading(form, "Library");
   AddToggle(form, "Filter Tabs", "Tabs above the grid for All, Installed, Playing now and the other filters.",
             "library filter tabs chips", &FrontendPrefs::library_filter_tabs, true);
   AddToggle(form, "Continue Playing", "Large cards for running and recently played games above the grid.",

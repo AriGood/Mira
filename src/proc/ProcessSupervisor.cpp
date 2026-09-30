@@ -188,13 +188,28 @@ ProcessSupervisor::~ProcessSupervisor() {
   // Games are deliberately left running: quitting the daemon shouldn't kill
   // what the player is playing. The watchers just stop watching.
   std::map<std::string, std::thread> watchers;
+  std::vector<std::thread> retired;
   {
     std::lock_guard lock(mutex_);
     watchers.swap(watchers_);
+    retired.swap(retired_);
   }
   for (auto& [id, thread] : watchers) {
     if (thread.joinable()) thread.join();
   }
+  for (std::thread& thread : retired) {
+    if (thread.joinable()) thread.join();
+  }
+}
+
+void ProcessSupervisor::AdoptWatcher(const std::string& game_id, std::thread watcher) {
+  // The previous watcher for this id has erased itself from running_, but may
+  // still be recording its exit, so it is kept to be joined, not detached.
+  if (auto stale = watchers_.find(game_id); stale != watchers_.end()) {
+    if (stale->second.joinable()) retired_.push_back(std::move(stale->second));
+    watchers_.erase(stale);
+  }
+  watchers_[game_id] = std::move(watcher);
 }
 
 Result<void> ProcessSupervisor::Launch(const model::Game& game, const Command& command,
@@ -214,15 +229,8 @@ Result<void> ProcessSupervisor::Launch(const model::Game& game, const Command& c
     std::lock_guard lock(mutex_);
     running_[game.id] = *pid;
     prefixes_[game.id] = game.data_dir;  // for Stop(), see FindPrefixProcesses
-    // A previous watcher for this id has already finished by now (it erases
-    // itself from running_ before exiting), but its thread object can still
-    // be sitting here unjoined.
-    if (auto stale = watchers_.find(game.id); stale != watchers_.end()) {
-      if (stale->second.joinable()) stale->second.detach();
-      watchers_.erase(stale);
-    }
-    watchers_[game.id] =
-        std::thread(&ProcessSupervisor::Watch, this, game.id, *pid, started_at, std::move(post_script));
+    AdoptWatcher(game.id,
+                 std::thread(&ProcessSupervisor::Watch, this, game.id, *pid, started_at, std::move(post_script)));
   }
 
   // Written now, not at exit: this is "when you last started playing", and
@@ -255,12 +263,8 @@ Result<void> ProcessSupervisor::LaunchWrapped(const model::Game& game, pid_t wra
     // so Stop()'s kill(-pid) reaches mira-run and the game together.
     running_[game.id] = wrapper_pid;
     prefixes_[game.id] = game.data_dir;
-    if (auto stale = watchers_.find(game.id); stale != watchers_.end()) {
-      if (stale->second.joinable()) stale->second.detach();
-      watchers_.erase(stale);
-    }
-    watchers_[game.id] =
-        std::thread(&ProcessSupervisor::WatchWrapped, this, game.id, wrapper_pid, std::move(session_path));
+    AdoptWatcher(game.id,
+                 std::thread(&ProcessSupervisor::WatchWrapped, this, game.id, wrapper_pid, std::move(session_path)));
   }
 
   const std::int64_t started_at = model::NowSeconds();
@@ -432,12 +436,11 @@ void ProcessSupervisor::WatchWrapped(std::string game_id, pid_t wrapper_pid,
   // WNOHANG, not a blocking wait: no playtime checkpointing needed (the
   // session record already survives mirad dying), but Stop()'s SIGKILL
   // escalation via kill_deadlines_ still needs servicing, which a blocking
-  // waitpid() would never notice. No early return on stopping_ either:
-  // mira-run outlives this thread regardless, so quitting mirad shouldn't
-  // stop watching it -- on shutdown this thread is just detached (see the
-  // destructor) and the OS reaps mira-run once it exits.
+  // waitpid() would never notice. On shutdown this returns at once: mira-run
+  // outlives mirad and its session record is picked up by Reconcile() on the
+  // next start.
   int status = 0;
-  while (true) {
+  while (!stopping_.load(std::memory_order_relaxed)) {
     const pid_t waited = ::waitpid(wrapper_pid, &status, WNOHANG);
     if (waited == wrapper_pid) break;
     if (waited < 0 && errno != EINTR) break;  // wrapper_pid vanished; treat as exited
@@ -454,6 +457,7 @@ void ProcessSupervisor::WatchWrapped(std::string game_id, pid_t wrapper_pid,
     }
     std::this_thread::sleep_for(kPollInterval);
   }
+  if (stopping_.load(std::memory_order_relaxed)) return;  // daemon going away
 
   auto record = ReadSessionRecord(session_path);
   {
@@ -529,9 +533,10 @@ void ProcessSupervisor::FinalizeWrappedSession(const std::string& game_id, const
 void ProcessSupervisor::WatchReconciledLive(std::string game_id, pid_t wrapper_pid,
                                             std::filesystem::path session_path) {
   // Not this mirad's child, so waitpid() can't work -- poll liveness instead.
-  while (::kill(wrapper_pid, 0) == 0) {
+  while (!stopping_.load(std::memory_order_relaxed) && ::kill(wrapper_pid, 0) == 0) {
     std::this_thread::sleep_for(kPollInterval);
   }
+  if (stopping_.load(std::memory_order_relaxed)) return;  // daemon going away
 
   auto record = ReadSessionRecord(session_path);
   {
@@ -584,8 +589,8 @@ void ProcessSupervisor::Reconcile(const std::filesystem::path& sessions_dir) {
       log::Info("re-adopting live session for {} (mira-run pid {})", record->game_id, record->wrapper_pid);
       std::lock_guard lock(mutex_);
       running_[record->game_id] = record->wrapper_pid;
-      watchers_[record->game_id] = std::thread(&ProcessSupervisor::WatchReconciledLive, this, record->game_id,
-                                               record->wrapper_pid, path);
+      AdoptWatcher(record->game_id, std::thread(&ProcessSupervisor::WatchReconciledLive, this, record->game_id,
+                                                record->wrapper_pid, path));
     } else {
       log::Warn("session for {} was left behind by a mira-run (pid {}) that's no longer running; closing it out "
                "as incomplete",
@@ -631,12 +636,8 @@ Result<void> ProcessSupervisor::TrackExternal(const model::Game& game, ExternalM
     // Stop()'s guard below) so it's unambiguous as "not confirmed yet".
     running_[game.id] = 0;
     external_[game.id] = match;  // for Stop()/WatchExternal()'s kill escalation
-    if (auto stale = watchers_.find(game.id); stale != watchers_.end()) {
-      if (stale->second.joinable()) stale->second.detach();
-      watchers_.erase(stale);
-    }
-    watchers_[game.id] = std::thread(&ProcessSupervisor::WatchExternal, this, game.id, std::move(match),
-                                     model::NowSeconds(), std::move(post_script));
+    AdoptWatcher(game.id, std::thread(&ProcessSupervisor::WatchExternal, this, game.id, std::move(match),
+                                      model::NowSeconds(), std::move(post_script)));
   }
   return {};
 }

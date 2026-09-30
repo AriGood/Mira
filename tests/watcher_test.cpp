@@ -229,7 +229,7 @@ TEST_CASE("Watcher never extracts or scans anything under a configured runner_se
   // A runner build being downloaded (runner/Downloader.cpp, its own
   // separate tar) into runner_search_paths must never also be treated as a
   // droppable archive or a new game folder here -- see Watcher.cpp's
-  // IsUnderAnyRoot for why. This is a real, if unusual, config: nothing
+  // paths::IsWithin for why. This is a real, if unusual, config: nothing
   // stops library_roots from overlapping runner_search_paths.
   const fs::path root = TempDir("watch-runner-overlap-root");
   const fs::path state = TempDir("watch-runner-overlap-state");

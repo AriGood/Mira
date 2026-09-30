@@ -9,6 +9,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include "api/EventBus.h"
 #include "core/Command.h"
@@ -92,6 +93,8 @@ public:
   bool IsRunning(const std::string& game_id) const;
 
 private:
+  // Registers `watcher` for `game_id`; mutex_ must be held.
+  void AdoptWatcher(const std::string& game_id, std::thread watcher);
   void Watch(std::string game_id, pid_t pid, std::int64_t started_at, std::string post_script);
   void WatchWrapped(std::string game_id, pid_t wrapper_pid, std::filesystem::path session_path);
   void WatchReconciledLive(std::string game_id, pid_t wrapper_pid, std::filesystem::path session_path);
@@ -112,6 +115,8 @@ private:
   std::map<std::string, std::int64_t> kill_deadlines_;  // game id -> when to SIGKILL
   std::set<std::string> stop_requested_;  // Stop() was called; the exit isn't a crash
   std::map<std::string, std::thread> watchers_;
+  // Watchers replaced by a relaunch of the same game; joined at destruction.
+  std::vector<std::thread> retired_;
   std::atomic<bool> stopping_{false};
 };
 

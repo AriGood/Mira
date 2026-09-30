@@ -1451,7 +1451,8 @@ QWidget* LibraryWindow::BuildLibraryHeader() {
   pill->setObjectName("filter_sort_button");
   filter_sort_button_ = pill;
   auto* pill_layout = new QHBoxLayout(pill);
-  pill_layout->setContentsMargins(8, 6, 8, 6);
+  pill->setFixedHeight(mira_gui::TabRow::kControlHeight);
+  pill_layout->setContentsMargins(8, 0, 8, 0);
   pill_layout->setSpacing(6);
   filter_icon_ = new QLabel(pill);
   pill_layout->addWidget(filter_icon_);
@@ -1464,7 +1465,7 @@ QWidget* LibraryWindow::BuildLibraryHeader() {
   sort_icon_ = new QLabel(pill);
   pill_layout->addWidget(sort_icon_);
   sort_summary_label_ = new QLabel(pill);
-  sort_summary_label_->setProperty("role", "muted");
+  sort_summary_label_->setProperty("role", "subtle");
   pill_layout->addWidget(sort_summary_label_);
   filter_sort_chevron_ = new QLabel(pill);
   pill_layout->addWidget(filter_sort_chevron_);
@@ -1479,7 +1480,7 @@ QWidget* LibraryWindow::BuildLibraryHeader() {
   search_->setObjectName("library_search");
   search_->setPlaceholderText("Search…");
   search_->setClearButtonEnabled(true);
-  search_->setFixedWidth(240);
+  search_->setFixedSize(240, mira_gui::TabRow::kControlHeight);
   connect(search_, &QLineEdit::textChanged, this, [this] { ApplyFilter(); });
   library_tabs_->SetTrailing(search_);
   layout->addWidget(library_tabs_);
@@ -1891,6 +1892,15 @@ void LibraryWindow::ApplyFilter() {
   RefreshContinue();
 }
 
+void LibraryWindow::ScheduleApplyFilter() {
+  if (filter_timer_ == nullptr) {
+    filter_timer_ = new QTimer(this);
+    filter_timer_->setSingleShot(true);
+    connect(filter_timer_, &QTimer::timeout, this, [this] { ApplyFilter(); });
+  }
+  if (!filter_timer_->isActive()) filter_timer_->start(0);
+}
+
 void LibraryWindow::FillTile(QListWidgetItem* item, const mira_gui::GameSummary& game) {
   item->setData(mira_gui::GameTileDelegate::NameRole, QString::fromStdString(game.name));
   item->setData(mira_gui::GameTileDelegate::StatusRole, QString::fromStdString(game.status));
@@ -1922,7 +1932,7 @@ void LibraryWindow::UpsertGames(const std::vector<mira_gui::GameSummary>& games)
       games_.push_back(game);
     }
   }
-  ApplyFilter();
+  ScheduleApplyFilter();
 }
 
 void LibraryWindow::RemoveGame(const std::string& id) { RemoveGames({id}); }
@@ -1930,7 +1940,7 @@ void LibraryWindow::RemoveGame(const std::string& id) { RemoveGames({id}); }
 void LibraryWindow::RemoveGames(const std::vector<std::string>& ids) {
   std::erase_if(games_, [&](const mira_gui::GameSummary& game) { return std::ranges::contains(ids, game.id); });
   if (std::ranges::contains(ids, selected_id_)) selected_id_.clear();
-  ApplyFilter();
+  ScheduleApplyFilter();
 }
 
 void LibraryWindow::SelectionChanged() {
@@ -2413,6 +2423,13 @@ void LibraryWindow::UpdateLibraryNavActive() {
   if (grid_view_button_ != nullptr) {
     grid_view_button_->setChecked(!classic_active);
     table_view_button_->setChecked(classic_active);
+  }
+  // Only the pages they act on show the view toggle and tile size.
+  if (view_toggle_ != nullptr && zoom_ != nullptr) {
+    const bool source_shown = content_stack_->currentWidget() == splitter_ && source_page_ != nullptr &&
+                              main_stack_->currentWidget() == source_page_;
+    view_toggle_->setVisible(GridShown() || classic_active);
+    zoom_->setVisible(GridShown() || classic_active || source_shown);
   }
   const QString open_source = content_stack_->currentWidget() == splitter_ && source_page_ != nullptr
                                   ? source_page_->property("source_id").toString()
@@ -3451,7 +3468,7 @@ void LibraryWindow::HandleGameEvent(const std::string& type, const std::string& 
     } else if (install.state == "finished") {
       mira_gui::notify::Notice(this, name + " is installed.");
     }
-    ApplyFilter();
+    ScheduleApplyFilter();
     return;
   }
 

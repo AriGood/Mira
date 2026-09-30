@@ -62,6 +62,7 @@ ItchImporter::ItchImporter(config::Config& config, store::GameStore& games, api:
     : config_(config), games_(games), events_(events) {}
 
 Result<ItchImportSummary> ItchImporter::Import() {
+  const auto batch = games_.BatchSaves();
   ItchImportSummary summary;
   if (!config_.GetBool("itch.enabled")) return summary;
 

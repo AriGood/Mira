@@ -302,6 +302,7 @@ Result<std::vector<DesktopEntryCandidate>> DesktopEntryScanner::ListCandidates()
 }
 
 Result<DesktopEntryImportSummary> DesktopEntryScanner::Import(const std::vector<std::string>& ids) {
+  const auto batch = games_.BatchSaves();
   if (!config_.GetBool("desktop_import.enabled")) {
     return Err("desktop_import_disabled", "desktop_import.enabled is off");
   }
