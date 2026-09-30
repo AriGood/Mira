@@ -149,6 +149,35 @@ TEST_CASE("SelectArtwork replaces the metadata file whole, leaving nothing besid
   CHECK(files == 1);
 }
 
+TEST_CASE("A refresh keeps art the user picked by hand") {
+  const fs::path dir = TempDir("metadata-refresh-keeps-chosen");
+  config::Config config(dir / "settings.toml");
+  config.Load();
+  REQUIRE(config.Set("metadata.steam_art_by_name", false).has_value());  // keeps Fetch offline
+
+  const fs::path image = dir / "picked.png";
+  std::ofstream(image, std::ios::binary) << "\x89PNG picked";
+  const fs::path metadata_file = metadata::MetadataFile(config, "celeste");
+  fs::create_directories(metadata_file.parent_path());
+  std::ofstream(metadata_file) << nlohmann::json{
+      {"art_candidates", {{"cover", nlohmann::json::array({{{"id", 5}, {"url", "file://" + image.string()}}})}}},
+  }.dump();
+  REQUIRE(metadata::SelectArtwork(config, "celeste", "cover", 5).has_value());
+
+  model::Game game;
+  game.id = "celeste";
+  game.name = "Celeste";
+  REQUIRE(metadata::Fetch(config, game).has_value());
+
+  std::ifstream in(metadata_file);
+  const nlohmann::json info = nlohmann::json::parse(in, nullptr, false);
+  CHECK(info["artwork"].value("candidate_id", 0) == 5);
+  std::ifstream cover(metadata::ArtworkDir(config, "celeste") / info["artwork"].value("file", std::string()),
+                      std::ios::binary);
+  const std::string bytes((std::istreambuf_iterator<char>(cover)), std::istreambuf_iterator<char>());
+  CHECK(bytes == "\x89PNG picked");
+}
+
 TEST_CASE("SelectArtwork that fails to download keeps the slot's current image") {
   const fs::path dir = TempDir("metadata-select-keeps");
   config::Config config(dir / "settings.toml");

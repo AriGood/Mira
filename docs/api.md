@@ -460,13 +460,13 @@ With a key, SteamGridDB also adds alternates for every game in `art_candidates`,
 New games are fetched when first added, through a queue of three workers. Tracked games go before store titles. `metadata.enabled` turns automatic fetching off.
 
 ### `GET /v1/games/{id}/metadata`
-The cached JSON: `source`, `fetched_at`, and whichever of `steam`, `steam_reviews`, `protondb`, `artwork` (the cover), `hero`, `capsule`, `header`, `logo` and `icon` were found. Art entries look like `{"file", "content_type", "source", "candidate_id"?}`. `art_candidates` maps each slot to `[{"id", "url", "thumb", "width", "height", "style", "nsfw"}]`; adult art is only listed with `steamgriddb.nsfw` on and is never picked by default. `404` when nothing is cached.
+The cached JSON: `source`, `fetched_at`, and whichever of `steam`, `steam_reviews`, `epic`, `protondb`, `artwork` (the cover), `hero`, `capsule`, `header`, `logo` and `icon` were found. Art entries look like `{"file", "content_type", "source", "candidate_id"?, "chosen"?}`; `chosen` marks a slot the user picked. `art_candidates` maps each slot to `[{"id", "url", "thumb", "width", "height", "style", "nsfw"}]`; adult art is only listed with `steamgriddb.nsfw` on and is never picked by default. `404` when nothing is cached.
 
 ### `GET /v1/games/{id}/artwork?type=`
 The cached image for a slot (`cover` by default). `404` if that slot isn't cached.
 
 ### `POST /v1/games/{id}/artwork?type=`
-Body `{"candidate_id": <id>}`. Switches a slot to a cached candidate. Only candidate ids are accepted, never URLs. Events: `game.artwork_selected`/`artwork_select_failed`.
+Body `{"candidate_id": <id>}`. Switches a slot to a cached candidate. Only candidate ids are accepted, never URLs. A metadata refresh keeps the pick; picking again is the only way to change it. Events: `game.artwork_selected`/`artwork_select_failed`.
 
 ### `POST /v1/games/{id}/artwork/candidates?type=&page=&request=`
 Fetches one page (50) of SteamGridDB art for a slot, starting at page 0, and adds it to `art_candidates`. Event: `game.artwork_candidates_ready` with `{id, type, page, request, total, candidates}`, or `code` and `error` (`no_steamgriddb_key`, `no_steamgriddb_match`, `steamgriddb_unreachable`). `request` is echoed back so a caller can match its answer.
