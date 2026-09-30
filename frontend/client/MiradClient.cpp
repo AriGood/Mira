@@ -416,6 +416,7 @@ PatchConfigResult SaveFrontendPrefsSync(const FrontendPrefs& prefs) {
   if (prefs.source_page_tabs) table["source_page_tabs"] = *prefs.source_page_tabs;
   if (prefs.tile_size_synced) table["tile_size_synced"] = *prefs.tile_size_synced;
   if (prefs.source_tile_widths) table["source_tile_widths"] = *prefs.source_tile_widths;
+  for (const std::string& key : prefs.clear) table[key] = nullptr;  // merge-patch: null deletes
 
   // Short, because SaveFrontendPrefsBlocking runs this on the UI thread
   // while a window is closing.

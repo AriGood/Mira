@@ -52,7 +52,7 @@ Every setting in display order:
 `category` is the settings section and `group` changes where a divider goes. `scope` is `per_game` when a game can override the setting and `game_only` when it only exists per game. Optional fields, present only when they apply: `game_doc` (help text for a game's own settings, used instead of `doc`), `one_of` (enum values), `minimum`/`maximum`, `is_secret` (mask the value), `is_runner_ref` (offer a runner picker), `link` (a web page where the user gets the value, e.g. an API key page) and `keywords` (extra search terms such as abbreviations, space-separated).
 
 ### `PATCH /v1/config`
-Sets any subset of settings, nested like `GET /v1/config`, plus an optional `frontend` key. The whole patch is validated first; one bad value means nothing is applied.
+Sets any subset of settings, nested like `GET /v1/config`, plus an optional `frontend` key, merged into `frontend.toml` as a JSON merge patch (a `null` value deletes that key). The whole patch is validated first; one bad value means nothing is applied.
 
 ### `POST /v1/config/reset[?key=<dotted.key>]`
 Resets one key, or everything when `key` is left out.
@@ -73,9 +73,11 @@ Lists games, optionally filtered by `status` (`setting_up`, `ready`, `broken`, `
   "source": "scan", "exe_path": "Celeste", "args": "", "working_dir": "", "runner_ref": "",
   "data_dir": "", "runner_config": {}, "overrides": {}, "last_error": "",
   "created_at": 0, "updated_at": 0, "last_played_at": null, "play_seconds": 0,
-  "env": {}, "candidates": [], "tags": []
+  "env": {}, "candidates": [], "tags": [], "running": false
 }
 ```
+
+- `running` is whether Mira is tracking a process for the game right now. Every game record the API returns or an event carries has it.
 
 - `confidence` and `reviewed` let a client surface games nobody has checked since detection.
 - `candidates` lists every executable the detector considered.

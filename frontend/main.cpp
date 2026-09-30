@@ -23,7 +23,7 @@ namespace {
 
 // Theme, shape overrides and shortcut overrides from frontend.toml.
 void ApplyAppearance(const mira_gui::FrontendPrefs& prefs) {
-  // Negative is how frontend.toml spells "leave it to the theme".
+  // Unset leaves it to the theme; a negative value is how older builds wrote that.
   const auto shape = [](const std::optional<int>& pref) -> std::optional<int> {
     if (pref && *pref >= 0) return pref;
     return std::nullopt;

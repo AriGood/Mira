@@ -5,6 +5,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -57,7 +58,17 @@ public:
   // The newest event's id, or 0 with none buffered: where a replay ends.
   std::int64_t LatestId() const;
 
+  // Runs on every game record an event carries (game.added, game.updated,
+  // each of games.updated's), whoever published it, so every record comes
+  // out the same shape. Empty clears it.
+  void SetGameRecordHook(std::function<void(nlohmann::json& game)> hook);
+
 private:
+  // Fills `running` on the game records in `payload`, as SetGameRecordHook says.
+  void DecorateGames(const std::string& type, nlohmann::json& payload);
+
+  std::mutex hook_mutex_;
+  std::function<void(nlohmann::json& game)> game_hook_;
   mutable std::mutex mutex_;
   std::condition_variable cv_;
   std::deque<model::Event> events_;

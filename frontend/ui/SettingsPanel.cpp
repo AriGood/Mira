@@ -536,13 +536,19 @@ void SettingsPanel::Save() {
     prefs.hidden_sources = std::move(hidden_ids);
     hidden_sources_original_ = hidden;
     prefs.theme = theme_name.toStdString();
-    // Always written, including the -1 that means "theme default": the key
-    // has to be able to go back to unset, and a merge-patch cannot drop one.
-    prefs.tile_spacing = tile_spacing_.spin->value();
-    prefs.grid_margin = grid_margin_.spin->value();
-    prefs.tile_radius = tile_radius_.spin->value();
-    prefs.panel_radius = panel_radius_.spin->value();
-    prefs.control_radius = control_radius_.spin->value();
+    // The spin box's -1 is "theme default": deleted from the file, not stored.
+    const auto store = [&prefs](const ShapeField& field, std::optional<int>& out, const char* key) {
+      if (field.spin->value() < 0) {
+        prefs.clear.push_back(key);
+      } else {
+        out = field.spin->value();
+      }
+    };
+    store(tile_spacing_, prefs.tile_spacing, "tile_spacing");
+    store(grid_margin_, prefs.grid_margin, "grid_margin");
+    store(tile_radius_, prefs.tile_radius, "tile_radius");
+    store(panel_radius_, prefs.panel_radius, "panel_radius");
+    store(control_radius_, prefs.control_radius, "control_radius");
     for (ShapeField* field :
          {&tile_spacing_, &grid_margin_, &tile_radius_, &panel_radius_, &control_radius_}) {
       field->original = field->spin->value();

@@ -425,9 +425,14 @@ Server::Server(config::Config& config, store::GameStore& games, EventBus& events
       games_(games),
       events_(events),
       http_(std::make_unique<httplib::Server>()),
-      supervisor_(games, events, config.GetInt("launch.stop_timeout_s")) {}
+      supervisor_(games, events, config.GetInt("launch.stop_timeout_s")) {
+  // Importers and the scanner publish bare records; this makes every game
+  // event say whether the game is running, the same as GET /v1/games.
+  events_.SetGameRecordHook([this](json& game) { game["running"] = supervisor_.IsRunning(game.value("id", "")); });
+}
 
 Server::~Server() {
+  events_.SetGameRecordHook(nullptr);
   stopping_.store(true, std::memory_order_relaxed);
   if (external_watch_.joinable()) external_watch_.join();
 }

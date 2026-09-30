@@ -651,6 +651,9 @@ struct FrontendPrefs {
   // Synced: every page uses tile_width.
   std::optional<std::map<std::string, int>> source_tile_widths;
   std::optional<bool> tile_size_synced;
+  // Keys to delete from frontend.toml on save (sent as null), so they read
+  // as unset again, e.g. a shape override going back to the theme's.
+  std::vector<std::string> clear;
 };
 
 struct FrontendPrefsResult {

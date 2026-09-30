@@ -992,3 +992,22 @@ TEST_CASE("GET /v1/games/{id}/installer describes a hand-picked file; progress i
   REQUIRE(res != nullptr);
   CHECK(nlohmann::json::parse(res->body).value("state", "") == "idle");
 }
+
+TEST_CASE("PATCH /v1/config merges the frontend table, and a null deletes that key") {
+  LiveServer server(TempDir("server-frontend-patch"));
+  httplib::Client client = server.Client();
+
+  auto set = client.Patch("/v1/config", R"({"frontend": {"tile_radius": 4, "theme": "mira-dark"}})",
+                          "application/json");
+  REQUIRE(set != nullptr);
+  REQUIRE(set->status == 200);
+  auto cleared = client.Patch("/v1/config", R"({"frontend": {"tile_radius": null}})", "application/json");
+  REQUIRE(cleared != nullptr);
+  REQUIRE(cleared->status == 200);
+
+  auto config = client.Get("/v1/config");
+  REQUIRE(config != nullptr);
+  const nlohmann::json frontend = nlohmann::json::parse(config->body)["frontend"];
+  CHECK_FALSE(frontend.contains("tile_radius"));
+  CHECK(frontend.value("theme", "") == "mira-dark");
+}
