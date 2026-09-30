@@ -25,7 +25,8 @@ namespace mira_gui {
 //  - **Ask once.** An id that has answered, either way, isn't asked again
 //    until something invalidates it.
 //  - **At most `kMaxInFlight` at a time.** Every request is a thread and a
-//    socket; a 500-game library would otherwise open 500 of both at once.
+//    socket, and decodes its image there; a 500-game library would
+//    otherwise open 500 of both at once.
 //  - **Keep the original, scale on demand.** The zoom slider changes tile
 //    size constantly; re-decoding or re-fetching per step would be absurd.
 //
@@ -74,7 +75,8 @@ public:
 
   // The same, for every game at once. For a theme change: a generated
   // placeholder is drawn in the theme's colors (see ui/CoverArt), so all of
-  // them are stale even though the fetched artwork is not.
+  // them are stale even though the fetched artwork is not. Also for a new
+  // tile size, so the old size's copies don't pile up.
   void InvalidateAllRenderings();
 
 signals:
@@ -87,7 +89,7 @@ private:
   void Request(const QString& id);
   void Pump();
 
-  static constexpr int kMaxInFlight = 4;
+  static constexpr int kMaxInFlight = 8;
 
   QHash<QString, QPixmap> original_;  // by id, at whatever size mirad sent
   QHash<QString, QPixmap> scaled_;    // by "id@tile_width"

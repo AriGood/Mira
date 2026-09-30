@@ -59,8 +59,10 @@ void Paint(QWidget* widget) {
 QPoint Place(const QRect& anchor, QSize size, bool beside) {
   QScreen* screen = QGuiApplication::screenAt(anchor.center());
   if (screen == nullptr) screen = QGuiApplication::primaryScreen();
-  const QRect area = screen != nullptr ? screen->availableGeometry() : QRect(anchor.topLeft(), size);
+  return Place(anchor, size, beside, screen != nullptr ? screen->availableGeometry() : QRect(anchor.topLeft(), size));
+}
 
+QPoint Place(const QRect& anchor, QSize size, bool beside, const QRect& area) {
   QPoint pos;
   if (beside) {
     pos = QPoint(anchor.right() + 1 + kGap, anchor.top());
@@ -94,11 +96,12 @@ void HoverDwell::Forget() {
   last_ = nullptr;
 }
 
-HoverCard::HoverCard(QWidget* parent) : QWidget(parent) {
-  // ToolTip: never takes focus or activation, never shows in a taskbar.
-  setWindowFlags(Qt::ToolTip | Qt::FramelessWindowHint);
-  setAttribute(Qt::WA_TranslucentBackground);
-  setAttribute(Qt::WA_ShowWithoutActivating);
+HoverCard::HoverCard(QWidget* parent) : QWidget(parent != nullptr ? parent->window() : nullptr) {
+  // A child of the window, not a tooltip window of its own: a separate
+  // window swallowed clicks meant for the grid beside it while it showed.
+  // It never takes a click itself; what's under it does.
+  setAttribute(Qt::WA_TransparentForMouseEvents);
+  hide();
 
   auto* layout = new QVBoxLayout(this);
   layout->setContentsMargins(card::kPaddingX, card::kPaddingY, card::kPaddingX, card::kPaddingY);
@@ -197,13 +200,17 @@ void HoverCard::PopUpBeside(const QRect& anchor) {
   anchor_ = anchor;
   Reposition();
   show();
+  raise();
 }
 
 void HoverCard::Reposition() {
   adjustSize();
   // Placed again once metadata grows it: flipped to a tile's left, its old
-  // spot would now overlap the tile.
-  if (anchor_.isValid()) move(card::Place(anchor_, size(), /*beside=*/true));
+  // spot would now overlap the tile. Kept inside the window it's drawn in.
+  QWidget* window = parentWidget();
+  if (!anchor_.isValid() || window == nullptr) return;
+  const QRect area(window->mapToGlobal(QPoint(0, 0)), window->size());
+  move(window->mapFromGlobal(card::Place(anchor_, size(), /*beside=*/true, area)));
 }
 
 void HoverCard::paintEvent(QPaintEvent*) { card::Paint(this); }

@@ -4,12 +4,17 @@
 #include <QPainter>
 #include <QPainterPath>
 
+#include <optional>
+
+#include "../client/Async.h"
 #include "../client/MiradClient.h"
 #include "CoverArt.h"
 #include "Theme.h"
 
 namespace mira_gui {
 namespace {
+
+const QSize kMaxArt(800, 1200);
 
 QString ScaleKey(const QString& id, QSize tile) {
   return QString("%1@%2").arg(id).arg(tile.width());
@@ -137,36 +142,44 @@ void ArtworkStore::Pump() {
   while (in_flight_ < kMaxInFlight && !pending_.isEmpty()) {
     const QString id = pending_.dequeue();
     ++in_flight_;
-    auto on_result = [this, id](ArtworkResult result) {
+    std::optional<std::pair<std::string, std::string>> title;
+    if (const auto found = titles_.constFind(id); found != titles_.constEnd()) title = *found;
+    // Fetched and decoded off the UI thread: a library's worth of covers
+    // decoding here is what made the window stutter while they arrived.
+    // Loaded from bytes, not a path: the image lives in mirad's own cache
+    // directory, which the frontend has no business knowing.
+    auto fetch = [id = id.toStdString(), title] {
+      const ArtworkResult result = title ? MiradClient::GetTitleArtworkBlocking(title->first, title->second)
+                                         : MiradClient::GetArtworkBlocking(id, "cover");
+      QImage image;
+      if (!result.ok || !image.loadFromData(reinterpret_cast<const uchar*>(result.bytes.data()),
+                                            static_cast<int>(result.bytes.size()))) {
+        return QImage();
+      }
+      // Never drawn bigger than the largest tile on a HiDPI screen; the rest is memory.
+      if (image.width() > kMaxArt.width() || image.height() > kMaxArt.height()) {
+        image = image.scaled(kMaxArt, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+      }
+      return image;
+    };
+    async::Run<QImage>(this, std::move(fetch), [this, id](QImage image) {
       --in_flight_;
       queued_.remove(id);
       // Answered covers all three outcomes on purpose: re-asking on every
       // repaint would turn an empty library into a request loop. Only
       // Invalidate reopens the question.
       answered_.insert(id);
-
-      if (result.ok) {
-        QPixmap art;
-        // Loaded from bytes, not a path: the image lives in mirad's own
-        // cache directory, which the frontend has no business knowing.
-        if (art.loadFromData(reinterpret_cast<const uchar*>(result.bytes.data()),
-                             static_cast<uint>(result.bytes.size()))) {
-          original_.insert(id, art);
-          InvalidateRendering(id.toStdString());
-          emit CoverChanged(id);
-        }
+      if (!image.isNull()) {
+        original_.insert(id, QPixmap::fromImage(std::move(image)));
+        InvalidateRendering(id.toStdString());
+        emit CoverChanged(id);
       }
       if (ask_again_.remove(id) && !original_.contains(id)) {
         answered_.remove(id);
         Request(id);
       }
       Pump();
-    };
-    if (const auto title = titles_.constFind(id); title != titles_.constEnd()) {
-      MiradClient::GetTitleArtworkAsync(this, title->first, title->second, std::move(on_result));
-    } else {
-      MiradClient::GetArtworkAsync(this, id.toStdString(), std::move(on_result));
-    }
+    });
   }
 }
 

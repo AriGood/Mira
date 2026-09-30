@@ -51,7 +51,7 @@ void Attach(QMainWindow* window) {
   QObject::connect(toggle, &QAction::triggered, toggle, [] {
     if (g_window == nullptr) return;
     if (g_window->isVisible()) {
-      g_window->hide();
+      g_window->close();  // not hide(): closeEvent hides it and saves its layout
     } else {
       Restore();
     }

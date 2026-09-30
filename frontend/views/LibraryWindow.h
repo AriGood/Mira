@@ -17,7 +17,6 @@
 #include <string>
 #include <vector>
 
-#include "../client/EventStream.h"
 #include "../client/Types.h"
 #include "../ui/ArtworkStore.h"
 #include "../dialogs/ManageSourcesDialog.h"
@@ -80,7 +79,8 @@ class LibraryWindow : public QMainWindow {
   Q_OBJECT
 
 public:
-  explicit LibraryWindow(QWidget* parent = nullptr);
+  // `prefs` is frontend.toml as read at startup; the theme is already applied.
+  explicit LibraryWindow(const mira_gui::FrontendPrefs& prefs, QWidget* parent = nullptr);
 
 private:
   QWidget* BuildTopBar();
@@ -101,9 +101,9 @@ private:
   void BuildShortcuts();
 
   // Frontend's own state (size, tile size, which filter) round-trips through
-  // frontend.toml, not settings.toml. Applied after the window is already
-  // up, so a slow or absent daemon costs a visible resize, not a blank window.
-  void LoadPrefs();
+  // frontend.toml, not settings.toml. The window's own layout is read in the
+  // constructor; these are what the settings screen also changes.
+  void ApplySettingsPrefs(const mira_gui::FrontendPrefs& prefs);
   void SavePrefs();
   void closeEvent(QCloseEvent* event) override;
   void changeEvent(QEvent* event) override;
@@ -114,11 +114,11 @@ private:
   void ApplyTopBarIcons();
   void ApplyLayoutTokens();
 
-  // `force_scan` separates the two callers: startup, which honours the
-  // scan_on_startup preference, and Refresh, which does not.
-  void RefreshHealth(bool force_scan = false);
-  void RescanAndRefreshGames(bool force_scan);
+  // Lists the library and scans it at once; the scan's changes arrive as
+  // events. `force_scan` is Refresh's: startup honours scan_on_startup.
+  void Reload(bool force_scan);
   void RefreshGames();
+  void ConnectionChanged(bool connected);
 
   // games_ is the whole library as last fetched; the grid is a filtered
   // projection of it. Filtering client-side keeps the search box instant and
@@ -133,6 +133,7 @@ private:
   // active one's.
   bool MatchesFilterKey(const mira_gui::GameSummary& game, const QString& key) const;
   void UpdateFilterCounts();
+  void UpdateFooter();
   QString CurrentFilterKey() const;
   void UpsertGame(const mira_gui::GameSummary& game);
   // Many games, one grid rebuild.
@@ -142,13 +143,20 @@ private:
   const mira_gui::GameSummary* FindGame(const std::string& id) const;
 
   QPixmap CoverFor(const mira_gui::GameSummary& game);
+  // The library grid's.
   void SetTileWidth(int width);
   // The slider moved: resizes whichever page is showing.
   void Zoom(int width);
   int SourceTileWidth(const QString& id) const;
+  // Points the slider at the page on screen, and off where there's no grid.
+  void SyncZoom();
+  bool SourcePageShown() const;
   QSize TileSize() const;
 
   void SelectionChanged();
+  void ClearGridSelection();
+  // The selected tiles' ids and names, in grid order.
+  std::vector<std::pair<std::string, QString>> SelectedGames() const;
   // nullptr hides it; otherwise positions and fills a persistent HoverCard
   // for that tile. Called by LibraryGrid::on_hover_item after its dwell.
   void ShowHoverCard(QListWidgetItem* item);
@@ -224,6 +232,9 @@ private:
   // Moves `id` to just before the visible row `before` (end if -1).
   void MoveSource(const QString& id, int before);
   int SourceDropRow(int y) const;
+  // Closes Settings and a game's card, asking first if either has unsaved
+  // edits. False while one stays open.
+  bool LeaveOverlays();
   // The Runners page, in the grid's place like a source page.
   void OpenRunners();
   void CloseRunners();
@@ -268,12 +279,13 @@ private:
   void FetchMissingArtwork();
   void SyncDesktopEntries();
   void RemoveAllDesktopEntries();
-  void ShowSteamGridDbNotice(bool asked_for);
+  void ShowSteamGridDbNotice(bool asked_for, const mira_gui::ApiError& error);
   // Routes ui/ErrorHelp's fix-it buttons to this window's pages.
   void InstallErrorNavigator();
   void UpdateTileCover(const QString& id);
 
-  void HandleGameEvent(const std::string& type, const std::string& data);
+  // `live` is false for mirad's replayed history: applied, never announced.
+  void HandleGameEvent(const std::string& type, const std::string& data, bool live);
   int FilterRow(const QString& key) const;
 
   QWidget* top_bar_ = nullptr;
@@ -403,7 +415,10 @@ private:
   QWidget* classic_page_ = nullptr;
   QTableWidget* classic_table_ = nullptr;
   QLabel* footer_ = nullptr;
+  int shown_count_ = 0;  // tiles the last ApplyFilter showed, for the footer
   QLabel* empty_hint_ = nullptr;
+  // The filter, search and sort the grid was last built for; see ApplyFilter.
+  QString grid_view_;
   mira_gui::HoverCard* hover_card_ = nullptr;
   // Dwell before a recently played row's hover card.
   QTimer* recent_hover_ = nullptr;
@@ -413,8 +428,10 @@ private:
   std::set<std::string> running_ids_;
   mira_gui::DownloadTracker* downloads_ = nullptr;
   mira_gui::DaemonSupervisor* daemon_supervisor_ = nullptr;  // "Start mirad" from a failure
-  bool events_live_ = false;  // past mirad's replay (`stream.live`); only then announce events
-  bool mirad_reachable_ = true;  // as of the last health check, for the footer
+  bool mirad_reachable_ = true;  // as of the last request or event connection, for the footer
+  bool stream_dropped_ = false;  // the event stream lost mirad; its return resyncs the list
+  // Bumped per RefreshGames, so an older reply landing late can't undo a newer one.
+  int games_request_ = 0;
   mira_gui::DownloadsPanel* downloads_panel_ = nullptr;
   // game.added events asking for their settings to open, gathered briefly
   // so a scan's burst of them opens nothing.
@@ -434,7 +451,10 @@ private:
   // The tile width Ctrl+0 returns to, and the one a frontend.toml with
   // no tile_width starts at.
   static constexpr int kDefaultTileWidth = 168;
+  static constexpr int kMinTileWidth = 120;
+  static constexpr int kMaxTileWidth = 260;
   int tile_width_ = kDefaultTileWidth;
+  static constexpr int kDefaultSourceTileWidth = 150;  // smaller: a source page holds two grids
   std::string sort_key_ = "name";
   bool sort_descending_ = false;
   bool scan_on_startup_ = true;
@@ -442,6 +462,4 @@ private:
   // and ApplyFilter() rebuilds every visible tile on each keystroke.
   mira_gui::ArtworkStore* artwork_ = nullptr;
   mira_gui::shortcuts::Common common_;
-
-  mira_gui::EventStream event_stream_;
 };

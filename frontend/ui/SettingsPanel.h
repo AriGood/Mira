@@ -72,6 +72,8 @@ public:
 signals:
   void LoadFailed(QString error);
   void SaveFinished(bool ok, QString error);
+  // The frontend.toml values just saved; the theme and shortcuts are already applied.
+  void PrefsSaved(const mira_gui::FrontendPrefs& prefs);
 
 private:
   struct Field : SettingEditor {

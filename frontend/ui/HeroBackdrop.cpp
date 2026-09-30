@@ -52,22 +52,17 @@ void HeroBackdrop::RefreshHero(const std::string& id) {
 
 void HeroBackdrop::LoadHero() {
   const std::string id = game_.id;
-  MiradClient::GetMetadataAsync(this, id, [this, id](GameMetadataResult result) {
-    if (game_.id != id || !result.ok) return;
-    const std::vector<std::string>& art_slots = result.metadata.art_slots;
-    if (std::ranges::find(art_slots, "hero") == art_slots.end()) return;
-    MiradClient::GetArtworkSlotAsync(this, id, "hero", [this, id](ArtworkResult art) {
-      if (game_.id != id || !art.ok) return;
-      QPixmap pixmap;
-      if (!pixmap.loadFromData(reinterpret_cast<const uchar*>(art.bytes.data()),
-                               static_cast<uint>(art.bytes.size()))) {
-        return;
-      }
-      hero_ = pixmap;
-      hero_preview_ = QPixmap();
-      rendered_ = QPixmap();
-      update();
-    });
+  // One request: a game without a hero is just a 404 here.
+  MiradClient::GetArtworkSlotAsync(this, id, "hero", [this, id](ArtworkResult art) {
+    if (game_.id != id || !art.ok) return;
+    QPixmap pixmap;
+    if (!pixmap.loadFromData(reinterpret_cast<const uchar*>(art.bytes.data()), static_cast<uint>(art.bytes.size()))) {
+      return;
+    }
+    hero_ = pixmap;
+    hero_preview_ = QPixmap();
+    rendered_ = QPixmap();
+    update();
   });
 }
 

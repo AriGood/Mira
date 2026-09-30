@@ -74,6 +74,11 @@ void TileGrid::mouseReleaseEvent(QMouseEvent* event) {
 }
 
 void TileGrid::wheelEvent(QWheelEvent* event) {
+  if ((event->modifiers() & Qt::ControlModifier) && on_ctrl_wheel) {
+    if (const int steps = event->angleDelta().y() / 120; steps != 0) on_ctrl_wheel(steps);
+    event->accept();
+    return;
+  }
   StopHover();  // the tile is about to scroll out from under its card
   event->ignore();
 }
