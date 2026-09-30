@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstring>
+#include <set>
 #include <vector>
 
 #include "core/Log.h"
@@ -52,25 +53,6 @@ std::uintmax_t ArchiveSize(const fs::path& archive) {
     if (!ec) total += size;
   }
   return total;
-}
-
-// True if `path` resolves inside any of `roots`. Guards against a
-// library_roots entry pointing at (or inside) a runner_search_paths/
-// wine_search_paths dir, where a Proton/Wine build mid-download
-// (runner/Downloader.cpp) would otherwise race this watcher and get
-// misdetected as a new game folder. Same check Server.cpp's delete
-// endpoints use, applied read-only here.
-bool IsUnderAnyRoot(const fs::path& path, const std::vector<fs::path>& roots) {
-  std::error_code ec;
-  const fs::path resolved = fs::weakly_canonical(path, ec);
-  if (ec) return false;
-  return std::ranges::any_of(roots, [&](const fs::path& root) {
-    std::error_code root_ec;
-    const fs::path canon_root = fs::weakly_canonical(root, root_ec);
-    if (root_ec) return false;
-    const auto [root_end, nothing] = std::mismatch(canon_root.begin(), canon_root.end(), resolved.begin());
-    return root_end == canon_root.end();
-  });
 }
 
 }  // namespace
@@ -235,13 +217,12 @@ void Watcher::HandleInotify() {
   // is variable-length (name follows the struct), so this is read in a loop
   // rather than assumed to be one event per read.
   alignas(inotify_event) char buffer[4096];
-  library::Scanner scanner(config_, games_, events_);
+  std::set<fs::path> deleted_from;  // roots to rescan once the queue is drained
 
   // Computed once per call, not per event: a runner build being downloaded
   // (runner/Downloader.cpp) into runner_search_paths/wine_search_paths must
-  // never also be treated as a new game folder or a droppable archive here
-  // See IsUnderAnyRoot's comment for why this matters even though the
-  // defaults never overlap.
+  // never also be treated as a new game folder or a droppable archive here,
+  // and a library_roots entry can overlap these.
   std::vector<fs::path> runner_roots;
   for (const fs::path& p : config_.GetPathArray("runner_search_paths")) runner_roots.push_back(p);
   for (const fs::path& p : config_.GetPathArray("wine_search_paths")) runner_roots.push_back(p);
@@ -260,7 +241,7 @@ void Watcher::HandleInotify() {
       const fs::path path = root_it->second / event->name;
 
       if (event->mask & (IN_CREATE | IN_MOVED_TO)) {
-        if (IsUnderAnyRoot(path, runner_roots)) continue;
+        if (paths::IsWithin(path, runner_roots, /*allow_equal=*/true)) continue;
         std::error_code ec;
         const bool extract = config_.GetBool("scan.auto_extract_archives");
         if (fs::is_directory(path, ec)) {
@@ -275,11 +256,17 @@ void Watcher::HandleInotify() {
         }
       } else if (event->mask & (IN_DELETE | IN_MOVED_FROM)) {
         pending_.erase(path.string());  // no point finishing a debounce for a path that's gone
-        // A deletion needs no debounce: rescan this root now so a removed
-        // game is marked missing promptly.
-        const ScanSummary summary = scanner.ScanRoot(root_it->second);
-        for (const model::Game& game : summary.added_games) metadata_fetches_.Enqueue(config_, events_, game);
+        deleted_from.insert(root_it->second);
       }
+    }
+  }
+  // A deletion needs no debounce: rescan now so a removed game is marked
+  // missing promptly. Once per root, however many entries went at once.
+  if (!deleted_from.empty()) {
+    library::Scanner scanner(config_, games_, events_);
+    for (const fs::path& root : deleted_from) {
+      const ScanSummary summary = scanner.ScanRoot(root);
+      for (const model::Game& game : summary.added_games) metadata_fetches_.Enqueue(config_, events_, game);
     }
   }
   RearmTimer();

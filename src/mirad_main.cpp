@@ -108,15 +108,18 @@ int main(int argc, char** argv) {
 
   // A game folder that already existed before mirad started produces no
   // inotify event: inotify only reports changes from here on, not existing
-  // state, so a full reconcile has to run once before the watcher takes
-  // over. Also catches a folder that appeared while the daemon was down.
+  // state, so a full reconcile has to run once. Also catches a folder that
+  // appeared while the daemon was down. It runs beside the server, not before
+  // it: provisioning a new Windows game takes seconds each, and clients must
+  // not wait on that to connect. Scans and the watcher serialize on
+  // GameStore::LockFolders.
   mira::library::CreateMissingRoots(config);
-  {
+  std::thread startup_scan_thread([&] {
     mira::library::Scanner startup_scan(config, games, events);
     const mira::library::ScanSummary summary = startup_scan.ScanAll();
     mira::log::Info("startup scan: added {}, missing {}, restored {}", summary.added,
                     summary.missing, summary.restored);
-  }
+  });
 
   mira::library::Watcher watcher(config, games, events);
   server.SetOnLibraryRootsChanged([&watcher] { watcher.ReloadRoots(); });
@@ -134,6 +137,7 @@ int main(int argc, char** argv) {
   watcher.Stop();
   server_thread.join();
   watcher_thread.join();
+  startup_scan_thread.join();
   mira::metadata::ClearCandidateThumbs(config);
   return 0;
 }

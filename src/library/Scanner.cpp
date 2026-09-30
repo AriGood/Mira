@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <format>
 #include <iterator>
+#include <set>
 #include <thread>
 
 #include "core/Log.h"
@@ -121,7 +122,7 @@ ScanSummary Scanner::ScanRoot(const fs::path& root) {
   AutoSetup auto_setup(config_, games_, events_);
   const runner::RunnerRegistry runners(config_);
 
-  std::vector<std::string> seen_install_paths;
+  std::set<std::string> seen_install_paths;
 
   for (const auto& entry : fs::directory_iterator(root, fs::directory_options::skip_permission_denied, ec)) {
     if (!entry.is_directory(ec)) continue;
@@ -150,7 +151,7 @@ ScanSummary Scanner::ScanRoot(const fs::path& root) {
     });
     if (ignored) continue;
 
-    seen_install_paths.push_back(install_path);
+    seen_install_paths.insert(install_path);
 
     if (existing) {
       if (existing->status == model::GameStatus::Missing) {
@@ -207,7 +208,7 @@ ScanSummary Scanner::ScanRoot(const fs::path& root) {
   const bool remove_missing = config_.GetBool("library.remove_missing");
   for (const model::Game& game : games_.All()) {
     if (fs::path(game.install_path).parent_path() != root) continue;
-    if (std::ranges::find(seen_install_paths, game.install_path) != seen_install_paths.end()) continue;
+    if (seen_install_paths.contains(game.install_path)) continue;
 
     // Checked before the already-Missing skip below, not after: otherwise
     // turning the toggle on would only ever catch a game the *next* time it

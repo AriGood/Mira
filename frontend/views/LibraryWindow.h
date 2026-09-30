@@ -124,6 +124,9 @@ private:
   // projection of it. Filtering client-side keeps the search box instant and
   // lets "Playing now"/"Never played" be filters at all.
   void ApplyFilter();
+  // ApplyFilter once the event loop is idle: a scan or import publishes one
+  // event per game, and each would otherwise re-sort and rebuild every view.
+  void ScheduleApplyFilter();
   bool MatchesFilter(const mira_gui::GameSummary& game) const;
   // The part of MatchesFilter that doesn't depend on the search box, shared
   // with UpdateFilterCounts, which needs every key's count, not just the
@@ -417,6 +420,7 @@ private:
   // so a scan's burst of them opens nothing.
   std::vector<std::string> pending_added_;
   QTimer* added_timer_ = nullptr;
+  QTimer* filter_timer_ = nullptr;  // ScheduleApplyFilter's
   // Whether RefreshGames() has ever completed successfully.
   bool loaded_ = false;
   // Games the user explicitly asked to refresh: a metadata failure for one

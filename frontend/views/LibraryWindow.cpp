@@ -1891,6 +1891,15 @@ void LibraryWindow::ApplyFilter() {
   RefreshContinue();
 }
 
+void LibraryWindow::ScheduleApplyFilter() {
+  if (filter_timer_ == nullptr) {
+    filter_timer_ = new QTimer(this);
+    filter_timer_->setSingleShot(true);
+    connect(filter_timer_, &QTimer::timeout, this, [this] { ApplyFilter(); });
+  }
+  if (!filter_timer_->isActive()) filter_timer_->start(0);
+}
+
 void LibraryWindow::FillTile(QListWidgetItem* item, const mira_gui::GameSummary& game) {
   item->setData(mira_gui::GameTileDelegate::NameRole, QString::fromStdString(game.name));
   item->setData(mira_gui::GameTileDelegate::StatusRole, QString::fromStdString(game.status));
@@ -1922,7 +1931,7 @@ void LibraryWindow::UpsertGames(const std::vector<mira_gui::GameSummary>& games)
       games_.push_back(game);
     }
   }
-  ApplyFilter();
+  ScheduleApplyFilter();
 }
 
 void LibraryWindow::RemoveGame(const std::string& id) { RemoveGames({id}); }
@@ -1930,7 +1939,7 @@ void LibraryWindow::RemoveGame(const std::string& id) { RemoveGames({id}); }
 void LibraryWindow::RemoveGames(const std::vector<std::string>& ids) {
   std::erase_if(games_, [&](const mira_gui::GameSummary& game) { return std::ranges::contains(ids, game.id); });
   if (std::ranges::contains(ids, selected_id_)) selected_id_.clear();
-  ApplyFilter();
+  ScheduleApplyFilter();
 }
 
 void LibraryWindow::SelectionChanged() {
@@ -3451,7 +3460,7 @@ void LibraryWindow::HandleGameEvent(const std::string& type, const std::string& 
     } else if (install.state == "finished") {
       mira_gui::notify::Notice(this, name + " is installed.");
     }
-    ApplyFilter();
+    ScheduleApplyFilter();
     return;
   }
 

@@ -3,6 +3,7 @@
 #include <pwd.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <cctype>
 #include <cstdlib>
 
@@ -56,6 +57,22 @@ std::filesystem::path Expand(std::string_view raw) {
   // "~/Games/" and "~/Games" name the same root; compared as paths, they differ.
   while (out.size() > 1 && out.back() == '/') out.pop_back();
   return out;
+}
+
+bool IsWithin(const std::filesystem::path& target, const std::vector<std::filesystem::path>& roots,
+              bool allow_equal) {
+  std::error_code ec;
+  const std::filesystem::path resolved = std::filesystem::weakly_canonical(target, ec);
+  if (ec) return false;
+  return std::ranges::any_of(roots, [&](const std::filesystem::path& root) {
+    if (root.empty()) return false;
+    std::error_code root_ec;
+    const std::filesystem::path base = std::filesystem::weakly_canonical(root, root_ec);
+    if (root_ec) return false;
+    const auto [base_end, resolved_at] = std::ranges::mismatch(base, resolved);
+    if (base_end != base.end()) return false;
+    return allow_equal || resolved_at != resolved.end();
+  });
 }
 
 }  // namespace mira::paths
