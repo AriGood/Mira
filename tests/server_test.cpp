@@ -1,8 +1,12 @@
 #include <doctest.h>
 #include <httplib.h>
 #include <sys/socket.h>
+#include <sys/time.h>
+#include <sys/un.h>
+#include <unistd.h>
 
 #include <chrono>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <thread>
@@ -77,6 +81,7 @@ public:
   }
 
   store::GameStore& games() { return games_; }
+  const fs::path& socket_path() const { return socket_path_; }
   const config::Config& config() const { return config_; }
   config::Config& MutableConfig() { return config_; }
 
@@ -138,7 +143,33 @@ fs::path WriteEnvCheckScript(const fs::path& dir, std::string_view expect_foo) {
   return script;
 }
 
+// Sends `request` as-is over the socket and returns what came back within
+// `wait`. For requests httplib's client won't send, e.g. without Content-Length.
+std::string RawRequest(const fs::path& socket_path, const std::string& request, std::chrono::seconds wait) {
+  const int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+  REQUIRE(fd >= 0);
+  sockaddr_un address{};
+  address.sun_family = AF_UNIX;
+  std::strncpy(address.sun_path, socket_path.c_str(), sizeof(address.sun_path) - 1);
+  REQUIRE(connect(fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0);
+  const timeval timeout{.tv_sec = wait.count(), .tv_usec = 0};
+  setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+  REQUIRE(write(fd, request.data(), request.size()) == static_cast<ssize_t>(request.size()));
+  char buffer[4096];
+  const ssize_t got = read(fd, buffer, sizeof(buffer));
+  close(fd);
+  return got > 0 ? std::string(buffer, static_cast<size_t>(got)) : std::string();
+}
+
 }  // namespace
+
+TEST_CASE("A POST with no body and no Content-Length is answered without waiting for one") {
+  LiveServer server(TempDir("server-bare-post"));
+  // mirad's read timeout is 5 s; waiting 2 means an answer only counts if it didn't wait for a body.
+  const std::string reply = RawRequest(
+      server.socket_path(), "POST /v1/games/nope/stop HTTP/1.1\r\nHost: x\r\n\r\n", std::chrono::seconds(2));
+  CHECK(reply.starts_with("HTTP/1.1 "));
+}
 
 TEST_CASE("PATCH /v1/games/{id} env: per-key null removes just that key") {
   LiveServer server(TempDir("server-env-patch"));
