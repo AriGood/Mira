@@ -192,6 +192,29 @@ TEST_CASE("GET /v1/games excludes hidden-tagged games by default; ?tag= filters,
   auto tool_list = client.Get("/v1/games?tag=tool");
   REQUIRE(tool_list != nullptr);
   CHECK(tool_list->body.find("\"umu-launcher\"") != std::string::npos);
+
+  auto everything = client.Get("/v1/games?include_hidden=true");
+  REQUIRE(everything != nullptr);
+  CHECK(everything->body.find("\"celeste\"") != std::string::npos);
+  CHECK(everything->body.find("\"umu-launcher\"") != std::string::npos);
+}
+
+TEST_CASE("POST /v1/games/metadata/refresh queues known ids and skips unknown ones") {
+  LiveServer server(TempDir("server-refresh-many"));
+  model::Game game;
+  game.id = "celeste";
+  game.name = "Celeste";
+  REQUIRE(server.games().Upsert(game).has_value());
+
+  httplib::Client client = server.Client();
+  auto res = client.Post("/v1/games/metadata/refresh", R"({"ids": ["celeste", "nope"]})", "application/json");
+  REQUIRE(res != nullptr);
+  CHECK(res->status == 202);
+  CHECK(nlohmann::json::parse(res->body).value("count", -1) == 1);
+
+  auto bad = client.Post("/v1/games/metadata/refresh", R"({"ids": "celeste"})", "application/json");
+  REQUIRE(bad != nullptr);
+  CHECK(bad->status == 400);
 }
 
 TEST_CASE("POST /v1/games/{id}/launch refuses a command_wrappers entry that isn't on PATH") {

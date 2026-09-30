@@ -17,10 +17,11 @@ TEST_CASE("ToGameSummary reads the fields a library row shows") {
     "id": "animal-well", "name": "Animal Well", "status": "ready",
     "platform": "windows", "runner_ref": "proton_umu:GE-Proton11-7",
     "last_error": "", "reviewed": true, "confidence": 0.75,
-    "last_played_at": 1789620825, "play_seconds": 4210
+    "last_played_at": 1789620825, "play_seconds": 4210, "running": true
   })");
 
   const GameSummary game = mapping::ToGameSummary(entry);
+  CHECK(game.running);
   CHECK(game.id == "animal-well");
   CHECK(game.name == "Animal Well");
   CHECK(game.status == "ready");

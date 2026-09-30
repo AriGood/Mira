@@ -10,6 +10,7 @@
 #include <utility>
 
 #include "../client/MiradClient.h"
+#include "../ui/EventHub.h"
 #include "../ui/Notify.h"
 #include "../ui/Theme.h"
 
@@ -62,8 +63,10 @@ WinetricksDialog::WinetricksDialog(std::string game_id, QString game_name, QWidg
   connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
   layout->addWidget(buttons);
 
-  event_stream_.Start(this,
-                      [this](std::string type, std::string data) { HandleEvent(type, data); });
+  connect(EventHub::Instance(), &EventHub::Received, this,
+          [this](const std::string& type, const std::string& data, bool live) {
+            if (live) HandleEvent(type, data);
+          });
 }
 
 void WinetricksDialog::SetStatus(const QString& text, bool error) {

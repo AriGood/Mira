@@ -50,11 +50,14 @@ EventStream::EventStream() : state_(std::make_shared<State>()) {}
 // lingering thread is now just idle, not dangerous.
 EventStream::~EventStream() { state_->stopped.store(true); }
 
-void EventStream::Start(QObject* context,
-                        std::function<void(std::string, std::string)> on_event) {
+void EventStream::Start(QObject* context, std::function<void(std::string, std::string)> on_event,
+                        std::function<void(bool)> on_connection) {
   QPointer<QObject> guard(context);
-  std::thread([guard, state = state_, on_event = std::move(on_event)]() {
+  std::thread([guard, state = state_, on_event = std::move(on_event), on_connection = std::move(on_connection)]() {
     std::string last_event_id;
+    const auto report = [&](bool connected) {
+      if (on_connection) async::Deliver(guard, [on_connection, connected] { on_connection(connected); });
+    };
 
     while (!state->stopped.load()) {
       httplib::Client client(transport::SocketPath(), 80);
@@ -66,9 +69,14 @@ void EventStream::Start(QObject* context,
       if (!last_event_id.empty()) headers = {{"Last-Event-ID", last_event_id}};
 
       std::string buffer;
+      bool connected = false;
       client.Get(
           "/v1/events", headers,
-          [](const httplib::Response& response) { return response.status == 200; },
+          [&](const httplib::Response& response) {
+            connected = response.status == 200;
+            if (connected) report(true);
+            return connected;
+          },
           [&](const char* data, size_t length) {
             // Returning false aborts the Get, giving an exit path to a stopped
             // stream that would otherwise block for a year waiting on the next event.
@@ -90,6 +98,7 @@ void EventStream::Start(QObject* context,
           });
 
       if (state->stopped.load()) break;
+      if (connected) report(false);
       std::this_thread::sleep_for(std::chrono::seconds(2));
     }
   }).detach();

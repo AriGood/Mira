@@ -6,7 +6,6 @@
 #include <set>
 #include <string>
 
-#include "../client/EventStream.h"
 #include "../client/Types.h"
 
 class QCloseEvent;
@@ -36,10 +35,10 @@ private:
   void OpenGameDetail(int row, int column);
   void OpenSettings();
 
-  // Applies one event from event_stream_ directly to the table (added/
-  // updated carry the full record, removed just the id), instead of
-  // re-fetching the whole list on every change.
-  void HandleGameEvent(const std::string& type, const std::string& data);
+  // Applies one event directly to the table (added/updated carry the full
+  // record, removed just the id), instead of re-fetching the whole list on
+  // every change. `live` is false for mirad's replayed history.
+  void HandleGameEvent(const std::string& type, const std::string& data, bool live);
   int FindRow(const std::string& id) const;
   void PopulateRow(int row, const mira_gui::GameSummary& game);
   void UpsertRow(const mira_gui::GameSummary& game);
@@ -51,11 +50,9 @@ private:
   QPushButton* refresh_button_;
   QTableWidget* games_table_;
   QLabel* connection_footer_;
-  // Client-side only: derived from game.state events, not any GET response.
+  // Seeded from the list's `running`, then kept by game.state events.
   // Consulted by PopulateRow to decide each row's Launch/Stop button.
   std::set<std::string> running_ids_;
   // Whether RefreshGames() has ever completed successfully.
   bool loaded_ = false;
-  mira_gui::EventStream event_stream_;
-  bool events_live_ = false;  // past mirad's replay (`stream.live`)
 };

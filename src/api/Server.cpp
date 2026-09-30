@@ -595,12 +595,13 @@ void Server::RegisterRoutes() {
 
   // --- games ----------------------------------------------------------------
 
-  // Games tagged "hidden" are left out unless a tag is asked for.
+  // Games tagged "hidden" are left out unless a tag is asked for, or include_hidden=true.
   http_->Get("/v1/games", [this](const Request& req, Response& res) {
     std::vector<model::Game> all = games_.All();
     json out = json::array();
     const auto status_filter = req.params.find("status");
     const auto tag_filter = req.params.find("tag");
+    const bool include_hidden = req.get_param_value("include_hidden") == "true";
     for (const model::Game& game : all) {
       if (status_filter != req.params.end() &&
           status_filter->second != model::ToString(game.status)) {
@@ -608,7 +609,7 @@ void Server::RegisterRoutes() {
       }
       if (tag_filter != req.params.end()) {
         if (!std::ranges::contains(game.tags, tag_filter->second)) continue;
-      } else if (std::ranges::contains(game.tags, std::string("hidden"))) {
+      } else if (!include_hidden && std::ranges::contains(game.tags, std::string("hidden"))) {
         continue;
       }
       out.push_back(GameJson(game, supervisor_));
@@ -2058,6 +2059,21 @@ void Server::RegisterRoutes() {
     SendJson(res, {{"status", "fetching"}, {"steamgriddb_id", id}}, 202);
   });
 
+  // POST /v1/games/{id}/metadata/refresh for many games in one request, unannounced.
+  http_->Post("/v1/games/metadata/refresh", [this](const Request& req, Response& res) {
+    const json body = json::parse(req.body, nullptr, false);
+    const auto ids = body.is_object() ? StringList(body, "ids") : std::nullopt;
+    if (!ids) return SendError(res, 400, "invalid_body", R"(expected {"ids": [...]})");
+    std::size_t count = 0;
+    for (const std::string& id : *ids) {
+      const auto game = games_.Find(id);
+      if (!game) continue;
+      metadata_fetches_.Enqueue(config_, events_, *game, /*force=*/true);
+      ++count;
+    }
+    SendJson(res, {{"status", "fetching"}, {"count", count}}, 202);
+  });
+
   http_->Post("/v1/games/metadata/refresh-missing", [this](const Request&, Response& res) {
     std::size_t count = 0;
     for (const model::Game& game : games_.All()) {
@@ -2324,13 +2340,17 @@ void Server::InstallRunnerAsync(const std::string& kind, const std::string& sour
       });
       if (fresh != builds.end()) {
         const std::string to = fresh->Reference();
-        int moved = 0;
+        json moved = json::array();
         for (const model::Game& game : games_.All()) {
           if (game.runner_ref != replacing) continue;
-          if (games_.Update(game.id, [&](model::Game& g) { g.runner_ref = to; })) ++moved;
+          if (auto updated = games_.Update(game.id, [&](model::Game& g) { g.runner_ref = to; })) {
+            moved.push_back(GameJson(*updated, supervisor_));
+          }
         }
         if (config_.GetString("default_runner.windows") == replacing) (void)config_.Set("default_runner.windows", to);
-        events_.Publish("runners.updated", {{"kind", kind}, {"from", replacing}, {"to", to}, {"games", moved}});
+        if (!moved.empty()) events_.Publish("games.updated", {{"games", moved}});
+        events_.Publish("runners.updated",
+                        {{"kind", kind}, {"from", replacing}, {"to", to}, {"games", moved.size()}});
         finished["replaced"] = replacing;
       }
     }

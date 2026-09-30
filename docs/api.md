@@ -61,8 +61,8 @@ Resets one key, or everything when `key` is left out.
 
 Stored in `games.toml`. A game's `id` is a readable slug such as `celeste`, or `celeste-2` on a clash.
 
-### `GET /v1/games[?status=][&tag=]`
-Lists games, optionally filtered by `status` (`setting_up`, `ready`, `broken`, `missing`, `needs_install`) and by tag. Games tagged `hidden` are left out unless `tag` is given, so `?tag=hidden` lists only those. With `scan.tag_by_root` on, detected games are tagged with the name of their library root.
+### `GET /v1/games[?status=][&tag=][&include_hidden=true]`
+Lists games, optionally filtered by `status` (`setting_up`, `ready`, `broken`, `missing`, `needs_install`) and by tag. Games tagged `hidden` are left out unless `tag` is given, so `?tag=hidden` lists only those, or `include_hidden=true` is, which lists them alongside the rest. With `scan.tag_by_root` on, detected games are tagged with the name of their library root.
 
 ### `GET /v1/games/{id}`
 
@@ -262,7 +262,7 @@ Removable builds whose source has a newer release:
 ```
 
 ### `POST /v1/runners/update`
-Body `{"reference": "kind:name"}`. Installs the newer release like a download, then moves every game using the old build, and `default_runner.windows` if it names it, onto the new one. The old build stays. `runners.updated {kind, from, to, games}` fires before `runners.download.finished`, which then carries `replaced`. `409 no_update` when nothing is newer.
+Body `{"reference": "kind:name"}`. Installs the newer release like a download, then moves every game using the old build, and `default_runner.windows` if it names it, onto the new one. The old build stays. The moved games arrive as `games.updated`, then `runners.updated {kind, from, to, games}` fires before `runners.download.finished`, which then carries `replaced`. `409 no_update` when nothing is newer.
 
 ### `GET /v1/runners/tools`
 
@@ -468,7 +468,7 @@ One cached preview. `404 thumb_not_cached` until fetched.
 Deletes all cached previews (`204`). The GUI calls it on quit, and `mirad` clears them on start and stop.
 
 ### `POST /v1/games/{id}/metadata/refresh?announce=`
-Fetches one game again, even with `metadata.enabled` off. Events: `game.metadata_ready`/`metadata_failed` with `code` and `error`. With `announce=1`, a failure also publishes a `notification`, except for `no_steamgriddb_key`.
+Fetches one game again, even with `metadata.enabled` off. Events: `game.metadata_ready`/`metadata_failed` with `code`, `error`, and the error's `hint` and `fix` when it has them. With `announce=1`, a failure also publishes a `notification`, except for `no_steamgriddb_key`.
 
 ### `GET /v1/games/{id}/metadata/matches[?q=]`
 SteamGridDB's matches for the name (or `q`): `{query, chosen, matches: [{id, name, release_date?}]}`. `chosen` is 0 when the top match is in use.
@@ -478,6 +478,9 @@ Moves to the next SteamGridDB match, saves it as `metadata.steamgriddb_id` and f
 
 ### `POST /v1/games/{id}/metadata/match`
 Body `{"steamgriddb_id": N}`. Uses that SteamGridDB game from now on; `0` goes back to the top match.
+
+### `POST /v1/games/metadata/refresh`
+Body `{"ids": [...]}`. Fetches each of these games again, like `POST /v1/games/{id}/metadata/refresh` without `announce`. Unknown ids are skipped. Returns `202 {"status": "fetching", "count": n}`.
 
 ### `POST /v1/games/metadata/refresh-missing`
 Queues a fetch for every game without a cover. Returns `202 {"status": "fetching", "count": n}`.

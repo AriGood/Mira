@@ -33,6 +33,8 @@ public:
   static void ListGamesAsync(QObject* context, std::function<void(GamesResult)> callback,
                              const std::string& status_filter = std::string(),
                              const std::string& tag_filter = std::string());
+  // GET /v1/games?include_hidden=true: the whole library, hidden games included.
+  static void ListAllGamesAsync(QObject* context, std::function<void(GamesResult)> callback);
 
   // DELETE /v1/games/{id}[?delete_files=true][?delete_prefix=true][?delete_metadata=true].
   // All opt-in; false/omitted never touches disk. delete_metadata alone has
@@ -127,6 +129,10 @@ public:
   // art_slots says which were cached.
   static void GetArtworkSlotAsync(QObject* context, const std::string& id, const std::string& slot,
                                   std::function<void(ArtworkResult)> callback);
+  // The same two fetches on the calling thread, for a caller that decodes
+  // the image on its own worker thread too.
+  static ArtworkResult GetArtworkBlocking(const std::string& id, const std::string& slot);
+  static ArtworkResult GetTitleArtworkBlocking(const std::string& source, const std::string& ref);
 
   // GET /v1/games/{id}/metadata/matches[?q=]: which SteamGridDB game the
   // art could come from. Empty `query` searches the game's name.
@@ -147,6 +153,9 @@ public:
   // user-initiated so mirad reports the outcome as a `notification` event.
   static void RefreshMetadataAsync(QObject* context, const std::string& id, bool announce,
                                    std::function<void(MetadataRefreshResult)> callback);
+  // POST /v1/games/metadata/refresh: the same, unannounced, for many games in one request.
+  static void RefreshMetadataManyAsync(QObject* context, const std::vector<std::string>& ids,
+                                       std::function<void(MetadataRefreshResult)> callback);
 
   // POST /v1/games/{id}/artwork?type=. `candidate_id` must be one of the ids
   // GetMetadataAsync's cover_candidates listed. mirad looks it up rather
@@ -316,6 +325,9 @@ public:
   // into Mira's own layout, one game at a time.
   static void RelocateGamesAsync(QObject* context, const std::vector<std::string>& ids,
                                  std::function<void(RelocateLibraryResult)> callback);
+  // POST /v1/games/{id}/relocate: moves one game's files to `install_path`.
+  static void RelocateGameAsync(QObject* context, const std::string& id, const std::string& install_path,
+                                std::function<void(GameDetailResult)> callback);
   static bool ParseInstallEvent(const std::string& event_type, const std::string& data,
                                 InstallEvent* out);
 

@@ -97,6 +97,10 @@ QStringList Available();
 // it, so changing that setting re-themes a running window.
 void Apply(const QString& name);
 
+// SetOverrides and Apply in one restyle, for startup and a settings save
+// that changes both.
+void Configure(const QString& name, const Overrides& overrides);
+
 // The name last passed to Apply(), so the settings picker can show it.
 QString CurrentName();
 

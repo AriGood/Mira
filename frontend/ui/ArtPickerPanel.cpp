@@ -7,6 +7,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPushButton>
@@ -24,6 +25,7 @@
 
 #include "../client/MiradClient.h"
 #include "ErrorHelp.h"
+#include "EventHub.h"
 #include "Theme.h"
 
 namespace mira_gui {
@@ -63,6 +65,11 @@ protected:
   void resizeEvent(QResizeEvent* event) override {
     QListWidget::resizeEvent(event);
     if (on_resize) on_resize();
+  }
+  // A click between previews drops the pick back to the art in use.
+  void mousePressEvent(QMouseEvent* event) override {
+    if (event->button() == Qt::LeftButton && itemAt(event->pos()) == nullptr) setCurrentItem(nullptr);
+    QListWidget::mousePressEvent(event);
   }
 };
 
@@ -267,7 +274,10 @@ ArtPickerPanel::ArtPickerPanel(std::string game_id, QWidget* parent) : QWidget(p
   message_layout->addStretch(1);
   stack_->addWidget(message_page_);
 
-  event_stream_.Start(this, [this](std::string type, std::string data) { HandleEvent(type, data); });
+  connect(EventHub::Instance(), &EventHub::Received, this,
+          [this](const std::string& type, const std::string& data, bool live) {
+            if (live) HandleEvent(type, data);
+          });
 }
 
 void ArtPickerPanel::Open(const std::string& slot) {
@@ -542,7 +552,8 @@ void ArtPickerPanel::Apply() {
   if (!HasChange()) return;
   const std::string slot = slot_;
   const std::int64_t candidate_id = *pick_;
-  applying_ = {slot, candidate_id};  MiradClient::SelectArtworkAsync(this, id_, slot, candidate_id, [this, slot](ArtworkSelectResult result) {
+  applying_ = {slot, candidate_id};
+  MiradClient::SelectArtworkAsync(this, id_, slot, candidate_id, [this, slot](ArtworkSelectResult result) {
     if (result.ok) return;  // game.artwork_selected follows
     applying_.reset();
     emit ApplyFailed(QString::fromStdString(slot), QString::fromStdString(result.error));
@@ -669,7 +680,8 @@ void ArtPickerPanel::HandleEvent(const std::string& type, const std::string& dat
 
   if (type != "game.artwork_selected" && type != "game.artwork_select_failed") return;
   ArtworkSelectEvent event;
-  if (!MiradClient::ParseArtworkSelectEvent(data, &event) || event.id != id_) return;  if (!applying_ || applying_->first != event.slot) return;
+  if (!MiradClient::ParseArtworkSelectEvent(data, &event) || event.id != id_) return;
+  if (!applying_ || applying_->first != event.slot) return;
   const std::int64_t applied = applying_->second;
   applying_.reset();
   if (type == "game.artwork_select_failed") {

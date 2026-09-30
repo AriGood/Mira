@@ -29,7 +29,7 @@ HealthStatus GetHealthSync() {
   return status;
 }
 
-GamesResult GetGamesSync(const std::string& status_filter, const std::string& tag_filter) {
+GamesResult GetGamesSync(const std::string& status_filter, const std::string& tag_filter, bool include_hidden) {
   GamesResult result;
   std::string path = "/v1/games";
   std::string separator = "?";
@@ -39,7 +39,9 @@ GamesResult GetGamesSync(const std::string& status_filter, const std::string& ta
   }
   if (!tag_filter.empty()) {
     path += separator + "tag=" + tag_filter;
+    separator = "&";
   }
+  if (include_hidden) path += separator + "include_hidden=true";
   const transport::Reply reply = transport::Get(path);
   if (!reply.ok) {
     result.error = reply.error;
@@ -316,6 +318,7 @@ FrontendPrefsResult GetFrontendPrefsSync() {
   const auto read_bool = [&table](const char* key, std::optional<bool>& out) {
     if (table.contains(key) && table[key].is_boolean()) out = table[key].get<bool>();
   };
+  read_bool("window_maximized", result.prefs.window_maximized);
   read_string("library_filter", result.prefs.library_filter);
   read_string("sort_by", result.prefs.sort_by);
   read_bool("sort_descending", result.prefs.sort_descending);
@@ -376,6 +379,7 @@ PatchConfigResult SaveFrontendPrefsSync(const FrontendPrefs& prefs) {
   json table = json::object();
   if (prefs.window_width) table["window_width"] = *prefs.window_width;
   if (prefs.window_height) table["window_height"] = *prefs.window_height;
+  if (prefs.window_maximized) table["window_maximized"] = *prefs.window_maximized;
   if (prefs.tile_width) table["tile_width"] = *prefs.tile_width;
   if (prefs.sidebar_width) table["sidebar_width"] = *prefs.sidebar_width;
   if (prefs.library_filter) table["library_filter"] = *prefs.library_filter;
@@ -549,6 +553,11 @@ MetadataRefreshResult RefreshMetadataSync(const std::string& id, bool announce) 
   return {reply.ok, reply.error};
 }
 
+MetadataRefreshResult RefreshMetadataManySync(const std::vector<std::string>& ids) {
+  const transport::Reply reply = transport::PostJson("/v1/games/metadata/refresh", {{"ids", ids}});
+  return {reply.ok, reply.error};
+}
+
 ArtworkSelectResult SelectArtworkSync(const std::string& id, const std::string& slot,
                                       std::int64_t candidate_id) {
   const transport::Reply reply = transport::PostJson(
@@ -718,6 +727,8 @@ LutrisImportResult ImportLutrisSync() {
   result.ok = true;
   result.added = reply.body.value("added", 0);
   result.updated = reply.body.value("updated", 0);
+  result.other_runner = reply.body.value("other_runner", 0);
+  result.incomplete = reply.body.value("incomplete", 0);
   return result;
 }
 
@@ -1289,6 +1300,24 @@ RelocateLibraryResult RelocateLibrarySync(const std::optional<std::vector<std::s
   return result;
 }
 
+GameDetailResult RelocateGameSync(const std::string& id, const std::string& install_path) {
+  GameDetailResult result;
+  // Moving to another drive copies the whole game.
+  const transport::Reply reply = transport::PostJson("/v1/games/" + id + "/relocate", {{"install_path", install_path}},
+                                                     {.read_timeout = std::chrono::hours(12)});
+  if (!reply.ok) {
+    result.error = reply.error;
+    return result;
+  }
+  if (!reply.body.is_object()) {
+    result.error = transport::UnexpectedResponse("POST /v1/games/" + id + "/relocate");
+    return result;
+  }
+  result.ok = true;
+  result.game = mapping::ToGameDetail(reply.body);
+  return result;
+}
+
 DeleteGamesResult DeleteGamesSync(const std::vector<std::string>& ids, bool delete_files, bool delete_prefix,
                                   bool delete_metadata) {
   DeleteGamesResult result;
@@ -1386,8 +1415,12 @@ void MiradClient::CheckHealthAsync(QObject* context, std::function<void(HealthSt
 
 void MiradClient::ListGamesAsync(QObject* context, std::function<void(GamesResult)> callback,
                                  const std::string& status_filter, const std::string& tag_filter) {
-  async::Run(context, [status_filter, tag_filter] { return GetGamesSync(status_filter, tag_filter); },
+  async::Run(context, [status_filter, tag_filter] { return GetGamesSync(status_filter, tag_filter, false); },
              std::move(callback));
+}
+
+void MiradClient::ListAllGamesAsync(QObject* context, std::function<void(GamesResult)> callback) {
+  async::Run(context, [] { return GetGamesSync(std::string(), std::string(), true); }, std::move(callback));
 }
 
 void MiradClient::DeleteGameAsync(QObject* context, const std::string& id, bool delete_files,
@@ -1486,6 +1519,11 @@ void MiradClient::GetMetadataAsync(QObject* context, const std::string& id,
 void MiradClient::RefreshMetadataAsync(QObject* context, const std::string& id, bool announce,
                                        std::function<void(MetadataRefreshResult)> callback) {
   async::Run(context, [id, announce] { return RefreshMetadataSync(id, announce); }, std::move(callback));
+}
+
+void MiradClient::RefreshMetadataManyAsync(QObject* context, const std::vector<std::string>& ids,
+                                           std::function<void(MetadataRefreshResult)> callback) {
+  async::Run(context, [ids] { return RefreshMetadataManySync(ids); }, std::move(callback));
 }
 
 void MiradClient::SelectArtworkAsync(QObject* context, const std::string& id, const std::string& slot,
@@ -1712,7 +1750,7 @@ bool MiradClient::ParseMetadataEvent(const std::string& data, MetadataEvent* out
   if (id.empty()) return false;
   out->id = id;
   out->code = payload.value("code", std::string());
-  out->error = payload.value("error", std::string());
+  out->error = mapping::ToApiError(payload);
   return true;
 }
 
@@ -1923,6 +1961,19 @@ void MiradClient::RelocateLibraryAsync(QObject* context,
 void MiradClient::RelocateGamesAsync(QObject* context, const std::vector<std::string>& ids,
                                      std::function<void(RelocateLibraryResult)> callback) {
   async::Run(context, [ids] { return RelocateLibrarySync(ids); }, std::move(callback));
+}
+
+void MiradClient::RelocateGameAsync(QObject* context, const std::string& id, const std::string& install_path,
+                                    std::function<void(GameDetailResult)> callback) {
+  async::Run(context, [id, install_path] { return RelocateGameSync(id, install_path); }, std::move(callback));
+}
+
+ArtworkResult MiradClient::GetArtworkBlocking(const std::string& id, const std::string& slot) {
+  return GetArtworkSync(id, slot);
+}
+
+ArtworkResult MiradClient::GetTitleArtworkBlocking(const std::string& source, const std::string& ref) {
+  return GetTitleArtworkSync(source, ref);
 }
 
 void MiradClient::DeleteGamesAsync(QObject* context, const std::vector<std::string>& ids, bool delete_files,

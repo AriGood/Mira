@@ -27,8 +27,9 @@ public:
   // each event's type and raw JSON data. On drop, reconnects with fixed backoff
   // since mirad may restart independently, replaying via Last-Event-ID so a
   // reconnect doesn't miss events still in mirad's 500-event buffer. Stream stops
-  // on destruction.
-  void Start(QObject* context, std::function<void(std::string type, std::string data)> on_event);
+  // on destruction. `on_connection` hears each connect (true) and drop (false).
+  void Start(QObject* context, std::function<void(std::string type, std::string data)> on_event,
+             std::function<void(bool connected)> on_connection = nullptr);
 
 private:
   // Shared with the background thread rather than owned by it, so that
