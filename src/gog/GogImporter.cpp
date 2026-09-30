@@ -108,7 +108,7 @@ Result<model::Game> GogImporter::ImportPath(const std::string& id, const std::fi
   if (!existing) game.created_at = game.updated_at;
   AddTag(game.tags, "gog");
 
-  if (!existing || existing->runner_ref.empty() || existing->data_dir.empty()) {
+  if (library::NeedsProvisioning(existing)) {
     const runner::RunnerRegistry provisioner(config_);
     if (game.data_dir.empty()) game.data_dir = library::PrefixDir(config_, game).string();
     const model::Game provisioned = provisioner.ProvisionGame(game);
@@ -137,7 +137,13 @@ Result<GogImportSummary> GogImporter::Import() {
 
   for (const auto& entry : fs::directory_iterator(root, ec)) {
     if (!entry.is_directory()) continue;
-    const std::string id = GogIdIn(ResolveGameDir(entry.path())).value_or(entry.path().filename().string());
+    // No goggame-*.info yet: gogdl is still downloading it, unless it's the
+    // legacy <install_root>/<id>/ layout.
+    const std::string folder = entry.path().filename().string();
+    const bool legacy_id = !folder.empty() && std::ranges::all_of(folder, [](char c) { return c >= '0' && c <= '9'; });
+    const std::optional<std::string> found = GogIdIn(ResolveGameDir(entry.path()));
+    if (!found && !legacy_id) continue;
+    const std::string id = found.value_or(folder);
     const bool existed = games_.Find("gog-" + id).has_value();
 
     const Result<model::Game> imported = ImportPath(id, entry.path());

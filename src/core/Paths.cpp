@@ -53,6 +53,8 @@ std::filesystem::path Expand(std::string_view raw) {
       out += raw[i];
     }
   }
+  // "~/Games/" and "~/Games" name the same root; compared as paths, they differ.
+  while (out.size() > 1 && out.back() == '/') out.pop_back();
   return out;
 }
 

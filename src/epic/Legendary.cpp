@@ -76,7 +76,7 @@ Result<void> InstallLegendaryBinary(const config::Config& config, const runner::
   if (ec) return Err("install_dir_failed", ec.message());
 
   Command download;
-  download.argv = {"curl", "-sSL", "-o", target.string(), asset.download_url};
+  download.argv = {"curl", "-fsSL", "-o", target.string(), asset.download_url};
   const Result<runner::ExecResult> result = runner::RunAndWait(download);
   if (!result || result->exit_code != 0) {
     fs::remove(target, ec);

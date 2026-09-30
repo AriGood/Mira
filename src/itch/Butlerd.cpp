@@ -1,6 +1,7 @@
 #include "itch/Butlerd.h"
 
 #include <arpa/inet.h>
+#include <fcntl.h>
 #include <netdb.h>
 #include <poll.h>
 #include <sys/socket.h>
@@ -59,8 +60,15 @@ Connection& GlobalConnection() {
 // keeps running -- this is the one place in this codebase that needs
 // that shape (see Butlerd.h's class comment).
 Result<int> SpawnCapturingStdout(const std::vector<std::string>& argv) {
+  // Built before fork(): the child of a threaded process mustn't allocate.
+  std::vector<char*> args;
+  args.reserve(argv.size() + 1);
+  for (const std::string& arg : argv) args.push_back(const_cast<char*>(arg.c_str()));
+  args.push_back(nullptr);
+
+  // CLOEXEC so children other threads spawn meanwhile don't hold the write end.
   int pipe_fds[2];
-  if (pipe(pipe_fds) != 0) return Err("pipe_failed", std::strerror(errno));
+  if (pipe2(pipe_fds, O_CLOEXEC) != 0) return Err("pipe_failed", std::strerror(errno));
 
   const pid_t pid = fork();
   if (pid < 0) {
@@ -73,10 +81,6 @@ Result<int> SpawnCapturingStdout(const std::vector<std::string>& argv) {
     dup2(pipe_fds[1], STDOUT_FILENO);
     close(pipe_fds[1]);
     setsid();
-    std::vector<char*> args;
-    args.reserve(argv.size() + 1);
-    for (const std::string& arg : argv) args.push_back(const_cast<char*>(arg.c_str()));
-    args.push_back(nullptr);
     execvp(args[0], args.data());
     _exit(127);
   }

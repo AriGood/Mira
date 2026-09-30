@@ -57,6 +57,7 @@ model::Game AutoSetup::CreateGame(const fs::path& install_path, const Detector::
 
   if (auto result = games_.Upsert(game); !result) {
     log::Error("failed to save new game \"{}\": {}", game.id, result.error().message);
+    return game;
   }
 
   nlohmann::json payload = model::ToJson(game);

@@ -73,16 +73,9 @@ Result<EpicImportSummary> EpicImporter::Import() {
     if (!existing) game.created_at = game.updated_at;
     AddTag(game.tags, "epic");
 
-    // Unlike Steam/Lutris, Legendary never creates a Wine prefix of its own,
-    // so an already-installed Epic title still needs Mira's own
-    // RunnerRegistry to provision one before it's launchable (see this
-    // class's header comment). Only on first sight, or if a previous
-    // provisioning attempt never actually finished: re-provisioning a
-    // working game on every re-import would be wasteful and pointless.
-    if (!existing || existing->runner_ref.empty() || existing->data_dir.empty()) {
-      // ProvisionGame creates the prefix AT data_dir, it doesn't invent a
-      // path -- the caller has to say where first (same convention
-      // AutoSetup.cpp uses for a fresh scan-detected Windows game).
+    // Legendary makes no prefix of its own. Provisioned on first sight or
+    // after a failed attempt, not on every re-import.
+    if (library::NeedsProvisioning(existing)) {
       if (game.data_dir.empty()) game.data_dir = library::PrefixDir(config_, game).string();
       const model::Game provisioned = provisioner.ProvisionGame(game);
       game.runner_ref = provisioned.runner_ref;

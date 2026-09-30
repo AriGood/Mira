@@ -307,7 +307,10 @@ Result<model::Game> Install(config::Config& config, store::GameStore& games, con
       stored.exe_path = inside ? relative.string() : installer->string();
       stored.status = model::GameStatus::NeedsInstall;
     });
-    if (!saved) return std::unexpected(saved.error());
+    if (!saved) {
+      Finish(id, saved.error().message);
+      return std::unexpected(saved.error());
+    }
     game = *saved;
   }
 

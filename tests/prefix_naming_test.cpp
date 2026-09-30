@@ -4,6 +4,7 @@
 
 #include "config/Config.h"
 #include "library/PrefixNaming.h"
+#include "library/Relocate.h"
 
 using namespace mira;
 namespace fs = std::filesystem;
@@ -74,4 +75,32 @@ TEST_CASE("PrefixDir falls back to strings::Slugify's own \"game\" default for a
   game.id = "itch-42";
   game.name = "!!!";
   CHECK(library::PrefixDir(config, game) == root / "game");
+}
+
+TEST_CASE("Relocate leaves a prefix already at its named directory in place") {
+  config::Config config(TempConfigFile("prefix-naming-relocate.toml"));
+  config.Load();
+  const fs::path root = TempDir("prefix-naming-relocate-root");
+  REQUIRE(config.Set("prefix_root", root.string()).has_value());
+  fs::create_directories(root / "celeste" / "drive_c");
+
+  model::Game game;
+  game.id = "gog-1207660413";
+  game.name = "Celeste";
+  game.data_dir = (root / "celeste").string();
+  const auto relocated = library::Relocate(config, game);
+  REQUIRE(relocated.has_value());
+  CHECK(relocated->data_dir == game.data_dir);
+  CHECK(fs::is_directory(root / "celeste" / "drive_c"));
+}
+
+TEST_CASE("NeedsProvisioning retries a broken store game") {
+  model::Game game;
+  game.runner_ref = "proton:GE-Proton9-20";
+  game.data_dir = "/prefixes/celeste";
+  game.status = model::GameStatus::Ready;
+  CHECK_FALSE(library::NeedsProvisioning(game));
+  game.status = model::GameStatus::Broken;
+  CHECK(library::NeedsProvisioning(game));
+  CHECK(library::NeedsProvisioning(std::nullopt));
 }
