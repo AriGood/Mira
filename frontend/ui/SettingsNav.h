@@ -57,6 +57,9 @@ public:
   // the same ApplyFilter() pass.
   void SetRowGateVisible(QWidget* row_widget, bool visible);
 
+  // The category column's width; the default fits the settings screen's header checkbox.
+  void SetNavWidth(int width);
+
   // Clears any active search (so the target row can't be hidden by a stale
   // query), switches to row_widget's category, and scrolls it into view.
   // Does not change focus; the caller still owns whichever inner control
@@ -106,6 +109,7 @@ private:
   QStackedWidget* stack_ = nullptr;         // one page per category, indices matching nav_list_ rows
   QStackedWidget* content_stack_ = nullptr;  // stack_ vs. empty_state_
   QLabel* empty_state_ = nullptr;            // shown when a query matches nothing at all
+  QWidget* left_ = nullptr;
   QVBoxLayout* left_layout_ = nullptr;  // header widget (if any), search box, nav list, footer, in that order
   QWidget* header_widget_ = nullptr;
 

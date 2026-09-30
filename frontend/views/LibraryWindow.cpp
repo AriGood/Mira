@@ -559,6 +559,8 @@ void LibraryWindow::BuildShortcuts() {
     if (GameEditOpen()) {
       if (ArtPickerOpen()) {
         CloseArtPicker();
+      } else if (game_edit_form_->AdvancedOpen()) {
+        game_edit_form_->CloseAdvanced();
       } else {
         RequestCloseGameEdit();
       }
@@ -2272,7 +2274,7 @@ void LibraryWindow::CloseArtPicker(bool applied) {
   game_edit_hero_button_->setChecked(false);
   game_edit_cover_button_->setChecked(false);
   game_edit_back_->setText("← Back");
-  game_edit_advanced_->show();
+  game_edit_advanced_->setVisible(!game_edit_form_->AdvancedOpen());
   game_edit_save_->setText("Save");
   game_edit_save_->setEnabled(true);
   game_edit_stack_->setCurrentIndex(0);
@@ -2686,6 +2688,8 @@ QWidget* LibraryWindow::BuildGameEditCard(const std::string& id) {
   connect(back, &QPushButton::clicked, this, [this] {
     if (ArtPickerOpen()) {
       CloseArtPicker();
+    } else if (game_edit_form_->AdvancedOpen()) {
+      game_edit_form_->CloseAdvanced();
     } else {
       RequestCloseGameEdit();
     }
@@ -2702,6 +2706,9 @@ QWidget* LibraryWindow::BuildGameEditCard(const std::string& id) {
   auto* advanced = new QPushButton("Advanced settings…", footer);
   advanced->setToolTip("Per-game overrides of the global settings.");
   connect(advanced, &QPushButton::clicked, game_edit_form_, &mira_gui::GameEditForm::OpenAdvanced);
+  // Back steps out of the overrides first, as it does out of the art picker.
+  connect(game_edit_form_, &mira_gui::GameEditForm::AdvancedChanged, advanced,
+          [advanced](bool open) { advanced->setVisible(!open); });
   game_edit_back_ = back;
   game_edit_advanced_ = advanced;
   game_edit_save_ = save;

@@ -27,6 +27,8 @@ OverridesEditor::OverridesEditor(std::string game_id, QWidget* parent)
   outer->setContentsMargins(0, 0, 0, 0);
 
   nav_ = new SettingsNavWidget(this);
+  // Inside a game's card, where each row also carries its layer and Clear.
+  nav_->SetNavWidth(170);
   outer->addWidget(nav_);
 }
 

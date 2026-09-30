@@ -25,6 +25,7 @@ SettingsNavWidget::SettingsNavWidget(QWidget* parent) : QWidget(parent) {
   // Wide enough that SettingsPanel's "Show advanced & expert settings"
   // header checkbox (the longest thing this column ever holds) doesn't clip.
   left->setFixedWidth(240);
+  left_ = left;
   left_layout_ = new QVBoxLayout(left);
   left_layout_->setContentsMargins(0, 0, 12, 0);
   left_layout_->setSpacing(8);
@@ -57,6 +58,8 @@ SettingsNavWidget::SettingsNavWidget(QWidget* parent) : QWidget(parent) {
   content_stack_->addWidget(empty_state_);
   outer->addWidget(content_stack_, /*stretch=*/1);
 }
+
+void SettingsNavWidget::SetNavWidth(int width) { left_->setFixedWidth(width); }
 
 QFormLayout* SettingsNavWidget::AddCategory(const QString& title) {
   auto* page = new QWidget(this);

@@ -34,7 +34,6 @@ QWidget* SettingEditor::Build(QWidget* parent, std::function<void()> on_reset) {
     spin->setKeyboardTracking(false);
     spin->setToolTip(QString("Between %1 and %2").arg(*entry.minimum).arg(*entry.maximum));
     row_layout->addWidget(spin, /*stretch=*/1);
-    row_layout->addStretch(1);
   } else if (entry.is_runner_ref) {
     combo = new QComboBox(row_widget);
     combo->setEditable(true);

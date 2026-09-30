@@ -199,12 +199,9 @@ GameEditForm::GameEditForm(std::string id, QWidget* parent) : QWidget(parent), i
   auto* advanced_layout = new QVBoxLayout(advanced_page);
   advanced_layout->setContentsMargins(0, 0, 0, 0);
   advanced_layout->setSpacing(10);
-  auto* advanced_back = new QPushButton("← Back", advanced_page);
-  connect(advanced_back, &QPushButton::clicked, this, [this] {
-    fields_stack_->setCurrentIndex(0);
-    ResetScroll();
-  });
-  advanced_layout->addWidget(advanced_back, /*stretch=*/0, Qt::AlignLeft);
+  advanced_back_ = new QPushButton("← Back", advanced_page);
+  connect(advanced_back_, &QPushButton::clicked, this, &GameEditForm::CloseAdvanced);
+  advanced_layout->addWidget(advanced_back_, /*stretch=*/0, Qt::AlignLeft);
   overrides_ = new mira_gui::OverridesEditor(id_, advanced_page);
   advanced_layout->addWidget(overrides_, /*stretch=*/1);
   fields_stack_->addWidget(advanced_page);
@@ -219,7 +216,10 @@ void GameEditForm::SetArtworkStore(ArtworkStore* store) { hero_art_->SetArtworkS
 
 void GameEditForm::SetArtColumnVisible(bool visible) { art_column_->setVisible(visible); }
 
-void GameEditForm::SetAdvancedButtonVisible(bool visible) { advanced_button_->setVisible(visible); }
+void GameEditForm::SetAdvancedButtonVisible(bool visible) {
+  advanced_button_->setVisible(visible);
+  advanced_back_->setVisible(visible);
+}
 
 void GameEditForm::RefreshCover() { hero_art_->RefreshCover(); }
 void GameEditForm::RefreshBanner(const std::string& id) { hero_art_->RefreshBanner(id); }
@@ -227,7 +227,16 @@ void GameEditForm::RefreshBanner(const std::string& id) { hero_art_->RefreshBann
 void GameEditForm::OpenAdvanced() {
   fields_stack_->setCurrentIndex(1);
   ResetScroll();
+  emit AdvancedChanged(true);
 }
+
+void GameEditForm::CloseAdvanced() {
+  fields_stack_->setCurrentIndex(0);
+  ResetScroll();
+  emit AdvancedChanged(false);
+}
+
+bool GameEditForm::AdvancedOpen() const { return fields_stack_->currentIndex() == 1; }
 
 void GameEditForm::ResetScroll() {
   // The host (LibraryWindow's overlay card) wraps this form in a QScrollArea
