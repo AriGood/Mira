@@ -14,6 +14,7 @@
 #include <functional>
 #include <iostream>
 #include <string>
+#include <thread>
 #include <vector>
 #include <unistd.h>
 
@@ -73,6 +74,45 @@ void PrintError(const httplib::Result& res) {
 
 bool Ok(const httplib::Result& res) { return res && res->status >= 200 && res->status < 300; }
 
+// A long request's reply is 202 {job}: waits for that job (docs/api.md, Jobs)
+// and fills `result` with what it returned. Prints why and returns false if
+// the request or the job failed.
+bool AwaitJob(httplib::Client& client, const httplib::Result& res, json& result) {
+  if (!Ok(res)) {
+    PrintError(res);
+    return false;
+  }
+  const json started = json::parse(res->body, nullptr, false);
+  const std::string id = started.is_object() ? started.value("job", std::string()) : std::string();
+  if (id.empty()) {
+    result = started;
+    return true;
+  }
+  while (true) {
+    auto job = client.Get("/v1/jobs/" + id);
+    if (!Ok(job)) {
+      PrintError(job);
+      return false;
+    }
+    const json state = json::parse(job->body, nullptr, false);
+    const std::string done = state.value("state", std::string());
+    if (done == "finished") {
+      result = state.value("result", json::object());
+      return true;
+    }
+    if (done == "failed") {
+      const json error = state.value("error", json::object());
+      std::fprintf(stderr, "mira: %s\n", error.value("message", std::string("the job failed")).c_str());
+      const std::string hint = error.value("hint", std::string());
+      const std::string command = error.contains("fix") ? FixCommand(error["fix"]) : std::string();
+      if (!hint.empty()) std::fprintf(stderr, "      %s\n", hint.c_str());
+      if (!command.empty()) std::fprintf(stderr, "      Try: %s\n", command.c_str());
+      return false;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+  }
+}
+
 int CmdStatus() {
   auto client = Connect();
   auto res = client.Get("/v1/health");
@@ -86,12 +126,8 @@ int CmdStatus() {
 
 int CmdScan() {
   auto client = Connect();
-  auto res = client.Post("/v1/library/scan");
-  if (!Ok(res)) {
-    PrintError(res);
-    return 1;
-  }
-  json summary = json::parse(res->body);
+  json summary;
+  if (!AwaitJob(client, client.Post("/v1/library/scan"), summary)) return 1;
   std::printf("added: %lld  missing: %lld  restored: %lld\n",
              summary.value("added", 0LL), summary.value("missing", 0LL),
              summary.value("restored", 0LL));
@@ -100,12 +136,8 @@ int CmdScan() {
 
 int CmdLibraryRelocate() {
   auto client = Connect();
-  auto res = client.Post("/v1/library/relocate");
-  if (!Ok(res)) {
-    PrintError(res);
-    return 1;
-  }
-  json summary = json::parse(res->body);
+  json summary;
+  if (!AwaitJob(client, client.Post("/v1/library/relocate"), summary)) return 1;
   std::printf("moved: %lld  failed: %lld\n", summary.value("moved", 0LL), summary.value("failed", 0LL));
   return 0;
 }
@@ -469,12 +501,8 @@ int CmdRelocate(int argc, char** argv) {
     return 2;
   }
   auto client = Connect();
-  auto res = client.Post(std::format("/v1/games/{}/relocate", argv[0]));
-  if (!Ok(res)) {
-    PrintError(res);
-    return 1;
-  }
-  json game = json::parse(res->body);
+  json game;
+  if (!AwaitJob(client, client.Post(std::format("/v1/games/{}/relocate", argv[0])), game)) return 1;
   std::printf("%s: install_path=%s data_dir=%s\n", game.value("id", "").c_str(),
              game.value("install_path", "").c_str(), game.value("data_dir", "").c_str());
   return 0;
@@ -523,12 +551,8 @@ int CmdRemove(int argc, char** argv) {
 
 int CmdSteamScan() {
   auto client = Connect();
-  auto res = client.Post("/v1/steam/scan");
-  if (!Ok(res)) {
-    PrintError(res);
-    return 1;
-  }
-  json summary = json::parse(res->body);
+  json summary;
+  if (!AwaitJob(client, client.Post("/v1/steam/scan"), summary)) return 1;
   std::printf("added: %lld  updated: %lld\n", summary.value("added", 0LL), summary.value("updated", 0LL));
   return 0;
 }
@@ -541,12 +565,8 @@ int CmdSteam(int argc, char** argv) {
 
 int CmdLutrisImport() {
   auto client = Connect();
-  auto res = client.Post("/v1/lutris/import");
-  if (!Ok(res)) {
-    PrintError(res);
-    return 1;
-  }
-  json summary = json::parse(res->body);
+  json summary;
+  if (!AwaitJob(client, client.Post("/v1/lutris/import"), summary)) return 1;
   std::printf("added: %lld  updated: %lld\n", summary.value("added", 0LL), summary.value("updated", 0LL));
   if (const long long other = summary.value("other_runner", 0LL); other > 0) {
     std::printf("%lld left to another runner (Steam, Flatpak, ...). They stay in Lutris, and a Steam "
@@ -610,18 +630,19 @@ int CmdAmazon(int argc, char** argv) {
     std::puts("logged in");
     return 0;
   }
-  if (sub == "setup" || sub == "logout" || sub == "import") {
+  if (sub == "import") {
+    json summary;
+    if (!AwaitJob(client, client.Post("/v1/amazon/import"), summary)) return 1;
+    std::printf("added: %lld  updated: %lld\n", summary.value("added", 0LL), summary.value("updated", 0LL));
+    return 0;
+  }
+  if (sub == "setup" || sub == "logout") {
     auto res = client.Post(std::format("/v1/amazon/{}", sub));
     if (!Ok(res)) {
       PrintError(res);
       return 1;
     }
-    if (sub == "setup") std::puts("downloading nile: `mira amazon status` to check on it");
-    if (sub == "logout") std::puts("logged out");
-    if (sub == "import") {
-      const json summary = json::parse(res->body);
-      std::printf("added: %lld  updated: %lld\n", summary.value("added", 0LL), summary.value("updated", 0LL));
-    }
+    std::puts(sub == "setup" ? "downloading nile: `mira amazon status` to check on it" : "logged out");
     return 0;
   }
   std::fprintf(stderr,
@@ -832,12 +853,8 @@ int CmdLibrary(int argc, char** argv) {
 
 int CmdEpicImport() {
   auto client = Connect();
-  auto res = client.Post("/v1/epic/import");
-  if (!Ok(res)) {
-    PrintError(res);
-    return 1;
-  }
-  json summary = json::parse(res->body);
+  json summary;
+  if (!AwaitJob(client, client.Post("/v1/epic/import"), summary)) return 1;
   std::printf("added: %lld  updated: %lld\n", summary.value("added", 0LL), summary.value("updated", 0LL));
   return 0;
 }
@@ -943,12 +960,8 @@ int CmdGogLogout() {
 
 int CmdGogImport() {
   auto client = Connect();
-  auto res = client.Post("/v1/gog/import");
-  if (!Ok(res)) {
-    PrintError(res);
-    return 1;
-  }
-  json summary = json::parse(res->body);
+  json summary;
+  if (!AwaitJob(client, client.Post("/v1/gog/import"), summary)) return 1;
   std::printf("added: %lld  updated: %lld\n", summary.value("added", 0LL), summary.value("updated", 0LL));
   return 0;
 }
@@ -1048,12 +1061,8 @@ int CmdItchLogout() {
 
 int CmdItchImport() {
   auto client = Connect();
-  auto res = client.Post("/v1/itch/import");
-  if (!Ok(res)) {
-    PrintError(res);
-    return 1;
-  }
-  json summary = json::parse(res->body);
+  json summary;
+  if (!AwaitJob(client, client.Post("/v1/itch/import"), summary)) return 1;
   std::printf("added: %lld  updated: %lld\n", summary.value("added", 0LL), summary.value("updated", 0LL));
   return 0;
 }

@@ -27,6 +27,24 @@ fs::path TempDir(const char* name) {
   return dir;
 }
 
+// A long request answers 202 {job}; this waits for the job and returns it
+// as GET /v1/jobs/{id} shows it once done (`state`, then `result` or `error`).
+nlohmann::json AwaitJob(httplib::Client& client, const httplib::Result& started) {
+  REQUIRE(started != nullptr);
+  REQUIRE(started->status == 202);
+  const std::string id = nlohmann::json::parse(started->body).value("job", "");
+  REQUIRE_FALSE(id.empty());
+  for (int attempt = 0; attempt < 300; ++attempt) {
+    auto job = client.Get("/v1/jobs/" + id);
+    REQUIRE(job != nullptr);
+    nlohmann::json state = nlohmann::json::parse(job->body);
+    if (state.value("state", "") != "running") return state;
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  }
+  FAIL("job never finished");
+  return {};
+}
+
 // Runs a real Server over a real UDS socket for the lifetime of the test,
 // PATCH /v1/games/{id} env handling is otherwise only ever exercised by hand
 // over curl/the CLI, which is exactly the kind of "looks right, isn't" gap
@@ -730,12 +748,11 @@ TEST_CASE("POST /v1/games/delete removes many games, deletes files only where al
   add("kept", library_root / "Kept", "scan");
 
   httplib::Client client = server.Client();
-  auto res = client.Post("/v1/games/delete",
-                         R"({"ids": ["inside", "linked", "outside", "nope"], "delete_files": true})",
-                         "application/json");
-  REQUIRE(res != nullptr);
-  CHECK(res->status == 200);
-  const auto body = nlohmann::json::parse(res->body);
+  const auto job = AwaitJob(client, client.Post("/v1/games/delete",
+                                                R"({"ids": ["inside", "linked", "outside", "nope"], "delete_files": true})",
+                                                "application/json"));
+  REQUIRE(job["state"] == "finished");
+  const auto& body = job["result"];
   CHECK(body["removed"] == nlohmann::json::array({"inside", "linked"}));
   REQUIRE(body["failed"].size() == 1);
   CHECK(body["failed"][0]["id"] == "outside");
@@ -774,11 +791,11 @@ TEST_CASE("POST /v1/library/relocate with ids moves only those games") {
   }
 
   httplib::Client client = server.Client();
-  client.set_read_timeout(std::chrono::seconds(30));
-  auto res = client.Post("/v1/library/relocate", R"({"ids": ["picked"]})", "application/json");
-  REQUIRE(res != nullptr);
-  CHECK(res->status == 200);
-  const auto body = nlohmann::json::parse(res->body);
+  const auto job =
+      AwaitJob(client, client.Post("/v1/library/relocate?job=my-move", R"({"ids": ["picked"]})", "application/json"));
+  CHECK(job["id"] == "my-move");  // the client's own token, so it can listen before the reply
+  REQUIRE(job["state"] == "finished");
+  const auto& body = job["result"];
   CHECK(body["moved"] == 1);
   CHECK(body["failed"] == 0);
 
