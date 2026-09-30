@@ -510,6 +510,10 @@ Result<void> Server::Serve(const std::filesystem::path& socket_path) {
 
   RegisterRoutes();
 
+  // httplib's default is one thread per core with a floor of 8, and every
+  // event stream and every long request (a scan, a move) holds one for its
+  // whole length. Idle threads cost almost nothing.
+  http_->new_task_queue = [] { return new httplib::ThreadPool(32); };
   http_->set_address_family(AF_UNIX);
   if (!http_->bind_to_port(socket_path.string(), 80)) {
     return Err("socket_bind_failed", std::format("cannot bind {}", socket_path.string()));

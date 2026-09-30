@@ -104,7 +104,13 @@ private:
   // frontend.toml, not settings.toml. The window's own layout is read in the
   // constructor; these are what the settings screen also changes.
   void ApplySettingsPrefs(const mira_gui::FrontendPrefs& prefs);
-  void SavePrefs();
+  // The layout this window owns (size, zoom, filter, sort, sidebar), saved
+  // in the background a moment after it last changed, so a crash loses at
+  // most that moment. FlushPrefs writes a pending one now, for quitting.
+  mira_gui::FrontendPrefs LayoutPrefs() const;
+  void ScheduleSavePrefs();
+  void FlushPrefs();
+  void resizeEvent(QResizeEvent* event) override;
   void closeEvent(QCloseEvent* event) override;
   void changeEvent(QEvent* event) override;
   bool eventFilter(QObject* watched, QEvent* event) override;
@@ -432,6 +438,7 @@ private:
   bool stream_dropped_ = false;  // the event stream lost mirad; its return resyncs the list
   // Bumped per RefreshGames, so an older reply landing late can't undo a newer one.
   int games_request_ = 0;
+  QTimer* save_prefs_timer_ = nullptr;  // see ScheduleSavePrefs
   mira_gui::DownloadsPanel* downloads_panel_ = nullptr;
   // game.added events asking for their settings to open, gathered briefly
   // so a scan's burst of them opens nothing.

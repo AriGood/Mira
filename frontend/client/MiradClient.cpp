@@ -1431,7 +1431,7 @@ void MiradClient::DeleteGameAsync(QObject* context, const std::string& id, bool 
       context, [id, delete_files, delete_prefix, delete_metadata] {
         return DeleteGameSync(id, delete_files, delete_prefix, delete_metadata);
       },
-      std::move(callback));
+      std::move(callback), async::Lane::Slow);
 }
 
 void MiradClient::LaunchGameAsync(QObject* context, const std::string& id,
@@ -1445,7 +1445,7 @@ void MiradClient::StopGameAsync(QObject* context, const std::string& id,
 }
 
 void MiradClient::ScanLibraryAsync(QObject* context, std::function<void(ScanResult)> callback) {
-  async::Run(context, [] { return ScanLibrarySync(); }, std::move(callback));
+  async::Run(context, [] { return ScanLibrarySync(); }, std::move(callback), async::Lane::Slow);
 }
 
 void MiradClient::GetGameAsync(QObject* context, const std::string& id,
@@ -1562,13 +1562,15 @@ void MiradClient::RefreshMissingArtworkAsync(QObject* context,
 
 void MiradClient::GetRunnerCatalogAsync(QObject* context, const std::string& kind, const std::string& source,
                                         std::function<void(RunnerCatalogResult)> callback) {
-  async::Run(context, [kind, source] { return GetRunnerCatalogSync(kind, source); }, std::move(callback));
+  async::Run(context, [kind, source] { return GetRunnerCatalogSync(kind, source); }, std::move(callback),
+             async::Lane::Slow);
 }
 
 void MiradClient::DownloadRunnerAsync(QObject* context, const std::string& kind,
                                       const std::string& tag, const std::string& source,
                                       std::function<void(RunnerDownloadResult)> callback) {
-  async::Run(context, [kind, tag, source] { return DownloadRunnerSync(kind, tag, source); }, std::move(callback));
+  async::Run(context, [kind, tag, source] { return DownloadRunnerSync(kind, tag, source); }, std::move(callback),
+             async::Lane::Slow);
 }
 
 void MiradClient::ListRunnerSourcesAsync(QObject* context, const std::string& kind,
@@ -1577,12 +1579,12 @@ void MiradClient::ListRunnerSourcesAsync(QObject* context, const std::string& ki
 }
 
 void MiradClient::GetRunnerUpdatesAsync(QObject* context, std::function<void(RunnerUpdatesResult)> callback) {
-  async::Run(context, [] { return GetRunnerUpdatesSync(); }, std::move(callback));
+  async::Run(context, [] { return GetRunnerUpdatesSync(); }, std::move(callback), async::Lane::Slow);
 }
 
 void MiradClient::UpdateRunnerAsync(QObject* context, const std::string& reference,
                                     std::function<void(RunnerDownloadResult)> callback) {
-  async::Run(context, [reference] { return UpdateRunnerSync(reference); }, std::move(callback));
+  async::Run(context, [reference] { return UpdateRunnerSync(reference); }, std::move(callback), async::Lane::Slow);
 }
 
 void MiradClient::ListRunnerToolsAsync(QObject* context, std::function<void(RunnerToolsResult)> callback) {
@@ -1591,23 +1593,23 @@ void MiradClient::ListRunnerToolsAsync(QObject* context, std::function<void(Runn
 
 void MiradClient::SetupRunnerToolAsync(QObject* context, const std::string& id,
                                        std::function<void(RunnerDownloadResult)> callback) {
-  async::Run(context, [id] { return SetupRunnerToolSync(id); }, std::move(callback));
+  async::Run(context, [id] { return SetupRunnerToolSync(id); }, std::move(callback), async::Lane::Slow);
 }
 
 void MiradClient::ScanSteamAsync(QObject* context, std::function<void(SteamScanResult)> callback) {
-  async::Run(context, [] { return ScanSteamSync(); }, std::move(callback));
+  async::Run(context, [] { return ScanSteamSync(); }, std::move(callback), async::Lane::Slow);
 }
 
 void MiradClient::ImportLutrisAsync(QObject* context,
                                     std::function<void(LutrisImportResult)> callback) {
-  async::Run(context, [] { return ImportLutrisSync(); }, std::move(callback));
+  async::Run(context, [] { return ImportLutrisSync(); }, std::move(callback), async::Lane::Slow);
 }
 
 void MiradClient::RunInPrefixAsync(QObject* context, const std::string& id,
                                    const std::string& exe_path, const std::string& args,
                                    std::function<void(RunInPrefixResult)> callback) {
   async::Run(context, [id, exe_path, args] { return RunInPrefixSync(id, exe_path, args); },
-             std::move(callback));
+             std::move(callback), async::Lane::Slow);
 }
 
 void MiradClient::FinishInstallAsync(QObject* context, const std::string& id,
@@ -1815,19 +1817,19 @@ bool MiradClient::ParseNotification(const std::string& data, NotificationEvent* 
 
 void MiradClient::GetStoreStatusAsync(QObject* context, const std::string& source,
                                       std::function<void(StoreStatusResult)> callback) {
-  async::Run(context, [source] { return GetStoreStatusSync(source); }, std::move(callback));
+  async::Run(context, [source] { return GetStoreStatusSync(source); }, std::move(callback), async::Lane::Slow);
 }
 
 void MiradClient::SetupStoreToolAsync(QObject* context, const std::string& source,
                                       std::function<void(StoreActionResult)> callback) {
-  async::Run(context, [source] { return SetupStoreToolSync(source); }, std::move(callback));
+  async::Run(context, [source] { return SetupStoreToolSync(source); }, std::move(callback), async::Lane::Slow);
 }
 
 void MiradClient::SignInStoreAsync(QObject* context, const std::string& source,
                                    const std::string& credential,
                                    std::function<void(StoreActionResult)> callback) {
   async::Run(context, [source, credential] { return SignInStoreSync(source, credential); },
-             std::move(callback));
+             std::move(callback), async::Lane::Slow);
 }
 
 void MiradClient::SignOutStoreAsync(QObject* context, const std::string& source,
@@ -1837,12 +1839,12 @@ void MiradClient::SignOutStoreAsync(QObject* context, const std::string& source,
 
 void MiradClient::ImportStoreAsync(QObject* context, const std::string& source,
                                    std::function<void(StoreImportResult)> callback) {
-  async::Run(context, [source] { return ImportStoreSync(source); }, std::move(callback));
+  async::Run(context, [source] { return ImportStoreSync(source); }, std::move(callback), async::Lane::Slow);
 }
 
 void MiradClient::GetStoreLibraryAsync(QObject* context, const std::string& source,
                                        std::function<void(StoreLibraryResult)> callback) {
-  async::Run(context, [source] { return GetStoreLibrarySync(source); }, std::move(callback));
+  async::Run(context, [source] { return GetStoreLibrarySync(source); }, std::move(callback), async::Lane::Slow);
 }
 
 void MiradClient::InstallStoreTitleAsync(QObject* context, const std::string& source,
@@ -1854,7 +1856,7 @@ void MiradClient::InstallStoreTitleAsync(QObject* context, const std::string& so
 
 void MiradClient::GetGriddbMatchesAsync(QObject* context, const std::string& id, const std::string& query,
                                         std::function<void(GriddbMatchesResult)> callback) {
-  async::Run(context, [id, query] { return GetGriddbMatchesSync(id, query); }, std::move(callback));
+  async::Run(context, [id, query] { return GetGriddbMatchesSync(id, query); }, std::move(callback), async::Lane::Slow);
 }
 
 void MiradClient::SetGriddbMatchAsync(QObject* context, const std::string& id, std::int64_t griddb_id,
@@ -1881,7 +1883,7 @@ void MiradClient::GetRemovalPlanAsync(QObject* context, const std::string& sourc
 
 void MiradClient::RemoveSourceAsync(QObject* context, const std::string& source,
                                     std::function<void(RemoveSourceResult)> callback) {
-  async::Run(context, [source] { return RemoveSourceSync(source); }, std::move(callback));
+  async::Run(context, [source] { return RemoveSourceSync(source); }, std::move(callback), async::Lane::Slow);
 }
 
 void MiradClient::GetSourceRunnerAsync(QObject* context, const std::string& source,
@@ -1928,7 +1930,7 @@ bool MiradClient::ParseTitleArtworkEvent(const std::string& event_type, const st
 
 void MiradClient::GetHumbleLibraryAsync(QObject* context,
                                         std::function<void(HumbleLibraryResult)> callback) {
-  async::Run(context, [] { return GetHumbleLibrarySync(); }, std::move(callback));
+  async::Run(context, [] { return GetHumbleLibrarySync(); }, std::move(callback), async::Lane::Slow);
 }
 
 void MiradClient::DownloadHumbleBundleAsync(QObject* context, const std::string& bundle_key,
@@ -1956,17 +1958,18 @@ void MiradClient::GetInstallProgressAsync(QObject* context, const std::string& i
 
 void MiradClient::RelocateLibraryAsync(QObject* context,
                                        std::function<void(RelocateLibraryResult)> callback) {
-  async::Run(context, [] { return RelocateLibrarySync(std::nullopt); }, std::move(callback));
+  async::Run(context, [] { return RelocateLibrarySync(std::nullopt); }, std::move(callback), async::Lane::Slow);
 }
 
 void MiradClient::RelocateGamesAsync(QObject* context, const std::vector<std::string>& ids,
                                      std::function<void(RelocateLibraryResult)> callback) {
-  async::Run(context, [ids] { return RelocateLibrarySync(ids); }, std::move(callback));
+  async::Run(context, [ids] { return RelocateLibrarySync(ids); }, std::move(callback), async::Lane::Slow);
 }
 
 void MiradClient::RelocateGameAsync(QObject* context, const std::string& id, const std::string& install_path,
                                     std::function<void(GameDetailResult)> callback) {
-  async::Run(context, [id, install_path] { return RelocateGameSync(id, install_path); }, std::move(callback));
+  async::Run(context, [id, install_path] { return RelocateGameSync(id, install_path); }, std::move(callback),
+             async::Lane::Slow);
 }
 
 ArtworkResult MiradClient::GetArtworkBlocking(const std::string& id, const std::string& slot) {
@@ -1985,7 +1988,7 @@ void MiradClient::DeleteGamesAsync(QObject* context, const std::vector<std::stri
       [ids, delete_files, delete_prefix, delete_metadata] {
         return DeleteGamesSync(ids, delete_files, delete_prefix, delete_metadata);
       },
-      std::move(callback));
+      std::move(callback), async::Lane::Slow);
 }
 
 bool MiradClient::ParseOpenConfig(const std::string& data) {
@@ -2007,7 +2010,7 @@ bool MiradClient::ParseInstallEvent(const std::string& event_type, const std::st
 
 void MiradClient::BeginAmazonLoginAsync(QObject* context,
                                         std::function<void(LoginUrlResult)> callback) {
-  async::Run(context, [] { return BeginAmazonLoginSync(); }, std::move(callback));
+  async::Run(context, [] { return BeginAmazonLoginSync(); }, std::move(callback), async::Lane::Slow);
 }
 
 void MiradClient::GetLaunchersAsync(QObject* context, std::function<void(LaunchersResult)> callback) {
@@ -2021,7 +2024,7 @@ void MiradClient::InstallLauncherAsync(QObject* context, const std::string& id,
 
 void MiradClient::ImportLauncherAsync(QObject* context, const std::string& id,
                                       std::function<void(StoreImportResult)> callback) {
-  async::Run(context, [id] { return ImportLauncherSync(id); }, std::move(callback));
+  async::Run(context, [id] { return ImportLauncherSync(id); }, std::move(callback), async::Lane::Slow);
 }
 
 void MiradClient::OpenLauncherAsync(QObject* context, const std::string& id,

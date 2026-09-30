@@ -429,6 +429,7 @@ LibraryWindow::LibraryWindow(const mira_gui::FrontendPrefs& prefs, QWidget* pare
   const int sidebar = prefs.sidebar_width.value_or(232);
   splitter_->setSizes({sidebar, std::max(400, width() - sidebar)});
   splitter_->setChildrenCollapsible(false);
+  connect(splitter_, &QSplitter::splitterMoved, this, &LibraryWindow::ScheduleSavePrefs);
 
   // Settings is built lazily by OpenSettings() and covers this slot. A
   // game's edit card is a separate overlay, not a page here.
@@ -657,7 +658,30 @@ void LibraryWindow::ApplySettingsPrefs(const mira_gui::FrontendPrefs& prefs) {
   ApplyFilter();
 }
 
-void LibraryWindow::SavePrefs() {
+void LibraryWindow::ScheduleSavePrefs() {
+  // Before it's shown, "changes" are just the saved layout being applied.
+  if (!isVisible()) return;
+  if (save_prefs_timer_ == nullptr) {
+    save_prefs_timer_ = new QTimer(this);
+    save_prefs_timer_->setSingleShot(true);
+    // Long enough that dragging the zoom slider or the window edge saves once.
+    save_prefs_timer_->setInterval(1000);
+    connect(save_prefs_timer_, &QTimer::timeout, this, [this] {
+      mira_gui::MiradClient::SaveFrontendPrefsAsync(this, LayoutPrefs(), [](mira_gui::PatchConfigResult) {});
+    });
+  }
+  save_prefs_timer_->start();
+}
+
+void LibraryWindow::FlushPrefs() {
+  if (save_prefs_timer_ == nullptr || !save_prefs_timer_->isActive()) return;
+  save_prefs_timer_->stop();
+  // Blocking: an async save's thread might not reach the socket before the
+  // process exits. Failure isn't reported: the cost is a layout, not data.
+  mira_gui::MiradClient::SaveFrontendPrefsBlocking(LayoutPrefs());
+}
+
+mira_gui::FrontendPrefs LibraryWindow::LayoutPrefs() const {
   mira_gui::FrontendPrefs prefs;
   // The unmaximized size, or a restart would open a normal window as big as the screen.
   const QSize normal = isMaximized() || isFullScreen() ? normalGeometry().size() : size();
@@ -671,13 +695,14 @@ void LibraryWindow::SavePrefs() {
   prefs.library_filter = CurrentFilterKey().toStdString();
   prefs.sort_by = sort_key_;
   prefs.sort_descending = sort_descending_;
-  prefs.scan_on_startup = scan_on_startup_;
   const QList<int> sizes = splitter_->sizes();
   if (sizes.size() == 2) prefs.sidebar_width = sizes[0];
-  // Blocking, not fire-and-forget: the async form's detached thread might
-  // not reach the socket before the process exits on the last window's
-  // close. Failure isn't reported: the cost is a remembered layout, not data.
-  mira_gui::MiradClient::SaveFrontendPrefsBlocking(prefs);
+  return prefs;
+}
+
+void LibraryWindow::resizeEvent(QResizeEvent* event) {
+  QMainWindow::resizeEvent(event);
+  ScheduleSavePrefs();
 }
 
 void LibraryWindow::ApplyLayoutTokens() {
@@ -734,6 +759,7 @@ void LibraryWindow::changeEvent(QEvent* event) {
     maximize_button_->setIcon(mira_gui::icons::For(
         isMaximized() ? mira_gui::icons::Glyph::Restore : mira_gui::icons::Glyph::Maximize));
     maximize_button_->setToolTip(isMaximized() ? "Restore" : "Maximize");
+    ScheduleSavePrefs();
   }
   QMainWindow::changeEvent(event);
 }
@@ -864,7 +890,7 @@ void LibraryWindow::closeEvent(QCloseEvent* event) {
   // Only for the window Attach() made the tray's; a secondary window
   // closes for real either way, since nothing would bring it back.
   if (mira_gui::tray::IsManaged(this) && !mira_gui::tray::Quitting()) {
-    SavePrefs();
+    FlushPrefs();
     event->ignore();
     hide();
     return;
@@ -905,7 +931,7 @@ void LibraryWindow::closeEvent(QCloseEvent* event) {
     }
   }
 
-  SavePrefs();
+  FlushPrefs();
   mira_gui::MiradClient::ClearArtThumbsBlocking();
   QMainWindow::closeEvent(event);
 }
@@ -1211,6 +1237,7 @@ QWidget* LibraryWindow::BuildFilterSortPopover() {
     if (library_tabs_ != nullptr) library_tabs_->SetCurrent(CurrentFilterKey());
     UpdateFilterSortSummary();
     ApplyFilter();
+    ScheduleSavePrefs();
   });
   // QListWidget's own sizeHint doesn't grow with its item count -- fit
   // exactly the rows it has, once, rather than an arbitrary scrollable box.
@@ -1236,6 +1263,7 @@ QWidget* LibraryWindow::BuildFilterSortPopover() {
     sort_descending_ = !sort_descending_;
     UpdateFilterSortSummary();
     ApplyFilter();
+    ScheduleSavePrefs();
   });
   sort_heading_row->addWidget(sort_direction_);
   layout->addLayout(sort_heading_row);
@@ -1255,6 +1283,7 @@ QWidget* LibraryWindow::BuildFilterSortPopover() {
       sort_key_ = key.toStdString();
       UpdateFilterSortSummary();
       ApplyFilter();
+      ScheduleSavePrefs();
     });
     sort_group->addButton(button);
     sort_buttons_.append(button);
@@ -1592,6 +1621,7 @@ QSize LibraryWindow::TileSize() const {
 }
 
 void LibraryWindow::Zoom(int width) {
+  ScheduleSavePrefs();
   if (!SourcePageShown() || tile_size_synced_) SetTileWidth(width);
   if (!SourcePageShown()) return;
   if (!tile_size_synced_) source_tile_widths_[source_page_->property("source_id").toString().toStdString()] = width;
