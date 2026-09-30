@@ -3173,6 +3173,12 @@ void LibraryWindow::FillSidebarSection(QLabel* heading, QVBoxLayout* layout,
   // first: a popup's nested event loop would otherwise keep it painted.
   while (QLayoutItem* item = layout->takeAt(0)) {
     if (QWidget* row = item->widget()) {
+      // The hovered row is going away without a Leave, so its card would stay up.
+      if (row == recent_hover_row_) {
+        if (recent_hover_ != nullptr) recent_hover_->stop();
+        recent_hover_row_ = nullptr;
+        ShowHoverCard(QModelIndex());
+      }
       row->hide();
       row->deleteLater();
     }

@@ -533,6 +533,14 @@ GameMetadataResult GetMetadataSync(const std::string& id) {
     out.screenshots = strings(steam.value("screenshots", json::array()));
     out.trailers = strings(steam.value("movies", json::array()));
   }
+  // From Legendary's catalog cache: only a description and a developer.
+  if (reply.body.contains("epic") && reply.body["epic"].is_object()) {
+    const json& epic = reply.body["epic"];
+    if (out.description.empty()) out.description = epic.value("description", std::string());
+    if (const std::string developer = epic.value("developer", std::string()); !developer.empty() && out.developers.empty()) {
+      out.developers.push_back(developer);
+    }
+  }
   if (reply.body.contains("steam_reviews") && reply.body["steam_reviews"].is_object()) {
     const json& reviews = reply.body["steam_reviews"];
     out.review_summary = reviews.value("score_description", std::string());
