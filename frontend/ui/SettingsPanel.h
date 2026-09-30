@@ -7,6 +7,7 @@
 #include <QString>
 
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -84,6 +85,20 @@ private:
     int original = -1;
   };
 
+  // A frontend.toml checkbox or number, bound to its FrontendPrefs field.
+  struct PrefToggle {
+    QCheckBox* check = nullptr;
+    std::optional<bool> FrontendPrefs::*member = nullptr;
+    bool fallback = false;  // when frontend.toml doesn't set it
+    bool original = false;
+  };
+  struct PrefCount {
+    QSpinBox* spin = nullptr;
+    std::optional<int> FrontendPrefs::*member = nullptr;
+    int fallback = 0;
+    int original = 0;
+  };
+
   struct ShortcutField {
     QString id;
     QKeySequenceEdit* edit = nullptr;
@@ -97,7 +112,12 @@ private:
   void BuildShortcutsGroup();
   void BuildSidebarGroup();
   QSet<QString> CurrentHiddenSources() const;
-  bool SidebarDirty() const;
+  // Anything frontend.toml holds differs from what was loaded.
+  bool PrefsDirty() const;
+  QCheckBox* AddToggle(QFormLayout* form, const QString& label, const QString& tip, const QString& search,
+                       std::optional<bool> FrontendPrefs::*member, bool fallback);
+  QSpinBox* AddCount(QFormLayout* form, const QString& label, const QString& tip, const QString& search,
+                     std::optional<int> FrontendPrefs::*member, int fallback, int minimum, int maximum);
   QWidget* MakeShapeControl(ShapeField& field, const QString& label, int maximum,
                             const QString& tip);
   // Shows each shape spinbox's special "unset" value as the actual number
@@ -118,16 +138,11 @@ private:
   void ResetField(size_t index);
 
   SettingsNavWidget* nav_ = nullptr;
-  QCheckBox* scan_on_startup_ = nullptr;
-  bool scan_on_startup_original_ = true;
   QComboBox* theme_ = nullptr;
   QString theme_original_;
-  QCheckBox* drag_select_ = nullptr;
-  bool drag_select_original_ = true;
-  QSpinBox* recent_count_ = nullptr;
-  int recent_count_original_ = 3;
-  QCheckBox* source_counts_ = nullptr;
-  bool source_counts_original_ = true;
+  std::vector<PrefToggle> toggles_;
+  std::vector<PrefCount> counts_;
+  QWidget* sidebar_first_row_ = nullptr;  // kSidebarKey's target
   std::vector<std::pair<QString, QCheckBox*>> source_checks_;  // source id, "show in sidebar"
   QSet<QString> hidden_sources_original_;
   ShapeField tile_spacing_;

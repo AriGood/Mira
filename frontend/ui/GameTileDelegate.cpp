@@ -1,5 +1,7 @@
 #include "GameTileDelegate.h"
 
+#include <algorithm>
+
 #include <QFontMetrics>
 #include <QLinearGradient>
 #include <QPainter>
@@ -8,6 +10,7 @@
 
 #include "GamePresentation.h"
 #include "Icons.h"
+#include "Sources.h"
 #include "Theme.h"
 
 namespace mira_gui {
@@ -105,6 +108,13 @@ void GameTileDelegate::paint(QPainter* painter, const QStyleOptionViewItem& opti
   gradient.setColorAt(0.0, QColor(0, 0, 0, tokens.scrim_alpha));
   gradient.setColorAt(1.0, QColor(0, 0, 0, 0));
   painter->fillRect(scrim, gradient);
+
+  if (const QVariant progress = index.data(ProgressRole); progress.isValid()) {
+    const QRect track(rect.left(), rect.bottom() - 5, rect.width(), 6);
+    painter->fillRect(track, QColor(0, 0, 0, 160));
+    const int filled = qRound(track.width() * std::clamp(progress.toDouble(), 0.0, 1.0));
+    painter->fillRect(track.adjusted(0, 0, filled - track.width(), 0), tokens.accent);
+  }
   painter->restore();
 
   painter->save();
@@ -121,7 +131,7 @@ void GameTileDelegate::paint(QPainter* painter, const QStyleOptionViewItem& opti
   // "Ready" says nothing worth a line on every tile, only a state that
   // needs attention (or Playing) earns one.
   const QString status_text = index.data(StatusTextRole).toString();
-  if (running || status != "ready" || !status_text.isEmpty()) {
+  if (show_status_ && (running || status != "ready" || !status_text.isEmpty())) {
     QFont status_font = option.font;
     status_font.setPixelSize(qMax(9, status_font.pixelSize() > 0 ? status_font.pixelSize() - 2 : 10));
     painter->setFont(status_font);
@@ -134,6 +144,21 @@ void GameTileDelegate::paint(QPainter* painter, const QStyleOptionViewItem& opti
                       !status_text.isEmpty() ? status_text
                       : running              ? QString("Playing")
                                              : StatusLabel(status));
+  }
+
+  if (show_source_mark_) {
+    if (const SourceInfo* source = FindSourceInfo(index.data(SourceRole).toString())) {
+      const QRect mark(rect.left() + 6, rect.top() + 6, 20, 20);
+      painter->setPen(Qt::NoPen);
+      painter->setBrush(source->color);
+      painter->drawRoundedRect(mark, 5, 5);
+      QFont mark_font = option.font;
+      mark_font.setWeight(QFont::Bold);
+      mark_font.setPixelSize(11);
+      painter->setFont(mark_font);
+      painter->setPen(Qt::white);
+      painter->drawText(mark, Qt::AlignCenter, source->name.left(1));
+    }
   }
 
   const QString action = index.data(ActionRole).toString();

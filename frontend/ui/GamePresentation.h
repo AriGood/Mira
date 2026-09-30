@@ -2,6 +2,7 @@
 
 #include <QColor>
 #include <QDateTime>
+#include <QLocale>
 #include <QString>
 
 #include "Theme.h"
@@ -66,6 +67,17 @@ inline QString StatusLabel(const std::string& status) {
 inline QString FormatLastPlayed(const std::optional<std::int64_t>& last_played_at) {
   if (!last_played_at) return "Never";
   return QDateTime::fromSecsSinceEpoch(*last_played_at).toString("yyyy-MM-dd HH:mm");
+}
+
+// "Today", "Yesterday", "3 days ago", then the date.
+inline QString FormatPlayedAgo(const std::optional<std::int64_t>& last_played_at) {
+  if (!last_played_at) return "Never played";
+  const QDate played = QDateTime::fromSecsSinceEpoch(*last_played_at).date();
+  const qint64 days = played.daysTo(QDate::currentDate());
+  if (days <= 0) return "Today";
+  if (days == 1) return "Yesterday";
+  if (days < 7) return QString("%1 days ago").arg(days);
+  return QLocale().toString(played, QLocale::ShortFormat);
 }
 
 inline QString FormatPlaytime(std::int64_t play_seconds) {

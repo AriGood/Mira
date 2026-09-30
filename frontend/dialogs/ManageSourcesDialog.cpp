@@ -13,6 +13,7 @@
 
 #include "../client/MiradClient.h"
 #include "../ui/Theme.h"
+#include "../views/SourcePage.h"
 
 namespace {
 

@@ -9,6 +9,7 @@
 #include "epic/EpicImporter.h"
 #include "epic/Legendary.h"
 #include "library/Catalog.h"
+#include "library/StoreProgress.h"
 #include "store/GameStore.h"
 #include "support/TestEnv.h"
 
@@ -210,4 +211,16 @@ TEST_CASE("ListCatalog reports entitlements read-through and marks tracked ones"
   CHECK(owned_only->title == "Not Installed");
   CHECK_FALSE(owned_only->installed);
   CHECK(owned_only->game_id.empty());
+}
+
+TEST_CASE("ParseProgressLine reads legendary and gogdl download lines") {
+  library::DownloadProgress progress;
+  CHECK(library::ParseProgressLine(
+      "[DLManager] INFO: = Progress: 42.50% (425/1000), Running for 00:01:00, ETA: 00:02:05", progress));
+  CHECK(progress.fraction == doctest::Approx(0.425));
+  CHECK(progress.eta_seconds == 125);
+  CHECK_FALSE(library::ParseProgressLine("[DLManager] INFO:  + Download\t- 12.50 MiB/s (raw)", progress));
+  CHECK(progress.bytes_per_second == doctest::Approx(12.5 * 1024 * 1024));
+  CHECK(library::ParseProgressLine("= Progress: 7.00 70/1000, Running for: 00:00:10, ETA: 00:02:10", progress));
+  CHECK(progress.fraction == doctest::Approx(0.07));
 }

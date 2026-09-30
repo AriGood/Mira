@@ -3,6 +3,7 @@
 #include "gog/Gog.h"
 #include "core/StoreErrors.h"
 #include "gog/GogImporter.h"
+#include "library/StoreProgress.h"
 
 namespace mira::gog {
 namespace {
@@ -30,7 +31,9 @@ Result<void> GogInstaller::Run(const std::string& id) {
   } else if (config_.GetString("gog.folder_naming") == "id") {
     root /= id;
   }
-  if (auto output = RunGogdl(config_, {"download", id, "--path", root.string(), "--platform", "windows"});
+  library::StoreProgress progress(events_, "gog", id);
+  if (auto output = RunGogdl(config_, {"download", id, "--path", root.string(), "--platform", "windows"},
+                             [&progress](std::string_view chunk) { progress.Feed(chunk); });
       !output) {
     return std::unexpected(output.error());
   }

@@ -72,7 +72,13 @@ DeleteChoice FinishDeleteDialog(QDialog& dialog, QVBoxLayout* layout, QCheckBox*
   QObject::connect(files_check, &QCheckBox::toggled, &dialog, sync_buttons);
   QObject::connect(prefix_check, &QCheckBox::toggled, &dialog, sync_buttons);
   QObject::connect(metadata_check, &QCheckBox::toggled, &dialog, sync_buttons);
+  // Sized with the warning shown, plus a margin, so ticking a box never
+  // clips the wrapped text.
+  dialog.setMinimumWidth(460);
+  warning->setVisible(true);
+  const int height = dialog.sizeHint().height() * 11 / 10;
   sync_buttons();
+  dialog.resize(dialog.minimumWidth(), height);
 
   DeleteChoice choice;
   if (dialog.exec() != QDialog::Accepted) return choice;

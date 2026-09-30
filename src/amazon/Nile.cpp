@@ -78,7 +78,8 @@ json ReadNileFile(const std::string& name) {
   return parsed.is_discarded() ? json(nullptr) : parsed;
 }
 
-Result<std::string> RunNile(const config::Config& config, std::vector<std::string> args) {
+Result<std::string> RunNile(const config::Config& config, std::vector<std::string> args,
+                               const runner::OutputFn& on_output) {
   const NileStatus status = DetectNile(config);
   if (!status.installed) {
     return StoreToolMissing("amazon", "Amazon Games", "nile");
@@ -86,7 +87,7 @@ Result<std::string> RunNile(const config::Config& config, std::vector<std::strin
   Command command;
   command.argv = {status.path};
   command.argv.insert(command.argv.end(), args.begin(), args.end());
-  const Result<runner::ExecResult> result = runner::RunAndWait(command);
+  const Result<runner::ExecResult> result = runner::RunAndWait(command, on_output);
   if (!result) return std::unexpected(result.error());
   if (result->exit_code != 0) {
     return Err("nile_failed", std::format("nile exited {}: {}", result->exit_code, result->output));

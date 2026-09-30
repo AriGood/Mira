@@ -10,6 +10,7 @@
 #include "config/Config.h"
 #include "core/Result.h"
 #include "runner/Downloader.h"
+#include "runner/Exec.h"
 
 // Epic Games Store support: wraps Legendary, a native-Linux Epic CLI client,
 // for everything protocol-shaped (auth, catalog, install, update, uninstall).
@@ -56,7 +57,8 @@ Result<void> InstallLegendaryBinary(const config::Config& config, const runner::
 // Err("legendary_missing", ...) up front if nothing resolved, pointing at
 // "mira epic setup", and never assumes legendary is there. Returns combined
 // stdout+stderr; Err("legendary_failed", ...) on a nonzero exit.
-Result<std::string> RunLegendary(const config::Config& config, std::vector<std::string> args);
+Result<std::string> RunLegendary(const config::Config& config, std::vector<std::string> args,
+                               const runner::OutputFn& on_output = {});
 
 // Like RunLegendary, but appends --json and parses stdout as JSON.
 Result<nlohmann::json> RunLegendaryJson(const config::Config& config, std::vector<std::string> args);

@@ -6,15 +6,19 @@
 
 `mira-gui` opens on the **grid** (`views/LibraryWindow`): cover tiles, a left sidebar and a custom top bar in place of a native titlebar. The window is frameless. Dragging the top bar's empty area or the sidebar header moves it, double-clicking the top bar toggles maximize, and the edges resize. Moves and resizes go through `QWindow::startSystemMove`/`startSystemResize` so they work on Wayland and X11.
 
-The **table** (`views/MainWindow`) shows every field of every game. The top bar's grid/table toggle shows it in the grid's place, filtered and sorted by the same sidebar controls. `mira-gui --classic` opens it as its own window.
+The **table** (`views/MainWindow`) shows every field of every game. The top bar's grid/table toggle shows it in the grid's place, filtered and sorted by the same controls. `mira-gui --classic` opens it as its own window.
+
+### Library page
+
+The grid page opens on the same tab row as a source page (`ui/TabRow`): tabs for All, Installed, Playing now, Needs attention and Never played, then the filter and sort menu and the search box. There's no page title; the sidebar says where you are. Under them, *Continue playing* (`ui/ContinueRow`) shows large cards for running and recently played games while the whole library is shown. Tiles show a status line and a small mark for the source a game came from. Each part can be turned off in Settings → Interface.
 
 ### Sidebar
 
-From top to bottom: the Mira header, the Library, Runners and Settings rows, search with the filter and sort menu, pinned games, the sources, recently played games, and the Add games button.
+From top to bottom: the Mira header, the Library, Runners and Settings rows, pinned games, the sources, recently played games (off by default), and the Add games button.
 
-Pinning a game (game menu, or several at once from the batch menu, which offers Pin/Unpin and Hide/Unhide for whichever selected games each would change) adds the `favorite` tag, the same one Lutris imports its favorites under. Pinned games list by name under PINNED and get a pin badge on their tile. PINNED follows the grid's filter: hidden pinned games show only under the Hidden filter, and only they do.
+Pinning a game (game menu, or several at once from the batch menu, which offers Pin/Unpin and Hide/Unhide for whichever selected games each would change) adds the `favorite` tag, the same one Lutris imports its favorites under. Pinned games list by name under PINNED and get a pin badge on their tile. PINNED follows the grid's filter: hidden pinned games show only under the Hidden filter, and only they do. Clicking a pinned or recently played row plays the game; the second click of a double click is ignored, since the list can reorder under it. Source rows show the source's colored initial and an orange dot for a store that has games but is signed out.
 
-Only sources that are set up show in the sidebar. *Manage sources* (`dialogs/ManageSourcesDialog`) lists every source, sets which ones show and their order, and opens the page of one that isn't set up yet.
+Only sources that are set up show in the sidebar. *Manage sources* (`dialogs/ManageSourcesDialog`) lists every source, sets which ones show and their order, and opens the page of one that isn't set up yet. `ui/Sources` lists them for every view.
 
 ### Source pages
 
@@ -24,7 +28,7 @@ Each source row opens `views/SourcePage` in the grid's place:
 - **Launchers** (Battle.net, Ubisoft Connect, EA app): install the launcher into its own prefix, open it, import its games.
 - **Local** (Steam, Lutris): import what the other program installed. Steam also lists owned games once a Web API key is set.
 
-A page shows a banner with the source's status, a setup card while a step is left, and the source's games as tiles (`ui/TileGrid`). Covers for games that aren't installed come from `/v1/library/artwork`. Login URLs and paste parsing come from `mirad`, so the page only holds wording. A source turned off with `<id>.enabled` isn't listed.
+A page opens on a tab row that also holds the source's status and its Sign out / Open, Import, settings and ⋯ buttons, numbered setup steps while one is left (the current one expanded), and the source's games as tiles (`ui/TileGrid`), split into Installed and Not installed tabs unless `source_page_tabs` is off. The zoom slider sizes each page on its own unless `tile_size_synced` is on. Covers for games that aren't installed come from `/v1/library/artwork`. Login URLs and paste parsing come from `mirad`, so the page only holds wording. A source turned off with `<id>.enabled` isn't listed.
 
 The banner's gear opens `views/SourceSettingsCard` under it: the source's runner (`/v1/sources/{id}/runner`) and every schema setting under its own keys (`<id>.*`, plus `launchers.<id>.*`), each saved as soon as it changes. The banner's ⋯ menu updates a store's tool, opens a launcher's prefix tools (folder, winetricks, run a program, log) and removes the source through the same confirmation Manage sources uses.
 
@@ -39,17 +43,17 @@ A banner offers to install umu-launcher or winetricks when either is missing.
 
 ### Downloads
 
-The top bar's download button opens `ui/DownloadsPanel`. It lists everything `ui/DownloadTracker` has seen from the event stream: game installers, store installs and updates, Humble downloads, launcher installs, tool downloads and runner downloads. `mirad` replays recent events on connect, so work started before the GUI opened also shows. Only game installers report progress (bytes written). A finished install offers *Show*, which selects the game.
+The top bar's download button opens `ui/DownloadsPanel`. It lists everything `ui/DownloadTracker` has seen from the event stream: game installers, store installs and updates, Humble downloads, launcher installs, tool downloads and runner downloads. `mirad` replays recent events on connect, so work started before the GUI opened also shows. Game installers report bytes written; Epic, GOG, Amazon and itch installs report percent, speed and time left (`library.install.progress`), also drawn as a bar on the title's tile. A finished install offers *Show*, which selects the game.
 
 ### Selection and hover
 
-One click selects a tile. Ctrl, Shift or a drag selects several, and the context menu then offers batch actions. Double-click launches. A single click never launches, so a misclick can't start a game. *Drag to select* on the Interface tab turns drag selection off.
+One click selects a tile. Ctrl, Shift or a drag selects several, and the context menu then offers batch actions; source pages work the same way (`ui/TileView`), with *Install (N)* on not-installed titles. Double-click launches. A single click never launches, so a misclick can't start a game. *Drag to select* on the Interface tab turns drag selection off.
 
 Hovering a tile shows `ui/HoverCard` with the name, status, runner, ProtonDB tier, developer and genres. Tooltips everywhere go through `ui/ToolTip`, which draws them as the same card.
 
 ### Keyboard
 
-`ui/KeyBindings` holds every shortcut, and each can be changed in Settings (stored in `shortcut_overrides`). `ui/Shortcuts` installs `Ctrl+Q`, `Ctrl+W` and `F1` (list of shortcuts) on both windows. The grid adds `Ctrl+F` search, `Esc`, `Ctrl+1` to `Ctrl+8` filters, `F5`/`Ctrl+R` refresh, `Ctrl+,` settings, tile size keys and, while the grid has focus, `Enter` to play or stop, `Alt+Enter` for details and `Delete` to remove. That last group is scoped to the grid so the keys still work in the search box.
+`ui/KeyBindings` holds every shortcut, and each can be changed in Settings (stored in `shortcut_overrides`). `ui/Shortcuts` installs `Ctrl+Q`, `Ctrl+W` and `F1` (list of shortcuts) on both windows. The grid adds `Ctrl+F` search, `Esc`, `Ctrl+1` to `Ctrl+9` filters, `F5`/`Ctrl+R` refresh, `Ctrl+,` settings, tile size keys and, while the grid has focus, `Enter` to play or stop, `Alt+Enter` for details and `Delete` to remove. That last group is scoped to the grid so the keys still work in the search box.
 
 Quit goes through `QApplication::closeAllWindows()` so `LibraryWindow::closeEvent` saves its prefs.
 
@@ -100,7 +104,8 @@ Only `game.added` and `game.updated` carry a game record, so views check the eve
 |---|---|
 | `window_width`, `window_height` | Window size. |
 | `sidebar_width` | Sidebar width. |
-| `tile_width` | Tile size, clamped to the zoom slider's range. |
+| `tile_width` | The library's tile size, clamped to the zoom slider's range. |
+| `source_tile_widths`, `tile_size_synced` | Each source page's tile size, or one size for every page. |
 | `library_filter`, `sort_by`, `sort_descending` | Selected filter and sort. |
 | `scan_on_startup` | Run a library scan when the GUI opens. |
 | `theme` | Theme name or `auto`. |
@@ -109,7 +114,11 @@ Only `game.added` and `game.updated` carry a game record, so views check the eve
 | `shortcut_overrides` | Changed shortcuts by id. |
 | `hidden_sources`, `source_order` | Which sources the sidebar shows, and in what order. |
 | `source_imported_at` | When each source last imported. |
-| `sidebar_recent_count`, `sidebar_source_counts` | How many recently played games to list, and whether source rows show counts. |
+| `sidebar_recent_count`, `sidebar_source_counts` | How many recently played games to list (0 hides them), and whether source rows show counts. |
+| `sidebar_source_icons` | Colored initials on source rows. |
+| `library_filter_tabs`, `library_continue_row`, `library_continue_count` | The library's tabs and its Continue playing cards. |
+| `tile_status`, `tile_source_mark` | What a tile draws besides its title. |
+| `source_page_tabs` | Installed and Not installed as tabs on source pages. |
 
 Every field is optional; a missing one means the default. Values go through the widget that owns them, so a hand-edited value is still clamped.
 

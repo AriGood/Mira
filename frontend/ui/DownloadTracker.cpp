@@ -1,5 +1,7 @@
 #include "DownloadTracker.h"
 
+#include <QLocale>
+#include <QStringList>
 #include <QTimer>
 
 #include <algorithm>
@@ -49,6 +51,20 @@ QString DownloadTracker::KeyFor(Kind kind, const QString& source, const QString&
   return QString();
 }
 
+QString DownloadTracker::ProgressText(const Entry& entry, bool short_form) {
+  if (entry.progress < 0) return {};
+  QStringList parts{QString("%1%").arg(qRound(entry.progress * 100))};
+  if (!short_form && entry.bytes_per_second > 0) {
+    parts << QLocale().formattedDataSize(static_cast<qint64>(entry.bytes_per_second)) + "/s";
+  }
+  if (entry.eta_seconds > 0) {
+    const qint64 minutes = (entry.eta_seconds + 59) / 60;
+    parts << (minutes >= 60 ? QString("%1 h %2 min left").arg(minutes / 60).arg(minutes % 60)
+                            : QString("%1 min left").arg(minutes));
+  }
+  return parts.join(" · ");
+}
+
 bool DownloadTracker::HandleEvent(const std::string& type, const std::string& data) {
   State state;
   if (InstallEvent install; MiradClient::ParseInstallEvent(type, data, &install)) {
@@ -77,6 +93,8 @@ bool DownloadTracker::HandleEvent(const std::string& type, const std::string& da
     Entry& entry = Upsert(Kind::Title, QString::fromStdString(store.source), QString::fromStdString(store.ref));
     entry.state = State::Running;
     entry.progress = store.progress;
+    entry.eta_seconds = store.eta_seconds;
+    entry.bytes_per_second = store.bytes_per_second;
     emit Changed(entry.key);
     return true;
   }
@@ -93,7 +111,11 @@ bool DownloadTracker::HandleEvent(const std::string& type, const std::string& da
   entry.state = state;
   entry.update = store.update;
   entry.error = QString::fromStdString(store.error);
-  if (state == State::Running) entry.progress = -1;
+  if (state == State::Running) {
+    entry.progress = -1;
+    entry.eta_seconds = -1;
+    entry.bytes_per_second = -1;
+  }
   const QString key = entry.key;
   if (kind == Kind::Title && NameFor(entry) == ref) ResolveNames(source);
   emit Changed(key);

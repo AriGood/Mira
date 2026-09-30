@@ -7,6 +7,7 @@
 #include "config/Config.h"
 #include "core/Result.h"
 #include "runner/Downloader.h"
+#include "runner/Exec.h"
 
 // Wraps gogdl (github.com/Heroic-Games-Launcher/heroic-gogdl), the GOG
 // downloader Heroic itself uses. It's a self-executing Python zipapp, not
@@ -39,7 +40,8 @@ std::filesystem::path AuthConfigPath(const config::Config& config);
 
 // Runs gogdl with --auth-config-path already inserted. Blocking, same
 // convention as epic::RunLegendary.
-Result<std::string> RunGogdl(const config::Config& config, std::vector<std::string> args);
+Result<std::string> RunGogdl(const config::Config& config, std::vector<std::string> args,
+                               const runner::OutputFn& on_output = {});
 
 struct GogAuthStatus {
   GogStatus gogdl;
