@@ -94,6 +94,9 @@ protected:
   bool lessThan(const QModelIndex& left, const QModelIndex& right) const override;
 
 private:
+  // Applies `change` to the filter's inputs and refilters the rows.
+  void ChangeFilter(const std::function<void()>& change);
+
   GameLibraryModel* library_;
   QString key_ = "all";
   QString search_;

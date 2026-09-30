@@ -262,9 +262,9 @@ void Warn(QWidget* parent, const QString& text) {
   ShowCard(parent, Level::Warning, text, /*persistent=*/true);
 }
 
-void Notice(QWidget* parent, const QString& text) {
+void Notice(QWidget* parent, const QString& text, Level level) {
   if (system_notifier::Send(Urgency::Transient, "Mira", text)) return;
-  ShowCard(parent, Level::Info, text, /*persistent=*/false);
+  ShowCard(parent, level, text, /*persistent=*/false);
 }
 
 void Info(QWidget* parent, const QString& title, const QString& message) {
