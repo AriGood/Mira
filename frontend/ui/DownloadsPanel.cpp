@@ -35,6 +35,7 @@ QString RunningText(const DownloadTracker::Entry& entry) {
       return progress.isEmpty() ? verb : verb + " " + progress;
     }
     case Kind::Launcher: return "Installing…";
+    case Kind::Job: return entry.message.isEmpty() ? QString("Working…") : entry.message;
     default: return "Downloading…";
   }
 }
@@ -46,6 +47,7 @@ QString FinishedText(const DownloadTracker::Entry& entry) {
     case Kind::Title:
       if (entry.update) return "Updated";
       return entry.source == "steam" ? "Sent to Steam" : "Installed";
+    case Kind::Job: return "Done";
     default: return "Downloaded";
   }
 }
@@ -54,7 +56,8 @@ QString FinishedText(const DownloadTracker::Entry& entry) {
 // game's own installer.
 QString Origin(const DownloadTracker& tracker, const DownloadTracker::Entry& entry) {
   switch (entry.kind) {
-    case Kind::Game: return QString();
+    case Kind::Game:
+    case Kind::Job: return QString();
     case Kind::Runner: return entry.source.isEmpty() ? QString() : entry.source.left(1).toUpper() + entry.source.mid(1);
     case Kind::Tool: return tracker.source_name ? tracker.source_name(entry.source) + " helper" : QString();
     default: return tracker.source_name ? tracker.source_name(entry.source) : entry.source;
@@ -73,7 +76,7 @@ DownloadsPanel::DownloadsPanel(DownloadTracker* tracker, ArtworkStore* artwork, 
   layout->setSpacing(8);
 
   auto* header = new QHBoxLayout();
-  auto* title = new QLabel("Downloads", this);
+  auto* title = new QLabel("Activity", this);
   title->setProperty("role", "section");
   header->addWidget(title);
   header->addStretch(1);
@@ -83,7 +86,7 @@ DownloadsPanel::DownloadsPanel(DownloadTracker* tracker, ArtworkStore* artwork, 
   header->addWidget(clear_);
   layout->addLayout(header);
 
-  empty_ = new QLabel("Nothing installing or downloading.", this);
+  empty_ = new QLabel("Nothing installing, downloading or running.", this);
   empty_->setProperty("role", "muted");
   layout->addWidget(empty_);
 
@@ -156,8 +159,13 @@ QWidget* DownloadsPanel::BuildRow(int index) {
   } else if (entry.kind == Kind::Title) {
     cover->setPixmap(artwork_->TitleCover(entry.source, entry.ref, name, kCover, dpr));
   } else {
-    const icons::Glyph glyph = entry.kind == Kind::Runner || entry.kind == Kind::Tool ? icons::Glyph::Wrench
-                                                                                    : icons::Glyph::Download;
+    icons::Glyph glyph = icons::Glyph::Download;
+    if (entry.kind == Kind::Runner || entry.kind == Kind::Tool) glyph = icons::Glyph::Wrench;
+    if (entry.kind == Kind::Job) {
+      if (entry.source == "scan") glyph = icons::Glyph::Search;
+      if (entry.source == "relocate") glyph = icons::Glyph::Refresh;
+      if (entry.source == "delete" || entry.source == "remove_source") glyph = icons::Glyph::Trash;
+    }
     cover->setPixmap(icons::For(glyph, tokens.text_muted).pixmap(22, 22));
   }
   layout->addWidget(cover);

@@ -20,26 +20,29 @@ namespace mira_gui {
 // replays its recent events to a new stream, so this also knows about work
 // started before the GUI was.
 //
+// It also lists mirad's jobs (scans, imports, moves, deletes), from job.*.
+//
 // Only game installers report how far along they are (bytes written);
 // the rest are only started, finished or failed.
 class DownloadTracker : public QObject {
   Q_OBJECT
 
 public:
-  enum class Kind { Game, Title, Humble, Launcher, Tool, Runner };
+  enum class Kind { Game, Title, Humble, Launcher, Tool, Runner, Job };
   enum class State { Running, Finished, Failed };
 
   struct Entry {
     QString key;  // see KeyFor
     Kind kind = Kind::Game;
-    QString source;  // a source id; empty for Game and Runner
-    QString ref;     // game id, title ref, bundle key, launcher id or runner tag
+    QString source;  // a source id; empty for Game and Runner; a Job's kind
+    QString ref;     // game id, title ref, bundle key, launcher id, runner tag or job id
     bool update = false;
     State state = State::Running;
     qint64 bytes = 0;  // Game only
-    double progress = -1;  // 0..1 when the source reports it (store installs)
+    double progress = -1;  // 0..1 when the source reports it (store installs, jobs with steps)
     qint64 eta_seconds = -1;
     double bytes_per_second = -1;
+    QString message;       // a Job's current step
     QString error;
     QDateTime changed;
   };
@@ -79,6 +82,7 @@ signals:
 
 private:
   Entry& Upsert(Kind kind, const QString& source, const QString& ref);
+  bool HandleJobEvent(const std::string& type, const std::string& data);
   void Poll();
   void ResolveNames(const QString& source);
 

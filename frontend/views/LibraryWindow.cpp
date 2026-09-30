@@ -63,7 +63,7 @@
 #include "../ui/DaemonSupervisor.h"
 #include "../ui/DownloadTracker.h"
 #include "../ui/DownloadsPanel.h"
-#include "../ui/EventHub.h"
+#include "../client/EventHub.h"
 #include "../ui/GameActions.h"
 #include "../ui/GameEditForm.h"
 #include "../ui/GamePresentation.h"
@@ -1136,7 +1136,7 @@ QWidget* LibraryWindow::BuildTopBar() {
 
   downloads_button_ = new QToolButton(top_bar_);
   downloads_button_->setAutoRaise(true);
-  downloads_button_->setToolTip("Downloads");
+  downloads_button_->setToolTip("Activity");
   // Its count's text is taller than the icon; the bar shouldn't grow for it.
   downloads_button_->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Ignored);
   connect(downloads_button_, &QToolButton::clicked, this,

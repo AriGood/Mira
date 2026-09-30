@@ -10,7 +10,7 @@
 #include <utility>
 
 #include "../client/MiradClient.h"
-#include "../ui/EventHub.h"
+#include "../client/EventHub.h"
 #include "../ui/Notify.h"
 #include "../ui/Theme.h"
 

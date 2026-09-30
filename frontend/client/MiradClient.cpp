@@ -5,10 +5,12 @@
 #include <cctype>
 #include <chrono>
 #include <optional>
+#include <stdexcept>
 #include <string_view>
 #include <utility>
 
 #include "Async.h"
+#include "Jobs.h"
 #include "JsonMapping.h"
 #include "Transport.h"
 
@@ -93,20 +95,41 @@ StopResult StopGameSync(const std::string& id) {
   return {reply.ok, reply.error};
 }
 
-ScanResult ScanLibrarySync() {
-  ScanResult result;
-  const transport::Reply reply =
-      transport::Post("/v1/library/scan", {.read_timeout = std::chrono::seconds(30)});
-  if (!reply.ok) {
-    result.error = reply.error;
-    return result;
-  }
+// Starts a job (docs/api.md#jobs) and hands its outcome to `callback` as an
+// R, with `fill` reading the job's result. `start` sends the request with
+// `query` ("?job=<token>") appended, so the waiter is listening before the 202.
+template <typename R>
+void RunJob(QObject* context, const std::string& kind, std::function<transport::Reply(const std::string&)> start,
+            std::function<void(R&, const json&)> fill, std::function<void(R)> callback) {
+  const std::string token = jobs::NewToken(kind);
+  jobs::Await(context, token, [fill, callback](jobs::Outcome outcome) {
+    R result;
+    if (!outcome.ok) {
+      result.error = outcome.error;
+    } else {
+      try {
+        fill(result, outcome.result);
+        result.ok = true;
+      } catch (const std::exception& e) {
+        result.error = e.what();
+      }
+    }
+    callback(std::move(result));
+  });
+  async::Run(context, [start, token] { return start("?job=" + token); },
+             std::function<void(transport::Reply)>([token, callback](transport::Reply reply) {
+               // Refused before it started (a bad body, an unknown source, mirad down).
+               if (reply.ok || !jobs::Forget(token)) return;
+               R result;
+               result.error = reply.error;
+               callback(std::move(result));
+             }));
+}
 
-  result.ok = true;
-  result.added = reply.body.value("added", 0);
-  result.missing = reply.body.value("missing", 0);
-  result.restored = reply.body.value("restored", 0);
-  return result;
+void FillScan(ScanResult& result, const json& body) {
+  result.added = body.value("added", 0);
+  result.missing = body.value("missing", 0);
+  result.restored = body.value("restored", 0);
 }
 
 GameDetailResult GetGameSync(const std::string& id) {
@@ -715,36 +738,18 @@ RunnerDownloadResult SetupRunnerToolSync(const std::string& id) {
   return {reply.ok, reply.error};
 }
 
-LutrisImportResult ImportLutrisSync() {
-  LutrisImportResult result;
-  // Same 30s as the Steam scan: this one reads Lutris's sqlite database
-  // through the sqlite3 CLI and a yaml file per game.
-  const transport::Reply reply =
-      transport::Post("/v1/lutris/import", {.read_timeout = std::chrono::seconds(30)});
-  if (!reply.ok) {
-    result.error = reply.error;
-    return result;
-  }
-  result.ok = true;
-  result.added = reply.body.value("added", 0);
-  result.updated = reply.body.value("updated", 0);
-  result.other_runner = reply.body.value("other_runner", 0);
-  result.incomplete = reply.body.value("incomplete", 0);
-  return result;
+void FillLutrisImport(LutrisImportResult& result, const json& body) {
+  result.added = body.value("added", 0);
+  result.updated = body.value("updated", 0);
+  result.other_runner = body.value("other_runner", 0);
+  result.incomplete = body.value("incomplete", 0);
 }
 
-SteamScanResult ScanSteamSync() {
-  SteamScanResult result;
-  const transport::Reply reply =
-      transport::Post("/v1/steam/scan", {.read_timeout = std::chrono::seconds(30)});
-  if (!reply.ok) {
-    result.error = reply.error;
-    return result;
-  }
-  result.ok = true;
-  result.added = reply.body.value("added", 0);
-  result.updated = reply.body.value("updated", 0);
-  return result;
+// Steam scans, store and launcher imports all answer {added, updated}.
+template <typename R>
+void FillAddedUpdated(R& result, const json& body) {
+  result.added = body.value("added", 0);
+  result.updated = body.value("updated", 0);
 }
 
 RunInPrefixResult RunInPrefixSync(const std::string& id, const std::string& exe_path,
@@ -1002,21 +1007,6 @@ StoreActionResult SignOutStoreSync(const std::string& source) {
   return {reply.ok, reply.error};
 }
 
-StoreImportResult ImportStoreSync(const std::string& source) {
-  StoreImportResult result;
-  // Provisions a prefix per new game, so a first import can take a while.
-  const transport::Reply reply =
-      transport::Post("/v1/" + source + "/import", {.read_timeout = std::chrono::seconds(300)});
-  if (!reply.ok) {
-    result.error = reply.error;
-    return result;
-  }
-  result.ok = true;
-  result.added = reply.body.value("added", 0);
-  result.updated = reply.body.value("updated", 0);
-  return result;
-}
-
 StoreLibraryResult GetStoreLibrarySync(const std::string& source) {
   StoreLibraryResult result;
   const transport::Reply reply =
@@ -1165,20 +1155,11 @@ RemovalPlanResult GetRemovalPlanSync(const std::string& source) {
   return result;
 }
 
-RemoveSourceResult RemoveSourceSync(const std::string& source) {
-  RemoveSourceResult result;
-  // Uninstalling can take a while (legendary, butler, nile).
-  const transport::Reply reply = transport::Post("/v1/sources/" + source + "/remove", {.read_timeout = std::chrono::minutes(10)});
-  if (!reply.ok) {
-    result.error = reply.error;
-    return result;
-  }
-  result.ok = true;
-  result.removed = reply.body.value("removed", 0);
-  for (const json& problem : reply.body.value("problems", json::array())) {
+void FillRemoveSource(RemoveSourceResult& result, const json& body) {
+  result.removed = body.value("removed", 0);
+  for (const json& problem : body.value("problems", json::array())) {
     if (problem.is_string()) result.problems.push_back(problem.get<std::string>());
   }
-  return result;
 }
 
 SourceRunnerResult SourceRunnerFrom(const transport::Reply& reply) {
@@ -1283,63 +1264,31 @@ std::vector<GameFailure> ToGameFailures(const json& reply, const char* key) {
   return out;
 }
 
+void FillRelocate(RelocateLibraryResult& result, const json& body) {
+  result.moved = body.value("moved", 0);
+  result.failed = body.value("failed", 0);
+  result.errors = ToGameFailures(body, "errors");
+}
+
 // No `ids` relocates every game.
-RelocateLibraryResult RelocateLibrarySync(const std::optional<std::vector<std::string>>& ids) {
-  RelocateLibraryResult result;
-  // Can copy many whole games across filesystems.
-  const transport::Options options{.read_timeout = std::chrono::hours(12)};
-  const transport::Reply reply = ids ? transport::PostJson("/v1/library/relocate", {{"ids", *ids}}, options)
-                                     : transport::Post("/v1/library/relocate", options);
-  if (!reply.ok) {
-    result.error = reply.error;
-    return result;
-  }
-  result.ok = true;
-  result.moved = reply.body.value("moved", 0);
-  result.failed = reply.body.value("failed", 0);
-  result.errors = ToGameFailures(reply.body, "errors");
-  return result;
+void RelocateLibraryJob(QObject* context, std::optional<std::vector<std::string>> ids,
+                        std::function<void(RelocateLibraryResult)> callback) {
+  RunJob<RelocateLibraryResult>(
+      context, "relocate",
+      [ids](const std::string& query) {
+        return ids ? transport::PostJson("/v1/library/relocate" + query, {{"ids", *ids}})
+                   : transport::Post("/v1/library/relocate" + query);
+      },
+      FillRelocate, std::move(callback));
 }
 
-GameDetailResult RelocateGameSync(const std::string& id, const std::string& install_path) {
-  GameDetailResult result;
-  // Moving to another drive copies the whole game.
-  const transport::Reply reply = transport::PostJson("/v1/games/" + id + "/relocate", {{"install_path", install_path}},
-                                                     {.read_timeout = std::chrono::hours(12)});
-  if (!reply.ok) {
-    result.error = reply.error;
-    return result;
-  }
-  if (!reply.body.is_object()) {
-    result.error = transport::UnexpectedResponse("POST /v1/games/" + id + "/relocate");
-    return result;
-  }
-  result.ok = true;
-  result.game = mapping::ToGameDetail(reply.body);
-  return result;
-}
-
-DeleteGamesResult DeleteGamesSync(const std::vector<std::string>& ids, bool delete_files, bool delete_prefix,
-                                  bool delete_metadata) {
-  DeleteGamesResult result;
-  const json body = {{"ids", ids},
-                     {"delete_files", delete_files},
-                     {"delete_prefix", delete_prefix},
-                     {"delete_metadata", delete_metadata}};
-  // Deleting many games' files can take a while.
-  const transport::Reply reply = transport::PostJson("/v1/games/delete", body, {.read_timeout = std::chrono::hours(2)});
-  if (!reply.ok) {
-    result.error = reply.error;
-    return result;
-  }
-  result.ok = true;
-  if (reply.body.is_object() && reply.body.contains("removed") && reply.body["removed"].is_array()) {
-    for (const json& id : reply.body["removed"]) {
+void FillDeleteGames(DeleteGamesResult& result, const json& body) {
+  if (body.is_object() && body.contains("removed") && body["removed"].is_array()) {
+    for (const json& id : body["removed"]) {
       if (id.is_string()) result.removed.push_back(id.get<std::string>());
     }
   }
-  result.failed = ToGameFailures(reply.body, "failed");
-  return result;
+  result.failed = ToGameFailures(body, "failed");
 }
 
 LoginUrlResult BeginAmazonLoginSync() {
@@ -1387,20 +1336,6 @@ StoreActionResult InstallLauncherSync(const std::string& id) {
   return {reply.ok, reply.error};
 }
 
-StoreImportResult ImportLauncherSync(const std::string& id) {
-  StoreImportResult result;
-  const transport::Reply reply =
-      transport::Post("/v1/launchers/" + id + "/import", {.read_timeout = std::chrono::seconds(120)});
-  if (!reply.ok) {
-    result.error = reply.error;
-    return result;
-  }
-  result.ok = true;
-  result.added = reply.body.value("added", 0);
-  result.updated = reply.body.value("updated", 0);
-  return result;
-}
-
 StoreActionResult OpenLauncherSync(const std::string& id) {
   const transport::Reply reply = transport::PostJson("/v1/launchers/" + id + "/open", json::object());
   return {reply.ok, reply.error};
@@ -1445,7 +1380,9 @@ void MiradClient::StopGameAsync(QObject* context, const std::string& id,
 }
 
 void MiradClient::ScanLibraryAsync(QObject* context, std::function<void(ScanResult)> callback) {
-  async::Run(context, [] { return ScanLibrarySync(); }, std::move(callback), async::Lane::Slow);
+  RunJob<ScanResult>(
+      context, "scan", [](const std::string& query) { return transport::Post("/v1/library/scan" + query); },
+      FillScan, std::move(callback));
 }
 
 void MiradClient::GetGameAsync(QObject* context, const std::string& id,
@@ -1597,12 +1534,16 @@ void MiradClient::SetupRunnerToolAsync(QObject* context, const std::string& id,
 }
 
 void MiradClient::ScanSteamAsync(QObject* context, std::function<void(SteamScanResult)> callback) {
-  async::Run(context, [] { return ScanSteamSync(); }, std::move(callback), async::Lane::Slow);
+  RunJob<SteamScanResult>(
+      context, "scan", [](const std::string& query) { return transport::Post("/v1/steam/scan" + query); },
+      FillAddedUpdated<SteamScanResult>, std::move(callback));
 }
 
 void MiradClient::ImportLutrisAsync(QObject* context,
                                     std::function<void(LutrisImportResult)> callback) {
-  async::Run(context, [] { return ImportLutrisSync(); }, std::move(callback), async::Lane::Slow);
+  RunJob<LutrisImportResult>(
+      context, "import", [](const std::string& query) { return transport::Post("/v1/lutris/import" + query); },
+      FillLutrisImport, std::move(callback));
 }
 
 void MiradClient::RunInPrefixAsync(QObject* context, const std::string& id,
@@ -1839,7 +1780,10 @@ void MiradClient::SignOutStoreAsync(QObject* context, const std::string& source,
 
 void MiradClient::ImportStoreAsync(QObject* context, const std::string& source,
                                    std::function<void(StoreImportResult)> callback) {
-  async::Run(context, [source] { return ImportStoreSync(source); }, std::move(callback), async::Lane::Slow);
+  RunJob<StoreImportResult>(
+      context, "import",
+      [source](const std::string& query) { return transport::Post("/v1/" + source + "/import" + query); },
+      FillAddedUpdated<StoreImportResult>, std::move(callback));
 }
 
 void MiradClient::GetStoreLibraryAsync(QObject* context, const std::string& source,
@@ -1883,7 +1827,10 @@ void MiradClient::GetRemovalPlanAsync(QObject* context, const std::string& sourc
 
 void MiradClient::RemoveSourceAsync(QObject* context, const std::string& source,
                                     std::function<void(RemoveSourceResult)> callback) {
-  async::Run(context, [source] { return RemoveSourceSync(source); }, std::move(callback), async::Lane::Slow);
+  RunJob<RemoveSourceResult>(
+      context, "remove_source",
+      [source](const std::string& query) { return transport::Post("/v1/sources/" + source + "/remove" + query); },
+      FillRemoveSource, std::move(callback));
 }
 
 void MiradClient::GetSourceRunnerAsync(QObject* context, const std::string& source,
@@ -1958,18 +1905,26 @@ void MiradClient::GetInstallProgressAsync(QObject* context, const std::string& i
 
 void MiradClient::RelocateLibraryAsync(QObject* context,
                                        std::function<void(RelocateLibraryResult)> callback) {
-  async::Run(context, [] { return RelocateLibrarySync(std::nullopt); }, std::move(callback), async::Lane::Slow);
+  RelocateLibraryJob(context, std::nullopt, std::move(callback));
 }
 
 void MiradClient::RelocateGamesAsync(QObject* context, const std::vector<std::string>& ids,
                                      std::function<void(RelocateLibraryResult)> callback) {
-  async::Run(context, [ids] { return RelocateLibrarySync(ids); }, std::move(callback), async::Lane::Slow);
+  RelocateLibraryJob(context, ids, std::move(callback));
 }
 
 void MiradClient::RelocateGameAsync(QObject* context, const std::string& id, const std::string& install_path,
                                     std::function<void(GameDetailResult)> callback) {
-  async::Run(context, [id, install_path] { return RelocateGameSync(id, install_path); }, std::move(callback),
-             async::Lane::Slow);
+  RunJob<GameDetailResult>(
+      context, "relocate",
+      [id, install_path](const std::string& query) {
+        return transport::PostJson("/v1/games/" + id + "/relocate" + query, {{"install_path", install_path}});
+      },
+      [id](GameDetailResult& result, const json& body) {
+        if (!body.is_object()) throw std::runtime_error(transport::UnexpectedResponse("POST /v1/games/" + id + "/relocate"));
+        result.game = mapping::ToGameDetail(body);
+      },
+      std::move(callback));
 }
 
 ArtworkResult MiradClient::GetArtworkBlocking(const std::string& id, const std::string& slot) {
@@ -1983,12 +1938,14 @@ ArtworkResult MiradClient::GetTitleArtworkBlocking(const std::string& source, co
 void MiradClient::DeleteGamesAsync(QObject* context, const std::vector<std::string>& ids, bool delete_files,
                                    bool delete_prefix, bool delete_metadata,
                                    std::function<void(DeleteGamesResult)> callback) {
-  async::Run(
-      context,
-      [ids, delete_files, delete_prefix, delete_metadata] {
-        return DeleteGamesSync(ids, delete_files, delete_prefix, delete_metadata);
-      },
-      std::move(callback), async::Lane::Slow);
+  const json body = {{"ids", ids},
+                     {"delete_files", delete_files},
+                     {"delete_prefix", delete_prefix},
+                     {"delete_metadata", delete_metadata}};
+  RunJob<DeleteGamesResult>(
+      context, "delete",
+      [body](const std::string& query) { return transport::PostJson("/v1/games/delete" + query, body); },
+      FillDeleteGames, std::move(callback));
 }
 
 bool MiradClient::ParseOpenConfig(const std::string& data) {
@@ -2024,7 +1981,10 @@ void MiradClient::InstallLauncherAsync(QObject* context, const std::string& id,
 
 void MiradClient::ImportLauncherAsync(QObject* context, const std::string& id,
                                       std::function<void(StoreImportResult)> callback) {
-  async::Run(context, [id] { return ImportLauncherSync(id); }, std::move(callback), async::Lane::Slow);
+  RunJob<StoreImportResult>(
+      context, "import",
+      [id](const std::string& query) { return transport::Post("/v1/launchers/" + id + "/import" + query); },
+      FillAddedUpdated<StoreImportResult>, std::move(callback));
 }
 
 void MiradClient::OpenLauncherAsync(QObject* context, const std::string& id,

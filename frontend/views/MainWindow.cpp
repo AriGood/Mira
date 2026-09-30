@@ -16,7 +16,7 @@
 #include "../client/MiradClient.h"
 #include "../dialogs/GameDetailDialog.h"
 #include "../dialogs/SettingsDialog.h"
-#include "../ui/EventHub.h"
+#include "../client/EventHub.h"
 #include "../ui/GameActions.h"
 #include "../ui/GamePresentation.h"
 #include "../ui/KeyBindings.h"

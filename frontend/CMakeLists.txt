@@ -31,8 +31,12 @@ qt_add_executable(mira-gui
 
   # client/: everything that talks to mirad, and nothing that draws.
   client/Async.h
+  client/EventHub.cpp
+  client/EventHub.h
   client/EventStream.cpp
   client/EventStream.h
+  client/Jobs.cpp
+  client/Jobs.h
   client/JsonMapping.cpp
   client/JsonMapping.h
   client/MiradClient.cpp
@@ -58,8 +62,6 @@ qt_add_executable(mira-gui
   ui/DownloadTracker.h
   ui/DownloadsPanel.cpp
   ui/DownloadsPanel.h
-  ui/EventHub.cpp
-  ui/EventHub.h
   ui/GameLibraryModel.cpp
   ui/GameLibraryModel.h
   ui/GameActions.cpp
@@ -221,6 +223,9 @@ add_executable(mira_gui_tests
   ${MIRA_GUI_TEST_SOURCES}
   client/JsonMapping.cpp
   client/MiradClient.cpp
+  client/Jobs.cpp
+  client/EventHub.cpp
+  client/EventStream.cpp
   ui/LibrarySort.cpp
   ui/GameLibraryModel.cpp
   ui/Theme.cpp

@@ -4,7 +4,7 @@
 
 #include <string>
 
-#include "../client/EventStream.h"
+#include "EventStream.h"
 
 namespace mira_gui {
 

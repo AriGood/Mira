@@ -25,7 +25,7 @@
 
 #include "../client/MiradClient.h"
 #include "ErrorHelp.h"
-#include "EventHub.h"
+#include "../client/EventHub.h"
 #include "Theme.h"
 
 namespace mira_gui {

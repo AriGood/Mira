@@ -41,9 +41,11 @@ The banner's gear opens `views/SourceSettingsCard` under it: the source's runner
 
 A banner offers to install umu-launcher or winetricks when either is missing.
 
-### Downloads
+### Activity
 
-The top bar's download button opens `ui/DownloadsPanel`. It lists everything `ui/DownloadTracker` has seen from the event stream: game installers, store installs and updates, Humble downloads, launcher installs, tool downloads and runner downloads. `mirad` replays recent events on connect, so work started before the GUI opened also shows. Game installers report bytes written; Epic, GOG, Amazon and itch installs report percent, speed and time left (`library.install.progress`), also drawn as a bar on the title's tile. A finished install offers *Show*, which selects the game.
+The top bar's download button opens `ui/DownloadsPanel`, titled Activity. It lists everything `ui/DownloadTracker` has seen from the event stream: game installers, store installs and updates, Humble downloads, launcher installs, tool downloads, runner downloads and `mirad`'s jobs (scans, imports, moving and deleting games, removing a source). `mirad` replays recent events on connect, so work started before the GUI opened also shows. Game installers report bytes written; Epic, GOG, Amazon and itch installs report percent, speed and time left (`library.install.progress`), also drawn as a bar on the title's tile; jobs with steps report how far along they are. A finished install offers *Show*, which selects the game.
+
+Jobs answer `202` at once (see [api.md](api.md#jobs)). `client/Jobs` waits for each one's `job.finished` or `job.failed` on the shared event connection, and after a reconnect asks `GET /v1/jobs/{id}` about any it was still waiting on, so the `MiradClient` calls that start them still hand their caller one result.
 
 ### Selection and hover
 
