@@ -19,3 +19,13 @@ TEST_CASE("DeleteInside only deletes strictly inside a root") {
   CHECK(library::DeleteInside((root / "game").string(), {root}));
   CHECK_FALSE(fs::exists(root / "game"));
 }
+
+TEST_CASE("DeleteInside leaves a folder above or beside a deeper root alone") {
+  const fs::path root = test::TempDir("delete-inside-deep");
+  test::Touch(root / "a" / "b" / "c" / "file");
+
+  // The target is shorter than the root's path: nothing above the root may go.
+  CHECK_FALSE(library::DeleteInside(root.string(), {root / "a" / "b" / "c"}));
+  CHECK_FALSE(library::DeleteInside((root / "a").string(), {root / "a" / "b" / "c"}));
+  CHECK(fs::exists(root / "a" / "b" / "c" / "file"));
+}
