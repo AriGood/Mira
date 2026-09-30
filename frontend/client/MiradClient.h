@@ -153,9 +153,10 @@ public:
   // user-initiated so mirad reports the outcome as a `notification` event.
   static void RefreshMetadataAsync(QObject* context, const std::string& id, bool announce,
                                    std::function<void(MetadataRefreshResult)> callback);
-  // POST /v1/games/metadata/refresh: the same, unannounced, for many games in one request.
+  // POST /v1/games/metadata/refresh: the same, unannounced, for many games, as
+  // one job; `callback` runs once every fetch has ended.
   static void RefreshMetadataManyAsync(QObject* context, const std::vector<std::string>& ids,
-                                       std::function<void(MetadataRefreshResult)> callback);
+                                       std::function<void(MetadataBatchResult)> callback);
 
   // POST /v1/games/{id}/artwork?type=. `candidate_id` must be one of the ids
   // GetMetadataAsync's cover_candidates listed. mirad looks it up rather
@@ -180,9 +181,8 @@ public:
                                 const std::vector<std::int64_t>& candidate_ids,
                                 std::function<void(ArtThumbsResult)> callback);
 
-  // POST /v1/games/metadata/refresh-missing. Bulk version of the above.
-  static void RefreshMissingArtworkAsync(QObject* context,
-                                         std::function<void(RefreshMissingArtworkResult)> callback);
+  // POST /v1/games/metadata/refresh-missing: every game without a cover, as one job.
+  static void RefreshMissingArtworkAsync(QObject* context, std::function<void(MetadataBatchResult)> callback);
 
   // GET /v1/runners.
   static void ListRunnersAsync(QObject* context, std::function<void(RunnersResult)> callback);

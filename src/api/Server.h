@@ -66,6 +66,9 @@ private:
   // names the job, so its client can listen for it before this reply lands.
   void StartJob(const httplib::Request& req, httplib::Response& res, const std::string& kind,
                 const std::string& target, const std::string& label, JobRegistry::Work work);
+  // Queues a full metadata fetch for each game and reports as each finishes,
+  // for a job: {refreshed, failed} once all have.
+  Result<nlohmann::json> RefreshMetadata(std::vector<model::Game> games, JobRegistry::Progress& progress);
   // Deletes what DELETE /v1/games/{id} was asked to, before the game itself is removed.
   Result<void> DeleteGameData(const model::Game& game, bool files, bool prefix, bool metadata);
   // A game as the API shows it: model::ToJson plus `running` and `art`.

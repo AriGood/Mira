@@ -29,9 +29,9 @@ Long-running work (downloads, installs, winetricks) answers `202` straight away 
 
 ## Jobs
 
-Scans, imports, moving games, removing games and removing a source are jobs. The request checks its input as usual (a bad body is still `400`), then answers `202 {"status": "running", "job": "<id>"}` and does the work in the background. Pass `?job=<id>` (letters, digits, `-`, `_`, up to 64) to name the job yourself, so you can listen for it before the reply arrives.
+Scans, imports, moving games, removing games, removing a source and bulk metadata refreshes are jobs. The request checks its input as usual (a bad body is still `400`), then answers `202 {"status": "running", "job": "<id>"}` and does the work in the background. Pass `?job=<id>` (letters, digits, `-`, `_`, up to 64) to name the job yourself, so you can listen for it before the reply arrives.
 
-Events: `job.started {id, kind, target, label}`, `job.progress {id, done, total, message}` where the work has steps, then `job.finished {id, kind, target, result}` or `job.failed {id, kind, target, error}`. `result` is what the endpoint describes as its reply; `error` is the usual `{code, message, hint?, fix?}`. `kind` is `scan`, `import`, `relocate`, `delete` or `remove_source`; `target` is the source or game it's about, or empty.
+Events: `job.started {id, kind, target, label}`, `job.progress {id, done, total, message}` where the work has steps, then `job.finished {id, kind, target, result}` or `job.failed {id, kind, target, error}`. `result` is what the endpoint describes as its reply; `error` is the usual `{code, message, hint?, fix?}`. `kind` is `scan`, `import`, `relocate`, `delete`, `remove_source` or `metadata`; `target` is the source or game it's about, or empty.
 
 ### `GET /v1/jobs/{id}`
 `{id, kind, target, label, state, progress?, result?, error?}` with `state` `running`, `finished` or `failed`. The last 100 jobs are kept; an older one is `404 job_not_found`.
@@ -493,10 +493,10 @@ Moves to the next SteamGridDB match, saves it as `metadata.steamgriddb_id` and f
 Body `{"steamgriddb_id": N}`. Uses that SteamGridDB game from now on; `0` goes back to the top match.
 
 ### `POST /v1/games/metadata/refresh`
-Body `{"ids": [...]}`. Fetches each of these games again, like `POST /v1/games/{id}/metadata/refresh` without `announce`. Unknown ids are skipped. Returns `202 {"status": "fetching", "count": n}`.
+Body `{"ids": [...]}`. Fetches each of these games again, like `POST /v1/games/{id}/metadata/refresh` without `announce`. Unknown ids are skipped. A job (see [Jobs](#jobs)) of kind `metadata`: `job.progress` counts games as their fetches end, and the result is `{"refreshed", "failed"}`. Each game still sends its own `game.metadata_ready`/`metadata_failed`.
 
 ### `POST /v1/games/metadata/refresh-missing`
-Queues a fetch for every game without a cover. Returns `202 {"status": "fetching", "count": n}`.
+The same, for every game without a cover.
 
 ## Events
 

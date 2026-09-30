@@ -585,9 +585,9 @@ MetadataRefreshResult RefreshMetadataSync(const std::string& id, bool announce) 
   return {reply.ok, reply.error};
 }
 
-MetadataRefreshResult RefreshMetadataManySync(const std::vector<std::string>& ids) {
-  const transport::Reply reply = transport::PostJson("/v1/games/metadata/refresh", {{"ids", ids}});
-  return {reply.ok, reply.error};
+void FillMetadataBatch(MetadataBatchResult& result, const json& body) {
+  result.refreshed = body.value("refreshed", 0);
+  result.failed = body.value("failed", 0);
 }
 
 ArtworkSelectResult SelectArtworkSync(const std::string& id, const std::string& slot,
@@ -619,18 +619,6 @@ ArtThumbsResult GetArtThumbsSync(const std::string& id, const std::string& slot,
                                                       "&candidate_id=" + std::to_string(candidate_id));
     if (blob.ok) result.images.emplace_back(candidate_id, blob.bytes);
   }
-  return result;
-}
-
-RefreshMissingArtworkResult RefreshMissingArtworkSync() {
-  RefreshMissingArtworkResult result;
-  const transport::Reply reply = transport::Post("/v1/games/metadata/refresh-missing");
-  if (!reply.ok) {
-    result.error = reply.error;
-    return result;
-  }
-  result.ok = true;
-  result.count = reply.body.value("count", 0);
   return result;
 }
 
@@ -1468,8 +1456,12 @@ void MiradClient::RefreshMetadataAsync(QObject* context, const std::string& id, 
 }
 
 void MiradClient::RefreshMetadataManyAsync(QObject* context, const std::vector<std::string>& ids,
-                                           std::function<void(MetadataRefreshResult)> callback) {
-  async::Run(context, [ids] { return RefreshMetadataManySync(ids); }, std::move(callback));
+                                           std::function<void(MetadataBatchResult)> callback) {
+  const json body = {{"ids", ids}};
+  RunJob<MetadataBatchResult>(
+      context, "metadata",
+      [body](const std::string& query) { return transport::PostJson("/v1/games/metadata/refresh" + query, body); },
+      FillMetadataBatch, std::move(callback));
 }
 
 void MiradClient::SelectArtworkAsync(QObject* context, const std::string& id, const std::string& slot,
@@ -1501,8 +1493,11 @@ void MiradClient::GetArtThumbsAsync(QObject* context, const std::string& id, con
 }
 
 void MiradClient::RefreshMissingArtworkAsync(QObject* context,
-                                             std::function<void(RefreshMissingArtworkResult)> callback) {
-  async::Run(context, [] { return RefreshMissingArtworkSync(); }, std::move(callback));
+                                             std::function<void(MetadataBatchResult)> callback) {
+  RunJob<MetadataBatchResult>(
+      context, "metadata",
+      [](const std::string& query) { return transport::Post("/v1/games/metadata/refresh-missing" + query); },
+      FillMetadataBatch, std::move(callback));
 }
 
 void MiradClient::GetRunnerCatalogAsync(QObject* context, const std::string& kind, const std::string& source,

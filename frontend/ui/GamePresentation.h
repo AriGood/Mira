@@ -6,6 +6,7 @@
 #include <QString>
 #include <QTableWidgetItem>
 
+#include "../client/Types.h"
 #include "Theme.h"
 
 #include <cstdint>
@@ -15,6 +16,14 @@
 // Small presentation helpers shared by the grid, the table and a game's
 // card, so a game reads the same way everywhere.
 namespace mira_gui {
+
+// A finished bulk refresh, e.g. "Refreshed 180 games. 20 found nothing."
+inline QString BatchRefreshSummary(const MetadataBatchResult& result) {
+  QString text = result.refreshed == 1 ? QString("Refreshed 1 game.")
+                                       : QString("Refreshed %1 games.").arg(result.refreshed);
+  if (result.failed > 0) text += QString(" %1 found nothing.").arg(result.failed);
+  return text;
+}
 
 // A color per lifecycle state so status reads at a glance without a
 // legend. The theme owns the colors; see ui/Theme.h.

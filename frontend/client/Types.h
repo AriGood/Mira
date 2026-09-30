@@ -215,11 +215,13 @@ struct MetadataRefreshResult {
   ApiError error;
 };
 
-// POST /v1/games/metadata/refresh-missing. `count` is how many were enqueued.
-struct RefreshMissingArtworkResult {
+// POST /v1/games/metadata/refresh and .../refresh-missing, jobs that finish
+// once every game's fetch has.
+struct MetadataBatchResult {
   bool ok = false;
   ApiError error;
-  int count = 0;
+  int refreshed = 0;
+  int failed = 0;
 };
 
 // A game.metadata_ready / game.metadata_failed payload, trimmed to what the

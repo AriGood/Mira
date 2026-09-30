@@ -164,6 +164,7 @@ QWidget* DownloadsPanel::BuildRow(int index) {
     if (entry.kind == Kind::Job) {
       if (entry.source == "scan") glyph = icons::Glyph::Search;
       if (entry.source == "relocate") glyph = icons::Glyph::Refresh;
+      if (entry.source == "metadata") glyph = icons::Glyph::Image;
       if (entry.source == "delete" || entry.source == "remove_source") glyph = icons::Glyph::Trash;
     }
     cover->setPixmap(icons::For(glyph, tokens.text_muted).pixmap(22, 22));

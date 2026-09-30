@@ -1737,21 +1737,19 @@ void LibraryWindow::ShowSteamGridDbNotice(bool asked_for, const mira_gui::ApiErr
 }
 
 void LibraryWindow::FetchMissingArtwork() {
-  // One request for the whole library; mirad decides what's missing.
-  mira_gui::MiradClient::RefreshMissingArtworkAsync(
-      this, [this](mira_gui::RefreshMissingArtworkResult result) {
-        if (!result.ok) {
-          mira_gui::notify::FailedRequest(this, "Could not fetch missing cover art.", result.error);
-          return;
-        }
-        if (result.count == 0) {
-          mira_gui::notify::Notice(this, "Every game already has cover art.");
-          return;
-        }
-        // No notice: covers appear as they arrive. Asked-for, though, so a
-        // missing SteamGridDB key is worth saying (ShowSteamGridDbNotice).
-        artwork_fetch_requested_ = true;
-      });
+  // One job for the whole library; mirad decides what's missing, and Activity shows it going.
+  // Asked for, so a missing SteamGridDB key is worth saying (ShowSteamGridDbNotice).
+  artwork_fetch_requested_ = true;
+  mira_gui::MiradClient::RefreshMissingArtworkAsync(this, [this](mira_gui::MetadataBatchResult result) {
+    artwork_fetch_requested_ = false;
+    if (!result.ok) {
+      mira_gui::notify::FailedRequest(this, "Could not fetch missing cover art.", result.error);
+    } else if (result.refreshed + result.failed == 0) {
+      mira_gui::notify::Notice(this, "Every game already has cover art.");
+    } else {
+      mira_gui::notify::Notice(this, mira_gui::BatchRefreshSummary(result));
+    }
+  });
 }
 
 void LibraryWindow::RefreshMetadata(const std::string& id, bool announce) {
@@ -2110,9 +2108,13 @@ void LibraryWindow::ShowBatchMenu(const std::vector<std::string>& ids, const QPo
   QAction* chosen = menu.exec(global_pos);
   if (chosen == nullptr) return;  // dismissed; also keeps it from matching an action left out above
   if (chosen == refresh_metadata) {
-    // No notice: covers visibly update as each fetch lands.
-    mira_gui::MiradClient::RefreshMetadataManyAsync(this, ids, [this](mira_gui::MetadataRefreshResult result) {
-      if (!result.ok) mira_gui::notify::FailedRequest(this, "Could not refresh metadata.", result.error);
+    // Activity shows it going; a notice sums it up at the end.
+    mira_gui::MiradClient::RefreshMetadataManyAsync(this, ids, [this](mira_gui::MetadataBatchResult result) {
+      if (!result.ok) {
+        mira_gui::notify::FailedRequest(this, "Could not refresh metadata.", result.error);
+      } else {
+        mira_gui::notify::Notice(this, mira_gui::BatchRefreshSummary(result));
+      }
     });
   } else if (chosen == pin || chosen == unpin) {
     BatchSetTag(ids, kPinnedTag, chosen == pin);

@@ -288,18 +288,21 @@ TEST_CASE("A game record lists its cached art slots, with a version that changes
   CHECK(art_of("celeste") == second);
 }
 
-TEST_CASE("POST /v1/games/metadata/refresh queues known ids and skips unknown ones") {
+TEST_CASE("POST /v1/games/metadata/refresh is a job that reports each known game's outcome") {
   LiveServer server(TempDir("server-refresh-many"));
+  // Offline: with no SteamGridDB key and no lookup by name, a non-Steam fetch fails at once.
+  REQUIRE(server.MutableConfig().Set("metadata.steam_art_by_name", false).has_value());
   model::Game game;
   game.id = "celeste";
   game.name = "Celeste";
   REQUIRE(server.games().Upsert(game).has_value());
 
   httplib::Client client = server.Client();
-  auto res = client.Post("/v1/games/metadata/refresh", R"({"ids": ["celeste", "nope"]})", "application/json");
-  REQUIRE(res != nullptr);
-  CHECK(res->status == 202);
-  CHECK(nlohmann::json::parse(res->body).value("count", -1) == 1);
+  const auto job = AwaitJob(
+      client, client.Post("/v1/games/metadata/refresh", R"({"ids": ["celeste", "nope"]})", "application/json"));
+  CHECK(job.value("state", std::string()) == "finished");
+  CHECK(job["result"].value("refreshed", -1) == 0);
+  CHECK(job["result"].value("failed", -1) == 1);
 
   auto bad = client.Post("/v1/games/metadata/refresh", R"({"ids": "celeste"})", "application/json");
   REQUIRE(bad != nullptr);

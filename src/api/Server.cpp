@@ -8,9 +8,12 @@
 #include <atomic>
 #include <charconv>
 #include <chrono>
+#include <condition_variable>
 #include <filesystem>
 #include <format>
 #include <fstream>
+#include <memory>
+#include <mutex>
 #include <sstream>
 #include <thread>
 
@@ -2121,29 +2124,26 @@ void Server::RegisterRoutes() {
     SendJson(res, {{"status", "fetching"}, {"steamgriddb_id", id}}, 202);
   });
 
-  // POST /v1/games/{id}/metadata/refresh for many games in one request, unannounced.
+  // POST /v1/games/{id}/metadata/refresh for many games in one request, unannounced, as a job.
   http_->Post("/v1/games/metadata/refresh", [this](const Request& req, Response& res) {
     const json body = json::parse(req.body, nullptr, false);
     const auto ids = body.is_object() ? StringList(body, "ids") : std::nullopt;
     if (!ids) return SendError(res, 400, "invalid_body", R"(expected {"ids": [...]})");
-    std::size_t count = 0;
+    std::vector<model::Game> games;
     for (const std::string& id : *ids) {
-      const auto game = games_.Find(id);
-      if (!game) continue;
-      metadata_fetches_.Enqueue(config_, events_, *game, /*force=*/true);
-      ++count;
+      if (auto game = games_.Find(id)) games.push_back(std::move(*game));
     }
-    SendJson(res, {{"status", "fetching"}, {"count", count}}, 202);
+    StartJob(req, res, "metadata", "", "Refreshing metadata",
+             [this, games = std::move(games)](JobRegistry::Progress& progress) { return RefreshMetadata(games, progress); });
   });
 
-  http_->Post("/v1/games/metadata/refresh-missing", [this](const Request&, Response& res) {
-    std::size_t count = 0;
+  http_->Post("/v1/games/metadata/refresh-missing", [this](const Request& req, Response& res) {
+    std::vector<model::Game> games;
     for (const model::Game& game : games_.All()) {
-      if (HasCachedArtwork(config_, game.id)) continue;
-      metadata_fetches_.Enqueue(config_, events_, game, /*force=*/true);
-      ++count;
+      if (!HasCachedArtwork(config_, game.id)) games.push_back(game);
     }
-    SendJson(res, {{"status", "fetching"}, {"count", count}}, 202);
+    StartJob(req, res, "metadata", "", "Fetching missing cover art",
+             [this, games = std::move(games)](JobRegistry::Progress& progress) { return RefreshMetadata(games, progress); });
   });
 
   // --- runners --------------------------------------------------------------
@@ -2353,6 +2353,42 @@ void Server::StartJob(const Request& req, Response& res, const std::string& kind
                       const std::string& label, JobRegistry::Work work) {
   const std::string id = jobs_.Start(kind, target, label, std::move(work), req.get_param_value("job"));
   SendJson(res, {{"status", "running"}, {"job", id}}, 202);
+}
+
+Result<json> Server::RefreshMetadata(std::vector<model::Game> games, JobRegistry::Progress& progress) {
+  struct Tally {
+    std::mutex mutex;
+    std::condition_variable changed;
+    int done = 0;
+    int failed = 0;
+  };
+  const auto tally = std::make_shared<Tally>();
+  const int total = static_cast<int>(games.size());
+  progress.Report(0, total);
+  for (model::Game& game : games) {
+    metadata_fetches_.Enqueue(config_, events_, std::move(game), /*force=*/true, /*announce=*/false,
+                              [tally](bool ok) {
+                                std::lock_guard lock(tally->mutex);
+                                ++tally->done;
+                                if (!ok) ++tally->failed;
+                                tally->changed.notify_all();
+                              });
+  }
+  std::unique_lock lock(tally->mutex);
+  int reported = 0;
+  while (tally->done < total) {
+    // Polled, so quitting mid-refresh doesn't wait out every fetch still queued.
+    if (stopping_.load(std::memory_order_relaxed)) {
+      return Err("shutting_down", "mirad stopped before the refresh finished");
+    }
+    tally->changed.wait_for(lock, std::chrono::milliseconds(250));
+    if (tally->done == reported) continue;
+    reported = tally->done;
+    lock.unlock();
+    progress.Report(reported, total);
+    lock.lock();
+  }
+  return json{{"refreshed", total - tally->failed}, {"failed", tally->failed}};
 }
 
 Result<void> Server::DeleteGameData(const model::Game& game, bool files, bool prefix, bool metadata) {
