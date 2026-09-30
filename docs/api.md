@@ -82,11 +82,13 @@ Lists games, optionally filtered by `status` (`setting_up`, `ready`, `broken`, `
   "source": "scan", "exe_path": "Celeste", "args": "", "working_dir": "", "runner_ref": "",
   "data_dir": "", "runner_config": {}, "overrides": {}, "last_error": "",
   "created_at": 0, "updated_at": 0, "last_played_at": null, "play_seconds": 0,
-  "env": {}, "candidates": [], "tags": [], "running": false
+  "env": {}, "candidates": [], "tags": [], "running": false, "art": {"cover": "18f3a2c07d4e1b00-2c41"}
 }
 ```
 
 - `running` is whether Mira is tracking a process for the game right now. Every game record the API returns or an event carries has it.
+
+- `art` lists the art slots Mira has an image cached for, each with a version: `{"cover": "18f3a…-2c41", "hero": "…"}`. A slot left out has no image, so `GET /v1/games/{id}/artwork` for it would 404. The version changes whenever the slot's image does, so a client can keep its copy until then. Every game record has it, and so do `game.metadata_ready`, `game.metadata_failed` and `game.artwork_selected`.
 
 - `confidence` and `reviewed` let a client surface games nobody has checked since detection.
 - `candidates` lists every executable the detector considered.

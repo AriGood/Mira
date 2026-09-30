@@ -127,13 +127,6 @@ void SendResult(Response& res, const Result<void>& result) {
   }
 }
 
-// model::ToJson plus whether the game is running, so a client can resync after a reconnect.
-json GameJson(const model::Game& game, const proc::ProcessSupervisor& supervisor) {
-  json body = model::ToJson(game);
-  body["running"] = supervisor.IsRunning(game.id);
-  return body;
-}
-
 model::Game ParseGamePatch(const model::Game& base, const json& patch) {
   model::Game game = base;
   if (patch.contains("name") && patch["name"].is_string()) game.name = patch["name"];
@@ -426,13 +419,27 @@ Server::Server(config::Config& config, store::GameStore& games, EventBus& events
       events_(events),
       http_(std::make_unique<httplib::Server>()),
       supervisor_(games, events, config.GetInt("launch.stop_timeout_s")) {
-  // Importers and the scanner publish bare records; this makes every game
-  // event say whether the game is running, the same as GET /v1/games.
-  events_.SetGameRecordHook([this](json& game) { game["running"] = supervisor_.IsRunning(game.value("id", "")); });
+  // Importers and the scanner publish bare records; this gives every game
+  // event the same `running` and `art` as GET /v1/games.
+  events_.SetGameRecordHook([this](json& game) {
+    const std::string id = game.value("id", "");
+    game["running"] = supervisor_.IsRunning(id);
+    game["art"] = art_index_.For(id);
+  });
+  events_.SetArtHook([this](const std::string& id) { return art_index_.For(id); });
+}
+
+json Server::Record(const model::Game& game) {
+  json body = model::ToJson(game);
+  // So a client can resync after a reconnect.
+  body["running"] = supervisor_.IsRunning(game.id);
+  body["art"] = art_index_.For(game.id);
+  return body;
 }
 
 Server::~Server() {
   events_.SetGameRecordHook(nullptr);
+  events_.SetArtHook(nullptr);
   stopping_.store(true, std::memory_order_relaxed);
   if (external_watch_.joinable()) external_watch_.join();
 }
@@ -497,7 +504,7 @@ void Server::ReconcileSessions() {
   // the old daemon as running.
   for (const model::Game& game : games_.All()) {
     if (supervisor_.IsRunning(game.id)) continue;
-    json event = GameJson(game, supervisor_);
+    json event = Record(game);
     event["state"] = "idle";
     events_.Publish("game.state", std::move(event));
   }
@@ -640,7 +647,7 @@ void Server::RegisterRoutes() {
       } else if (!include_hidden && std::ranges::contains(game.tags, std::string("hidden"))) {
         continue;
       }
-      out.push_back(GameJson(game, supervisor_));
+      out.push_back(Record(game));
     }
     SendJson(res, std::move(out));
   });
@@ -648,7 +655,7 @@ void Server::RegisterRoutes() {
   http_->Get(R"(/v1/games/([^/]+))", [this](const Request& req, Response& res) {
     auto game = games_.Find(req.matches[1]);
     if (!game) return SendError(res, 404, "game_not_found", "no such game");
-    SendJson(res, GameJson(*game, supervisor_));
+    SendJson(res, Record(*game));
   });
 
   // The tail of mira-run's log for this game. No log yet is an empty list.
@@ -688,8 +695,8 @@ void Server::RegisterRoutes() {
     auto result = games_.Update(id, [&](model::Game& game) { game = ParseGamePatch(game, patch); });
     if (!result) return SendStoreError(res, result.error());
     SyncDesktopEntries(config_, games_);
-    events_.Publish("game.updated", GameJson(*result, supervisor_));
-    SendJson(res, GameJson(*result, supervisor_));
+    events_.Publish("game.updated", Record(*result));
+    SendJson(res, Record(*result));
   });
 
   // One save, one menu sync and one event for any number of games, so a
@@ -719,7 +726,7 @@ void Server::RegisterRoutes() {
     if (!updated) return SendStoreError(res, updated.error());
 
     json games = json::array();
-    for (const model::Game& game : *updated) games.push_back(GameJson(game, supervisor_));
+    for (const model::Game& game : *updated) games.push_back(Record(game));
     if (!updated->empty()) {
       // Tags never change a menu entry; only an override can.
       if (!config.empty()) SyncDesktopEntries(config_, games_);
@@ -749,7 +756,7 @@ void Server::RegisterRoutes() {
     if (!result) return SendStoreError(res, result.error());
     // An override can turn desktop_entries.enabled off for this game.
     SyncDesktopEntries(config_, games_);
-    SendJson(res, GameJson(*result, supervisor_));
+    SendJson(res, Record(*result));
   });
 
   http_->Delete(R"(/v1/games/([^/]+))", [this](const Request& req, Response& res) {
@@ -861,7 +868,7 @@ void Server::RegisterRoutes() {
                    errors.push_back(BatchFailure(game.id, saved.error()));
                    continue;
                  }
-                 events_.Publish("game.updated", GameJson(*saved, supervisor_));
+                 events_.Publish("game.updated", Record(*saved));
                  ++moved;
                }
                SyncDesktopEntries(config_, games_);
@@ -1086,7 +1093,7 @@ void Server::RegisterRoutes() {
     std::thread([this, launcher] {
       const auto done = launchers::Install(config_, games_, *launcher);
       if (const auto stored = games_.Find(launchers::GameId(*launcher))) {
-        events_.Publish("game.updated", GameJson(*stored, supervisor_));
+        events_.Publish("game.updated", Record(*stored));
       }
       if (!done) {
         events_.Publish("launcher.install.failed", {{"id", launcher->id}, {"error", done.error().message}});
@@ -1219,7 +1226,7 @@ void Server::RegisterRoutes() {
                                                  body.value("apply_to_games", false));
     if (runner) {
       for (const std::string& id : runner->changed) {
-        if (const auto game = games_.Find(id)) events_.Publish("game.updated", GameJson(*game, supervisor_));
+        if (const auto game = games_.Find(id)) events_.Publish("game.updated", Record(*game));
       }
     }
     send_source_runner(res, runner);
@@ -1516,8 +1523,8 @@ void Server::RegisterRoutes() {
 
     SyncDesktopEntries(config_, games_);
     if (!existing) metadata_fetches_.Enqueue(config_, events_, game);
-    events_.Publish(existing ? "game.updated" : "game.added", GameJson(game, supervisor_));
-    SendJson(res, GameJson(game, supervisor_));
+    events_.Publish(existing ? "game.updated" : "game.added", Record(game));
+    SendJson(res, Record(game));
   });
 
   // --- launching ------------------------------------------------------------
@@ -1704,7 +1711,7 @@ void Server::RegisterRoutes() {
       // A client that missed the exit gets told it's stopped instead of an error.
       if (stopped.error().code == "not_running") {
         if (const auto game = games_.Find(req.matches[1])) {
-          json event = GameJson(*game, supervisor_);
+          json event = Record(*game);
           event["state"] = "idle";
           events_.Publish("game.state", std::move(event));
           return SendJson(res, {{"status", "not_running"}});
@@ -1839,10 +1846,10 @@ void Server::RegisterRoutes() {
                                          installer);
       if (done) {
         SyncDesktopEntries(config_, games_);
-        events_.Publish("game.updated", GameJson(*done, supervisor_));
+        events_.Publish("game.updated", Record(*done));
         events_.Publish("game.install.finished", {{"id", id}});
       } else {
-        if (const auto stored = games_.Find(id)) events_.Publish("game.updated", GameJson(*stored, supervisor_));
+        if (const auto stored = games_.Find(id)) events_.Publish("game.updated", Record(*stored));
         json failed = {{"id", id}, {"error", done.error().message}};
         AddHintAndFix(failed, done.error());
         events_.Publish("game.install.failed", std::move(failed));
@@ -1875,8 +1882,8 @@ void Server::RegisterRoutes() {
     });
     if (!result) return SendStoreError(res, result.error());
     SyncDesktopEntries(config_, games_);
-    events_.Publish("game.updated", GameJson(*result, supervisor_));
-    SendJson(res, GameJson(*result, supervisor_));
+    events_.Publish("game.updated", Record(*result));
+    SendJson(res, Record(*result));
   });
 
   http_->Post(R"(/v1/games/([^/]+)/relocate)", [this](const Request& req, Response& res) {
@@ -1910,7 +1917,7 @@ void Server::RegisterRoutes() {
                folders_lock.unlock();
                if (!saved) return std::unexpected(saved.error());
                SyncDesktopEntries(config_, games_);
-               json record = GameJson(*saved, supervisor_);
+               json record = Record(*saved);
                events_.Publish("game.updated", record);
                return record;
              });
@@ -2405,7 +2412,7 @@ void Server::InstallRunnerAsync(const std::string& kind, const std::string& sour
         for (const model::Game& game : games_.All()) {
           if (game.runner_ref != replacing) continue;
           if (auto updated = games_.Update(game.id, [&](model::Game& g) { g.runner_ref = to; })) {
-            moved.push_back(GameJson(*updated, supervisor_));
+            moved.push_back(Record(*updated));
           }
         }
         if (config_.GetString("default_runner.windows") == replacing) (void)config_.Set("default_runner.windows", to);

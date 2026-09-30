@@ -248,6 +248,46 @@ TEST_CASE("GET /v1/games excludes hidden-tagged games by default; ?tag= filters,
   CHECK(everything->body.find("\"umu-launcher\"") != std::string::npos);
 }
 
+TEST_CASE("A game record lists its cached art slots, with a version that changes with the image") {
+  LiveServer server(TempDir("server-art"));
+  for (const char* id : {"celeste", "hollow"}) {
+    model::Game game;
+    game.id = id;
+    game.name = id;
+    REQUIRE(server.games().Upsert(game).has_value());
+  }
+  // Only celeste has art: a cover, plus a hero whose file has gone missing.
+  const fs::path art_dir = metadata::ArtworkDir(server.config(), "celeste");
+  fs::create_directories(art_dir);
+  std::ofstream(art_dir / "cover.jpg") << "first";
+  fs::create_directories(metadata::MetadataFile(server.config(), "celeste").parent_path());
+  std::ofstream(metadata::MetadataFile(server.config(), "celeste"))
+      << R"({"artwork": {"file": "cover.jpg"}, "hero": {"file": "hero.jpg"}})";
+
+  httplib::Client client = server.Client();
+  const auto art_of = [&client](const std::string& id) {
+    auto res = client.Get("/v1/games/" + id);
+    REQUIRE(res != nullptr);
+    return nlohmann::json::parse(res->body).value("art", nlohmann::json());
+  };
+  const nlohmann::json first = art_of("celeste");
+  CHECK(first.contains("cover"));
+  CHECK_FALSE(first.contains("hero"));
+  CHECK(art_of("hollow") == nlohmann::json::object());
+
+  // A new image in the slot, as a refresh or a pick writes it: the file, then the metadata.
+  std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  std::ofstream(art_dir / "cover.jpg") << "second, larger";
+  std::ofstream(metadata::MetadataFile(server.config(), "celeste"))
+      << R"({"artwork": {"file": "cover.jpg"}, "hero": {"file": "hero.jpg"}})";
+  const nlohmann::json second = art_of("celeste");
+  REQUIRE(second.contains("cover"));
+  CHECK(second["cover"] != first["cover"]);
+
+  // Unchanged art keeps its version.
+  CHECK(art_of("celeste") == second);
+}
+
 TEST_CASE("POST /v1/games/metadata/refresh queues known ids and skips unknown ones") {
   LiveServer server(TempDir("server-refresh-many"));
   model::Game game;

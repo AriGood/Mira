@@ -13,8 +13,22 @@ void EventBus::SetGameRecordHook(std::function<void(nlohmann::json& game)> hook)
   game_hook_ = std::move(hook);
 }
 
+void EventBus::SetArtHook(std::function<nlohmann::json(const std::string& id)> hook) {
+  std::lock_guard lock(hook_mutex_);
+  art_hook_ = std::move(hook);
+}
+
 void EventBus::DecorateGames(const std::string& type, nlohmann::json& payload) {
   if (!payload.is_object()) return;
+  if (type == "game.metadata_ready" || type == "game.metadata_failed" || type == "game.artwork_selected") {
+    std::function<nlohmann::json(const std::string&)> art;
+    {
+      std::lock_guard lock(hook_mutex_);
+      art = art_hook_;
+    }
+    if (art && payload.contains("id")) payload["art"] = art(payload.value("id", std::string()));
+    return;
+  }
   // A state change says outright whether it runs; asking the supervisor
   // could race its own bookkeeping.
   if (type == "game.state") {

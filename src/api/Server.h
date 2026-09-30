@@ -11,6 +11,7 @@
 #include "config/Config.h"
 #include "core/BackgroundQueue.h"
 #include "core/Result.h"
+#include "metadata/ArtIndex.h"
 #include "metadata/FetchQueue.h"
 #include "proc/ProcessSupervisor.h"
 #include "runner/Downloader.h"
@@ -67,12 +68,15 @@ private:
                 const std::string& target, const std::string& label, JobRegistry::Work work);
   // Deletes what DELETE /v1/games/{id} was asked to, before the game itself is removed.
   Result<void> DeleteGameData(const model::Game& game, bool files, bool prefix, bool metadata);
+  // A game as the API shows it: model::ToJson plus `running` and `art`.
+  nlohmann::json Record(const model::Game& game);
 
   config::Config& config_;
   store::GameStore& games_;
   EventBus& events_;
   std::unique_ptr<httplib::Server> http_;
   proc::ProcessSupervisor supervisor_;
+  metadata::ArtIndex art_index_{config_};
   metadata::FetchQueue metadata_fetches_;
   BackgroundQueue tricks_queue_;
   BackgroundQueue artwork_selects_;

@@ -99,3 +99,13 @@ TEST_CASE("Every game record an event carries gets the record hook, and a state 
   // Not a game record.
   CHECK_FALSE(bus.Publish("game.removed", {{"id", "celeste"}}).payload.contains("running"));
 }
+
+TEST_CASE("Art events carry the game's current art") {
+  api::EventBus bus;
+  bus.SetArtHook([](const std::string& id) { return nlohmann::json{{"cover", id + "-v2"}}; });
+
+  for (const char* type : {"game.metadata_ready", "game.metadata_failed", "game.artwork_selected"}) {
+    CHECK(bus.Publish(type, {{"id", "celeste"}}).payload["art"]["cover"] == "celeste-v2");
+  }
+  CHECK_FALSE(bus.Publish("game.removed", {{"id", "celeste"}}).payload.contains("art"));
+}
