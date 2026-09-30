@@ -17,6 +17,9 @@
 // directly. See docs/api.md for the JSON each one mirrors.
 namespace mira_gui {
 
+// A game's `art`: slot -> version of its cached image (docs/api.md).
+using ArtVersions = std::map<std::string, std::string>;
+
 struct HealthStatus {
   bool reachable = false;
   std::string detail;
@@ -43,9 +46,10 @@ struct GameSummary {
   // Which importer owns it: "scan", "steam", "epic", "lutris", "battlenet",
   // ... ("launcher" for a store launcher's own install).
   std::string source;
-  // Only GET /v1/games and mirad's own replies carry it; an importer's event
-  // leaves it out, so it reads false there even for a running game.
   bool running = false;
+  // Slot ("cover", "hero", ...) -> version, only for slots with an image.
+  // Unset when the record didn't say, which means nothing is known either way.
+  std::optional<ArtVersions> art;
 };
 
 struct GamesResult {
@@ -226,6 +230,7 @@ struct MetadataEvent {
   // `error` is a sentence written for a human to read.
   std::string code;
   ApiError error;
+  std::optional<ArtVersions> art;  // the game's art after the fetch
 };
 
 // game.artwork_selected / .artwork_select_failed: the outcome of
@@ -234,6 +239,7 @@ struct ArtworkSelectEvent {
   std::string id;
   std::string slot;
   std::string error;  // .artwork_select_failed only
+  std::optional<ArtVersions> art;  // .artwork_selected only
 };
 
 // POST /v1/games/{id}/artwork?type=: 202, so this is only "accepted", not

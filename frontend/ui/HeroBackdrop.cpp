@@ -28,7 +28,7 @@ void HeroBackdrop::ShowGame(const GameSummary& game) {
   hero_ = QPixmap();
   rendered_ = QPixmap();
   if (artwork_ != nullptr) artwork_->EnsureRequested(game.id);
-  LoadHero();
+  if (!game.art || game.art->contains("hero")) LoadHero();
   update();
 }
 
@@ -52,7 +52,7 @@ void HeroBackdrop::RefreshHero(const std::string& id) {
 
 void HeroBackdrop::LoadHero() {
   const std::string id = game_.id;
-  // One request: a game without a hero is just a 404 here.
+  // A game with no hero is a 404 here, when its record didn't already say so.
   MiradClient::GetArtworkSlotAsync(this, id, "hero", [this, id](ArtworkResult art) {
     if (game_.id != id || !art.ok) return;
     QPixmap pixmap;

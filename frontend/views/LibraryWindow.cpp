@@ -1789,6 +1789,8 @@ void LibraryWindow::RefreshGames() {
       return;
     }
     loaded_ = true;
+    // Before the tiles paint, so a game without art is never asked for it.
+    for (const mira_gui::GameSummary& game : result.games) artwork_->NoteArt(game.id, game.art);
     library_->Replace(result.games);
   });
 }
@@ -1888,7 +1890,10 @@ const mira_gui::GameSummary* LibraryWindow::FindGame(const std::string& id) cons
 void LibraryWindow::UpsertGames(const std::vector<mira_gui::GameSummary>& games) {
   // A rename changes the placeholder's initials, so the rendered tile is
   // stale even though the fetched artwork behind it isn't.
-  for (const mira_gui::GameSummary& game : games) artwork_->InvalidateRendering(game.id);
+  for (const mira_gui::GameSummary& game : games) {
+    artwork_->InvalidateRendering(game.id);
+    artwork_->NoteArt(game.id, game.art);
+  }
   library_->Upsert(games);
 }
 
@@ -3433,12 +3438,9 @@ void LibraryWindow::HandleGameEvent(const std::string& type, const std::string& 
     // History's outcomes are already in what the grid fetched at startup.
     mira_gui::MetadataEvent event;
     if (!live || !mira_gui::MiradClient::ParseMetadataEvent(data, &event)) return;
-    if (type == "game.metadata_ready") {
-      // Only the artwork is refetched here; the rest of the metadata isn't
-      // part of the game record, so nothing else in the library view changes.
-      artwork_->Invalidate(event.id);
-      return;
-    }
+    // The cover is fetched again only if this one changed it.
+    artwork_->NoteArt(event.id, event.art);
+    if (type == "game.metadata_ready") return;
     // The one failure worth interrupting for: it's fixable and never
     // transient: no SteamGridDB key means every non-Steam game keeps its
     // placeholder forever.
@@ -3458,7 +3460,7 @@ void LibraryWindow::HandleGameEvent(const std::string& type, const std::string& 
     mira_gui::ArtworkSelectEvent event;
     if (!live || !mira_gui::MiradClient::ParseArtworkSelectEvent(data, &event)) return;
     if (event.slot == "cover") {
-      artwork_->Invalidate(event.id);
+      artwork_->NoteArt(event.id, event.art);
     } else if (event.slot == "hero") {
       if (game_edit_form_ != nullptr) game_edit_form_->RefreshBanner(event.id);
       if (game_edit_backdrop_ != nullptr) game_edit_backdrop_->RefreshHero(event.id);

@@ -1695,6 +1695,7 @@ bool MiradClient::ParseMetadataEvent(const std::string& data, MetadataEvent* out
   out->id = id;
   out->code = payload.value("code", std::string());
   out->error = mapping::ToApiError(payload);
+  out->art = mapping::ToArtVersions(payload);
   return true;
 }
 
@@ -1706,6 +1707,7 @@ bool MiradClient::ParseArtworkSelectEvent(const std::string& data, ArtworkSelect
   out->id = id;
   out->slot = payload.value("type", std::string());
   out->error = payload.value("error", std::string());
+  out->art = mapping::ToArtVersions(payload);
   return true;
 }
 

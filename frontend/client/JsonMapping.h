@@ -17,6 +17,8 @@ namespace mira_gui::mapping {
 ApiError ToApiError(const nlohmann::json& error);
 
 GameSummary ToGameSummary(const nlohmann::json& entry);
+// A record's or art event's `art`; unset when it has none.
+std::optional<ArtVersions> ToArtVersions(const nlohmann::json& entry);
 GameDetail ToGameDetail(const nlohmann::json& entry);
 
 // A settings value as editable text, a bool, a natural number, an array of

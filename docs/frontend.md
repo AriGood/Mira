@@ -144,9 +144,9 @@ On connect, `mirad` replays its event buffer and then sends `stream.live`. Windo
 
 `ui/ArtworkStore` fetches art from `GET /v1/games/{id}/artwork` and always returns a pixmap:
 
-- A 404 is normal. `ui/CoverArt` draws a placeholder with a hue from the game's id, so it stays the same across restarts.
-- Each game is asked once, until `game.metadata_ready` or a refresh.
-- At most four requests are in flight.
+- A game's record says which art it has (`art`, see [api.md](api.md)). A game without a cover is never asked for one; `ui/CoverArt` draws a placeholder with a hue from the game's id, so it stays the same across restarts.
+- A cover is fetched once, and again only when its version changes in a record, `game.metadata_ready` or `game.artwork_selected`. The old image stays on screen until the new one lands.
+- At most eight requests are in flight.
 - The original image is kept and scaled on demand for the zoom slider.
 
 Without `steamgriddb.api_key`, non-Steam games may have no source. `mirad` then fails the fetch with `no_steamgriddb_key`, and the GUI says so once per session: a popup offering Settings when the user asked, a notice after a background scan.

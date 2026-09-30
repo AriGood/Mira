@@ -8,6 +8,7 @@
 #include <QSize>
 #include <QString>
 
+#include <optional>
 #include <string>
 
 #include "../client/Types.h"
@@ -22,8 +23,9 @@ namespace mira_gui {
 // library of any size is a burst of requests where most come back empty.
 // Three rules keep that from being the frontend's problem:
 //
-//  - **Ask once.** An id that has answered, either way, isn't asked again
-//    until something invalidates it.
+//  - **Ask only for what exists, once.** A game record's `art` (NoteArt)
+//    says whether there is a cover and which version; one without isn't
+//    asked for, and one is asked again only when its version changes.
 //  - **At most `kMaxInFlight` at a time.** Every request is a thread and a
 //    socket, and decodes its image there; a 500-game library would
 //    otherwise open 500 of both at once.
@@ -63,8 +65,12 @@ public:
   // scaling/caching a Cover() for some tile size nobody asked for.
   void EnsureRequested(const std::string& id);
 
+  // What a game record or art event says about this game's cover (its
+  // `art`). No cover means nothing to ask for; a new version is fetched
+  // again, with the old image shown until it lands. Unset does nothing.
+  void NoteArt(const std::string& id, const std::optional<ArtVersions>& art);
+
   // Forget everything known about one game's artwork and fetch it again.
-  // For `game.metadata_ready`, and for an explicit refresh.
   void Invalidate(const std::string& id);
 
   // mirad fetched a store title's cover. Refetches it if TitleCover has
@@ -97,6 +103,7 @@ private:
   QSet<QString> answered_;            // asked and heard back, either way
   QSet<QString> queued_;              // in `pending_` or in flight
   QSet<QString> ask_again_;           // in flight when mirad said it has art now
+  QHash<QString, QString> versions_;  // cover version by id, from NoteArt; empty for none
   QQueue<QString> pending_;
   QHash<QString, std::pair<std::string, std::string>> titles_;  // id -> {source, ref}
   int in_flight_ = 0;
