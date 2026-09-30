@@ -189,6 +189,7 @@ private:
   // settings_page_: starts synced to what's actually saved, not stale edits
   // from a discarded previous open.
   QWidget* BuildGameEditCard(const std::string& id);
+  void SizeGameEditCard(QWidget* card);
   void CloseGameEdit();
   // Confirms first if game_edit_form_ is dirty; the card's own Back
   // button, the sidebar's Library nav row, and a click on the scrim.
@@ -250,7 +251,11 @@ private:
   void CloseClassicView();
   // A store or launcher's page, rebuilt fresh on each open.
   void OpenSource(const mira_gui::SourceInfo& source);
-  void CloseSource();
+  // False while the page stays: its settings card's edits were kept, or are
+  // saving first, and then `retry` runs (CloseSource itself when empty).
+  bool CloseSource(std::function<void()> retry = {});
+  // Asks about the open source page's unsaved settings; CloseSource's rules.
+  bool ConfirmLeaveSource(std::function<void()> retry);
   // Hides the sources turned off in Settings (`<id>.enabled`), and asks
   // which stores are signed in and which launchers installed.
   void RefreshSourceNavs();

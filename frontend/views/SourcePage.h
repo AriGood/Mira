@@ -58,6 +58,8 @@ public:
   void SetDragSelectEnabled(bool enabled);
   // Starts an update of an installed store title.
   void UpdateTitle(const QString& ref);
+  // Null until the banner's settings button first opens it.
+  SourceSettingsCard* SettingsCard() const { return settings_card_; }
 
 signals:
   // Games were imported or installed; the grid should relist.

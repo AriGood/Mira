@@ -86,6 +86,7 @@
 #include "../ui/Tray.h"
 #include "RunnersPage.h"
 #include "SourcePage.h"
+#include "SourceSettingsCard.h"
 
 // setViewportMargins is protected on QAbstractScrollArea; this republishes
 // it so ApplyLayoutTokens() can pad the tiles without also insetting the
@@ -713,6 +714,7 @@ mira_gui::FrontendPrefs LibraryWindow::LayoutPrefs() const {
 
 void LibraryWindow::resizeEvent(QResizeEvent* event) {
   QMainWindow::resizeEvent(event);
+  SizeGameEditCard(game_edit_card_);
   ScheduleSavePrefs();
 }
 
@@ -907,6 +909,10 @@ void LibraryWindow::closeEvent(QCloseEvent* event) {
     return;
   }
 
+  if (!ConfirmLeaveSource([this] { close(); })) {
+    event->ignore();
+    return;
+  }
   const bool settings_dirty = settings_panel_ != nullptr && settings_panel_->IsDirty();
   const bool game_dirty =
       game_edit_form_ != nullptr && GameEditOpen() && game_edit_form_->IsDirty();
@@ -953,8 +959,8 @@ void LibraryWindow::OpenRunners() {
     UpdateLibraryNavActive();
     return;
   }
+  if (source_page_ != nullptr && !CloseSource([this] { OpenRunners(); })) return;
   if (ClassicShown()) CloseClassicView();
-  if (source_page_ != nullptr) CloseSource();
   runners_page_ = new mira_gui::RunnersPage(downloads_, this);
   runners_page_->SetGames(library_->Games());
   main_stack_->addWidget(runners_page_);
@@ -2224,7 +2230,8 @@ void LibraryWindow::OpenArtPicker(const std::string& slot) {
     game_edit_picker_ = new mira_gui::ArtPickerPanel(game_edit_form_->id(), game_edit_stack_);
     game_edit_stack_->addWidget(game_edit_picker_);
     connect(game_edit_picker_, &mira_gui::ArtPickerPanel::Previewed, this,
-            [this](const QString& preview_slot, const QPixmap& preview) {              game_edit_backdrop_->SetPreview(preview_slot, preview);
+            [this](const QString& preview_slot, const QPixmap& preview) {
+              game_edit_backdrop_->SetPreview(preview_slot, preview);
               if (preview_slot == "cover") game_edit_cover_->SetPreview(preview);
             });
     // The footer is the picker's only while it's open; an apply can land after.
@@ -2235,7 +2242,8 @@ void LibraryWindow::OpenArtPicker(const std::string& slot) {
       if (ArtPickerOpen()) game_edit_save_->click();
     });
     connect(game_edit_picker_, &mira_gui::ArtPickerPanel::ApplyFailed, this,
-            [this](const QString& failed_slot, const QString& error) {              if (game_edit_backdrop_ != nullptr) game_edit_backdrop_->SetPreview(failed_slot, QPixmap());
+            [this](const QString& failed_slot, const QString& error) {
+              if (game_edit_backdrop_ != nullptr) game_edit_backdrop_->SetPreview(failed_slot, QPixmap());
               if (game_edit_cover_ != nullptr && failed_slot == "cover") game_edit_cover_->SetPreview(QPixmap());
               mira_gui::notify::Failed(this, "Could not change the art.", error);
             });
@@ -2481,7 +2489,8 @@ QWidget* LibraryWindow::BuildSettingsPage() {
   actions_layout->setSpacing(6);
   auto* back = new QPushButton("← Back", actions);
   connect(back, &QPushButton::clicked, this, &LibraryWindow::RequestCloseSettings);
-  auto* reset = new QPushButton("Reset", actions);
+  // Not "Reset": each setting's own Reset button already means "back to the default".
+  auto* reset = new QPushButton("Discard", actions);
   reset->setToolTip("Discard unsaved changes and go back to the last saved settings.");
   connect(reset, &QPushButton::clicked, this, [this] {
     if (settings_panel_ != nullptr) settings_panel_->DiscardChanges();
@@ -2520,6 +2529,11 @@ QWidget* LibraryWindow::BuildGameEditOverlay() {
   return overlay;
 }
 
+// ~70% of the window, following it as it resizes.
+void LibraryWindow::SizeGameEditCard(QWidget* card) {
+  if (card != nullptr) card->setFixedSize(qRound(width() * 0.7), qRound(height() * 0.7));
+}
+
 QWidget* LibraryWindow::BuildGameEditCard(const std::string& id) {
   const mira_gui::theme::Tokens& tokens = mira_gui::theme::Current();
   const mira_gui::GameSummary* game = FindGame(id);
@@ -2529,9 +2543,7 @@ QWidget* LibraryWindow::BuildGameEditCard(const std::string& id) {
   game_edit_backdrop_ = new mira_gui::HeroBackdrop(artwork_);
   QWidget* card = game_edit_backdrop_;
   if (game != nullptr) game_edit_backdrop_->ShowGame(*game);
-  // ~70% of the window, not a hardcoded constant -- recomputed per open
-  // since the window can resize between edits.
-  card->setFixedSize(qRound(width() * 0.7), qRound(height() * 0.7));
+  SizeGameEditCard(card);
 
   auto* layout = new QVBoxLayout(card);
   layout->setContentsMargins(0, 0, 0, 0);
@@ -2708,6 +2720,7 @@ bool LibraryWindow::LeaveOverlays() {
 
 void LibraryWindow::OpenSource(const mira_gui::SourceInfo& source) {
   if (!LeaveOverlays()) return;
+  if (!ConfirmLeaveSource([this, source] { OpenSource(source); })) return;
   if (ClassicShown()) CloseClassicView();
   CloseRunners();
   if (source_page_ != nullptr) {
@@ -2725,6 +2738,7 @@ void LibraryWindow::OpenSource(const mira_gui::SourceInfo& source) {
   connect(source_page_, &mira_gui::SourcePage::OpenSettingsRequested, this,
           [this](const QString& key) { OpenSettings(key); });
   connect(source_page_, &mira_gui::SourcePage::Removed, this, [this, id = source.id] {
+    if (mira_gui::SourceSettingsCard* card = source_page_->SettingsCard()) card->Discard();
     CloseSource();
     ForgetSource(id);
   });
@@ -2755,7 +2769,34 @@ void LibraryWindow::OpenSource(const mira_gui::SourceInfo& source) {
   UpdateLibraryNavActive();
 }
 
-void LibraryWindow::CloseSource() {
+bool LibraryWindow::ConfirmLeaveSource(std::function<void()> retry) {
+  mira_gui::SourceSettingsCard* card = source_page_ != nullptr ? source_page_->SettingsCard() : nullptr;
+  if (card == nullptr || !card->IsDirty()) return true;
+  const mira_gui::notify::UnsavedAction action =
+      mira_gui::notify::ConfirmUnsaved(this, "This source's settings changed but aren't saved.");
+  // The nav row that was clicked checked itself; staying put unchecks it.
+  UpdateLibraryNavActive();
+  switch (action) {
+    case mira_gui::notify::UnsavedAction::Cancel:
+      return false;
+    case mira_gui::notify::UnsavedAction::SaveAndExit:
+      // A failed save stays on the page, with its error on the card.
+      connect(card, &mira_gui::SourceSettingsCard::SaveFinished, this,
+              [retry = std::move(retry)](bool ok) {
+                if (ok) retry();
+              },
+              Qt::SingleShotConnection);
+      card->Save();
+      return false;
+    case mira_gui::notify::UnsavedAction::DiscardAndExit:
+      return true;
+  }
+  return true;
+}
+
+bool LibraryWindow::CloseSource(std::function<void()> retry) {
+  if (!retry) retry = [this] { CloseSource(); };
+  if (!ConfirmLeaveSource(std::move(retry))) return false;
   main_stack_->setCurrentWidget(grid_page_);
   if (source_page_ != nullptr) {
     main_stack_->removeWidget(source_page_);
@@ -2765,6 +2806,7 @@ void LibraryWindow::CloseSource() {
   SetSourceControlsEnabled(true);
   UpdateLibraryNavActive();
   RefreshSourceNavs();  // a sign-in or launcher install there changes the order
+  return true;
 }
 
 // The grid's search and filter leave with its page; the slider is SyncZoom's.
@@ -2804,8 +2846,8 @@ void LibraryWindow::DownloadChanged(const QString& key) {
 void LibraryWindow::ShowGame(const std::string& id) {
   if (SettingsOpen()) RequestCloseSettings();
   if (GameEditOpen()) RequestCloseGameEdit();
+  if (source_page_ != nullptr && !CloseSource([this, id] { ShowGame(id); })) return;
   if (ClassicShown()) CloseClassicView();
-  if (source_page_ != nullptr) CloseSource();
   CloseRunners();
   if (const QModelIndex tile = grid_games_->mapFromSource(library_->IndexOf(id)); tile.isValid()) {
     grid_->setCurrentIndex(tile);  // ClearAndSelect: this game alone
@@ -3249,7 +3291,7 @@ void LibraryWindow::ShowLibrary() {
 
 // Filter, sort and search apply to the table too; only tile size doesn't.
 void LibraryWindow::OpenClassicView() {
-  if (source_page_ != nullptr) CloseSource();
+  if (source_page_ != nullptr && !CloseSource([this] { OpenClassicView(); })) return;
   CloseRunners();
   ShowHoverCard(QModelIndex());
   main_stack_->setCurrentWidget(classic_page_);

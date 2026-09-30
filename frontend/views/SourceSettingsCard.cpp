@@ -11,6 +11,8 @@
 #include <QStyle>
 #include <QVBoxLayout>
 
+#include <algorithm>
+
 #include "../client/MiradClient.h"
 #include "../ui/ErrorHelp.h"
 #include "../ui/HelpButton.h"
@@ -58,7 +60,6 @@ SourceSettingsCard::SourceSettingsCard(const SourceInfo& source, QWidget* parent
   if (HasRunner()) BuildRunnerRow(form_);
 
   auto* footer = new QHBoxLayout();
-  footer->addStretch(1);
   auto* all = new QPushButton("All settings…", this);
   all->setFlat(true);
   all->setCursor(Qt::PointingHandCursor);
@@ -66,9 +67,102 @@ SourceSettingsCard::SourceSettingsCard(const SourceInfo& source, QWidget* parent
     emit OpenSettingsRequested(settings_.empty() ? QString() : QString::fromStdString(settings_.front().entry.key));
   });
   footer->addWidget(all);
+  footer->addStretch(1);
+  // Same pair, and names, as the settings screen's.
+  discard_ = new QPushButton("Discard", this);
+  discard_->setToolTip("Discard unsaved changes and go back to the last saved settings.");
+  connect(discard_, &QPushButton::clicked, this, &SourceSettingsCard::Discard);
+  footer->addWidget(discard_);
+  save_ = new QPushButton("Save", this);
+  connect(save_, &QPushButton::clicked, this, &SourceSettingsCard::Save);
+  footer->addWidget(save_);
   layout->addLayout(footer);
 
+  UpdateButtons();
   LoadSettings();
+}
+
+bool SourceSettingsCard::RunnerDirty() const {
+  return runner_ != nullptr && runner_->isEnabled() && runner_->currentData().toString() != runner_ref_;
+}
+
+bool SourceSettingsCard::IsDirty() const {
+  if (RunnerDirty()) return true;
+  return std::ranges::any_of(settings_, [](const SettingEditor& editor) { return editor.Text() != editor.original; });
+}
+
+void SourceSettingsCard::UpdateButtons() {
+  const bool dirty = IsDirty();
+  discard_->setEnabled(dirty && !saving_);
+  save_->setEnabled(dirty && !saving_);
+  // Switching every game to a runner that isn't saved yet would be a surprise.
+  if (runner_apply_ != nullptr) runner_apply_->setVisible(runner_can_apply_ && !RunnerDirty());
+}
+
+void SourceSettingsCard::Discard() {
+  if (runner_ != nullptr) SelectRunner(runner_ref_);
+  for (SettingEditor& editor : settings_) editor.SetText(editor.original);
+  status_->setVisible(false);
+  UpdateButtons();
+}
+
+void SourceSettingsCard::Save() {
+  if (saving_ || !IsDirty()) {
+    emit SaveFinished(true);
+    return;
+  }
+  std::vector<ConfigEdit> edits;
+  std::vector<std::pair<size_t, std::string>> saved;
+  for (size_t i = 0; i < settings_.size(); ++i) {
+    const std::string value = settings_[i].Text();
+    if (value == settings_[i].original) continue;
+    edits.push_back({settings_[i].entry.key, settings_[i].entry.type, value});
+    saved.emplace_back(i, value);
+  }
+  const bool runner_changed = RunnerDirty();
+  const QString runner_ref = runner_changed ? runner_->currentData().toString() : QString();
+  saving_ = true;
+  UpdateButtons();
+
+  // Settings first, as one validated patch, then the runner; either failing stops there.
+  auto save_runner = [this, runner_changed, runner_ref] {
+    if (!runner_changed) {
+      saving_ = false;
+      ShowStatus("Saved", false);
+      UpdateButtons();
+      emit SaveFinished(true);
+      return;
+    }
+    MiradClient::SetSourceRunnerAsync(this, id_, runner_ref.toStdString(), /*apply_to_games=*/false,
+                                      [this](SourceRunnerResult result) {
+                                        saving_ = false;
+                                        if (!result.ok) {
+                                          ShowStatus("Could not change the runner: " + error_help::Describe(result.error), true);
+                                          UpdateButtons();
+                                          emit SaveFinished(false);
+                                          return;
+                                        }
+                                        ShowRunner(result);
+                                        ShowStatus("Saved", false);
+                                        UpdateButtons();
+                                        emit SaveFinished(true);
+                                      });
+  };
+  if (edits.empty()) {
+    save_runner();
+    return;
+  }
+  MiradClient::PatchConfigAsync(this, edits, [this, saved, save_runner](PatchConfigResult result) {
+    if (!result.ok) {
+      saving_ = false;
+      ShowStatus(error_help::Describe(result.error), true);
+      UpdateButtons();
+      emit SaveFinished(false);
+      return;
+    }
+    for (const auto& [index, value] : saved) settings_[index].original = value;
+    save_runner();
+  });
 }
 
 bool SourceSettingsCard::HasRunner() const {
@@ -89,10 +183,7 @@ void SourceSettingsCard::BuildRunnerRow(QFormLayout* form) {
 
   runner_ = new QComboBox(column);
   runner_->setEnabled(false);
-  connect(runner_, QOverload<int>::of(&QComboBox::activated), this, [this](int index) {
-    const QString ref = runner_->itemData(index).toString();
-    if (ref != runner_ref_) SetRunner(ref, /*apply_to_games=*/false);
-  });
+  connect(runner_, QOverload<int>::of(&QComboBox::activated), this, &SourceSettingsCard::UpdateButtons);
   column_layout->addWidget(runner_);
 
   auto* note_row = new QHBoxLayout();
@@ -102,7 +193,19 @@ void SourceSettingsCard::BuildRunnerRow(QFormLayout* form) {
   note_row->addWidget(runner_note_, /*stretch=*/1);
   runner_apply_ = new QPushButton(column);
   runner_apply_->setVisible(false);
-  connect(runner_apply_, &QPushButton::clicked, this, [this] { SetRunner(runner_ref_, /*apply_to_games=*/true); });
+  connect(runner_apply_, &QPushButton::clicked, this, [this] {
+    runner_apply_->setEnabled(false);
+    MiradClient::SetSourceRunnerAsync(this, id_, runner_ref_.toStdString(), /*apply_to_games=*/true,
+                                      [this](SourceRunnerResult result) {
+                                        runner_apply_->setEnabled(true);
+                                        if (!result.ok) {
+                                          ShowStatus("Could not switch the games: " + error_help::Describe(result.error), true);
+                                          return;
+                                        }
+                                        ShowStatus("Switched", false);
+                                        ShowRunner(result);
+                                      });
+  });
   note_row->addWidget(runner_apply_, 0, Qt::AlignTop);
   column_layout->addLayout(note_row);
 
@@ -119,8 +222,18 @@ void SourceSettingsCard::LoadRunner() {
   MiradClient::GetSourceRunnerAsync(this, id_, [this](SourceRunnerResult runner) { ShowRunner(runner); });
 }
 
+void SourceSettingsCard::SelectRunner(const QString& runner_ref) {
+  int index = runner_->findData(runner_ref);
+  if (index < 0) {
+    runner_->addItem(runner_ref + " (not installed)", runner_ref);
+    index = runner_->count() - 1;
+  }
+  runner_->setCurrentIndex(index);
+}
+
 void SourceSettingsCard::ShowRunner(const SourceRunnerResult& runner) {
-  runner_apply_->setVisible(false);
+  runner_can_apply_ = false;
+  UpdateButtons();
   if (!runner.ok) {
     runner_->setEnabled(false);
     runner_note_->setText(source_.kind == SourceInfo::Kind::Launcher
@@ -141,13 +254,9 @@ void SourceSettingsCard::ShowRunner(const SourceRunnerResult& runner) {
                          QString::fromStdString(info.reference));
       }
     }
-    int current = runner_->findData(runner_ref_);
-    if (current < 0) {
-      runner_->addItem(runner_ref_ + " (not installed)", runner_ref_);
-      current = runner_->count() - 1;
-    }
-    runner_->setCurrentIndex(current);
+    SelectRunner(runner_ref_);
     runner_->setEnabled(true);
+    UpdateButtons();
   });
 
   if (source_.kind == SourceInfo::Kind::Launcher) {
@@ -165,24 +274,9 @@ void SourceSettingsCard::ShowRunner(const SourceRunnerResult& runner) {
                               .arg(runner.games)
                               .arg(runner.differing == 1 ? "uses" : "use"));
     runner_apply_->setText(runner.differing == 1 ? "Switch it too" : "Switch them too");
-    runner_apply_->setVisible(true);
+    runner_can_apply_ = true;
+    UpdateButtons();
   }
-}
-
-void SourceSettingsCard::SetRunner(const QString& runner_ref, bool apply_to_games) {
-  runner_->setEnabled(false);
-  runner_apply_->setEnabled(false);
-  MiradClient::SetSourceRunnerAsync(
-      this, id_, runner_ref.toStdString(), apply_to_games, [this](SourceRunnerResult result) {
-        runner_apply_->setEnabled(true);
-        if (!result.ok) {
-          ShowStatus("Could not change the runner: " + error_help::Describe(result.error), true);
-          LoadRunner();
-          return;
-        }
-        ShowStatus("Saved", false);
-        ShowRunner(result);
-      });
 }
 
 void SourceSettingsCard::LoadSettings() {
@@ -201,17 +295,14 @@ void SourceSettingsCard::LoadSettings() {
       for (size_t i = 0; i < settings_.size(); ++i) {
         SettingEditor& editor = settings_[i];
         QWidget* row = editor.Build(this, [this, i] { ResetSetting(i); });
-        if (editor.check != nullptr) connect(editor.check, &QCheckBox::toggled, this, [this, i] { Commit(i); });
+        if (editor.check != nullptr) connect(editor.check, &QCheckBox::toggled, this, &SourceSettingsCard::UpdateButtons);
         if (editor.spin != nullptr) {
-          connect(editor.spin, &QDoubleSpinBox::valueChanged, this, [this, i] { Commit(i); });
+          connect(editor.spin, &QDoubleSpinBox::valueChanged, this, &SourceSettingsCard::UpdateButtons);
         }
         if (editor.combo != nullptr) {
-          connect(editor.combo, QOverload<int>::of(&QComboBox::activated), this, [this, i] { Commit(i); });
-          if (editor.combo->lineEdit() != nullptr) {
-            connect(editor.combo->lineEdit(), &QLineEdit::editingFinished, this, [this, i] { Commit(i); });
-          }
+          connect(editor.combo, &QComboBox::currentTextChanged, this, &SourceSettingsCard::UpdateButtons);
         }
-        if (editor.line != nullptr) connect(editor.line, &QLineEdit::editingFinished, this, [this, i] { Commit(i); });
+        if (editor.line != nullptr) connect(editor.line, &QLineEdit::textChanged, this, &SourceSettingsCard::UpdateButtons);
         form_->addRow(editor.BuildLabel(this), row);
       }
       MiradClient::ListRunnersAsync(this, [this](RunnersResult runners) {
@@ -225,35 +316,14 @@ void SourceSettingsCard::LoadSettings() {
         ShowStatus("Could not load settings: " + QString::fromStdString(config.error), true);
         return;
       }
-      loading_ = true;
       for (SettingEditor& editor : settings_) {
         const auto it = config.values.find(editor.entry.key);
         editor.SetText(it != config.values.end() ? it->second : editor.entry.default_display);
         editor.original = editor.Text();
       }
-      loading_ = false;
+      UpdateButtons();
     });
   });
-}
-
-void SourceSettingsCard::Commit(size_t index) {
-  if (loading_) return;
-  SettingEditor& editor = settings_[index];
-  const std::string value = editor.Text();
-  if (value == editor.original) return;
-  MiradClient::PatchConfigAsync(this, {ConfigEdit{editor.entry.key, editor.entry.type, value}},
-                                [this, index, value](PatchConfigResult result) {
-                                  SettingEditor& done = settings_[index];
-                                  if (!result.ok) {
-                                    loading_ = true;
-                                    done.SetText(done.original);
-                                    loading_ = false;
-                                    ShowStatus(error_help::Describe(result.error), true);
-                                    return;
-                                  }
-                                  done.original = value;
-                                  ShowStatus("Saved", false);
-                                });
 }
 
 void SourceSettingsCard::ResetSetting(size_t index) {
@@ -263,10 +333,9 @@ void SourceSettingsCard::ResetSetting(size_t index) {
       return;
     }
     SettingEditor& editor = settings_[index];
-    loading_ = true;
     editor.SetText(editor.entry.default_display);
-    loading_ = false;
     editor.original = editor.Text();
+    UpdateButtons();
     ShowStatus("Reset", false);
   });
 }
