@@ -283,7 +283,7 @@ QWidget* SourcePage::BuildTopRow() {
   filter_ = new QLineEdit(tabs_);
   filter_->setPlaceholderText("Filter…");
   filter_->setClearButtonEnabled(true);
-  filter_->setFixedWidth(200);
+  filter_->setFixedSize(200, TabRow::kControlHeight);
   connect(filter_, &QLineEdit::textChanged, this, &SourcePage::ApplyFilter);
   tabs_->SetTrailing(filter_);
   return tabs_;

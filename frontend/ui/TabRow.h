@@ -16,6 +16,9 @@ class TabRow : public QWidget {
   Q_OBJECT
 
 public:
+  // The height of a search box or the filter pill beside the tabs.
+  static constexpr int kControlHeight = 30;
+
   explicit TabRow(QWidget* parent = nullptr);
 
   void AddTab(const QString& key, const QString& label);
