@@ -6,7 +6,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
-#include <QListWidgetItem>
+#include <QStandardItemModel>
 #include <QMenu>
 #include <QPushButton>
 #include <QScrollArea>
@@ -21,6 +21,7 @@
 #include "../ui/CoverArt.h"
 #include "../ui/DownloadTracker.h"
 #include "../ui/EventHub.h"
+#include "../ui/GameLibraryModel.h"
 #include "../ui/GameActions.h"
 #include "../ui/GameTileDelegate.h"
 #include "../ui/HoverCard.h"
@@ -171,15 +172,19 @@ void RemoveSource(QWidget* parent, const SourceInfo& source, std::function<void(
   });
 }
 
-SourcePage::SourcePage(const SourceInfo& source, ArtworkStore* artwork, DownloadTracker* downloads, bool tabs,
-                       int tile_width, QWidget* parent)
+SourcePage::SourcePage(const SourceInfo& source, GameLibraryModel* library, ArtworkStore* artwork,
+                       DownloadTracker* downloads, bool tabs, int tile_width, QWidget* parent)
     : QWidget(parent),
       source_(source),
       id_(source.id.toStdString()),
+      library_(library),
       artwork_(artwork),
       downloads_(downloads),
       tile_(tile_width, tile_width * 3 / 2),
       use_tabs_(tabs) {
+  games_ = new GameFilterProxy(library_, this);
+  games_->SetSource(id_);
+  owned_model_ = new QStandardItemModel(this);
   auto* outer = new QVBoxLayout(this);
   outer->setContentsMargins(0, 0, 0, 0);
 
@@ -209,6 +214,8 @@ SourcePage::SourcePage(const SourceInfo& source, ArtworkStore* artwork, Download
   connect(downloads_, &DownloadTracker::Changed, this, [this](const QString& key) {
     if (owned_grid_ != nullptr && (key.isEmpty() || key.startsWith(source_.id + ":"))) RebuildOwnedTiles();
   });
+  connect(library_, &GameLibraryModel::Changed, this, &SourcePage::LibraryUpdated);
+  LibraryUpdated();
 
   RefreshStatus();
   if (id_ == "steam") RefreshOwned();
@@ -219,7 +226,7 @@ bool SourcePage::eventFilter(QObject* watched, QEvent* event) {
     for (TileGrid* grid : {library_grid_, owned_grid_}) {
       if (grid == nullptr) continue;
       grid->clearSelection();
-      grid->setCurrentItem(nullptr);
+      grid->setCurrentIndex(QModelIndex());
     }
   }
   return QWidget::eventFilter(watched, event);
@@ -497,13 +504,14 @@ QWidget* SourcePage::BuildLibrarySection() {
   library_empty_ = Text(section, QString(), "muted");
   layout->addWidget(library_empty_);
 
-  library_grid_ = new TileGrid(tile_, section);
+  library_grid_ = new TileGrid(tile_, artwork_, section);
+  library_grid_->setModel(games_);
   library_grid_->setContextMenuPolicy(Qt::CustomContextMenu);
   connect(library_grid_, &QWidget::customContextMenuRequested, this, &SourcePage::ShowLibraryMenu);
-  connect(library_grid_, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem* item) {
-    emit PlayRequested(item->data(GameTileDelegate::IdRole).toString());
+  connect(library_grid_, &QAbstractItemView::doubleClicked, this, [this](const QModelIndex& index) {
+    emit PlayRequested(index.data(GameTileDelegate::IdRole).toString());
   });
-  library_grid_->on_hover_item = [this](QListWidgetItem* item) { ShowHoverCard(library_grid_, item); };
+  library_grid_->on_hover = [this](const QModelIndex& index) { ShowHoverCard(library_grid_, index); };
   library_grid_->on_ctrl_wheel = [this](int steps) { emit ZoomRequested(steps); };
   layout->addWidget(library_grid_);
   return section;
@@ -564,13 +572,14 @@ QWidget* SourcePage::BuildOwnedSection() {
     layout->addLayout(row);
   }
 
-  owned_grid_ = new TileGrid(tile_, owned_section_);
-  owned_grid_->on_hover_item = [this](QListWidgetItem* item) { ShowHoverCard(owned_grid_, item); };
+  owned_grid_ = new TileGrid(tile_, artwork_, owned_section_);
+  owned_grid_->setModel(owned_model_);
+  owned_grid_->on_hover = [this](const QModelIndex& index) { ShowHoverCard(owned_grid_, index); };
   owned_grid_->setContextMenuPolicy(Qt::CustomContextMenu);
   connect(owned_grid_, &QWidget::customContextMenuRequested, this, &SourcePage::ShowOwnedMenu);
   owned_grid_->on_ctrl_wheel = [this](int steps) { emit ZoomRequested(steps); };
-  owned_grid_->on_action = [this](QListWidgetItem* item) {
-    const QString ref = item->data(GameTileDelegate::IdRole).toString();
+  owned_grid_->on_action = [this](const QModelIndex& index) {
+    const QString ref = index.data(GameTileDelegate::IdRole).toString();
     if (id_ != "humble") {
       StartInstall(ref, /*update=*/false);
       return;
@@ -585,79 +594,46 @@ QWidget* SourcePage::BuildOwnedSection() {
     });
   };
   // Double-click does what the tile's button does, while it's clickable.
-  connect(owned_grid_, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem* item) {
-    if (item->data(GameTileDelegate::ActionEnabledRole).toBool() && owned_grid_->on_action) owned_grid_->on_action(item);
+  connect(owned_grid_, &QAbstractItemView::doubleClicked, this, [this](const QModelIndex& index) {
+    if (index.data(GameTileDelegate::ActionEnabledRole).toBool() && owned_grid_->on_action) owned_grid_->on_action(index);
   });
   layout->addWidget(owned_grid_);
   return owned_section_;
 }
 
-void SourcePage::SetGames(const std::vector<GameSummary>& games, const std::set<std::string>& running) {
-  if (library_grid_ == nullptr) return;
-  games_ = games;
-  running_ = running;
-  std::vector<const GameSummary*> own;
-  for (const GameSummary& game : games) {
-    if (IsOwnGame(game)) own.push_back(&game);
-  }
-  library_count_ = static_cast<int>(own.size());
-  const auto fill = [this, &running](QListWidgetItem* item, const GameSummary& game) {
-    item->setData(GameTileDelegate::NameRole, QString::fromStdString(game.name));
-    item->setData(GameTileDelegate::StatusRole, QString::fromStdString(game.status));
-    item->setData(GameTileDelegate::RunningRole, running.contains(game.id));
-    item->setData(Qt::DecorationRole, artwork_->Cover(game, tile_, devicePixelRatioF()));
-  };
-
-  // The same games in the same order (most updates): refresh in place,
-  // keeping the selection and the hover card.
-  bool same = library_grid_->count() == library_count_;
-  for (int i = 0; same && i < library_count_; ++i) {
-    same = library_grid_->item(i)->data(GameTileDelegate::IdRole).toString().toStdString() == own[i]->id;
-  }
-  if (same) {
-    for (int i = 0; i < library_count_; ++i) fill(library_grid_->item(i), *own[i]);
-  } else {
-    const QString selected = library_grid_->currentItem() != nullptr
-                                 ? library_grid_->currentItem()->data(GameTileDelegate::IdRole).toString()
-                                 : QString();
-    library_grid_->ForgetItems();
-    ShowHoverCard(nullptr, nullptr);
-    library_grid_->clear();
-    for (const GameSummary* game : own) {
-      auto* item = new QListWidgetItem(library_grid_);
-      const QString id = QString::fromStdString(game->id);
-      item->setData(GameTileDelegate::IdRole, id);
-      fill(item, *game);
-      if (id == selected) library_grid_->setCurrentItem(item);
-    }
-  }
-  library_heading_->setText(Heading("In your library", library_count_));
+void SourcePage::LibraryUpdated() {
+  library_count_ = static_cast<int>(
+      std::ranges::count_if(library_->Games(), [this](const GameSummary& game) { return IsOwnGame(game); }));
+  if (library_heading_ != nullptr) library_heading_->setText(Heading("In your library", library_count_));
   tabs_->SetCount("installed", library_count_);
   UpdateStatusLine();
-  ApplyFilter();
+  if (library_grid_ != nullptr) library_grid_->FitHeight();
+}
+
+void SourcePage::SetTileWidth(int width) {
+  const QSize tile(width, width * 3 / 2);
+  if (tile == tile_) return;
+  tile_ = tile;
+  // The library grid's delegate draws its covers at its own size.
+  if (library_grid_ != nullptr) library_grid_->SetTileSize(tile_);
+  if (owned_grid_ != nullptr) {
+    owned_grid_->SetTileSize(tile_);
+    RebuildOwnedTiles();
+  }
 }
 
 void SourcePage::UpdateCover(const QString& id) {
-  // A not-installed title's cover is keyed "<source>-<ref>".
+  // A not-installed title's cover is keyed "<source>-<ref>". The library
+  // grid's own tiles repaint from the shared model.
   const QString prefix = source_.id + "-";
-  if (owned_grid_ != nullptr && id_ != "humble" && id.startsWith(prefix)) {
-    const QString ref = id.mid(prefix.size());
-    for (int row = 0; row < owned_grid_->count(); ++row) {
-      QListWidgetItem* item = owned_grid_->item(row);
-      if (item->data(GameTileDelegate::IdRole).toString() != ref) continue;
-      item->setData(Qt::DecorationRole,
-                    artwork_->TitleCover(source_.id, ref, item->data(GameTileDelegate::NameRole).toString(),
-                                         tile_, devicePixelRatioF()));
-    }
-  }
-  if (library_grid_ == nullptr) return;
-  for (int row = 0; row < library_grid_->count(); ++row) {
-    QListWidgetItem* item = library_grid_->item(row);
-    if (item->data(GameTileDelegate::IdRole).toString() != id) continue;
-    GameSummary game;
-    game.id = id.toStdString();
-    game.name = item->data(GameTileDelegate::NameRole).toString().toStdString();
-    item->setData(Qt::DecorationRole, artwork_->Cover(game, tile_, devicePixelRatioF()));
+  if (owned_grid_ == nullptr || id_ == "humble" || !id.startsWith(prefix)) return;
+  const QString ref = id.mid(prefix.size());
+  for (int row = 0; row < owned_model_->rowCount(); ++row) {
+    QStandardItem* item = owned_model_->item(row);
+    if (item->data(GameTileDelegate::IdRole).toString() != ref) continue;
+    item->setData(artwork_->TitleCover(source_.id, ref, item->data(GameTileDelegate::NameRole).toString(), tile_,
+                                       devicePixelRatioF()),
+                  Qt::DecorationRole);
   }
 }
 
@@ -800,17 +776,6 @@ void SourcePage::UpdateSections() {
   if (owned_heading_ != nullptr) owned_heading_->setVisible(!tabbed);
 }
 
-void SourcePage::SetTileWidth(int width) {
-  const QSize tile(width, width * 3 / 2);
-  if (tile == tile_) return;
-  tile_ = tile;
-  for (TileGrid* grid : {library_grid_, owned_grid_}) {
-    if (grid != nullptr) grid->SetTileSize(tile_);
-  }
-  SetGames(games_, running_);
-  if (owned_grid_ != nullptr) RebuildOwnedTiles();
-}
-
 void SourcePage::OpenLogin() {
   if (id_ != "amazon") {
     QDesktopServices::openUrl(QUrl(QString::fromStdString(login_url_)));
@@ -942,36 +907,50 @@ void SourcePage::ShowBundles(const HumbleLibraryResult& result) {
 }
 
 void SourcePage::RebuildOwnedTiles() {
-  owned_grid_->ForgetItems();
-  ShowHoverCard(nullptr, nullptr);
-  owned_grid_->clear();
+  // The same titles in the same order (every progress tick): roles updated
+  // in place, so the hover card and selection stay put.
+  bool same = owned_model_->rowCount() == static_cast<int>(owned_.size());
+  for (int row = 0; same && row < owned_model_->rowCount(); ++row) {
+    same = owned_model_->item(row)->data(GameTileDelegate::IdRole).toString() == owned_[row].first;
+  }
+  if (!same) {
+    ShowHoverCard(nullptr, QModelIndex());
+    owned_model_->clear();
+    for (const auto& [ref, title] : owned_) {
+      auto* item = new QStandardItem();
+      item->setData(ref, GameTileDelegate::IdRole);
+      item->setData(title, GameTileDelegate::NameRole);
+      item->setData(QString("ready"), GameTileDelegate::StatusRole);
+      owned_model_->appendRow(item);
+    }
+  }
   const QString idle = id_ == "humble" ? "Download" : "Install";
-  for (const auto& [ref, title] : owned_) {
-    auto* item = new QListWidgetItem(owned_grid_);
-    item->setData(GameTileDelegate::IdRole, ref);
-    item->setData(GameTileDelegate::NameRole, title);
-    item->setData(GameTileDelegate::StatusRole, QString("ready"));
+  for (int row = 0; row < owned_model_->rowCount(); ++row) {
+    QStandardItem* item = owned_model_->item(row);
+    const auto& [ref, title] = owned_[row];
     // Bundles aren't games, so there's no cover to look up.
-    item->setData(Qt::DecorationRole,
-                  id_ == "humble" ? PlaceholderCover(title, source_.id + "-" + ref, tile_, devicePixelRatioF())
-                                  : artwork_->TitleCover(source_.id, ref, title, tile_, devicePixelRatioF()));
+    item->setData(id_ == "humble" ? PlaceholderCover(title, source_.id + "-" + ref, tile_, devicePixelRatioF())
+                                  : artwork_->TitleCover(source_.id, ref, title, tile_, devicePixelRatioF()),
+                  Qt::DecorationRole);
     QString state = owned_state_.value(ref);
+    QVariant progress;  // cleared once the install stops: the item is reused
     const DownloadTracker::Entry* running = downloads_->Find(source_.id + ":" + ref);
     if (running != nullptr && running->state == DownloadTracker::State::Running) {
       state = id_ == "humble" ? "Downloading…" : running->update ? "Updating…" : "Installing…";
       if (running->progress >= 0) {
         state = DownloadTracker::ProgressText(*running, /*short_form=*/true);
-        item->setData(GameTileDelegate::ProgressRole, running->progress);
+        progress = running->progress;
       }
     }
+    item->setData(progress, GameTileDelegate::ProgressRole);
     if (not_owned_.contains(ref)) {
-      item->setData(GameTileDelegate::ActionRole, QString("Not owned"));
-      item->setData(GameTileDelegate::ActionEnabledRole, false);
+      item->setData(QString("Not owned"), GameTileDelegate::ActionRole);
+      item->setData(false, GameTileDelegate::ActionEnabledRole);
       item->setToolTip(title + "\nA paid game from a collection. Buy it on itch.io to install it here.");
       continue;
     }
-    item->setData(GameTileDelegate::ActionRole, state.isEmpty() ? idle : state);
-    item->setData(GameTileDelegate::ActionEnabledRole, state.isEmpty());
+    item->setData(state.isEmpty() ? idle : state, GameTileDelegate::ActionRole);
+    item->setData(state.isEmpty(), GameTileDelegate::ActionEnabledRole);
   }
   owned_heading_->setText(Heading(id_ == "humble" ? "Your purchases" : "Not installed",
                                   static_cast<int>(owned_.size())));
@@ -993,36 +972,37 @@ void SourcePage::StartInstall(const QString& ref, bool update) {
 
 void SourcePage::ApplyFilter() {
   const QString needle = filter_->text().trimmed();
-  for (TileGrid* grid : {library_grid_, owned_grid_}) {
-    if (grid == nullptr) continue;
-    for (int row = 0; row < grid->count(); ++row) {
-      QListWidgetItem* item = grid->item(row);
-      const QString name = item->data(GameTileDelegate::NameRole).toString();
-      item->setHidden(!needle.isEmpty() && !name.contains(needle, Qt::CaseInsensitive));
+  if (library_grid_ != nullptr) {
+    games_->SetSearch(needle);
+    library_grid_->FitHeight();
+  }
+  if (owned_grid_ != nullptr) {
+    for (int row = 0; row < owned_model_->rowCount(); ++row) {
+      const QString name = owned_model_->item(row)->data(GameTileDelegate::NameRole).toString();
+      owned_grid_->setRowHidden(row, !needle.isEmpty() && !name.contains(needle, Qt::CaseInsensitive));
     }
-    grid->FitHeight();
+    owned_grid_->FitHeight();
   }
 }
 
-void SourcePage::ShowHoverCard(TileGrid* grid, QListWidgetItem* item) {
-  if (item == nullptr) {
+void SourcePage::ShowHoverCard(TileGrid* grid, const QModelIndex& index) {
+  if (!index.isValid()) {
     if (hover_card_ != nullptr) hover_card_->hide();
     return;
   }
   if (hover_card_ == nullptr) hover_card_ = new HoverCard(this);
   if (grid == library_grid_) {
-    const std::string id = item->data(GameTileDelegate::IdRole).toString().toStdString();
-    const auto game = std::ranges::find(games_, id, &GameSummary::id);
-    if (game == games_.end()) return;
-    hover_card_->ShowGame(*game, running_.contains(id));
+    const GameSummary* game = games_->GameAt(index);
+    if (game == nullptr) return;
+    hover_card_->ShowGame(*game, game->running);
   } else {
     // A tile's pill says what's under way; an idle one just says Install.
-    const QString status = item->data(GameTileDelegate::ActionEnabledRole).toBool()
+    const QString status = index.data(GameTileDelegate::ActionEnabledRole).toBool()
                                ? (id_ == "humble" ? "Not downloaded" : "Not installed")
-                               : item->data(GameTileDelegate::ActionRole).toString();
-    hover_card_->ShowTitle(item->data(GameTileDelegate::NameRole).toString(), status, source_.name);
+                               : index.data(GameTileDelegate::ActionRole).toString();
+    hover_card_->ShowTitle(index.data(GameTileDelegate::NameRole).toString(), status, source_.name);
   }
-  const QRect tile = grid->visualItemRect(item);
+  const QRect tile = grid->visualRect(index);
   hover_card_->PopUpBeside(QRect(grid->viewport()->mapToGlobal(tile.topLeft()), tile.size()));
 }
 
@@ -1033,24 +1013,23 @@ void SourcePage::SetDragSelectEnabled(bool enabled) {
 }
 
 // Right-clicking outside the selection replaces it, as in the library grid.
-QList<QListWidgetItem*> SelectForMenu(TileGrid* grid, QListWidgetItem* item) {
-  if (!item->isSelected()) {
-    grid->clearSelection();
-    item->setSelected(true);
+QModelIndexList SelectForMenu(TileGrid* grid, const QModelIndex& index) {
+  if (!grid->selectionModel()->isSelected(index)) {
+    grid->selectionModel()->select(index, QItemSelectionModel::ClearAndSelect);
   }
-  return grid->selectedItems();
+  return grid->selectionModel()->selectedIndexes();
 }
 
 void SourcePage::ShowLibraryMenu(const QPoint& pos) {
-  QListWidgetItem* item = library_grid_->itemAt(pos);
-  if (item == nullptr) return;
-  if (const QList<QListWidgetItem*> selected = SelectForMenu(library_grid_, item); selected.size() > 1) {
+  const QModelIndex index = library_grid_->indexAt(pos);
+  if (!index.isValid()) return;
+  if (const QModelIndexList selected = SelectForMenu(library_grid_, index); selected.size() > 1) {
     QStringList ids;
-    for (QListWidgetItem* it : selected) ids << it->data(GameTileDelegate::IdRole).toString();
+    for (const QModelIndex& it : selected) ids << it.data(GameTileDelegate::IdRole).toString();
     emit BatchMenuRequested(ids, library_grid_->viewport()->mapToGlobal(pos));
     return;
   }
-  const QString id = item->data(GameTileDelegate::IdRole).toString();
+  const QString id = index.data(GameTileDelegate::IdRole).toString();
   // A store game's id is "<source>-<ref>"; those can also be updated.
   const QString prefix = source_.id + "-";
   const QString update_ref = IsStore() && id_ != "humble" && id.startsWith(prefix) ? id.mid(prefix.size()) : QString();
@@ -1058,23 +1037,25 @@ void SourcePage::ShowLibraryMenu(const QPoint& pos) {
 }
 
 void SourcePage::ShowOwnedMenu(const QPoint& pos) {
-  QListWidgetItem* item = owned_grid_->itemAt(pos);
-  if (item == nullptr) return;
+  const QModelIndex index = owned_grid_->indexAt(pos);
+  if (!index.isValid()) return;
   QStringList refs;
-  for (QListWidgetItem* it : SelectForMenu(owned_grid_, item)) {
-    if (it->data(GameTileDelegate::ActionEnabledRole).toBool()) refs << it->data(GameTileDelegate::IdRole).toString();
+  for (const QModelIndex& it : SelectForMenu(owned_grid_, index)) {
+    if (it.data(GameTileDelegate::ActionEnabledRole).toBool()) refs << it.data(GameTileDelegate::IdRole).toString();
   }
   QMenu menu(this);
   const QString verb = id_ == "humble" ? "Download" : "Install";
   QAction* start = menu.addAction(refs.size() > 1 ? QString("%1 (%2)").arg(verb).arg(refs.size()) : verb);
   start->setEnabled(!refs.isEmpty());
-  if (menu.exec(owned_grid_->viewport()->mapToGlobal(pos)) != start) return;
+  if (menu.exec(owned_grid_->viewport()->mapToGlobal(pos)) != start || !owned_grid_->on_action) return;
+  // Looked up again per title: each action can rebuild the tiles.
   for (const QString& ref : refs) {
-    QListWidgetItem* match = nullptr;
-    for (int row = 0; row < owned_grid_->count() && match == nullptr; ++row) {
-      if (owned_grid_->item(row)->data(GameTileDelegate::IdRole).toString() == ref) match = owned_grid_->item(row);
+    for (int row = 0; row < owned_model_->rowCount(); ++row) {
+      const QModelIndex match = owned_model_->index(row, 0);
+      if (match.data(GameTileDelegate::IdRole).toString() != ref) continue;
+      owned_grid_->on_action(match);
+      break;
     }
-    if (match != nullptr && owned_grid_->on_action) owned_grid_->on_action(match);
   }
 }
 

@@ -8,27 +8,26 @@
 
 namespace mira_gui {
 
+class ArtworkStore;
 class GameTileDelegate;
 
-// A wrapping grid of cover tiles that grows to fit them instead of
-// scrolling, for a page that scrolls as a whole. Tiles are painted by
-// GameTileDelegate; set its roles on each item.
+// A wrapping grid of cover tiles over any model, that grows to fit them
+// instead of scrolling, for a page that scrolls as a whole. Tiles are
+// painted by GameTileDelegate from the model's roles.
 class TileGrid : public TileView {
 public:
-  TileGrid(QSize tile, QWidget* parent = nullptr);
+  TileGrid(QSize tile, ArtworkStore* artwork, QWidget* parent = nullptr);
 
   // A tile's ActionRole pill was clicked (only while ActionEnabledRole).
-  std::function<void(QListWidgetItem*)> on_action;
-
+  std::function<void(const QModelIndex&)> on_action;
   // Ctrl+wheel: one call per notch, positive to grow. The rest of the wheel
   // scrolls the page around the grid.
   std::function<void(int steps)> on_ctrl_wheel;
 
-  // New tile size; the items' covers are the caller's to redraw.
+  // New tile size; the covers redraw at it.
   void SetTileSize(QSize tile);
-  // Call after adding, removing or hiding items.
+  // Call after rows are added, removed or hidden.
   void FitHeight();
-  // Items not hidden.
   int VisibleCount() const;
 
 protected:
@@ -37,9 +36,11 @@ protected:
   void mouseReleaseEvent(QMouseEvent* event) override;
   // Left to the page's own scroll area.
   void wheelEvent(QWheelEvent* event) override;
+  void rowsInserted(const QModelIndex& parent, int start, int end) override;
+  void rowsAboutToBeRemoved(const QModelIndex& parent, int start, int end) override;
 
 private:
-  QListWidgetItem* ActionItemAt(const QPoint& pos) const;
+  QModelIndex ActionIndexAt(const QPoint& pos) const;
 };
 
 }  // namespace mira_gui

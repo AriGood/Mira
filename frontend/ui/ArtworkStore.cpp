@@ -59,7 +59,7 @@ QPixmap FitToTile(const QPixmap& source, QSize tile, qreal device_pixel_ratio) {
 ArtworkStore::ArtworkStore(QObject* parent) : QObject(parent) {}
 
 QPixmap ArtworkStore::Cover(const GameSummary& game, QSize tile, qreal device_pixel_ratio) {
-  return CoverFor(QString::fromStdString(game.id), QString::fromStdString(game.name), tile,
+  return CoverById(QString::fromStdString(game.id), QString::fromStdString(game.name), tile,
                   device_pixel_ratio);
 }
 
@@ -67,10 +67,10 @@ QPixmap ArtworkStore::TitleCover(const QString& source, const QString& ref, cons
                                  qreal device_pixel_ratio) {
   const QString id = source + "-" + ref;
   titles_.insert(id, {source.toStdString(), ref.toStdString()});
-  return CoverFor(id, title, tile, device_pixel_ratio);
+  return CoverById(id, title, tile, device_pixel_ratio);
 }
 
-QPixmap ArtworkStore::CoverFor(const QString& id, const QString& name, QSize tile, qreal device_pixel_ratio) {
+QPixmap ArtworkStore::CoverById(const QString& id, const QString& name, QSize tile, qreal device_pixel_ratio) {
   const QString key = ScaleKey(id, tile);
 
   if (const auto cached = scaled_.constFind(key); cached != scaled_.constEnd()) return *cached;

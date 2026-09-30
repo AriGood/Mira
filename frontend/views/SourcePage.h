@@ -17,8 +17,9 @@
 
 class QLabel;
 class QLineEdit;
-class QListWidgetItem;
 class QMenu;
+class QModelIndex;
+class QStandardItemModel;
 class QPushButton;
 class QToolButton;
 class QVBoxLayout;
@@ -27,6 +28,8 @@ namespace mira_gui {
 
 class ArtworkStore;
 class DownloadTracker;
+class GameFilterProxy;
+class GameLibraryModel;
 class HoverCard;
 class SourceSettingsCard;
 class TabRow;
@@ -44,12 +47,12 @@ class SourcePage : public QWidget {
   Q_OBJECT
 
 public:
+  // `library` is the window's shared game model; the page shows this source's games from it.
   // `tabs`: installed and not installed games as tabs, else stacked.
-  SourcePage(const SourceInfo& source, ArtworkStore* artwork, DownloadTracker* downloads, bool tabs,
-             int tile_width, QWidget* parent = nullptr);
+  SourcePage(const SourceInfo& source, GameLibraryModel* library, ArtworkStore* artwork, DownloadTracker* downloads,
+             bool tabs, int tile_width, QWidget* parent = nullptr);
 
-  // The whole library; the page shows the games whose source is this one.
-  void SetGames(const std::vector<GameSummary>& games, const std::set<std::string>& running);
+  // A store title's cover arrived; a game's own tile repaints from the model.
   void UpdateCover(const QString& id);
   void SetTileWidth(int width);
   void SetDragSelectEnabled(bool enabled);
@@ -110,7 +113,9 @@ private:
   void ShowLibraryMenu(const QPoint& pos);
   void ShowOwnedMenu(const QPoint& pos);
   // nullptr hides it.
-  void ShowHoverCard(TileGrid* grid, QListWidgetItem* item);
+  void ShowHoverCard(TileGrid* grid, const QModelIndex& index);
+  // The shared model changed: this source's count and status line.
+  void LibraryUpdated();
   void HandleEvent(const std::string& type, const std::string& data);
 
   SourceInfo source_;
@@ -181,9 +186,9 @@ private:
   // the ones done this session. What's running comes from downloads_.
   QHash<QString, QString> owned_state_;  // ref -> "Installing…", "Downloaded", ...
 
-  // As last passed to SetGames, for the hover card.
-  std::vector<GameSummary> games_;
-  std::set<std::string> running_;
+  GameLibraryModel* library_ = nullptr;
+  GameFilterProxy* games_ = nullptr;        // this source's games, for library_grid_
+  QStandardItemModel* owned_model_ = nullptr;  // owned_ as tiles, for owned_grid_
   HoverCard* hover_card_ = nullptr;
 };
 

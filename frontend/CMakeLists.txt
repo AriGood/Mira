@@ -60,6 +60,8 @@ qt_add_executable(mira-gui
   ui/DownloadsPanel.h
   ui/EventHub.cpp
   ui/EventHub.h
+  ui/GameLibraryModel.cpp
+  ui/GameLibraryModel.h
   ui/GameActions.cpp
   ui/GameActions.h
   ui/HeroArtWidget.cpp
@@ -220,6 +222,8 @@ add_executable(mira_gui_tests
   client/JsonMapping.cpp
   client/MiradClient.cpp
   ui/LibrarySort.cpp
+  ui/GameLibraryModel.cpp
+  ui/Theme.cpp
   ui/DaemonSupervisor.cpp
   ui/DownloadTracker.cpp
   ui/SettingsSearch.cpp
@@ -227,10 +231,9 @@ add_executable(mira_gui_tests
   client/Transport.cpp
 )
 target_include_directories(mira_gui_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-# Qt6::Core, not Widgets: the covered code needs QPointer and the queued-call
-# machinery to compile, but never a widget, a window or an event loop: a
-# test that needed one of those would be testing the wrong layer.
-target_link_libraries(mira_gui_tests PRIVATE mira_third_party Qt6::Core)
+# Widgets only for the game model's headers (its roles are the tile
+# delegate's) and theme colors; no test opens a window or runs an event loop.
+target_link_libraries(mira_gui_tests PRIVATE mira_third_party Qt6::Widgets)
 target_compile_features(mira_gui_tests PRIVATE cxx_std_20)
 target_compile_options(mira_gui_tests PRIVATE -Wall -Wextra)
 add_test(NAME frontend_unit COMMAND mira_gui_tests)

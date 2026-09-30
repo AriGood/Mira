@@ -1,14 +1,15 @@
 #include "TileGrid.h"
 
 #include <QMouseEvent>
+#include <QTimer>
 #include <QWheelEvent>
 
 #include "GameTileDelegate.h"
 
 namespace mira_gui {
 
-TileGrid::TileGrid(QSize tile, QWidget* parent) : TileView(parent) {
-  setItemDelegate(new GameTileDelegate(this, tile));
+TileGrid::TileGrid(QSize tile, ArtworkStore* artwork, QWidget* parent) : TileView(parent) {
+  setItemDelegate(new GameTileDelegate(this, tile, artwork));
   setViewMode(QListView::IconMode);
   setResizeMode(QListView::Adjust);
   setMovement(QListView::Static);
@@ -21,19 +22,21 @@ TileGrid::TileGrid(QSize tile, QWidget* parent) : TileView(parent) {
   setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
   setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
   viewport()->setAutoFillBackground(false);
-  setStyleSheet("QListWidget { background: transparent; border: none; }");
+  setStyleSheet("QListView { background: transparent; border: none; }");
 }
 
 void TileGrid::SetTileSize(QSize tile) {
   static_cast<GameTileDelegate*>(itemDelegate())->SetTileSize(tile);
   setGridSize(tile);
   FitHeight();
+  viewport()->update();
 }
 
 int TileGrid::VisibleCount() const {
+  if (model() == nullptr) return 0;
   int visible = 0;
-  for (int row = 0; row < count(); ++row) {
-    if (!item(row)->isHidden()) ++visible;
+  for (int row = 0; row < model()->rowCount(); ++row) {
+    if (!isRowHidden(row)) ++visible;
   }
   return visible;
 }
@@ -46,26 +49,37 @@ void TileGrid::FitHeight() {
 }
 
 void TileGrid::resizeEvent(QResizeEvent* event) {
-  QListWidget::resizeEvent(event);
+  QListView::resizeEvent(event);
   FitHeight();
 }
 
-QListWidgetItem* TileGrid::ActionItemAt(const QPoint& pos) const {
-  QListWidgetItem* hit = itemAt(pos);
-  if (hit == nullptr || !hit->data(GameTileDelegate::ActionEnabledRole).toBool()) return nullptr;
-  const QString text = hit->data(GameTileDelegate::ActionRole).toString();
-  if (text.isEmpty()) return nullptr;
-  return GameTileDelegate::ActionRect(visualItemRect(hit), text, font()).contains(pos) ? hit : nullptr;
+// Deferred: the model's own count isn't final until the insert or removal has run.
+void TileGrid::rowsInserted(const QModelIndex& parent, int start, int end) {
+  QListView::rowsInserted(parent, start, end);
+  QTimer::singleShot(0, this, &TileGrid::FitHeight);
+}
+
+void TileGrid::rowsAboutToBeRemoved(const QModelIndex& parent, int start, int end) {
+  QListView::rowsAboutToBeRemoved(parent, start, end);
+  QTimer::singleShot(0, this, &TileGrid::FitHeight);
+}
+
+QModelIndex TileGrid::ActionIndexAt(const QPoint& pos) const {
+  const QModelIndex hit = indexAt(pos);
+  if (!hit.isValid() || !hit.data(GameTileDelegate::ActionEnabledRole).toBool()) return {};
+  const QString text = hit.data(GameTileDelegate::ActionRole).toString();
+  if (text.isEmpty()) return {};
+  return GameTileDelegate::ActionRect(visualRect(hit), text, font()).contains(pos) ? hit : QModelIndex();
 }
 
 void TileGrid::mouseMoveEvent(QMouseEvent* event) {
-  viewport()->setCursor(ActionItemAt(event->pos()) != nullptr ? Qt::PointingHandCursor : Qt::ArrowCursor);
+  viewport()->setCursor(ActionIndexAt(event->pos()).isValid() ? Qt::PointingHandCursor : Qt::ArrowCursor);
   TileView::mouseMoveEvent(event);
 }
 
 void TileGrid::mouseReleaseEvent(QMouseEvent* event) {
   if (event->button() == Qt::LeftButton && on_action) {
-    if (QListWidgetItem* hit = ActionItemAt(event->pos())) {
+    if (const QModelIndex hit = ActionIndexAt(event->pos()); hit.isValid()) {
       on_action(hit);
       return;
     }

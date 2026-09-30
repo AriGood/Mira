@@ -24,7 +24,7 @@ class ContinueRow : public QWidget {
 public:
   ContinueRow(ArtworkStore* artwork, QWidget* parent = nullptr);
 
-  void SetGames(const std::vector<const GameSummary*>& games, const std::set<std::string>& running);
+  void SetGames(const std::vector<const GameSummary*>& games);
   bool Shows(const std::string& id) const { return shown_.contains(id); }
 
 signals:

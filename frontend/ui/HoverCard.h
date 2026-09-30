@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QPersistentModelIndex>
 #include <QRect>
 #include <QTimer>
 #include <QWidget>
@@ -10,7 +11,6 @@
 #include "../client/Types.h"
 
 class QLabel;
-class QListWidgetItem;
 
 namespace mira_gui {
 
@@ -31,19 +31,18 @@ QPoint Place(const QRect& anchor, QSize size, bool beside);
 QPoint Place(const QRect& anchor, QSize size, bool beside, const QRect& area);
 }  // namespace card
 
-// Calls on_hover with an item once the cursor has rested on it, and with
-// nullptr at once when it moves to another item or off the grid.
+// Calls on_hover with an index once the cursor has rested on it, and with an
+// invalid one at once when it moves to another index or off the grid. Held
+// as a persistent index, so a row that moves or goes away can't dangle.
 class HoverDwell {
 public:
-  explicit HoverDwell(std::function<void(QListWidgetItem*)> on_hover);
-  void Track(QListWidgetItem* hovered);
-  // Before the items are deleted.
-  void Forget();
+  explicit HoverDwell(std::function<void(const QModelIndex&)> on_hover);
+  void Track(const QModelIndex& hovered);
 
 private:
-  std::function<void(QListWidgetItem*)> on_hover_;
+  std::function<void(const QModelIndex&)> on_hover_;
   QTimer timer_;
-  QListWidgetItem* last_ = nullptr;
+  QPersistentModelIndex last_;
 };
 
 // A floating, non-modal preview shown after a short dwell over a game: name,

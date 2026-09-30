@@ -5,13 +5,14 @@
 
 namespace mira_gui {
 
+class ArtworkStore;
+
 // Paints one cover tile in the library grid: the artwork, a scrim, the title
 // over it, and the status.
 //
-// Everything it draws comes from the item's own roles, so a repaint never
-// reaches back into the window that owns the grid, because the grid can be
-// rebuilt from scratch on every keystroke without the painting code
-// knowing that happened.
+// Everything it draws comes from the index's roles, plus the cover: an
+// index's own DecorationRole if it has one (a store title), else the
+// artwork store's cover for its IdRole at this delegate's tile size.
 class GameTileDelegate : public QStyledItemDelegate {
 public:
   // The roles the grid sets on each item and this delegate reads.
@@ -37,11 +38,12 @@ public:
   // Where the ActionRole pill sits inside a tile's cell.
   static QRect ActionRect(const QRect& cell, const QString& text, const QFont& font);
 
-  GameTileDelegate(QObject* parent, QSize tile);
+  GameTileDelegate(QObject* parent, QSize tile, ArtworkStore* artwork = nullptr);
 
   void SetTileSize(QSize tile);
   void SetShowStatus(bool show) { show_status_ = show; }
   void SetShowSourceMark(bool show) { show_source_mark_ = show; }
+  QSize TileSize() const { return tile_; }
 
   QSize sizeHint(const QStyleOptionViewItem&, const QModelIndex&) const override;
   void paint(QPainter* painter, const QStyleOptionViewItem& option,
@@ -51,6 +53,7 @@ private:
   QSize tile_;
   bool show_status_ = true;
   bool show_source_mark_ = true;
+  ArtworkStore* artwork_;
 };
 
 }  // namespace mira_gui

@@ -17,6 +17,8 @@ namespace mira_gui {
 // else falls back to "name". Stable, and every key breaks ties by name, so
 // two never-played games keep a predictable order instead of shuffling.
 void SortGames(std::vector<GameSummary>& games, const std::string& key, bool descending);
+// The comparison SortGames sorts by, for a sort that isn't over a vector.
+bool GameLess(const GameSummary& a, const GameSummary& b, const std::string& key, bool descending);
 
 // The keys SortGames understands, in the order a picker should offer them,
 // paired with the label to show.
