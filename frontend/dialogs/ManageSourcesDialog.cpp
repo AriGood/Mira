@@ -6,6 +6,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMenu>
+#include <QPointer>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QToolButton>
@@ -178,7 +179,8 @@ QWidget* ManageSourcesDialog::BuildRow(const Entry& entry, bool first, bool last
 }
 
 void ManageSourcesDialog::Import(const Entry& entry, QWidget* status_holder) {
-  auto* status = qobject_cast<QLabel*>(status_holder);
+  // A QPointer: toggling another row rebuilds every row, this label included.
+  QPointer<QLabel> status = qobject_cast<QLabel*>(status_holder);
   if (status != nullptr) status->setText("Importing…");
   const QString id = entry.source.id;
   const auto done = [this, id, status](bool ok, const std::string& error, int added, int updated) {
