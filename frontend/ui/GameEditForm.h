@@ -24,9 +24,8 @@ class QWidget;
 
 namespace mira_gui {
 
-// One game's editable record (GET/PATCH /v1/games/{id}), with no QDialog
-// machinery, embeddable in a dialog shell (dialogs/GameDetailDialog) or
-// directly in a window (LibraryWindow, full-width).
+// One game's editable record (GET/PATCH /v1/games/{id}), shown in
+// LibraryWindow's game card.
 class GameEditForm : public QWidget {
   Q_OBJECT
 

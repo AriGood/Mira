@@ -15,7 +15,7 @@ namespace mira_gui {
 
 class SettingsNavWidget;
 
-// The "just for this game" half of GameDetailDialog: every overridable
+// The "just for this game" half of a game's settings: every overridable
 // setting, resolved through default -> settings.toml -> this game, editable
 // the same way SettingsDialog edits the global value, plus a Clear that
 // drops back to the layer underneath.

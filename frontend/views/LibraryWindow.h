@@ -70,9 +70,8 @@ struct SourceInfo;
 // native titlebar. Frameless, so it owns its own
 // move/resize/minimize/maximize/close.
 //
-// `mira-gui --classic` still opens MainWindow standalone; the top bar's
-// table toggle instead shows the same table in the grid's place, reading
-// the same library_ model.
+// The top bar's table toggle shows the library as a table in the grid's
+// place, reading the same library_ model; `mira-gui --classic` opens on it.
 //
 // Selection model: one click selects a tile, a second (double) click
 // launches, right-click opens the per-game menu. Hovering a tile shows a
@@ -84,6 +83,9 @@ class LibraryWindow : public QMainWindow {
 public:
   // `prefs` is frontend.toml as read at startup; the theme is already applied.
   explicit LibraryWindow(const mira_gui::FrontendPrefs& prefs, QWidget* parent = nullptr);
+
+  // The table in the grid's place, as the top bar's toggle shows it.
+  void ShowTable() { OpenClassicView(); }
 
 private:
   QWidget* BuildTopBar();

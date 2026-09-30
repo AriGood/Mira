@@ -12,8 +12,8 @@
 #include <optional>
 #include <string>
 
-// Small presentation helpers shared between MainWindow's table and
-// GameDetailDialog, so a game reads the same way in both places.
+// Small presentation helpers shared by the grid, the table and a game's
+// card, so a game reads the same way everywhere.
 namespace mira_gui {
 
 // A color per lifecycle state so status reads at a glance without a

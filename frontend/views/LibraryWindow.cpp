@@ -54,7 +54,6 @@
 #include "../client/MiradClient.h"
 #include "../dialogs/AddManualGameDialog.h"
 #include "../dialogs/DesktopEntryImportDialog.h"
-#include "../dialogs/GameDetailDialog.h"
 #include "../dialogs/GameDetailPageDialog.h"
 #include "../dialogs/ManageSourcesDialog.h"
 
@@ -611,8 +610,7 @@ void LibraryWindow::BuildShortcuts() {
   window_action("settings", "Settings", QKeySequence(Qt::CTRL | Qt::Key_Comma), {},
                [this] { OpenSettings(); });
   // F5 is the platform's own Refresh; Ctrl+R is the one every browser
-  // taught, and a second binding costs nothing. Shared id with MainWindow's
-  // own refresh action -- editing either in Settings updates both.
+  // taught, and a second binding costs nothing.
   window_action("refresh", "Refresh the library", QKeySequence(QKeySequence::Refresh),
                {QKeySequence(Qt::CTRL | Qt::Key_R)},
                [this] { Reload(/*force_scan=*/true); });
@@ -3362,11 +3360,12 @@ void LibraryWindow::HandleGameEvent(const std::string& type, const std::string& 
     mira_gui::NotificationEvent event;
     if (live && mira_gui::MiradClient::ParseNotification(data, &event)) {
       const QString message = QString::fromStdString(event.message);
+      // Only an error stays until dismissed; a warning ("no metadata found") is an answer, not an alarm.
       const auto level = mira_gui::notify::LevelFromString(QString::fromStdString(event.level));
-      if (level == mira_gui::notify::Level::Warning || level == mira_gui::notify::Level::Error) {
+      if (level == mira_gui::notify::Level::Error) {
         mira_gui::notify::Warn(this, message);
       } else {
-        mira_gui::notify::Notice(this, message);
+        mira_gui::notify::Notice(this, message, level);
       }
     }
     return;

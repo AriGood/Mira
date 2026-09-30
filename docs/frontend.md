@@ -6,7 +6,7 @@
 
 `mira-gui` opens on the **grid** (`views/LibraryWindow`): cover tiles, a left sidebar and a custom top bar in place of a native titlebar. The window is frameless. Dragging the top bar's empty area or the sidebar header moves it, double-clicking the top bar toggles maximize, and the edges resize. Moves and resizes go through `QWindow::startSystemMove`/`startSystemResize` so they work on Wayland and X11.
 
-The **table** (`views/MainWindow`) shows every field of every game. The top bar's grid/table toggle shows it in the grid's place, filtered and sorted by the same controls. `mira-gui --classic` opens it as its own window.
+The **table** shows the library as rows. The top bar's grid/table toggle shows it in the grid's place, filtered and sorted by the same controls. `mira-gui --classic` opens on it.
 
 ### Library page
 

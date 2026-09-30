@@ -1,5 +1,5 @@
-# The Qt frontend: a cover-art library grid (LibraryWindow) with the older
-# table view (MainWindow) kept as `mira-gui --classic`. See
+# The Qt frontend: a cover-art library grid (LibraryWindow), with a table
+# view in the grid's place (`mira-gui --classic` opens on it). See
 # docs/architecture.md for what it still grows into: a tray-capable process
 # that can supervise mirad itself when systemd isn't managing it.
 # It is a separate binary and a separate CMake project scope
@@ -118,7 +118,7 @@ qt_add_executable(mira-gui
   ui/GameEditForm.cpp
   ui/GameEditForm.h
 
-  # views/: the two top-level library windows, and LibraryWindow's full-page views.
+  # views/: the library window and its full-page views.
   views/LibraryWindow.cpp
   views/LibraryWindow.h
   views/RunnersPage.cpp
@@ -127,8 +127,6 @@ qt_add_executable(mira-gui
   views/SourcePage.h
   views/SourceSettingsCard.cpp
   views/SourceSettingsCard.h
-  views/MainWindow.cpp
-  views/MainWindow.h
 
   # dialogs/
   dialogs/AddManualGameDialog.cpp
@@ -137,8 +135,6 @@ qt_add_executable(mira-gui
   dialogs/DeleteGameDialog.h
   dialogs/DesktopEntryImportDialog.cpp
   dialogs/DesktopEntryImportDialog.h
-  dialogs/GameDetailDialog.cpp
-  dialogs/GameDetailDialog.h
   dialogs/GameDetailPageDialog.cpp
   dialogs/GameDetailPageDialog.h
   dialogs/InstallGameDialog.cpp

@@ -230,9 +230,8 @@ void GameEditForm::OpenAdvanced() {
 }
 
 void GameEditForm::ResetScroll() {
-  // Both host contexts (LibraryWindow's overlay card, GameDetailDialog)
-  // wrap this form in a QScrollArea it has no direct handle to, so walking up
-  // to find it beats each host remembering to reset scroll on page-switch.
+  // The host (LibraryWindow's overlay card) wraps this form in a QScrollArea
+  // it has no direct handle to.
   for (QWidget* ancestor = parentWidget(); ancestor != nullptr; ancestor = ancestor->parentWidget()) {
     if (auto* scroll_area = qobject_cast<QScrollArea*>(ancestor)) {
       scroll_area->verticalScrollBar()->setValue(0);
