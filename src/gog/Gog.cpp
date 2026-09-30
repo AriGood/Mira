@@ -93,7 +93,8 @@ std::filesystem::path AuthConfigPath(const config::Config& config) {
   return config.File().parent_path() / "gog-auth.json";
 }
 
-Result<std::string> RunGogdl(const config::Config& config, std::vector<std::string> args) {
+Result<std::string> RunGogdl(const config::Config& config, std::vector<std::string> args,
+                               const runner::OutputFn& on_output) {
   const GogStatus status = DetectGog(config);
   if (!status.installed) {
     return StoreToolMissing("gog", "GOG", "gogdl");
@@ -102,7 +103,7 @@ Result<std::string> RunGogdl(const config::Config& config, std::vector<std::stri
   Command command;
   command.argv = {status.path, "--auth-config-path", AuthConfigPath(config).string()};
   command.argv.insert(command.argv.end(), args.begin(), args.end());
-  const Result<runner::ExecResult> result = runner::RunAndWait(command);
+  const Result<runner::ExecResult> result = runner::RunAndWait(command, on_output);
   if (!result) return std::unexpected(result.error());
   if (result->exit_code != 0) {
     return Err("gogdl_failed", std::format("gogdl exited {}: {}", result->exit_code, result->output));

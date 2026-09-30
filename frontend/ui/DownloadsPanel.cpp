@@ -31,7 +31,8 @@ QString RunningText(const DownloadTracker::Entry& entry) {
     case Kind::Title: {
       if (entry.source == "steam" && !entry.update) return "Handing to Steam…";
       const QString verb = entry.update ? "Updating…" : "Installing…";
-      return entry.progress >= 0 ? QString("%1 %2%").arg(verb).arg(qRound(entry.progress * 100)) : verb;
+      const QString progress = DownloadTracker::ProgressText(entry);
+      return progress.isEmpty() ? verb : verb + " " + progress;
     }
     case Kind::Launcher: return "Installing…";
     default: return "Downloading…";

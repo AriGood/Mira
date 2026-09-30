@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <charconv>
 #include <format>
 #include <fstream>
 #include <optional>
@@ -44,7 +45,7 @@ struct Volume {
 // Game.part1.rar (new-style RAR), Game.rar + Game.r00 (old-style RAR) and
 // Game.7z.001 / Game.zip.001 (split files).
 std::optional<Volume> VolumeOf(const fs::path& path) {
-  static const std::regex kRarPart(R"(^(.*)\.part0*([0-9]+)\.rar$)");
+  static const std::regex kRarPart(R"(^(.*)\.part0*([0-9]{1,6})\.rar$)");
   static const std::regex kRarOld(R"(^(.*)\.r([0-9]{2,3})$)");
   static const std::regex kSplit(R"(^(.*\.(?:7z|zip))\.([0-9]{3})$)");
   const std::string name = strings::ToLower(path.filename().string());
@@ -127,7 +128,9 @@ bool AnyOpenForWriting(const std::vector<fs::path>& paths) {
       std::string flags;
       while (info >> key >> flags) {
         if (key != "flags:") continue;
-        if ((std::stoi(flags, nullptr, 8) & O_ACCMODE) != O_RDONLY) return true;
+        int mode = 0;
+        std::from_chars(flags.data(), flags.data() + flags.size(), mode, 8);
+        if ((mode & O_ACCMODE) != O_RDONLY) return true;
         break;
       }
     }

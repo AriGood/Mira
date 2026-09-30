@@ -37,7 +37,9 @@ public:
     bool update = false;
     State state = State::Running;
     qint64 bytes = 0;  // Game only
-    double progress = -1;  // 0..1 when the source reports it (itch installs)
+    double progress = -1;  // 0..1 when the source reports it (store installs)
+    qint64 eta_seconds = -1;
+    double bytes_per_second = -1;
     QString error;
     QDateTime changed;
   };
@@ -45,6 +47,9 @@ public:
   explicit DownloadTracker(QObject* parent = nullptr);
 
   static QString KeyFor(Kind kind, const QString& source, const QString& ref);
+  // "42% · 12.5 MB/s · 3 min left", as much as the source reported; empty
+  // when it reported nothing. `short_form` leaves out the speed.
+  static QString ProgressText(const Entry& entry, bool short_form = false);
 
   // Returns whether the event was one of ours.
   bool HandleEvent(const std::string& type, const std::string& data);

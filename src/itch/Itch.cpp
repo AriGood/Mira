@@ -1,5 +1,9 @@
 #include "itch/Itch.h"
 
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
 #include <algorithm>
 #include <cctype>
 #include <fstream>
@@ -86,12 +90,13 @@ Result<void> Login(const config::Config& config, const std::string& api_key) {
   const fs::path key_file = ApiKeyFile(config);
   std::error_code ec;
   fs::create_directories(key_file.parent_path(), ec);
-  {
-    std::ofstream file(key_file, std::ios::trunc);
-    if (!file) return Err("write_failed", "couldn't write " + key_file.string());
-    file << api_key;
-  }
-  fs::permissions(key_file, fs::perms::owner_read | fs::perms::owner_write, ec);
+  // Owner-only before the key is written, not after.
+  const int fd = ::open(key_file.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
+  if (fd < 0) return Err("write_failed", "couldn't write " + key_file.string());
+  fchmod(fd, 0600);
+  const bool written = ::write(fd, api_key.data(), api_key.size()) == static_cast<ssize_t>(api_key.size());
+  ::close(fd);
+  if (!written) return Err("write_failed", "couldn't write " + key_file.string());
 
   const Result<nlohmann::json> result = Call(config, "Profile.LoginWithAPIKey", {{"apiKey", api_key}});
   if (!result) {
@@ -156,7 +161,7 @@ Result<ItchCollection> FetchCollection(const config::Config& config, std::int64_
 }  // namespace
 
 std::optional<std::int64_t> ParseCollectionLink(std::string_view link) {
-  static const std::regex kLink(R"(^\s*(?:(?:https?://)?(?:www\.)?itch\.io/c/)?(\d+)(?:[/?#].*)?\s*$)");
+  static const std::regex kLink(R"(^\s*(?:(?:https?://)?(?:www\.)?itch\.io/c/)?(\d{1,18})(?:[/?#].*)?\s*$)");
   std::cmatch match;
   if (!std::regex_match(link.data(), link.data() + link.size(), match, kLink)) return std::nullopt;
   const std::int64_t id = std::stoll(match[1].str());

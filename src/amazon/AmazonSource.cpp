@@ -5,6 +5,7 @@
 #include "amazon/AmazonImporter.h"
 #include "amazon/Nile.h"
 #include "core/StoreErrors.h"
+#include "library/StoreProgress.h"
 
 namespace mira::amazon {
 namespace {
@@ -20,7 +21,9 @@ Result<void> CheckReady(const config::Config& config) {
 Result<void> Download(config::Config& config, store::GameStore& games, api::EventBus& events,
                       const std::string& verb, const std::string& ref) {
   if (auto ready = CheckReady(config); !ready) return ready;
-  if (auto output = RunNile(config, {verb, ref, "--base-path", config.GetPath("amazon.install_root").string()});
+  library::StoreProgress progress(events, "amazon", ref);
+  if (auto output = RunNile(config, {verb, ref, "--base-path", config.GetPath("amazon.install_root").string()},
+                            [&progress](std::string_view chunk) { progress.Feed(chunk); });
       !output) {
     return std::unexpected(output.error());
   }

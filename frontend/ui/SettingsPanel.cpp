@@ -11,11 +11,11 @@
 #include <QLineEdit>
 #include <QSpinBox>
 
-#include "../views/SourcePage.h"
 #include "HelpButton.h"
 #include "KeyBindings.h"
 #include "Notify.h"
 #include "SettingsNav.h"
+#include "Sources.h"
 #include "Theme.h"
 #include "SystemNotifier.h"
 #include <QPushButton>
@@ -50,17 +50,15 @@ void SettingsPanel::BuildSidebarGroup() {
   auto* form = nav_->AddCategory("Sidebar");
   QWidget* box = form->parentWidget();
 
-  recent_count_ = new QSpinBox(box);
-  recent_count_->setRange(0, 10);
-  recent_count_->setValue(recent_count_original_);
-  recent_count_->setSpecialValueText("Off");
-  form->addRow("Recently Played Count", recent_count_);
-  nav_->RegisterRow(form, recent_count_, "sidebar recently played recent games count");
-
-  source_counts_ = new QCheckBox(box);
-  source_counts_->setChecked(source_counts_original_);
-  form->addRow("Show Game Count per Source", source_counts_);
-  nav_->RegisterRow(form, source_counts_, "sidebar source game counts number");
+  sidebar_first_row_ =
+      AddCount(form, "Recently Played Count",
+               "How many recently played games to list. Running games always show. The library's Continue "
+               "Playing row shows them too.",
+               "sidebar recently played recent games count", &FrontendPrefs::sidebar_recent_count, 0, 0, 10);
+  AddToggle(form, "Show Game Count per Source", "Show how many games each source has next to its name.",
+            "sidebar source game counts number", &FrontendPrefs::sidebar_source_counts, true);
+  AddToggle(form, "Colored Source Icons", "Show each source's colored initial instead of a dot.",
+            "sidebar source icons colors", &FrontendPrefs::sidebar_source_icons, true);
 
   nav_->AddSubheading(form, "Sources");
   auto* sources_note = new QLabel("Only sources that are set up appear in the sidebar.", box);
@@ -76,6 +74,30 @@ void SettingsPanel::BuildSidebarGroup() {
   }
 }
 
+QCheckBox* SettingsPanel::AddToggle(QFormLayout* form, const QString& label, const QString& tip,
+                                    const QString& search, std::optional<bool> FrontendPrefs::*member,
+                                    bool fallback) {
+  auto* check = new QCheckBox(form->parentWidget());
+  check->setChecked(fallback);
+  form->addRow(LabelWithHelp(label, tip, form->parentWidget()), check);
+  nav_->RegisterRow(form, check, search);
+  toggles_.push_back({check, member, fallback, fallback});
+  return check;
+}
+
+QSpinBox* SettingsPanel::AddCount(QFormLayout* form, const QString& label, const QString& tip,
+                                  const QString& search, std::optional<int> FrontendPrefs::*member,
+                                  int fallback, int minimum, int maximum) {
+  auto* spin = new QSpinBox(form->parentWidget());
+  spin->setRange(minimum, maximum);
+  if (minimum == 0) spin->setSpecialValueText("Off");
+  spin->setValue(fallback);
+  form->addRow(LabelWithHelp(label, tip, form->parentWidget()), spin);
+  nav_->RegisterRow(form, spin, search);
+  counts_.push_back({spin, member, fallback, fallback});
+  return spin;
+}
+
 QSet<QString> SettingsPanel::CurrentHiddenSources() const {
   QSet<QString> hidden;
   for (const auto& [id, check] : source_checks_) {
@@ -84,25 +106,33 @@ QSet<QString> SettingsPanel::CurrentHiddenSources() const {
   return hidden;
 }
 
-bool SettingsPanel::SidebarDirty() const {
-  return recent_count_->value() != recent_count_original_ ||
-         source_counts_->isChecked() != source_counts_original_ ||
-         CurrentHiddenSources() != hidden_sources_original_;
+bool SettingsPanel::PrefsDirty() const {
+  if (theme_->currentData().toString() != theme_original_) return true;
+  if (CurrentHiddenSources() != hidden_sources_original_) return true;
+  for (const PrefToggle& toggle : toggles_) {
+    if (toggle.check->isChecked() != toggle.original) return true;
+  }
+  for (const PrefCount& count : counts_) {
+    if (count.spin->value() != count.original) return true;
+  }
+  for (const ShapeField* field :
+       {&tile_spacing_, &grid_margin_, &tile_radius_, &panel_radius_, &control_radius_}) {
+    if (field->spin->value() != field->original) return true;
+  }
+  for (const ShortcutField& field : shortcuts_) {
+    if (field.edit->keySequence() != field.original) return true;
+  }
+  return false;
 }
 
 void SettingsPanel::BuildInterfaceGroup() {
   auto* form = nav_->AddCategory("Interface");
   QWidget* box = form->parentWidget();
 
-  scan_on_startup_ = new QCheckBox(box);
-  scan_on_startup_->setChecked(true);
-  form->addRow(LabelWithHelp("Scan Library on Startup",
-                             "Scan the library each time Mira opens. The daemon already watches your "
-                             "folders while it runs, so this only catches changes made while it was "
-                             "stopped.",
-                             box),
-               scan_on_startup_);
-  nav_->RegisterRow(form, scan_on_startup_, "scan the library on startup");
+  AddToggle(form, "Scan Library on Startup",
+            "Scan the library each time Mira opens. The daemon already watches your folders while it runs, so "
+            "this only catches changes made while it was stopped.",
+            "scan the library on startup", &FrontendPrefs::scan_on_startup, true);
 
   theme_ = new QComboBox(box);
   theme_->addItem("Follow the desktop", "auto");
@@ -114,10 +144,28 @@ void SettingsPanel::BuildInterfaceGroup() {
                theme_);
   nav_->RegisterRow(form, theme_, "theme appearance dark light");
 
-  drag_select_ = new QCheckBox(box);
-  drag_select_->setChecked(true);
-  form->addRow("Drag to Select Games", drag_select_);
-  nav_->RegisterRow(form, drag_select_, "drag to select rubber band multiple");
+  AddToggle(form, "Drag to Select Games", "Drag across the library to select several games at once.",
+            "drag to select rubber band multiple", &FrontendPrefs::drag_select, true);
+
+  auto* library = new QLabel("Library", box);
+  library->setProperty("role", "section");
+  form->addRow(library);
+  AddToggle(form, "Filter Tabs", "Tabs above the grid for All, Installed, Playing now and the other filters.",
+            "library filter tabs chips", &FrontendPrefs::library_filter_tabs, true);
+  AddToggle(form, "Continue Playing", "Large cards for running and recently played games above the grid.",
+            "library continue playing cards recently played recent", &FrontendPrefs::library_continue_row, true);
+  AddCount(form, "Continue Playing Cards", "How many cards the Continue Playing row shows.",
+           "library continue playing cards count", &FrontendPrefs::library_continue_count, 3, 1, 6);
+  AddToggle(form, "Status on Tiles", "Show Needs install, Broken, Playing and the like on a tile.",
+            "tile status badge", &FrontendPrefs::tile_status, true);
+  AddToggle(form, "Source Mark on Tiles", "Show which store or launcher a game came from on its tile.",
+            "tile source mark store icon", &FrontendPrefs::tile_source_mark, true);
+  AddToggle(form, "Same Tile Size Everywhere",
+            "One tile size for the library and every source page. Off, each page keeps its own.",
+            "tile size zoom synced same everywhere source pages", &FrontendPrefs::tile_size_synced, false);
+  AddToggle(form, "Tabs on Source Pages",
+            "Split a source's games into Installed and Not installed tabs. Off lists both, one above the other.",
+            "source page tabs installed not installed", &FrontendPrefs::source_page_tabs, true);
 
   nav_->AddSubheading(form, "Layout");
 
@@ -255,24 +303,19 @@ void SettingsPanel::LoadFrontendPrefs() {
 
   mira_gui::MiradClient::GetFrontendPrefsAsync(this, [this](mira_gui::FrontendPrefsResult result) {
     if (!result.ok) return;  // the defaults are already shown
-    if (result.prefs.scan_on_startup) {
-      scan_on_startup_original_ = *result.prefs.scan_on_startup;
-      scan_on_startup_->setChecked(scan_on_startup_original_);
-    }
     if (result.prefs.theme) {
       theme_original_ = QString::fromStdString(*result.prefs.theme);
       const int index = theme_->findData(theme_original_);
       if (index >= 0) theme_->setCurrentIndex(index);
     }
-    if (result.prefs.drag_select) {
-      drag_select_original_ = *result.prefs.drag_select;
-      drag_select_->setChecked(drag_select_original_);
+    for (PrefToggle& toggle : toggles_) {
+      toggle.original = (result.prefs.*toggle.member).value_or(toggle.fallback);
+      toggle.check->setChecked(toggle.original);
     }
-    recent_count_original_ = result.prefs.sidebar_recent_count.value_or(recent_count_original_);
-    recent_count_->setValue(recent_count_original_);
-    recent_count_original_ = recent_count_->value();  // after the clamp
-    source_counts_original_ = result.prefs.sidebar_source_counts.value_or(true);
-    source_counts_->setChecked(source_counts_original_);
+    for (PrefCount& count : counts_) {
+      count.spin->setValue((result.prefs.*count.member).value_or(count.fallback));
+      count.original = count.spin->value();  // after the clamp
+    }
     hidden_sources_original_.clear();
     for (const std::string& id : result.prefs.hidden_sources.value_or(std::vector<std::string>{})) {
       hidden_sources_original_.insert(QString::fromStdString(id));
@@ -328,7 +371,7 @@ void SettingsPanel::Load() {
 void SettingsPanel::FocusKey(const QString& key) {
   const std::string wanted = key.toStdString();
   if (key == kSidebarKey) {
-    nav_->RevealRow(recent_count_);
+    nav_->RevealRow(sidebar_first_row_);
     return;
   }
   const auto it = std::ranges::find(fields_, wanted, [](const Field& f) { return f.entry.key; });
@@ -445,17 +488,7 @@ void SettingsPanel::ResetField(size_t index) {
 void SettingsPanel::SetFooterActions(QWidget* actions) { nav_->AddFooterWidget(actions); }
 
 bool SettingsPanel::IsDirty() const {
-  if (scan_on_startup_->isChecked() != scan_on_startup_original_) return true;
-  if (theme_->currentData().toString() != theme_original_) return true;
-  if (drag_select_->isChecked() != drag_select_original_) return true;
-  if (SidebarDirty()) return true;
-  for (const ShapeField* field :
-       {&tile_spacing_, &grid_margin_, &tile_radius_, &panel_radius_, &control_radius_}) {
-    if (field->spin->value() != field->original) return true;
-  }
-  for (const ShortcutField& field : shortcuts_) {
-    if (field.edit->keySequence() != field.original) return true;
-  }
+  if (PrefsDirty()) return true;
   for (const Field& field : fields_) {
     if (field.Text() != field.original) return true;
   }
@@ -463,12 +496,10 @@ bool SettingsPanel::IsDirty() const {
 }
 
 void SettingsPanel::DiscardChanges() {
-  scan_on_startup_->setChecked(scan_on_startup_original_);
   const int theme_index = theme_->findData(theme_original_);
   if (theme_index >= 0) theme_->setCurrentIndex(theme_index);
-  drag_select_->setChecked(drag_select_original_);
-  recent_count_->setValue(recent_count_original_);
-  source_counts_->setChecked(source_counts_original_);
+  for (PrefToggle& toggle : toggles_) toggle.check->setChecked(toggle.original);
+  for (PrefCount& count : counts_) count.spin->setValue(count.original);
   for (const auto& [id, check] : source_checks_) check->setChecked(!hidden_sources_original_.contains(id));
   for (ShapeField* field :
        {&tile_spacing_, &grid_margin_, &tile_radius_, &panel_radius_, &control_radius_}) {
@@ -489,23 +520,23 @@ void SettingsPanel::Save() {
   for (const ShortcutField& field : shortcuts_) {
     if (field.edit->keySequence() != field.original) shortcuts_changed = true;
   }
-  if (scan_on_startup_->isChecked() != scan_on_startup_original_ ||
-      theme_name != theme_original_ || shapes_changed || shortcuts_changed ||
-      drag_select_->isChecked() != drag_select_original_ || SidebarDirty()) {
+  if (PrefsDirty()) {
     mira_gui::FrontendPrefs prefs;
-    prefs.sidebar_recent_count = recent_count_->value();
-    prefs.sidebar_source_counts = source_counts_->isChecked();
+    for (PrefToggle& toggle : toggles_) {
+      toggle.original = toggle.check->isChecked();
+      prefs.*toggle.member = toggle.original;
+    }
+    for (PrefCount& count : counts_) {
+      count.original = count.spin->value();
+      prefs.*count.member = count.original;
+    }
     const QSet<QString> hidden = CurrentHiddenSources();
     std::vector<std::string> hidden_ids;
     for (const QString& id : hidden) hidden_ids.push_back(id.toStdString());
     std::ranges::sort(hidden_ids);
     prefs.hidden_sources = std::move(hidden_ids);
-    recent_count_original_ = *prefs.sidebar_recent_count;
-    source_counts_original_ = *prefs.sidebar_source_counts;
     hidden_sources_original_ = hidden;
-    prefs.scan_on_startup = scan_on_startup_->isChecked();
     prefs.theme = theme_name.toStdString();
-    prefs.drag_select = drag_select_->isChecked();
     // Always written, including the -1 that means "theme default": the key
     // has to be able to go back to unset, and a merge-patch cannot drop one.
     prefs.tile_spacing = tile_spacing_.spin->value();
@@ -545,8 +576,6 @@ void SettingsPanel::Save() {
       }
       prefs.shortcut_overrides = mira_gui::keybindings::Current();
     }
-    scan_on_startup_original_ = *prefs.scan_on_startup;
-    drag_select_original_ = *prefs.drag_select;
     if (theme_name != theme_original_) {
       theme_original_ = theme_name;
       mira_gui::theme::Apply(theme_name);

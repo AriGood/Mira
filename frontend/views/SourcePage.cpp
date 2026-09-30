@@ -5,10 +5,8 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
-#include <QLinearGradient>
 #include <QListWidgetItem>
 #include <QMenu>
-#include <QPainter>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QStyle>
@@ -26,15 +24,13 @@
 #include "../ui/HoverCard.h"
 #include "../ui/Icons.h"
 #include "../ui/Notify.h"
+#include "../ui/TabRow.h"
 #include "../ui/Theme.h"
 #include "../ui/TileGrid.h"
 #include "SourceSettingsCard.h"
 
 namespace mira_gui {
 namespace {
-
-// Smaller than the library's default: a page holds two grids.
-const QSize kTile(150, 225);
 
 // What differs per source, in words. Endpoints live in MiradClient.
 struct SourceCopy {
@@ -131,47 +127,7 @@ QString Heading(const QString& text, int count) {
                    : text;
 }
 
-// The page's top: the source's own color fading into the window.
-class Banner : public QWidget {
-public:
-  Banner(QColor color, QWidget* parent) : QWidget(parent), color_(color) {}
-
-protected:
-  void paintEvent(QPaintEvent*) override {
-    QPainter painter(this);
-    QLinearGradient gradient(rect().topLeft(), rect().bottomRight());
-    QColor start = color_;
-    start.setAlpha(210);
-    gradient.setColorAt(0.0, start);
-    gradient.setColorAt(1.0, theme::Current().window);
-    painter.setRenderHint(QPainter::Antialiasing);
-    painter.setPen(Qt::NoPen);
-    painter.setBrush(gradient);
-    painter.drawRoundedRect(rect(), theme::Current().radius_panel, theme::Current().radius_panel);
-  }
-
-private:
-  QColor color_;
-};
-
 }  // namespace
-
-const std::vector<SourceInfo>& AllSources() {
-  using Kind = SourceInfo::Kind;
-  static const std::vector<SourceInfo> sources = {
-      {"steam", "Steam", Kind::Local, QColor("#2a475e")},
-      {"epic", "Epic Games", Kind::Store, QColor("#4a4a4a")},
-      {"gog", "GOG", Kind::Store, QColor("#86328a")},
-      {"itch", "itch.io", Kind::Store, QColor("#fa5c5c")},
-      {"amazon", "Amazon Games", Kind::Store, QColor("#ff9900")},
-      {"humble", "Humble Bundle", Kind::Store, QColor("#cc2929")},
-      {"battlenet", "Battle.net", Kind::Launcher, QColor("#148eff")},
-      {"ubisoft", "Ubisoft Connect", Kind::Launcher, QColor("#0070ff")},
-      {"ea", "EA app", Kind::Launcher, QColor("#ff4747")},
-      {"lutris", "Lutris", Kind::Local, QColor("#f39c12")},
-  };
-  return sources;
-}
 
 void RemoveSource(QWidget* parent, const SourceInfo& source, std::function<void()> on_removed) {
   const QString name = source.name;
@@ -213,9 +169,15 @@ void RemoveSource(QWidget* parent, const SourceInfo& source, std::function<void(
   });
 }
 
-SourcePage::SourcePage(const SourceInfo& source, ArtworkStore* artwork, DownloadTracker* downloads,
-                       QWidget* parent)
-    : QWidget(parent), source_(source), id_(source.id.toStdString()), artwork_(artwork), downloads_(downloads) {
+SourcePage::SourcePage(const SourceInfo& source, ArtworkStore* artwork, DownloadTracker* downloads, bool tabs,
+                       int tile_width, QWidget* parent)
+    : QWidget(parent),
+      source_(source),
+      id_(source.id.toStdString()),
+      artwork_(artwork),
+      downloads_(downloads),
+      tile_(tile_width, tile_width * 3 / 2),
+      use_tabs_(tabs) {
   auto* outer = new QVBoxLayout(this);
   outer->setContentsMargins(0, 0, 0, 0);
 
@@ -224,12 +186,13 @@ SourcePage::SourcePage(const SourceInfo& source, ArtworkStore* artwork, Download
   scroll->setFrameShape(QFrame::NoFrame);
   auto* content = new QWidget();
   content_layout_ = new QVBoxLayout(content);
-  content_layout_->setContentsMargins(16, 12, 16, 16);
-  content_layout_->setSpacing(16);
-  content_layout_->addWidget(BuildBanner());
+  content_layout_->setContentsMargins(22, 14, 22, 16);
+  content_layout_->setSpacing(14);
+  content_layout_->addWidget(BuildTopRow());
   content_layout_->addWidget(BuildSetupCard());
   if (id_ != "humble") content_layout_->addWidget(BuildLibrarySection());
   if (HasOwned()) content_layout_->addWidget(BuildOwnedSection());
+  UpdateSections();
   content_layout_->addStretch(1);
   scroll->setWidget(content);
   outer->addWidget(scroll);
@@ -250,76 +213,23 @@ bool SourcePage::HasOwned() const { return IsStore() || id_ == "steam"; }
 
 bool SourcePage::IsOwnGame(const GameSummary& game) const { return game.source == id_; }
 
-QWidget* SourcePage::BuildBanner() {
-  auto* banner = new Banner(source_.color, this);
-  banner->setMinimumHeight(150);
-  auto* layout = new QVBoxLayout(banner);
-  layout->setContentsMargins(20, 14, 20, 18);
+// No title: the sidebar already says which source this is. One row holds the
+// tabs, the status and every action.
+QWidget* SourcePage::BuildTopRow() {
+  tabs_ = new TabRow(this);
+  tabs_->AddTab("installed", "Installed");
+  tabs_->AddTab("owned", id_ == "humble" ? "Purchases" : "Not installed");
+  tabs_->SetCurrent(id_ == "humble" ? "owned" : "installed");
+  connect(tabs_, &TabRow::CurrentChanged, this, &SourcePage::UpdateSections);
 
-  auto* top = new QHBoxLayout();
-  auto* back = new QPushButton("← Library", banner);
-  back->setFlat(true);
-  back->setStyleSheet("QPushButton { color: white; border: none; }");
-  back->setCursor(Qt::PointingHandCursor);
-  connect(back, &QPushButton::clicked, this, &SourcePage::BackRequested);
-  top->addWidget(back);
-  top->addStretch(1);
-  filter_ = new QLineEdit(banner);
-  filter_->setPlaceholderText("Filter…");
-  filter_->setClearButtonEnabled(true);
-  filter_->setFixedWidth(220);
-  connect(filter_, &QLineEdit::textChanged, this, &SourcePage::ApplyFilter);
-  top->addWidget(filter_);
-
-  const QColor on_banner(Qt::white);
-  // A dark backing keeps the white glyphs readable where the gradient fades to the window color.
-  const QString banner_button = "QToolButton { border: none; border-radius: 6px; padding: 5px; "
-                                "background: rgba(0, 0, 0, 90); }"
-                                "QToolButton:hover, QToolButton:checked { background: rgba(0, 0, 0, 150); }"
-                                "QToolButton::menu-indicator { image: none; }";
-  settings_button_ = new QToolButton(banner);
-  settings_button_->setIcon(icons::For(icons::Glyph::Settings, on_banner));
-  settings_button_->setToolTip(source_.name + " settings");
-  settings_button_->setCheckable(true);
-  settings_button_->setStyleSheet(banner_button);
-  settings_button_->setCursor(Qt::PointingHandCursor);
-  connect(settings_button_, &QToolButton::toggled, this, &SourcePage::ToggleSettings);
-  top->addWidget(settings_button_);
-
-  more_button_ = new QToolButton(banner);
-  more_button_->setText("⋯");
-  more_button_->setToolTip("More");
-  more_button_->setStyleSheet(banner_button + "QToolButton { color: white; font-weight: 700; }");
-  more_button_->setCursor(Qt::PointingHandCursor);
-  more_button_->setPopupMode(QToolButton::InstantPopup);
-  auto* more_menu = new QMenu(more_button_);
-  connect(more_menu, &QMenu::aboutToShow, this, [this, more_menu] { FillMoreMenu(more_menu); });
-  more_button_->setMenu(more_menu);
-  top->addWidget(more_button_);
-  layout->addLayout(top);
-  layout->addStretch(1);
-
-  auto* bottom = new QHBoxLayout();
-  auto* text = new QVBoxLayout();
-  text->setSpacing(2);
-  auto* title = new QLabel(source_.name, banner);
-  QFont title_font = title->font();
-  title_font.setPointSizeF(title_font.pointSizeF() * 2.0);
-  title_font.setWeight(QFont::Bold);
-  title->setFont(title_font);
-  title->setStyleSheet("color: white;");
-  text->addWidget(title);
-  auto* blurb = new QLabel(CopyFor(id_).blurb, banner);
-  blurb->setWordWrap(true);
-  blurb->setStyleSheet("color: rgba(255, 255, 255, 200);");
-  text->addWidget(blurb);
-  status_line_ = new QLabel(banner);
-  status_line_->setStyleSheet("color: rgba(255, 255, 255, 230); font-weight: 600;");
-  text->addWidget(status_line_);
-  bottom->addLayout(text, /*stretch=*/1);
+  status_line_ = new QLabel(tabs_);
+  status_line_->setObjectName("page_status");
+  status_line_->setTextFormat(Qt::RichText);
+  status_line_->setToolTip(CopyFor(id_).blurb);
+  tabs_->SetTrailing(status_line_);
 
   // Launchers: open it. Stores: sign out.
-  banner_primary_ = new QPushButton(banner);
+  banner_primary_ = new QPushButton(tabs_);
   banner_primary_->setVisible(false);
   connect(banner_primary_, &QPushButton::clicked, this, [this] {
     banner_primary_->setEnabled(false);
@@ -343,16 +253,47 @@ QWidget* SourcePage::BuildBanner() {
       RefreshStatus();
     });
   });
-  bottom->addWidget(banner_primary_, 0, Qt::AlignBottom);
-  layout->addLayout(bottom);
-  return banner;
+  tabs_->SetTrailing(banner_primary_);
+
+  import_button_ = new QPushButton(CopyFor(id_).import_button, tabs_);
+  import_button_->setIcon(icons::For(icons::Glyph::Refresh));
+  // Stores and launchers show it once set up (ApplyStoreStatus/ApplyLauncher).
+  import_button_->setVisible(HasImport() && !IsStore() && !IsLauncher());
+  connect(import_button_, &QPushButton::clicked, this, &SourcePage::Import);
+  tabs_->SetTrailing(import_button_);
+
+  settings_button_ = new QToolButton(tabs_);
+  settings_button_->setIcon(icons::For(icons::Glyph::Settings));
+  settings_button_->setToolTip(source_.name + " settings");
+  settings_button_->setCheckable(true);
+  settings_button_->setAutoRaise(true);
+  connect(settings_button_, &QToolButton::toggled, this, &SourcePage::ToggleSettings);
+  tabs_->SetTrailing(settings_button_);
+
+  more_button_ = new QToolButton(tabs_);
+  more_button_->setText("⋯");
+  more_button_->setToolTip("More");
+  more_button_->setAutoRaise(true);
+  more_button_->setPopupMode(QToolButton::InstantPopup);
+  auto* more_menu = new QMenu(more_button_);
+  connect(more_menu, &QMenu::aboutToShow, this, [this, more_menu] { FillMoreMenu(more_menu); });
+  more_button_->setMenu(more_menu);
+  tabs_->SetTrailing(more_button_);
+
+  filter_ = new QLineEdit(tabs_);
+  filter_->setPlaceholderText("Filter…");
+  filter_->setClearButtonEnabled(true);
+  filter_->setFixedWidth(200);
+  connect(filter_, &QLineEdit::textChanged, this, &SourcePage::ApplyFilter);
+  tabs_->SetTrailing(filter_);
+  return tabs_;
 }
 
 void SourcePage::ToggleSettings(bool shown) {
   if (shown && settings_card_ == nullptr) {
     settings_card_ = new SourceSettingsCard(source_, this);
     connect(settings_card_, &SourceSettingsCard::OpenSettingsRequested, this, &SourcePage::OpenSettingsRequested);
-    content_layout_->insertWidget(1, settings_card_);  // right under the banner
+    content_layout_->insertWidget(1, settings_card_);  // right under the top row
   } else if (shown) {
     settings_card_->Refresh();
   }
@@ -414,23 +355,41 @@ QWidget* SourcePage::BuildSetupCard() {
   const SourceCopy copy = CopyFor(id_);
   setup_card_ = new QFrame(this);
   setup_card_->setObjectName("source_setup");
-  const theme::Tokens& tokens = theme::Current();
-  setup_card_->setStyleSheet(QString("QFrame#source_setup { background: %1; border: 1px solid %2; "
-                                     "border-radius: %3px; }")
-                                 .arg(tokens.surface.name(), tokens.border.name())
-                                 .arg(tokens.radius_panel));
   setup_card_->setVisible(false);
   auto* layout = new QVBoxLayout(setup_card_);
   layout->setContentsMargins(18, 14, 18, 14);
-  layout->setSpacing(8);
+  layout->setSpacing(10);
 
-  setup_title_ = new QLabel(setup_card_);
-  setup_title_->setProperty("role", "section");
-  layout->addWidget(setup_title_);
-  setup_text_ = Text(setup_card_, QString());
-  layout->addWidget(setup_text_);
+  QStringList titles;
+  if (IsStore()) titles << "Get " + copy.tool << "Sign in to " + source_.name;
+  if (IsLauncher()) titles << "Install " + source_.name;
+  if (!titles.isEmpty() && HasImport()) titles << "Import your games";
+  for (int i = 0; i < titles.size(); ++i) {
+    Step step;
+    step.row = new QWidget(setup_card_);
+    auto* row = new QHBoxLayout(step.row);
+    row->setContentsMargins(0, 0, 0, 0);
+    row->setSpacing(12);
+    step.marker = new QLabel(QString::number(i + 1), step.row);
+    step.marker->setObjectName("step_marker");
+    step.marker->setFixedSize(26, 26);
+    step.marker->setAlignment(Qt::AlignCenter);
+    row->addWidget(step.marker);
+    step.title = new QLabel(titles[i], step.row);
+    row->addWidget(step.title, /*stretch=*/1);
+    layout->addWidget(step.row);
+    steps_.push_back(step);
+  }
 
-  setup_button_ = new QPushButton(setup_card_);
+  // Moved under whichever step is current (SetStep).
+  setup_body_ = new QWidget(setup_card_);
+  auto* body = new QVBoxLayout(setup_body_);
+  body->setContentsMargins(38, 0, 0, 4);
+  body->setSpacing(8);
+  setup_text_ = Text(setup_body_, QString());
+  body->addWidget(setup_text_);
+
+  setup_button_ = new QPushButton(setup_body_);
   setup_button_->setIcon(icons::For(icons::Glyph::Download));
   setup_button_->setVisible(false);
   connect(setup_button_, &QPushButton::clicked, this, [this] {
@@ -455,9 +414,9 @@ QWidget* SourcePage::BuildSetupCard() {
   auto* button_row = new QHBoxLayout();
   button_row->addWidget(setup_button_);
   button_row->addStretch(1);
-  layout->addLayout(button_row);
+  body->addLayout(button_row);
 
-  sign_in_row_ = new QWidget(setup_card_);
+  sign_in_row_ = new QWidget(setup_body_);
   sign_in_row_->setVisible(false);
   auto* sign_in_layout = new QHBoxLayout(sign_in_row_);
   sign_in_layout->setContentsMargins(0, 0, 0, 0);
@@ -471,16 +430,37 @@ QWidget* SourcePage::BuildSetupCard() {
   sign_in_layout->addWidget(open_login_);
   sign_in_layout->addWidget(credential_, /*stretch=*/1);
   sign_in_layout->addWidget(sign_in_);
-  layout->addWidget(sign_in_row_);
+  body->addWidget(sign_in_row_);
 
-  setup_error_ = Text(setup_card_, QString(), "error");
+  setup_error_ = Text(setup_body_, QString(), "error");
   setup_error_->setVisible(false);
-  layout->addWidget(setup_error_);
+  body->addWidget(setup_error_);
+  layout->addWidget(setup_body_);
   return setup_card_;
+}
+
+void SourcePage::SetStep(int current) {
+  auto* layout = static_cast<QVBoxLayout*>(setup_card_->layout());
+  for (int i = 0; i < static_cast<int>(steps_.size()); ++i) {
+    const Step& step = steps_[i];
+    const char* state = i < current ? "done" : i == current ? "current" : "todo";
+    step.marker->setText(i < current ? QString::fromUtf8("\xe2\x9c\x93") : QString::number(i + 1));
+    step.marker->setProperty("state", state);
+    step.marker->style()->unpolish(step.marker);
+    step.marker->style()->polish(step.marker);
+    step.title->setProperty("role", i == current ? "section" : i > current ? "muted" : "");
+    step.title->style()->unpolish(step.title);
+    step.title->style()->polish(step.title);
+  }
+  if (current >= 0 && current < static_cast<int>(steps_.size())) {
+    layout->removeWidget(setup_body_);
+    layout->insertWidget(layout->indexOf(steps_[current].row) + 1, setup_body_);
+  }
 }
 
 QWidget* SourcePage::BuildLibrarySection() {
   auto* section = new QWidget(this);
+  library_section_ = section;
   auto* layout = new QVBoxLayout(section);
   layout->setContentsMargins(0, 0, 0, 0);
   layout->setSpacing(8);
@@ -494,18 +474,12 @@ QWidget* SourcePage::BuildLibrarySection() {
   import_result_->setWordWrap(false);
   import_result_->setVisible(false);
   header->addWidget(import_result_);
-  import_button_ = new QPushButton(CopyFor(id_).import_button, section);
-  import_button_->setIcon(icons::For(icons::Glyph::Refresh));
-  // Stores and launchers show it once set up (ApplyStoreStatus/ApplyLauncher).
-  import_button_->setVisible(HasImport() && !IsStore() && !IsLauncher());
-  connect(import_button_, &QPushButton::clicked, this, &SourcePage::Import);
-  header->addWidget(import_button_);
   layout->addLayout(header);
 
   library_empty_ = Text(section, QString(), "muted");
   layout->addWidget(library_empty_);
 
-  library_grid_ = new TileGrid(kTile, section);
+  library_grid_ = new TileGrid(tile_, section);
   library_grid_->setContextMenuPolicy(Qt::CustomContextMenu);
   connect(library_grid_, &QWidget::customContextMenuRequested, this, &SourcePage::ShowLibraryMenu);
   connect(library_grid_, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem* item) {
@@ -518,7 +492,7 @@ QWidget* SourcePage::BuildLibrarySection() {
 
 QWidget* SourcePage::BuildOwnedSection() {
   owned_section_ = new QWidget(this);
-  owned_section_->setVisible(id_ == "steam");
+  owned_available_ = id_ == "steam";
   auto* layout = new QVBoxLayout(owned_section_);
   layout->setContentsMargins(0, 0, 0, 0);
   layout->setSpacing(8);
@@ -571,8 +545,10 @@ QWidget* SourcePage::BuildOwnedSection() {
     layout->addLayout(row);
   }
 
-  owned_grid_ = new TileGrid(kTile, owned_section_);
+  owned_grid_ = new TileGrid(tile_, owned_section_);
   owned_grid_->on_hover_item = [this](QListWidgetItem* item) { ShowHoverCard(owned_grid_, item); };
+  owned_grid_->setContextMenuPolicy(Qt::CustomContextMenu);
+  connect(owned_grid_, &QWidget::customContextMenuRequested, this, &SourcePage::ShowOwnedMenu);
   owned_grid_->on_action =[this](QListWidgetItem* item) {
     const QString ref = item->data(GameTileDelegate::IdRole).toString();
     if (id_ != "humble") {
@@ -616,10 +592,11 @@ void SourcePage::SetGames(const std::vector<GameSummary>& games, const std::set<
     item->setData(GameTileDelegate::NameRole, QString::fromStdString(game.name));
     item->setData(GameTileDelegate::StatusRole, QString::fromStdString(game.status));
     item->setData(GameTileDelegate::RunningRole, running.contains(game.id));
-    item->setData(Qt::DecorationRole, artwork_->Cover(game, kTile, devicePixelRatioF()));
+    item->setData(Qt::DecorationRole, artwork_->Cover(game, tile_, devicePixelRatioF()));
     if (id == selected) library_grid_->setCurrentItem(item);
   }
   library_heading_->setText(Heading("In your library", library_count_));
+  tabs_->SetCount("installed", library_count_);
   UpdateStatusLine();
   ApplyFilter();
 }
@@ -634,7 +611,7 @@ void SourcePage::UpdateCover(const QString& id) {
       if (item->data(GameTileDelegate::IdRole).toString() != ref) continue;
       item->setData(Qt::DecorationRole,
                     artwork_->TitleCover(source_.id, ref, item->data(GameTileDelegate::NameRole).toString(),
-                                         kTile, devicePixelRatioF()));
+                                         tile_, devicePixelRatioF()));
     }
   }
   if (library_grid_ == nullptr) return;
@@ -644,7 +621,7 @@ void SourcePage::UpdateCover(const QString& id) {
     GameSummary game;
     game.id = id.toStdString();
     game.name = item->data(GameTileDelegate::NameRole).toString().toStdString();
-    item->setData(Qt::DecorationRole, artwork_->Cover(game, kTile, devicePixelRatioF()));
+    item->setData(Qt::DecorationRole, artwork_->Cover(game, tile_, devicePixelRatioF()));
   }
 }
 
@@ -671,7 +648,6 @@ void SourcePage::ApplyStoreStatus(const StoreStatusResult& status) {
   const SourceCopy copy = CopyFor(id_);
   if (!status.ok) {
     setup_card_->setVisible(true);
-    setup_title_->setText(source_.name);
     ShowError(setup_error_, "Could not ask mirad about " + source_.name + ".", status.error);
     return;
   }
@@ -688,13 +664,12 @@ void SourcePage::ApplyStoreStatus(const StoreStatusResult& status) {
   setup_button_->setVisible(!tool_installed_);
   setup_button_->setEnabled(true);
   sign_in_row_->setVisible(tool_installed_ && !authenticated_);
+  SetStep(!tool_installed_ ? 0 : !authenticated_ ? 1 : 2);
   if (!tool_installed_) {
-    setup_title_->setText("Step 1 of 2  ·  Download " + copy.tool);
     setup_text_->setText("Mira uses " + copy.tool + " to talk to " + source_.name +
                          ". It's downloaded once, from its own releases.");
     setup_button_->setText("Download " + copy.tool);
   } else if (!authenticated_) {
-    setup_title_->setText("Step 2 of 2  ·  Sign in");
     setup_text_->setText(copy.sign_in_steps);
     open_login_->setVisible(id_ == "amazon" || !login_url_.empty());
   }
@@ -702,10 +677,9 @@ void SourcePage::ApplyStoreStatus(const StoreStatusResult& status) {
   banner_primary_->setText("Sign out");
   banner_primary_->setVisible(authenticated_ && id_ != "humble");
   if (import_button_ != nullptr) import_button_->setVisible(tool_installed_ && HasImport());
-  if (owned_section_ != nullptr) {
-    owned_section_->setVisible(tool_installed_ && authenticated_);
-    if (authenticated_ && !was_authenticated) RefreshOwned();
-  }
+  owned_available_ = tool_installed_ && authenticated_;
+  if (owned_section_ != nullptr && authenticated_ && !was_authenticated) RefreshOwned();
+  UpdateSections();
   UpdateStatusLine();
 }
 
@@ -718,8 +692,8 @@ void SourcePage::ApplyLauncher(const LauncherInfo& launcher) {
   // Its runner row only works once there's a prefix.
   if (launcher_installed_ != was_installed && settings_card_ != nullptr) settings_card_->Refresh();
   setup_card_->setVisible(!launcher_installed_);
+  SetStep(launcher_installed_ ? 1 : 0);
   if (!launcher_installed_) {
-    setup_title_->setText("Install " + source_.name);
     setup_text_->setText(
         launcher.interactive_install
             ? "Mira makes a Wine prefix for it and runs its installer. The installer's window "
@@ -740,20 +714,23 @@ void SourcePage::ApplyLauncher(const LauncherInfo& launcher) {
 }
 
 void SourcePage::UpdateStatusLine() {
+  const theme::Tokens& tokens = theme::Current();
   QStringList parts;
   if (IsStore()) {
     if (tool_updating_) {
-      parts << "Updating " + CopyFor(id_).tool + "…";
+      parts << StatusDot(tokens.info) + "Updating " + CopyFor(id_).tool + "…";
     } else if (!tool_installed_) {
-      parts << "Not set up";
+      parts << StatusDot(tokens.warning) + "Not set up";
     } else if (!authenticated_) {
-      parts << "Not signed in";
+      parts << StatusDot(tokens.warning) + "Not signed in";
     } else {
-      parts << (account_.empty() ? QString("Signed in")
-                                 : "Signed in as " + QString::fromStdString(account_));
+      parts << StatusDot(tokens.success) +
+                   (account_.empty() ? QString("Signed in") : "Signed in as " + QString::fromStdString(account_).toHtmlEscaped());
     }
   } else if (IsLauncher()) {
-    parts << (launcher_installing_ ? "Installing…" : launcher_installed_ ? "Installed" : "Not installed");
+    parts << (launcher_installing_ ? StatusDot(tokens.info) + "Installing…"
+              : launcher_installed_ ? StatusDot(tokens.success) + "Installed"
+                                    : StatusDot(tokens.warning) + "Not installed");
   }
   if (id_ != "humble") {
     parts << (library_count_ == 1 ? QString("1 game in your library")
@@ -772,6 +749,30 @@ void SourcePage::UpdateStatusLine() {
     library_empty_->setText("Nothing from " + source_.name + " in your library yet. \"" +
                             CopyFor(id_).import_button + "\" brings in what's already installed.");
   }
+}
+
+void SourcePage::UpdateSections() {
+  const bool has_owned = owned_section_ != nullptr && owned_available_;
+  // Tabs only when there's a choice to make.
+  const bool tabbed = use_tabs_ && has_owned && library_section_ != nullptr;
+  tabs_->SetTabsVisible(tabbed);
+  const QString current = tabs_->Current();
+  if (library_section_ != nullptr) library_section_->setVisible(!tabbed || current == "installed");
+  if (owned_section_ != nullptr) owned_section_->setVisible(has_owned && (!tabbed || current == "owned"));
+  // A tab names its section already.
+  if (library_heading_ != nullptr) library_heading_->setVisible(!tabbed);
+  if (owned_heading_ != nullptr) owned_heading_->setVisible(!tabbed);
+}
+
+void SourcePage::SetTileWidth(int width) {
+  const QSize tile(width, width * 3 / 2);
+  if (tile == tile_) return;
+  tile_ = tile;
+  for (TileGrid* grid : {library_grid_, owned_grid_}) {
+    if (grid != nullptr) grid->SetTileSize(tile_);
+  }
+  SetGames(games_, running_);
+  if (owned_grid_ != nullptr) RebuildOwnedTiles();
 }
 
 void SourcePage::OpenLogin() {
@@ -916,13 +917,16 @@ void SourcePage::RebuildOwnedTiles() {
     item->setData(GameTileDelegate::StatusRole, QString("ready"));
     // Bundles aren't games, so there's no cover to look up.
     item->setData(Qt::DecorationRole,
-                  id_ == "humble" ? PlaceholderCover(title, source_.id + "-" + ref, kTile, devicePixelRatioF())
-                                  : artwork_->TitleCover(source_.id, ref, title, kTile, devicePixelRatioF()));
+                  id_ == "humble" ? PlaceholderCover(title, source_.id + "-" + ref, tile_, devicePixelRatioF())
+                                  : artwork_->TitleCover(source_.id, ref, title, tile_, devicePixelRatioF()));
     QString state = owned_state_.value(ref);
     const DownloadTracker::Entry* running = downloads_->Find(source_.id + ":" + ref);
     if (running != nullptr && running->state == DownloadTracker::State::Running) {
       state = id_ == "humble" ? "Downloading…" : running->update ? "Updating…" : "Installing…";
-      if (running->progress >= 0) state = QString("%1 %2%").arg(state.chopped(1)).arg(qRound(running->progress * 100));
+      if (running->progress >= 0) {
+        state = DownloadTracker::ProgressText(*running, /*short_form=*/true);
+        item->setData(GameTileDelegate::ProgressRole, running->progress);
+      }
     }
     if (not_owned_.contains(ref)) {
       item->setData(GameTileDelegate::ActionRole, QString("Not owned"));
@@ -935,6 +939,7 @@ void SourcePage::RebuildOwnedTiles() {
   }
   owned_heading_->setText(Heading(id_ == "humble" ? "Your purchases" : "Not installed",
                                   static_cast<int>(owned_.size())));
+  tabs_->SetCount("owned", static_cast<int>(owned_.size()));
   ApplyFilter();
 }
 
@@ -985,14 +990,56 @@ void SourcePage::ShowHoverCard(TileGrid* grid, QListWidgetItem* item) {
   hover_card_->PopUpBeside(QRect(grid->viewport()->mapToGlobal(tile.topLeft()), tile.size()));
 }
 
+void SourcePage::SetDragSelectEnabled(bool enabled) {
+  for (TileGrid* grid : {library_grid_, owned_grid_}) {
+    if (grid != nullptr) grid->SetDragSelectEnabled(enabled);
+  }
+}
+
+// Right-clicking outside the selection replaces it, as in the library grid.
+QList<QListWidgetItem*> SelectForMenu(TileGrid* grid, QListWidgetItem* item) {
+  if (!item->isSelected()) {
+    grid->clearSelection();
+    item->setSelected(true);
+  }
+  return grid->selectedItems();
+}
+
 void SourcePage::ShowLibraryMenu(const QPoint& pos) {
   QListWidgetItem* item = library_grid_->itemAt(pos);
   if (item == nullptr) return;
+  if (const QList<QListWidgetItem*> selected = SelectForMenu(library_grid_, item); selected.size() > 1) {
+    QStringList ids;
+    for (QListWidgetItem* it : selected) ids << it->data(GameTileDelegate::IdRole).toString();
+    emit BatchMenuRequested(ids, library_grid_->viewport()->mapToGlobal(pos));
+    return;
+  }
   const QString id = item->data(GameTileDelegate::IdRole).toString();
   // A store game's id is "<source>-<ref>"; those can also be updated.
   const QString prefix = source_.id + "-";
   const QString update_ref = IsStore() && id_ != "humble" && id.startsWith(prefix) ? id.mid(prefix.size()) : QString();
   emit GameMenuRequested(id, library_grid_->viewport()->mapToGlobal(pos), update_ref);
+}
+
+void SourcePage::ShowOwnedMenu(const QPoint& pos) {
+  QListWidgetItem* item = owned_grid_->itemAt(pos);
+  if (item == nullptr) return;
+  QStringList refs;
+  for (QListWidgetItem* it : SelectForMenu(owned_grid_, item)) {
+    if (it->data(GameTileDelegate::ActionEnabledRole).toBool()) refs << it->data(GameTileDelegate::IdRole).toString();
+  }
+  QMenu menu(this);
+  const QString verb = id_ == "humble" ? "Download" : "Install";
+  QAction* start = menu.addAction(refs.size() > 1 ? QString("%1 (%2)").arg(verb).arg(refs.size()) : verb);
+  start->setEnabled(!refs.isEmpty());
+  if (menu.exec(owned_grid_->viewport()->mapToGlobal(pos)) != start) return;
+  for (const QString& ref : refs) {
+    QListWidgetItem* match = nullptr;
+    for (int row = 0; row < owned_grid_->count() && match == nullptr; ++row) {
+      if (owned_grid_->item(row)->data(GameTileDelegate::IdRole).toString() == ref) match = owned_grid_->item(row);
+    }
+    if (match != nullptr && owned_grid_->on_action) owned_grid_->on_action(match);
+  }
 }
 
 void SourcePage::UpdateTitle(const QString& ref) { StartInstall(ref, /*update=*/true); }
@@ -1020,8 +1067,7 @@ void SourcePage::HandleEvent(const std::string& type, const std::string& data) {
       tool_updating_ = false;
       setup_card_->setVisible(true);
       if (IsStore() && tool_installed_) {
-        setup_title_->setText("Update " + CopyFor(id_).tool);
-        setup_text_->clear();
+        setup_text_->setText("Updating " + CopyFor(id_).tool + " failed.");
       }
       setup_button_->setEnabled(true);
       setup_button_->setText(IsLauncher() ? "Install " + source_.name : "Retry download");

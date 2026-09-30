@@ -93,8 +93,8 @@ std::vector<RawCandidate> WalkForExecutables(const fs::path& folder, const Detec
                                     DirectoryHasLargeFile(dir, min_installer_bytes);
     std::error_code ec;
     for (const auto& entry : fs::directory_iterator(dir, fs::directory_options::skip_permission_denied, ec)) {
-      const fs::path rel = fs::relative(entry.path(), folder, ec);
-      if (ec) continue;
+      // Lexical: fs::relative resolves symlinks, turning a linked subfolder into "../..".
+      const fs::path rel = entry.path().lexically_relative(folder);
       if (MatchesAny(settings.ignore_globs, rel.generic_string())) continue;
 
       if (entry.is_directory(ec)) {

@@ -1,6 +1,5 @@
 #pragma once
 
-#include <QColor>
 #include <QPoint>
 #include <QHash>
 #include <QSet>
@@ -14,6 +13,7 @@
 
 #include "../client/EventStream.h"
 #include "../client/Types.h"
+#include "../ui/Sources.h"
 
 class QLabel;
 class QLineEdit;
@@ -29,22 +29,8 @@ class ArtworkStore;
 class DownloadTracker;
 class HoverCard;
 class SourceSettingsCard;
+class TabRow;
 class TileGrid;
-
-struct SourceInfo {
-  enum class Kind {
-    Store,     // a helper tool, an account, and what the account owns
-    Launcher,  // a Windows launcher installed into its own prefix
-    Local,     // reads what another program already installed
-  };
-  QString id;    // mirad's own name: "steam", "epic", ...; also the games' `source`
-  QString name;  // shown in the sidebar and as the page title
-  Kind kind = Kind::Local;
-  QColor color;  // the page banner's tint
-};
-
-// Every source the sidebar lists, in order.
-const std::vector<SourceInfo>& AllSources();
 
 // Shows what removing `source` would do, asks, then removes it.
 // `on_removed` runs only once it's gone.
@@ -58,27 +44,30 @@ class SourcePage : public QWidget {
   Q_OBJECT
 
 public:
-  SourcePage(const SourceInfo& source, ArtworkStore* artwork, DownloadTracker* downloads,
-             QWidget* parent = nullptr);
+  // `tabs`: installed and not installed games as tabs, else stacked.
+  SourcePage(const SourceInfo& source, ArtworkStore* artwork, DownloadTracker* downloads, bool tabs,
+             int tile_width, QWidget* parent = nullptr);
 
   // The whole library; the page shows the games whose source is this one.
   void SetGames(const std::vector<GameSummary>& games, const std::set<std::string>& running);
   void UpdateCover(const QString& id);
+  void SetTileWidth(int width);
+  void SetDragSelectEnabled(bool enabled);
   // Starts an update of an installed store title.
   void UpdateTitle(const QString& ref);
 
 signals:
-  void BackRequested();
   // Games were imported or installed; the grid should relist.
   void LibraryChanged();
   void OpenSettingsRequested(QString focus_key);
   void PlayRequested(QString id);
-  void OpenGameRequested(QString id);
   // Right-click on an installed game: the library's own game menu, plus
   // Update when `update_ref` is set.
   void GameMenuRequested(QString id, QPoint global_pos, QString update_ref);
-  // The source was removed from the banner's menu; the page should close.
+  // The source was removed from the header's menu; the page should close.
   void Removed();
+  // Right-click on several selected installed games.
+  void BatchMenuRequested(QStringList ids, QPoint global_pos);
 
 private:
   bool IsStore() const { return source_.kind == SourceInfo::Kind::Store; }
@@ -87,7 +76,7 @@ private:
   bool HasOwned() const;
   bool IsOwnGame(const GameSummary& game) const;
 
-  QWidget* BuildBanner();
+  QWidget* BuildTopRow();
   QWidget* BuildSetupCard();
   QWidget* BuildLibrarySection();
   QWidget* BuildOwnedSection();
@@ -100,6 +89,10 @@ private:
   void ApplyStoreStatus(const StoreStatusResult& status);
   void ApplyLauncher(const LauncherInfo& launcher);
   void UpdateStatusLine();
+  // Marks steps before `current` done and shows the setup body under it.
+  void SetStep(int current);
+  // Which of the two sections shows, per the tabs and the account.
+  void UpdateSections();
   void OpenLogin();
   void SignIn();
   void Import();
@@ -110,6 +103,7 @@ private:
   void StartInstall(const QString& ref, bool update);
   void ApplyFilter();
   void ShowLibraryMenu(const QPoint& pos);
+  void ShowOwnedMenu(const QPoint& pos);
   // nullptr hides it.
   void ShowHoverCard(TileGrid* grid, QListWidgetItem* item);
   void HandleEvent(const std::string& type, const std::string& data);
@@ -129,18 +123,28 @@ private:
   std::string account_;
   std::string login_url_;
   int library_count_ = 0;
+  QSize tile_;
+  bool use_tabs_ = true;
+  bool owned_available_ = false;  // the account is ready to list what it owns
 
   QLabel* status_line_ = nullptr;
   QPushButton* banner_primary_ = nullptr;  // Open launcher / Sign out
+  TabRow* tabs_ = nullptr;
   QLineEdit* filter_ = nullptr;
   QToolButton* settings_button_ = nullptr;
   QToolButton* more_button_ = nullptr;
   QVBoxLayout* content_layout_ = nullptr;
   SourceSettingsCard* settings_card_ = nullptr;  // built on first open
 
-  // Setup card: the steps still to do before the rest of the page works.
+  // Setup card: numbered steps, the current one holding the body below.
+  struct Step {
+    QWidget* row = nullptr;
+    QLabel* marker = nullptr;
+    QLabel* title = nullptr;
+  };
   QWidget* setup_card_ = nullptr;
-  QLabel* setup_title_ = nullptr;
+  std::vector<Step> steps_;
+  QWidget* setup_body_ = nullptr;
   QLabel* setup_text_ = nullptr;
   QPushButton* setup_button_ = nullptr;  // download the tool / install the launcher
   QWidget* sign_in_row_ = nullptr;
@@ -149,6 +153,7 @@ private:
   QPushButton* sign_in_ = nullptr;
   QLabel* setup_error_ = nullptr;
 
+  QWidget* library_section_ = nullptr;
   QLabel* library_heading_ = nullptr;
   QPushButton* import_button_ = nullptr;
   QLabel* import_result_ = nullptr;

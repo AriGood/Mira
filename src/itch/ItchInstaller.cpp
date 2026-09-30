@@ -1,5 +1,6 @@
 #include "itch/ItchInstaller.h"
 
+#include <charconv>
 #include <chrono>
 
 #include <filesystem>
@@ -29,6 +30,11 @@ ItchInstaller::ItchInstaller(config::Config& config, store::GameStore& games, ap
 
 Result<void> ItchInstaller::Run(const std::string& game_id) {
   if (auto ready = CheckReady(config_); !ready) return ready;
+  std::int64_t numeric_id = 0;
+  const auto [end, parsed] = std::from_chars(game_id.data(), game_id.data() + game_id.size(), numeric_id);
+  if (parsed != std::errc() || end != game_id.data() + game_id.size() || numeric_id <= 0) {
+    return Err("invalid_ref", "an itch.io game id is a number");
+  }
 
   const Result<std::int64_t> profile_id = CurrentProfileId(config_);
   if (!profile_id) return std::unexpected(profile_id.error());
@@ -38,7 +44,7 @@ Result<void> ItchInstaller::Run(const std::string& game_id) {
   // picks an upload and returns {id, stagingFolder}; Install.Perform
   // fetches it using exactly those two values back.
   const Result<json> queued = Call(config_, "Install.Queue",
-                                  {{"game", {{"id", std::stoll(game_id)}}},
+                                  {{"game", {{"id", numeric_id}}},
                                    {"profileId", *profile_id},
                                    {"installLocationId", "mira"}});
   if (!queued) return std::unexpected(queued.error());

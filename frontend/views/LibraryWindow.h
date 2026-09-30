@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QElapsedTimer>
 #include <QHash>
 #include <QList>
 #include <QMainWindow>
@@ -46,6 +47,7 @@ class LibraryGrid;
 
 namespace mira_gui {
 class ArtPickerPanel;
+class ContinueRow;
 class CoverChip;
 class DaemonSupervisor;
 class DownloadTracker;
@@ -57,6 +59,7 @@ class HoverCard;
 class RunnersPage;
 class SettingsPanel;
 class SourcePage;
+class TabRow;
 struct SourceInfo;
 }
 
@@ -83,6 +86,7 @@ private:
   QWidget* BuildTopBar();
   QWidget* BuildSidebar();
   QWidget* BuildGrid();
+  QWidget* BuildLibraryHeader();
   QWidget* BuildSettingsPage();
   // The sidebar's single filter+sort control, a Qt::Popup so it dismisses
   // itself on an outside click or Escape, so no manual close-on-click-away
@@ -136,6 +140,9 @@ private:
 
   QPixmap CoverFor(const mira_gui::GameSummary& game);
   void SetTileWidth(int width);
+  // The slider moved: resizes whichever page is showing.
+  void Zoom(int width);
+  int SourceTileWidth(const QString& id) const;
   QSize TileSize() const;
 
   void SelectionChanged();
@@ -153,7 +160,7 @@ private:
   void ShowSourceMenu(const mira_gui::SourceInfo& source, const QPoint& global_pos);
   // More than one tile selected: a reduced set of actions applied to all
   // of them at once, chosen at the pos the right-click landed on.
-  void ShowBatchContextMenu(const QList<QListWidgetItem*>& items, const QPoint& pos);
+  void ShowBatchMenu(const std::vector<std::string>& ids, const QPoint& global_pos);
   void ToggleRunning(const std::string& id);
   // Adds or removes `tag` ("hidden", "favorite") on one game.
   void ToggleTag(const std::string& id, const std::string& tag);
@@ -201,6 +208,11 @@ private:
   // Rebuilds one section's rows, only if what they'd show differs from `signature`.
   void FillSidebarSection(QLabel* heading, QVBoxLayout* layout,
                           const std::vector<const mira_gui::GameSummary*>& games, QString& signature);
+  void RefreshContinue();
+  // A sidebar row or card's click. Ignores the second click of a double
+  // click, which would otherwise land on whatever row moved under it.
+  void RowClicked(const std::string& id);
+  QIcon SourceIcon(const mira_gui::SourceInfo& source, bool active) const;
   void SetSourceHidden(const QString& id, bool hidden);
   std::vector<QString> SourceOrder() const;
   std::vector<ManageSourcesDialog::Entry> SourceEntries() const;
@@ -330,9 +342,19 @@ private:
   QLabel* recent_heading_ = nullptr;
   QString recent_signature_;
   QVBoxLayout* recent_layout_ = nullptr;
-  static constexpr int kDefaultRecentCount = 3;
-  int recent_count_ = kDefaultRecentCount;  // besides running games
+  int recent_count_ = 0;  // besides running games
   bool show_source_counts_ = true;
+  bool source_icons_ = true;
+  QElapsedTimer last_row_click_;
+  mira_gui::TabRow* library_tabs_ = nullptr;
+  mira_gui::ContinueRow* continue_row_ = nullptr;
+  bool continue_row_enabled_ = true;
+  int continue_count_ = 3;
+  bool source_page_tabs_ = true;
+  bool drag_select_ = true;
+  // Source pages' own tile widths, unless tile_size_synced_.
+  std::map<std::string, int> source_tile_widths_;
+  bool tile_size_synced_ = false;
   QVBoxLayout* source_nav_layout_ = nullptr;
   // Store signed in / launcher installed, by source id, as last asked.
   QHash<QString, bool> source_ready_;

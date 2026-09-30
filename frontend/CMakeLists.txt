@@ -48,6 +48,8 @@ qt_add_executable(mira-gui
   ui/ArtPickerPanel.h
   ui/ArtworkStore.cpp
   ui/ArtworkStore.h
+  ui/ContinueRow.cpp
+  ui/ContinueRow.h
   ui/CoverArt.cpp
   ui/CoverArt.h
   ui/DaemonSupervisor.cpp
@@ -77,14 +79,20 @@ qt_add_executable(mira-gui
   ui/Notify.h
   ui/PopupDialog.cpp
   ui/PopupDialog.h
+  ui/Sources.cpp
+  ui/Sources.h
   ui/SystemNotifier.cpp
   ui/SystemNotifier.h
   ui/Shortcuts.cpp
   ui/Shortcuts.h
   ui/Theme.cpp
   ui/Theme.h
+  ui/TabRow.cpp
+  ui/TabRow.h
   ui/TileGrid.cpp
   ui/TileGrid.h
+  ui/TileView.cpp
+  ui/TileView.h
   ui/ToolTip.cpp
   ui/ToolTip.h
   ui/Tray.cpp

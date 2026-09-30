@@ -337,10 +337,11 @@ void SendCachedArtwork(const config::Config& config, const std::string& id, cons
   res.set_content(buffer.str(), info[key].value("content_type", "image/jpeg"));
 }
 
-// A store title's art is cached under "<source>-<ref>", so the ref ends up
-// in a path.
+// A store ref ends up in a path ("<source>-<ref>" art) and on a store
+// tool's command line, where a leading '-' would read as an option.
 bool IsSafeRef(const std::string& ref) {
-  return !ref.empty() && ref.find('/') == std::string::npos && ref.find('\0') == std::string::npos;
+  return !ref.empty() && !ref.starts_with('-') && ref.find('/') == std::string::npos &&
+         ref.find('\0') == std::string::npos;
 }
 
 void SyncDesktopEntries(config::Config& config, store::GameStore& games) {
@@ -1391,6 +1392,7 @@ void Server::RegisterRoutes() {
     if (src == nullptr) {
       return SendError(res, 400, "unknown_source", std::format("no installable source named \"{}\"", source));
     }
+    if (!IsSafeRef(ref)) return SendError(res, 400, "invalid_ref", "that ref isn't a store id");
 
     events_.Publish("library.install.started", {{"source", source}, {"ref", ref}, {"update", is_update}});
     std::thread([this, src, source, ref, is_update] {

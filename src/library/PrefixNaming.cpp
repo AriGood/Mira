@@ -8,7 +8,8 @@
 namespace mira::library {
 
 std::filesystem::path NamedDir(const config::Config& config, const model::Game& game,
-                               const std::filesystem::path& root) {
+                               const std::filesystem::path& root,
+                               const std::filesystem::path& current) {
   namespace fs = std::filesystem;
   if (config.GetString("prefix_naming") != "name") return root / game.id;
 
@@ -16,10 +17,15 @@ std::filesystem::path NamedDir(const config::Config& config, const model::Game& 
 
   std::error_code ec;
   fs::path candidate = root / base;
-  for (int suffix = 2; fs::exists(candidate, ec); ++suffix) {
+  for (int suffix = 2; candidate != current && fs::exists(candidate, ec); ++suffix) {
     candidate = root / std::format("{}-{}", base, suffix);
   }
   return candidate;
+}
+
+bool NeedsProvisioning(const std::optional<model::Game>& existing) {
+  return !existing || existing->runner_ref.empty() || existing->data_dir.empty() ||
+         existing->status == model::GameStatus::Broken || existing->status == model::GameStatus::SettingUp;
 }
 
 std::filesystem::path PrefixDir(const config::Config& config, const model::Game& game) {

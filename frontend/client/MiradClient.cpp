@@ -329,6 +329,21 @@ FrontendPrefsResult GetFrontendPrefsSync() {
   read_int("control_radius", result.prefs.control_radius);
   read_int("sidebar_recent_count", result.prefs.sidebar_recent_count);
   read_bool("sidebar_source_counts", result.prefs.sidebar_source_counts);
+  read_bool("sidebar_source_icons", result.prefs.sidebar_source_icons);
+  read_bool("library_filter_tabs", result.prefs.library_filter_tabs);
+  read_bool("library_continue_row", result.prefs.library_continue_row);
+  read_int("library_continue_count", result.prefs.library_continue_count);
+  read_bool("tile_status", result.prefs.tile_status);
+  read_bool("tile_source_mark", result.prefs.tile_source_mark);
+  read_bool("source_page_tabs", result.prefs.source_page_tabs);
+  read_bool("tile_size_synced", result.prefs.tile_size_synced);
+  if (table.contains("source_tile_widths") && table["source_tile_widths"].is_object()) {
+    std::map<std::string, int> widths;
+    for (const auto& [id, width] : table["source_tile_widths"].items()) {
+      if (width.is_number_integer()) widths[id] = width.get<int>();
+    }
+    result.prefs.source_tile_widths = std::move(widths);
+  }
   if (table.contains("shortcuts") && table["shortcuts"].is_object()) {
     std::map<std::string, std::string> overrides;
     for (const auto& [id, keys] : table["shortcuts"].items()) {
@@ -336,26 +351,23 @@ FrontendPrefsResult GetFrontendPrefsSync() {
     }
     result.prefs.shortcut_overrides = std::move(overrides);
   }
-  if (table.contains("hidden_sources") && table["hidden_sources"].is_array()) {
-    std::vector<std::string> hidden;
-    for (const json& id : table["hidden_sources"]) {
-      if (id.is_string()) hidden.push_back(id.get<std::string>());
+  const auto read_strings = [&table](const char* key, std::optional<std::vector<std::string>>& out) {
+    if (!table.contains(key) || !table[key].is_array()) return;
+    std::vector<std::string> values;
+    for (const json& value : table[key]) {
+      if (value.is_string()) values.push_back(value.get<std::string>());
     }
-    result.prefs.hidden_sources = std::move(hidden);
-  }
+    out = std::move(values);
+  };
+  read_strings("hidden_sources", result.prefs.hidden_sources);
+  read_strings("source_order", result.prefs.source_order);
+
   if (table.contains("source_imported_at") && table["source_imported_at"].is_object()) {
     std::map<std::string, std::int64_t> imported;
     for (const auto& [id, at] : table["source_imported_at"].items()) {
       if (at.is_number_integer()) imported[id] = at.get<std::int64_t>();
     }
     result.prefs.source_imported_at = std::move(imported);
-  }
-  if (table.contains("source_order") && table["source_order"].is_array()) {
-    std::vector<std::string> order;
-    for (const json& id : table["source_order"]) {
-      if (id.is_string()) order.push_back(id.get<std::string>());
-    }
-    result.prefs.source_order = std::move(order);
   }
   return result;
 }
@@ -391,6 +403,15 @@ PatchConfigResult SaveFrontendPrefsSync(const FrontendPrefs& prefs) {
   }
   if (prefs.sidebar_recent_count) table["sidebar_recent_count"] = *prefs.sidebar_recent_count;
   if (prefs.sidebar_source_counts) table["sidebar_source_counts"] = *prefs.sidebar_source_counts;
+  if (prefs.sidebar_source_icons) table["sidebar_source_icons"] = *prefs.sidebar_source_icons;
+  if (prefs.library_filter_tabs) table["library_filter_tabs"] = *prefs.library_filter_tabs;
+  if (prefs.library_continue_row) table["library_continue_row"] = *prefs.library_continue_row;
+  if (prefs.library_continue_count) table["library_continue_count"] = *prefs.library_continue_count;
+  if (prefs.tile_status) table["tile_status"] = *prefs.tile_status;
+  if (prefs.tile_source_mark) table["tile_source_mark"] = *prefs.tile_source_mark;
+  if (prefs.source_page_tabs) table["source_page_tabs"] = *prefs.source_page_tabs;
+  if (prefs.tile_size_synced) table["tile_size_synced"] = *prefs.tile_size_synced;
+  if (prefs.source_tile_widths) table["source_tile_widths"] = *prefs.source_tile_widths;
 
   // Short, because SaveFrontendPrefsBlocking runs this on the UI thread
   // while a window is closing.
@@ -2000,7 +2021,11 @@ bool MiradClient::ParseStoreEvent(const std::string& event_type, const std::stri
     out->source = entry.value("source", std::string());
     out->ref = entry.value("ref", std::string());
     out->update = entry.value("update", false);
-    if (out->state == "progress") out->progress = entry.value("progress", 0.0);
+    if (out->state == "progress") {
+      out->progress = entry.value("progress", 0.0);
+      out->eta_seconds = static_cast<std::int64_t>(entry.value("eta", -1.0));
+      out->bytes_per_second = entry.value("bps", -1.0);
+    }
   } else if (out->kind == "download") {
     out->ref = entry.value("bundle_key", std::string());
   } else if (event_type.starts_with(kLauncher)) {

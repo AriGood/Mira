@@ -11,6 +11,7 @@
 #include <mutex>
 #include <optional>
 #include <set>
+#include <span>
 #include <sstream>
 #include <string_view>
 
@@ -357,10 +358,18 @@ std::string FindSteamAppId(const std::string& name, bool exact = false) {
   return {};
 }
 
-// One of Epic's keyImages by type, from Legendary's cached metadata.
-std::string FindKeyImage(const json& key_images, std::string_view type) {
-  for (const auto& image : key_images) {
-    if (Value(image, "type", std::string()) == type) return Value(image, "url", std::string());
+// One of Epic's keyImages from Legendary's cached metadata. Epic names the
+// same art differently per title: most use DieselGameBox*, some
+// DieselStoreFront* or OfferImage*. Tried in order.
+constexpr std::string_view kEpicCoverTypes[] = {"DieselGameBoxTall", "DieselStoreFrontTall", "OfferImageTall",
+                                                 "Thumbnail"};
+constexpr std::string_view kEpicHeroTypes[] = {"DieselGameBox", "DieselStoreFrontWide", "OfferImageWide"};
+
+std::string FindKeyImage(const json& key_images, std::span<const std::string_view> types) {
+  for (std::string_view type : types) {
+    for (const auto& image : key_images) {
+      if (Value(image, "type", std::string()) == type) return Value(image, "url", std::string());
+    }
   }
   return {};
 }
@@ -445,7 +454,7 @@ bool FetchStoreCover(const config::Config& config, const model::Game& game, json
     std::ifstream in(epic::LegendaryMetadataFile(game.source_ref));
     const json parsed = in ? json::parse(in, nullptr, false) : json();
     const json key_images = Value(Value(parsed, "metadata", json::object()), "keyImages", json::array());
-    if (const std::string url = FindKeyImage(key_images, "DieselStoreFrontTall");
+    if (const std::string url = FindKeyImage(key_images, kEpicCoverTypes);
         !url.empty() && FetchArtworkInto(config, url, game.id, "epic", "cover", info)) {
       return true;
     }
@@ -625,23 +634,20 @@ void FetchEpicOwned(const config::Config& config, const std::string& app_name, c
         {"developer", Value(meta, "developer", std::string())},
     };
 
-    // Epic's own image-type taxonomy: "DieselStoreFrontTall" is the
-    // vertical boxart-equivalent cover, "DieselStoreFrontWide" the wide
-    // banner-equivalent hero, the same two slots Steam's own CDN fills in
+    // A tall cover and a wide hero, the same two slots Steam's CDN fills in
     // FetchSteamOwned above.
     const json key_images = Value(meta, "keyImages", json::array());
-    auto find_image = [&](std::string_view type) { return FindKeyImage(key_images, type); };
 
     // Steam CDN candidates use id -1 above; a real SteamGridDB id is always
     // positive, so any small negative id is safe as a fixed marker.
     constexpr std::int64_t kEpicCandidateId = -2;
-    if (const std::string cover_url = find_image("DieselStoreFrontTall"); !cover_url.empty()) {
+    if (const std::string cover_url = FindKeyImage(key_images, kEpicCoverTypes); !cover_url.empty()) {
       if (FetchArtworkInto(config, cover_url, game_id, "epic", "cover", info, kEpicCandidateId)) {
         info["art_candidates"]["cover"] =
             json::array({{{"id", kEpicCandidateId}, {"url", cover_url}, {"source", "epic"}}});
       }
     }
-    if (const std::string hero_url = find_image("DieselStoreFrontWide"); !hero_url.empty()) {
+    if (const std::string hero_url = FindKeyImage(key_images, kEpicHeroTypes); !hero_url.empty()) {
       if (FetchArtworkInto(config, hero_url, game_id, "epic", "hero", info, kEpicCandidateId)) {
         info["art_candidates"]["hero"] =
             json::array({{{"id", kEpicCandidateId}, {"url", hero_url}, {"source", "epic"}}});

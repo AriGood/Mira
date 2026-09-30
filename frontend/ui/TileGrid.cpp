@@ -7,7 +7,7 @@
 
 namespace mira_gui {
 
-TileGrid::TileGrid(QSize tile, QWidget* parent) : QListWidget(parent) {
+TileGrid::TileGrid(QSize tile, QWidget* parent) : TileView(parent) {
   setItemDelegate(new GameTileDelegate(this, tile));
   setViewMode(QListView::IconMode);
   setResizeMode(QListView::Adjust);
@@ -15,15 +15,19 @@ TileGrid::TileGrid(QSize tile, QWidget* parent) : QListWidget(parent) {
   setUniformItemSizes(true);
   setSpacing(0);
   setGridSize(tile);
-  setSelectionMode(QAbstractItemView::SingleSelection);
   setEditTriggers(QAbstractItemView::NoEditTriggers);
-  setMouseTracking(true);
   setFrameShape(QFrame::NoFrame);
   setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
   setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
   setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
   viewport()->setAutoFillBackground(false);
   setStyleSheet("QListWidget { background: transparent; border: none; }");
+}
+
+void TileGrid::SetTileSize(QSize tile) {
+  static_cast<GameTileDelegate*>(itemDelegate())->SetTileSize(tile);
+  setGridSize(tile);
+  FitHeight();
 }
 
 int TileGrid::VisibleCount() const {
@@ -56,13 +60,7 @@ QListWidgetItem* TileGrid::ActionItemAt(const QPoint& pos) const {
 
 void TileGrid::mouseMoveEvent(QMouseEvent* event) {
   viewport()->setCursor(ActionItemAt(event->pos()) != nullptr ? Qt::PointingHandCursor : Qt::ArrowCursor);
-  hover_.Track(itemAt(event->pos()));
-  QListWidget::mouseMoveEvent(event);
-}
-
-void TileGrid::leaveEvent(QEvent* event) {
-  hover_.Track(nullptr);
-  QListWidget::leaveEvent(event);
+  TileView::mouseMoveEvent(event);
 }
 
 void TileGrid::mouseReleaseEvent(QMouseEvent* event) {
@@ -72,11 +70,11 @@ void TileGrid::mouseReleaseEvent(QMouseEvent* event) {
       return;
     }
   }
-  QListWidget::mouseReleaseEvent(event);
+  TileView::mouseReleaseEvent(event);
 }
 
 void TileGrid::wheelEvent(QWheelEvent* event) {
-  hover_.Track(nullptr);  // the tile is about to scroll out from under its card
+  StopHover();  // the tile is about to scroll out from under its card
   event->ignore();
 }
 

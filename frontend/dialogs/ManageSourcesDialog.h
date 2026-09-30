@@ -5,7 +5,7 @@
 #include <cstdint>
 #include <vector>
 
-#include "../views/SourcePage.h"
+#include "../ui/Sources.h"
 
 class QVBoxLayout;
 

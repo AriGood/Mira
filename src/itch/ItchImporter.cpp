@@ -105,7 +105,7 @@ Result<ItchImportSummary> ItchImporter::Import() {
     }
 
     if (game.platform == model::Platform::Windows &&
-        (!existing || existing->runner_ref.empty() || existing->data_dir.empty())) {
+        library::NeedsProvisioning(existing)) {
       if (game.data_dir.empty()) game.data_dir = library::PrefixDir(config_, game).string();
       const model::Game provisioned = provisioner.ProvisionGame(game);
       game.runner_ref = provisioned.runner_ref;

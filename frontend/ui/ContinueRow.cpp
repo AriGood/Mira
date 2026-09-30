@@ -1,0 +1,89 @@
+#include "ContinueRow.h"
+
+#include <QFrame>
+#include <QHBoxLayout>
+#include <QLabel>
+#include <QPushButton>
+#include <QVBoxLayout>
+
+#include "ArtworkStore.h"
+#include "GamePresentation.h"
+#include "Icons.h"
+
+namespace mira_gui {
+namespace {
+
+const QSize kCover(80, 120);
+
+}  // namespace
+
+ContinueRow::ContinueRow(ArtworkStore* artwork, QWidget* parent) : QWidget(parent), artwork_(artwork) {
+  auto* layout = new QVBoxLayout(this);
+  layout->setContentsMargins(0, 0, 0, 0);
+  layout->setSpacing(8);
+  auto* heading = new QLabel("Continue playing", this);
+  heading->setProperty("role", "section");
+  layout->addWidget(heading);
+  cards_ = new QHBoxLayout();
+  cards_->setSpacing(12);
+  layout->addLayout(cards_);
+}
+
+void ContinueRow::SetGames(const std::vector<const GameSummary*>& games, const std::set<std::string>& running) {
+  // deleteLater: a card's own button may be what got us here.
+  while (QLayoutItem* item = cards_->takeAt(0)) {
+    if (item->widget() != nullptr) item->widget()->deleteLater();
+    delete item;
+  }
+  shown_.clear();
+  for (const GameSummary* game : games) {
+    shown_.insert(game->id);
+    cards_->addWidget(MakeCard(*game, running.contains(game->id)));
+  }
+  cards_->addStretch(1);  // cards pack to the left
+  setVisible(!games.empty());
+}
+
+QWidget* ContinueRow::MakeCard(const GameSummary& game, bool running) {
+  auto* card = new QFrame(this);
+  card->setObjectName("continue_card");
+  card->setFixedHeight(kCover.height() + 16);
+  card->setFixedWidth(340);
+  const QString id = QString::fromStdString(game.id);
+  card->setContextMenuPolicy(Qt::CustomContextMenu);
+  connect(card, &QWidget::customContextMenuRequested, this,
+          [this, card, id](const QPoint& pos) { emit MenuRequested(id, card->mapToGlobal(pos)); });
+
+  auto* layout = new QHBoxLayout(card);
+  layout->setContentsMargins(8, 8, 12, 8);
+  layout->setSpacing(12);
+  auto* cover = new QLabel(card);
+  cover->setFixedSize(kCover);
+  cover->setPixmap(artwork_->Cover(game, kCover, devicePixelRatioF()));
+  layout->addWidget(cover);
+
+  auto* text = new QVBoxLayout();
+  text->setSpacing(2);
+  auto* name = new QLabel(QString::fromStdString(game.name), card);
+  name->setProperty("role", "section");
+  name->setWordWrap(true);
+  text->addWidget(name);
+  const QString when = running ? QString("Playing now") : FormatPlayedAgo(game.last_played_at);
+  auto* meta = new QLabel(QString("%1 · %2").arg(when, FormatPlaytime(game.play_seconds)), card);
+  meta->setProperty("role", "muted");
+  text->addWidget(meta);
+  text->addStretch(1);
+
+  auto* play = new QPushButton(running ? "Stop" : "Play", card);
+  play->setIcon(icons::For(icons::Glyph::Play));
+  play->setEnabled(running || game.status == "ready");
+  connect(play, &QPushButton::clicked, this, [this, id] { emit PlayToggled(id); });
+  auto* actions = new QHBoxLayout();
+  actions->addWidget(play);
+  actions->addStretch(1);
+  text->addLayout(actions);
+  layout->addLayout(text, /*stretch=*/1);
+  return card;
+}
+
+}  // namespace mira_gui

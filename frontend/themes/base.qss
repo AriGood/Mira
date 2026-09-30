@@ -233,6 +233,19 @@ QWidget#left_sidebar QPushButton {
   text-align: left;
 }
 
+/* The pinned/sources/recent rows scroll; their area takes the sidebar's own
+ * background instead of drawing a darker box. */
+QWidget#left_sidebar QScrollArea,
+QWidget#left_sidebar QScrollArea > QWidget > QWidget {
+  background: transparent;
+}
+
+/* Source rows: taller, room for the 22px colored initial. */
+QWidget#left_sidebar QPushButton#source_nav {
+  padding: 8px 10px;
+  min-height: 22px;
+}
+
 QWidget#left_sidebar QPushButton:hover {
   background: @surface_alt;
 }
@@ -608,6 +621,77 @@ QPushButton#hero_action:hover {
 QPushButton#hero_action:checked {
   background: @accent_soft;
   border-color: @accent;
+}
+
+/* --- Page header and tabs (ui/PageHeader) -------------------------------- */
+
+QLabel#page_status {
+  color: @text_muted;
+}
+
+QWidget#tab_row {
+  border-bottom: 1px solid @border;
+}
+
+QWidget#tab_row QPushButton {
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0px;
+  color: @text_muted;
+  padding: 8px 12px;
+}
+
+QWidget#tab_row QPushButton:hover {
+  color: @text;
+}
+
+QWidget#tab_row QPushButton:checked {
+  color: @text;
+  font-weight: 600;
+  border-bottom-color: @accent;
+}
+
+QWidget#tab_row QPushButton[alert="true"] {
+  color: @warning;
+}
+
+/* --- Continue playing (ui/ContinueRow) ----------------------------------- */
+
+QFrame#continue_card {
+  background: @surface;
+  border: 1px solid @border;
+  border-radius: @radius_panel;
+}
+
+QFrame#continue_card:hover {
+  border-color: @accent;
+}
+
+/* --- Source setup steps (views/SourcePage) ------------------------------- */
+
+QFrame#source_setup {
+  background: @surface;
+  border: 1px solid @border;
+  border-radius: @radius_panel;
+}
+
+QLabel#step_marker {
+  border: 1px solid @border;
+  border-radius: 13px;
+  color: @text_muted;
+  font-weight: 600;
+}
+
+QLabel#step_marker[state="current"] {
+  background: @accent;
+  border-color: @accent;
+  color: @on_accent;
+}
+
+QLabel#step_marker[state="done"] {
+  border-color: @success;
+  color: @success;
 }
 
 /* --- Art picker ---------------------------------------------------------- */

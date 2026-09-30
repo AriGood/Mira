@@ -3,8 +3,10 @@
 #include <sys/types.h>
 
 #include <filesystem>
+#include <functional>
 #include <optional>
 #include <string>
+#include <string_view>
 
 #include "core/Command.h"
 #include "core/Result.h"
@@ -19,7 +21,10 @@ struct ExecResult {
 // Blocking: runs `command`, waits for it to exit. Provisioning only: an
 // actual game launch is supervised, not blocked on (see
 // proc::ProcessSupervisor).
-Result<ExecResult> RunAndWait(const Command& command);
+// Sees a command's output as it arrives, in chunks that needn't end on a line.
+using OutputFn = std::function<void(std::string_view chunk)>;
+
+Result<ExecResult> RunAndWait(const Command& command, const OutputFn& on_output = {});
 
 // Starts `command` and returns its pid immediately, without waiting. For
 // launching a game: unlike provisioning, the caller must not block, and the

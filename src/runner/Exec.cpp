@@ -133,7 +133,7 @@ Result<pid_t> SpawnDetachedWithStatus(const Command& command, int& status_read_f
   return pid;
 }
 
-Result<ExecResult> RunAndWait(const Command& command) {
+Result<ExecResult> RunAndWait(const Command& command, const OutputFn& on_output) {
   if (command.argv.empty()) return Err("exec_empty_argv", "no command to run");
 
   // Everything the child needs is built *before* fork(). mirad forks from
@@ -183,7 +183,10 @@ Result<ExecResult> RunAndWait(const Command& command) {
   ExecResult result;
   char buffer[4096];
   ssize_t n;
-  while ((n = read(pipe_fds[0], buffer, sizeof(buffer))) > 0) result.output.append(buffer, static_cast<size_t>(n));
+  while ((n = read(pipe_fds[0], buffer, sizeof(buffer))) > 0) {
+    result.output.append(buffer, static_cast<size_t>(n));
+    if (on_output) on_output(std::string_view(buffer, static_cast<size_t>(n)));
+  }
   close(pipe_fds[0]);
 
   int status = 0;

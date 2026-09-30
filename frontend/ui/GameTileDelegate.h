@@ -28,6 +28,10 @@ public:
     StatusTextRole,
     // Pinned by the user: a pin badge in the tile's top-left corner.
     PinnedRole,
+    // Optional: the game's source id, drawn as a small colored mark.
+    SourceRole,
+    // Optional: 0..1, drawn as a bar along the tile's bottom edge.
+    ProgressRole,
   };
 
   // Where the ActionRole pill sits inside a tile's cell.
@@ -36,6 +40,8 @@ public:
   GameTileDelegate(QObject* parent, QSize tile);
 
   void SetTileSize(QSize tile);
+  void SetShowStatus(bool show) { show_status_ = show; }
+  void SetShowSourceMark(bool show) { show_source_mark_ = show; }
 
   QSize sizeHint(const QStyleOptionViewItem&, const QModelIndex&) const override;
   void paint(QPainter* painter, const QStyleOptionViewItem& option,
@@ -43,6 +49,8 @@ public:
 
 private:
   QSize tile_;
+  bool show_status_ = true;
+  bool show_source_mark_ = true;
 };
 
 }  // namespace mira_gui

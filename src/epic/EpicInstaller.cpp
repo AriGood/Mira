@@ -2,6 +2,7 @@
 
 #include "epic/EpicImporter.h"
 #include "epic/Legendary.h"
+#include "library/StoreProgress.h"
 
 namespace mira::epic {
 
@@ -9,7 +10,10 @@ EpicInstaller::EpicInstaller(config::Config& config, store::GameStore& games, ap
     : config_(config), games_(games), events_(events) {}
 
 Result<void> EpicInstaller::Run(const std::string& verb, const std::string& app_name) {
-  if (auto output = RunLegendary(config_, {verb, app_name, "-y"}); !output) {
+  library::StoreProgress progress(events_, "epic", app_name);
+  if (auto output = RunLegendary(config_, {verb, app_name, "-y"},
+                                 [&progress](std::string_view chunk) { progress.Feed(chunk); });
+      !output) {
     return std::unexpected(output.error());
   }
   // Picks up the new/updated install and provisions a Wine/Proton prefix

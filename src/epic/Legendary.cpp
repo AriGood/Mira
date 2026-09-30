@@ -76,7 +76,7 @@ Result<void> InstallLegendaryBinary(const config::Config& config, const runner::
   if (ec) return Err("install_dir_failed", ec.message());
 
   Command download;
-  download.argv = {"curl", "-sSL", "-o", target.string(), asset.download_url};
+  download.argv = {"curl", "-fsSL", "-o", target.string(), asset.download_url};
   const Result<runner::ExecResult> result = runner::RunAndWait(download);
   if (!result || result->exit_code != 0) {
     fs::remove(target, ec);
@@ -95,7 +95,8 @@ Result<void> InstallLegendaryBinary(const config::Config& config, const runner::
   return {};
 }
 
-Result<std::string> RunLegendary(const config::Config& config, std::vector<std::string> args) {
+Result<std::string> RunLegendary(const config::Config& config, std::vector<std::string> args,
+                               const runner::OutputFn& on_output) {
   const LegendaryStatus status = DetectLegendary(config);
   if (!status.installed) {
     return StoreToolMissing("epic", "Epic Games", "legendary");
@@ -104,7 +105,7 @@ Result<std::string> RunLegendary(const config::Config& config, std::vector<std::
   Command command;
   command.argv = {status.path};
   command.argv.insert(command.argv.end(), args.begin(), args.end());
-  const Result<runner::ExecResult> result = runner::RunAndWait(command);
+  const Result<runner::ExecResult> result = runner::RunAndWait(command, on_output);
   if (!result) return std::unexpected(result.error());
   if (result->exit_code != 0) {
     return Err("legendary_failed", std::format("legendary exited {}: {}", result->exit_code, result->output));

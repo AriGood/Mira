@@ -624,9 +624,26 @@ struct FrontendPrefs {
   // When each source last imported, as unix seconds.
   std::optional<std::map<std::string, std::int64_t>> source_imported_at;
   // How many recently played games the sidebar lists besides running ones
-  // (0 hides them), and whether source rows show a game count.
+  // (0, the default, hides them), and whether source rows show a game count.
   std::optional<int> sidebar_recent_count;
   std::optional<bool> sidebar_source_counts;
+  // Source rows show a colored tile with the source's initial, not a dot.
+  std::optional<bool> sidebar_source_icons;
+  // The library's filter tabs, and the "Continue playing" cards above the
+  // grid (running and recently played games) with how many it shows.
+  std::optional<bool> library_filter_tabs;
+  std::optional<bool> library_continue_row;
+  std::optional<int> library_continue_count;
+  // What a tile draws over its cover besides the title.
+  std::optional<bool> tile_status;
+  std::optional<bool> tile_source_mark;
+  // Source pages split installed and not installed games into tabs; off
+  // stacks both sections.
+  std::optional<bool> source_page_tabs;
+  // Each source page's tile width, by source id; tile_width is the library's.
+  // Synced: every page uses tile_width.
+  std::optional<std::map<std::string, int>> source_tile_widths;
+  std::optional<bool> tile_size_synced;
 };
 
 struct FrontendPrefsResult {
@@ -923,6 +940,8 @@ struct StoreEvent {
   std::string error;   // only on "failed"
   bool update = false;  // install: an update rather than a first install
   double progress = -1;  // install "progress": 0..1
+  std::int64_t eta_seconds = -1;  // install "progress", when reported
+  double bytes_per_second = -1;
 };
 
 }  // namespace mira_gui
