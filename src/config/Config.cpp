@@ -82,12 +82,12 @@ void Config::Load() {
 
 Result<void> Config::Save() {
   std::lock_guard lock(mutex_);
-  return WriteFileAtomic(file_, tomljson::ToToml(document_), "config_write_failed");
+  return WriteFileAtomic(file_, tomljson::ToTomlText(document_), "config_write_failed");
 }
 
 Result<void> Config::SaveFrontendFile() {
   std::lock_guard lock(mutex_);  // frontend_ is also written by Patch and SetFrontendSettings
-  return WriteFileAtomic(frontend_file_, tomljson::ToToml(frontend_), "config_write_failed");
+  return WriteFileAtomic(frontend_file_, tomljson::ToTomlText(frontend_), "config_write_failed");
 }
 
 json Config::Document() const {

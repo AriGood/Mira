@@ -50,7 +50,7 @@ Result<void> AppendSession(const std::filesystem::path& stats_file, const Sessio
 
   whole["session"].push_back(SessionToJson(record));
 
-  return WriteFileAtomic(stats_file, tomljson::ToToml(whole), "stats_write_failed");
+  return WriteFileAtomic(stats_file, tomljson::ToTomlText(whole), "stats_write_failed");
 }
 
 }  // namespace mira::proc

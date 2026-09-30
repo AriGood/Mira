@@ -62,6 +62,21 @@ public:
   // Removes every known id with one save and returns those removed.
   Result<std::vector<std::string>> RemoveMany(const std::vector<std::string>& ids);
 
+  // While one of these lives, saves are held back and written once when the
+  // last one is destroyed (a failure is logged). For an import that upserts
+  // many games, which would otherwise rewrite games.toml once per game.
+  class SaveBatch {
+  public:
+    explicit SaveBatch(GameStore& store);
+    ~SaveBatch();
+    SaveBatch(const SaveBatch&) = delete;
+    SaveBatch& operator=(const SaveBatch&) = delete;
+
+  private:
+    GameStore& store_;
+  };
+  [[nodiscard]] SaveBatch BatchSaves() { return SaveBatch(*this); }
+
 private:
   mutable std::mutex mutex_;
   // Held for a whole Save: concurrent saves share one temp file, and the last
@@ -70,6 +85,8 @@ private:
   std::mutex folders_mutex_;
   std::filesystem::path file_;
   std::vector<model::Game> games_;
+  int batch_depth_ = 0;       // guarded by mutex_
+  bool batch_dirty_ = false;  // a save was held back; guarded by mutex_
 };
 
 }  // namespace mira::store

@@ -59,6 +59,13 @@ Result<void> GameStore::Save() {
   // both touched the same GameStore around the same time). Copied under the
   // lock, then serialized/written from the copy so a slow disk write never
   // holds mutex_ and blocks an unrelated Find()/Update() the whole time.
+  {
+    std::lock_guard lock(mutex_);
+    if (batch_depth_ > 0) {
+      batch_dirty_ = true;
+      return {};
+    }
+  }
   std::lock_guard save_lock(save_mutex_);
   std::vector<model::Game> games_copy;
   {
@@ -70,7 +77,23 @@ Result<void> GameStore::Save() {
   whole["game"] = json::array();
   for (const model::Game& game : games_copy) whole["game"].push_back(model::ToJson(game));
 
-  return WriteFileAtomic(file_, tomljson::ToToml(whole), "games_write_failed");
+  return WriteFileAtomic(file_, tomljson::ToTomlText(whole), "games_write_failed");
+}
+
+GameStore::SaveBatch::SaveBatch(GameStore& store) : store_(store) {
+  std::lock_guard lock(store_.mutex_);
+  ++store_.batch_depth_;
+}
+
+GameStore::SaveBatch::~SaveBatch() {
+  bool write = false;
+  {
+    std::lock_guard lock(store_.mutex_);
+    write = --store_.batch_depth_ == 0 && store_.batch_dirty_;
+    if (write) store_.batch_dirty_ = false;
+  }
+  if (!write) return;
+  if (auto saved = store_.Save(); !saved) log::Error("could not save games: {}", saved.error().message);
 }
 
 std::vector<model::Game> GameStore::All() const {
