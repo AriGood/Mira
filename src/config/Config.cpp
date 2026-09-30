@@ -5,6 +5,7 @@
 #include <sstream>
 
 #include "config/Schema.h"
+#include "core/AtomicFile.h"
 #include "core/Log.h"
 #include "core/Paths.h"
 #include "core/TomlJson.h"
@@ -81,37 +82,12 @@ void Config::Load() {
 
 Result<void> Config::Save() {
   std::lock_guard lock(mutex_);
-  std::error_code ec;
-  std::filesystem::create_directories(file_.parent_path(), ec);
-
-  // Write-and-rename so an interrupted save cannot truncate a working file.
-  const auto temp = file_.string() + ".tmp";
-  {
-    std::ofstream out(temp);
-    if (!out) return Err("config_write_failed", std::format("couldn't write {}", temp), kDiskHint);
-    out << tomljson::ToToml(document_);
-  }
-  std::filesystem::rename(temp, file_, ec);
-  if (ec) return Err("config_write_failed", std::format("couldn't save {}: {}", file_.string(), ec.message()), kDiskHint);
-  return {};
+  return WriteFileAtomic(file_, tomljson::ToToml(document_), "config_write_failed");
 }
 
 Result<void> Config::SaveFrontendFile() {
-  std::error_code ec;
-  std::filesystem::create_directories(frontend_file_.parent_path(), ec);
-
-  const auto temp = frontend_file_.string() + ".tmp";
-  {
-    std::ofstream out(temp);
-    if (!out) return Err("config_write_failed", std::format("couldn't write {}", temp), kDiskHint);
-    out << tomljson::ToToml(frontend_);
-  }
-  std::filesystem::rename(temp, frontend_file_, ec);
-  if (ec) {
-    return Err("config_write_failed", std::format("couldn't save {}: {}", frontend_file_.string(), ec.message()),
-               kDiskHint);
-  }
-  return {};
+  std::lock_guard lock(mutex_);  // frontend_ is also written by Patch and SetFrontendSettings
+  return WriteFileAtomic(frontend_file_, tomljson::ToToml(frontend_), "config_write_failed");
 }
 
 json Config::Document() const {

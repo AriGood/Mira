@@ -4,6 +4,7 @@
 #include <fcntl.h>
 #include <netdb.h>
 #include <poll.h>
+#include <signal.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -81,6 +82,9 @@ Result<int> SpawnCapturingStdout(const std::vector<std::string>& argv) {
     dup2(pipe_fds[1], STDOUT_FILENO);
     close(pipe_fds[1]);
     setsid();
+    sigset_t none;  // mirad blocks SIGINT/SIGTERM; the mask would survive exec
+    sigemptyset(&none);
+    sigprocmask(SIG_SETMASK, &none, nullptr);
     execvp(args[0], args.data());
     _exit(127);
   }

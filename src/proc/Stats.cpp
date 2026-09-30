@@ -5,6 +5,7 @@
 
 #include <toml.hpp>
 
+#include "core/AtomicFile.h"
 #include "core/Log.h"
 #include "core/TomlJson.h"
 
@@ -49,16 +50,7 @@ Result<void> AppendSession(const std::filesystem::path& stats_file, const Sessio
 
   whole["session"].push_back(SessionToJson(record));
 
-  std::filesystem::create_directories(stats_file.parent_path(), ec);
-  const auto temp = stats_file.string() + ".tmp";
-  {
-    std::ofstream out(temp);
-    if (!out) return Err("stats_write_failed", std::format("cannot write {}", temp));
-    out << tomljson::ToToml(whole);
-  }
-  std::filesystem::rename(temp, stats_file, ec);
-  if (ec) return Err("stats_write_failed", ec.message());
-  return {};
+  return WriteFileAtomic(stats_file, tomljson::ToToml(whole), "stats_write_failed");
 }
 
 }  // namespace mira::proc

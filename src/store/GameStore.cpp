@@ -7,6 +7,7 @@
 
 #include <toml.hpp>
 
+#include "core/AtomicFile.h"
 #include "core/Log.h"
 #include "core/Strings.h"
 #include "core/TomlJson.h"
@@ -69,18 +70,7 @@ Result<void> GameStore::Save() {
   whole["game"] = json::array();
   for (const model::Game& game : games_copy) whole["game"].push_back(model::ToJson(game));
 
-  std::error_code ec;
-  std::filesystem::create_directories(file_.parent_path(), ec);
-
-  const auto temp = file_.string() + ".tmp";
-  {
-    std::ofstream out(temp);
-    if (!out) return Err("games_write_failed", std::format("couldn't write {}", temp), kDiskHint);
-    out << tomljson::ToToml(whole);
-  }
-  std::filesystem::rename(temp, file_, ec);
-  if (ec) return Err("games_write_failed", std::format("couldn't save {}: {}", file_.string(), ec.message()), kDiskHint);
-  return {};
+  return WriteFileAtomic(file_, tomljson::ToToml(whole), "games_write_failed");
 }
 
 std::vector<model::Game> GameStore::All() const {
