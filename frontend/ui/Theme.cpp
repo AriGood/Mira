@@ -338,4 +338,9 @@ void Apply(const QString& name) {
   ApplyResolved(g_name);
 }
 
+void Configure(const QString& name, const Overrides& overrides) {
+  g_overrides = overrides;
+  Apply(name);
+}
+
 }  // namespace mira_gui::theme

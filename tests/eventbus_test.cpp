@@ -83,3 +83,19 @@ TEST_CASE("many publishers and many subscribers race safely") {
   CHECK(delivered.load() > 0);
   CHECK(bus.Since(0).size() <= 100);  // ring buffer capacity may have trimmed some
 }
+
+TEST_CASE("Every game record an event carries gets the record hook, and a state change its own running") {
+  api::EventBus bus;
+  bus.SetGameRecordHook([](nlohmann::json& game) { game["running"] = game.value("id", "") == "celeste"; });
+
+  CHECK(bus.Publish("game.updated", {{"id", "celeste"}}).payload.value("running", false));
+  CHECK_FALSE(bus.Publish("game.added", {{"id", "hades"}}).payload.value("running", true));
+  const auto many = bus.Publish("games.updated", {{"games", {{{"id", "celeste"}}, {{"id", "hades"}}}}}).payload;
+  CHECK(many["games"][0].value("running", false));
+  CHECK_FALSE(many["games"][1].value("running", true));
+  // The state says it, whatever the hook would.
+  CHECK_FALSE(bus.Publish("game.state", {{"id", "celeste"}, {"state", "exited"}}).payload.value("running", true));
+  CHECK(bus.Publish("game.state", {{"id", "hades"}, {"state", "running"}}).payload.value("running", false));
+  // Not a game record.
+  CHECK_FALSE(bus.Publish("game.removed", {{"id", "celeste"}}).payload.contains("running"));
+}

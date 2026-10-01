@@ -4,6 +4,7 @@
 #include "../dialogs/OverridesEditor.h"
 #include "GamePresentation.h"
 #include "HeroArtWidget.h"
+#include "Notify.h"
 #include "Theme.h"
 
 #include <QComboBox>
@@ -147,8 +148,19 @@ GameEditForm::GameEditForm(std::string id, QWidget* parent) : QWidget(parent), i
     form->addWidget(box, row, column, 1, span);
     return box;
   };
+  // Editing the path would only repoint the record; Move… moves the files too.
+  auto* install_row_widget = new QWidget(this);
+  auto* install_row = new QHBoxLayout(install_row_widget);
+  install_row->setContentsMargins(0, 0, 0, 0);
+  install_row->setSpacing(8);
+  install_row->addWidget(install_path_label_, /*stretch=*/1);
+  move_button_ = new QPushButton("Move…", this);
+  move_button_->setToolTip("Move this game's files to another folder");
+  connect(move_button_, &QPushButton::clicked, this, &GameEditForm::MoveInstall);
+  install_row->addWidget(move_button_);
+
   status_box_ = add_field("Status", status_label_, 0, 0, 2);
-  add_field("Install path", install_path_label_, 1, 0, 2);
+  add_field("Install path", install_row_widget, 1, 0, 2);
   form->addWidget(source_note_label_, 2, 0, 1, 2);
   add_field("Executable", exe_row_widget, 3, 0, 2);
   add_field("Arguments", args_edit_, 4, 0, 1);
@@ -273,6 +285,8 @@ void GameEditForm::Populate(const mira_gui::GameDetail& game) {
   install_path_ = game.install_path;
   install_path_label_->setText(QString::fromStdString(game.install_path));
   install_path_label_->setToolTip(install_path_label_->text());
+  // A desktop entry's files belong to another app; Steam moves its own games.
+  move_button_->setVisible(!game.install_path.empty() && game.source != "desktop-entry" && game.source != "steam");
 
   if (game.source == "steam") {
     source_note_label_->setText(
@@ -372,6 +386,36 @@ void GameEditForm::BrowseExecutable() {
   exe_combo_->setEditText(!ec && !relative.empty() ? QString::fromStdString(relative.string())
                                                     : selected);
   exe_combo_->lineEdit()->setCursorPosition(0);
+}
+
+void GameEditForm::MoveInstall() {
+  const QString parent_dir =
+      install_path_.empty() ? QString() : QString::fromStdString(std::filesystem::path(install_path_).parent_path().string());
+  const QString picked = QFileDialog::getExistingDirectory(this, "Move the game's folder into", parent_dir);
+  if (picked.isEmpty()) return;
+  const std::string target =
+      (std::filesystem::path(picked.toStdString()) / std::filesystem::path(install_path_).filename()).string();
+  if (target == install_path_) return;
+  if (!notify::Confirm(this, "Move game",
+                       QString("Move this game's files to %1? A move to another drive copies them first, which "
+                               "can take a while.")
+                           .arg(QString::fromStdString(target)),
+                       "Move")) {
+    return;
+  }
+  move_button_->setEnabled(false);
+  move_button_->setText("Moving…");
+  MiradClient::RelocateGameAsync(this, id_, target, [this](GameDetailResult result) {
+    move_button_->setEnabled(true);
+    move_button_->setText("Move…");
+    if (!result.ok) {
+      notify::FailedRequest(this, "Could not move the game.", result.error);
+      return;
+    }
+    install_path_ = result.game.install_path;
+    install_path_label_->setText(QString::fromStdString(install_path_));
+    install_path_label_->setToolTip(install_path_label_->text());
+  });
 }
 
 mira_gui::GamePatch GameEditForm::CurrentPatch() const {

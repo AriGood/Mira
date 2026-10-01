@@ -68,20 +68,10 @@ void OverridesEditor::BuildRows(const ConfigSchemaResult& schema) {
       Field field;
       field.entry = entry;
 
-      auto* row_widget = new QWidget(this);
-      auto* row_layout = new QHBoxLayout(row_widget);
-      row_layout->setContentsMargins(0, 0, 0, 0);
-      row_layout->setSpacing(8);
-
-      if (entry.type == "a boolean") {
-        field.check = new QCheckBox(row_widget);
-        row_layout->addWidget(field.check);
-      } else {
-        field.line = new QLineEdit(row_widget);
-        if (entry.type == "an array of strings") field.line->setPlaceholderText("comma-separated");
-        if (entry.is_secret) field.line->setEchoMode(QLineEdit::PasswordEchoOnEdit);
-        row_layout->addWidget(field.line, /*stretch=*/1);
-      }
+      // The settings screen's own editor, so an enum is a dropdown and a
+      // runner a picker here too. Its own Reset is left out for Clear below.
+      QWidget* row_widget = field.Build(this, nullptr);
+      auto* row_layout = static_cast<QHBoxLayout*>(row_widget->layout());
 
       field.layer_label = new QLabel(row_widget);
       field.layer_label->setProperty("role", "muted");
@@ -102,7 +92,6 @@ void OverridesEditor::BuildRows(const ConfigSchemaResult& schema) {
       const std::string& doc = entry.game_doc.empty() ? entry.doc : entry.game_doc;
       QWidget* label = LabelWithHelp(label_text, QString::fromStdString(doc), this);
 
-      field.row_widget = row_widget;
       fields_.push_back(field);
       const size_t index = fields_.size() - 1;
       connect(field.reset_button, &QPushButton::clicked, this, [this, index] { ResetField(index); });
@@ -113,6 +102,11 @@ void OverridesEditor::BuildRows(const ConfigSchemaResult& schema) {
                                  QString::fromStdString(entry.doc), QString::fromStdString(entry.keywords)));
     }
   }
+  MiradClient::ListRunnersAsync(this, [this](RunnersResult runners) {
+    for (Field& field : fields_) {
+      if (field.combo != nullptr && field.entry.is_runner_ref) FillRunnerCombo(field.combo, runners);
+    }
+  });
 }
 
 void OverridesEditor::ApplyValues(const GameConfigResult& config) {
@@ -134,19 +128,9 @@ void OverridesEditor::ApplyValues(const GameConfigResult& config) {
     field.reset_button->setToolTip(
         entry.layer == "game" ? "Remove this game's override and use the global setting again"
                               : "This game has no override for this setting");
-    if (field.check) {
-      field.check->setChecked(entry.value_display == "true");
-    } else {
-      field.line->setText(QString::fromStdString(entry.value_display));
-      field.line->setCursorPosition(0);
-    }
-    field.original = CurrentText(field);
+    field.SetText(entry.value_display);
+    field.original = field.Text();
   }
-}
-
-std::string OverridesEditor::CurrentText(const Field& field) const {
-  if (field.check) return field.check->isChecked() ? "true" : "false";
-  return field.line->text().toStdString();
 }
 
 std::vector<GameConfigEdit> OverridesEditor::PendingEdits() const {
@@ -155,7 +139,7 @@ std::vector<GameConfigEdit> OverridesEditor::PendingEdits() const {
     // An empty layer means ApplyValues never reached this row (not
     // overridable, or the fetch failed), so there is nothing to compare
     // against and nothing to send.
-    const std::string current = CurrentText(field);
+    const std::string current = field.Text();
     if (field.layer.empty() || current == field.original) continue;
     edits.push_back(GameConfigEdit{field.entry.key, field.entry.type, current, false});
   }
@@ -163,7 +147,7 @@ std::vector<GameConfigEdit> OverridesEditor::PendingEdits() const {
 }
 
 void OverridesEditor::MarkSaved() {
-  for (Field& field : fields_) field.original = CurrentText(field);
+  for (Field& field : fields_) field.original = field.Text();
 }
 
 void OverridesEditor::ResetField(size_t index) {

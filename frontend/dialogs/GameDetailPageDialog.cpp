@@ -3,6 +3,7 @@
 #include <QDialogButtonBox>
 #include <QFrame>
 #include <QLabel>
+#include <QLocale>
 #include <QScrollArea>
 #include <QStringList>
 #include <QVBoxLayout>
@@ -29,8 +30,7 @@ QLabel* BodyLabel(QWidget* parent) {
 
 }  // namespace
 
-GameDetailPageDialog::GameDetailPageDialog(std::string game_id, QString game_name,
-                                           const std::string& runner_ref, QWidget* parent)
+GameDetailPageDialog::GameDetailPageDialog(std::string game_id, QString game_name, QWidget* parent)
     : QDialog(parent), game_id_(std::move(game_id)) {
   setWindowTitle(game_name);
   resize(900, 700);
@@ -50,18 +50,6 @@ GameDetailPageDialog::GameDetailPageDialog(std::string game_id, QString game_nam
   auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close, this);
   connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
   outer->addWidget(buttons);
-
-  // A non-Steam game's cached metadata never carries these fields, so skip
-  // the round trip entirely instead of fetching just to find that out.
-  if (!runner_ref.starts_with("steam:")) {
-    auto* empty = new QLabel(
-        "Currently only displaying additional store information for Steam games.", body);
-    empty->setWordWrap(true);
-    empty->setProperty("role", "muted");
-    layout->addWidget(empty);
-    layout->addStretch(1);
-    return;
-  }
 
   auto* loading = new QLabel("Loading…", body);
   loading->setProperty("role", "muted");
@@ -86,6 +74,59 @@ GameDetailPageDialog::GameDetailPageDialog(std::string game_id, QString game_nam
 
     const GameMetadata& metadata = result.metadata;
     int row = 0;
+    const auto join = [](const std::vector<std::string>& values) {
+      QStringList list;
+      for (const std::string& value : values) list << QString::fromStdString(value);
+      return list.join(", ");
+    };
+
+    // The overview: whatever of it the source had.
+    QStringList facts;
+    if (!metadata.release_date.empty()) facts << "Released " + QString::fromStdString(metadata.release_date);
+    if (!metadata.developers.empty()) facts << "By " + join(metadata.developers);
+    if (!metadata.genres.empty()) facts << join(metadata.genres);
+    if (!metadata.price.empty()) facts << QString::fromStdString(metadata.price);
+    QStringList ratings;
+    if (!metadata.review_summary.empty()) {
+      ratings << QString("Steam reviews: %1 (%2)")
+                     .arg(QString::fromStdString(metadata.review_summary))
+                     .arg(QLocale().toString(metadata.review_total));
+    }
+    if (metadata.metacritic_score > 0) ratings << QString("Metacritic: %1").arg(metadata.metacritic_score);
+    if (!metadata.protondb_tier.empty()) {
+      QString tier = QString::fromStdString(metadata.protondb_tier);
+      tier[0] = tier[0].toUpper();
+      ratings << "ProtonDB: " + tier;
+    }
+    if (!metadata.description.empty() || !facts.isEmpty() || !ratings.isEmpty() || !metadata.website.empty()) {
+      layout->insertWidget(row++, SectionLabel("About", body));
+      if (!facts.isEmpty()) {
+        auto* facts_label = BodyLabel(body);
+        facts_label->setProperty("role", "muted");
+        facts_label->setText(facts.join("  ·  "));
+        layout->insertWidget(row++, facts_label);
+      }
+      if (!metadata.description.empty()) {
+        auto* description = BodyLabel(body);
+        // Steam's short description is plain text that may carry entities.
+        description->setTextFormat(Qt::RichText);
+        description->setText(QString::fromStdString(metadata.description));
+        layout->insertWidget(row++, description);
+      }
+      if (!ratings.isEmpty()) {
+        auto* ratings_label = BodyLabel(body);
+        ratings_label->setText(ratings.join("\n"));
+        layout->insertWidget(row++, ratings_label);
+      }
+      if (!metadata.website.empty()) {
+        auto* website = BodyLabel(body);
+        website->setTextFormat(Qt::RichText);
+        website->setOpenExternalLinks(true);
+        const QString url = QString::fromStdString(metadata.website).toHtmlEscaped();
+        website->setText(QString("<a href=\"%1\">%1</a>").arg(url));
+        layout->insertWidget(row++, website);
+      }
+    }
 
     if (!metadata.requirements_min.empty() || !metadata.requirements_rec.empty()) {
       layout->insertWidget(row++, SectionLabel("PC requirements", body));
@@ -159,10 +200,8 @@ GameDetailPageDialog::GameDetailPageDialog(std::string game_id, QString game_nam
     }
 
     if (row == 0) {
-      // The caller already filtered out non-Steam games before making this
-      // call, so a genuinely Steam-owned game reaching here just has none of
-      // these fields cached: a sparse appdetails response, not a wrong game.
-      auto* empty = new QLabel("No extra store info cached for this game yet.", body);
+      // Art-only sources (SteamGridDB) cache none of these.
+      auto* empty = new QLabel("No store info cached for this game.", body);
       empty->setWordWrap(true);
       empty->setProperty("role", "muted");
       layout->insertWidget(0, empty);

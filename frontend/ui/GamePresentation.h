@@ -4,6 +4,7 @@
 #include <QDateTime>
 #include <QLocale>
 #include <QString>
+#include <QTableWidgetItem>
 
 #include "Theme.h"
 
@@ -19,6 +20,7 @@ namespace mira_gui {
 // legend. The theme owns the colors; see ui/Theme.h.
 inline QColor StatusColor(const std::string& status) {
   const theme::Tokens& tokens = theme::Current();
+  if (status == "running") return tokens.running;  // not a mirad status: "playing right now"
   if (status == "ready") return tokens.status_ready;
   if (status == "setting_up") return tokens.status_setting_up;
   if (status == "broken") return tokens.status_broken;
@@ -88,5 +90,20 @@ inline QString FormatPlaytime(std::int64_t play_seconds) {
   if (minutes > 0) return QString("%1m").arg(minutes);
   return "<1m";
 }
+
+// A table cell that sorts on a number instead of its text: "1h 5m" before
+// "45m" and a formatted date sort wrong as text.
+class NumericTableItem : public QTableWidgetItem {
+public:
+  NumericTableItem(const QString& text, double sort_value) : QTableWidgetItem(text), sort_value_(sort_value) {}
+
+  bool operator<(const QTableWidgetItem& other) const override {
+    if (const auto* numeric = dynamic_cast<const NumericTableItem*>(&other)) return sort_value_ < numeric->sort_value_;
+    return QTableWidgetItem::operator<(other);
+  }
+
+private:
+  double sort_value_;
+};
 
 }  // namespace mira_gui

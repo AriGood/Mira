@@ -3,6 +3,7 @@
 #include <QCoreApplication>
 #include <QObject>
 #include <QPointer>
+#include <QThreadPool>
 
 #include <exception>
 #include <functional>
@@ -12,6 +13,27 @@
 
 // How every MiradClient call gets off the UI thread and back onto it.
 namespace mira_gui::async {
+
+// Which worker a request runs on.
+enum class Lane {
+  // Answers in milliseconds: a bounded pool, so a burst (a library's covers)
+  // queues instead of starting a thread per request.
+  Quick,
+  // Can take seconds to hours (network, imports, moving files): a thread of
+  // its own, so it never holds up the quick ones behind it.
+  Slow,
+};
+
+// Never destroyed on purpose: destroying a pool waits for its threads, and
+// quitting shouldn't wait on a request nobody will read.
+inline QThreadPool* QuickPool() {
+  static QThreadPool* pool = [] {
+    auto* created = new QThreadPool();
+    created->setMaxThreadCount(8);
+    return created;
+  }();
+  return pool;
+}
 
 // Hands `fn` to the main thread, dropping it if the object `guard` watches
 // has been destroyed in the meantime.
@@ -33,14 +55,16 @@ void Deliver(const QPointer<QObject>& guard, Fn fn) {
       Qt::QueuedConnection);
 }
 
-// Runs `work` on a throwaway thread and delivers its return value to
-// `callback` on the main thread, subject to Deliver's liveness rule above.
-// `Result` is deduced from the callback, so a caller writes only the request
-// it actually wants to make.
+// Runs `work` off the UI thread and delivers its return value to `callback`
+// on the main thread, subject to Deliver's liveness rule above. `Result` is
+// deduced from the callback, so a caller writes only the request it
+// actually wants to make.
 template <typename Result, typename Work>
-void Run(QObject* context, Work work, std::function<void(Result)> callback) {
+void Run(QObject* context, Work work, std::function<void(Result)> callback, Lane lane = Lane::Quick) {
   QPointer<QObject> guard(context);
-  std::thread([guard, work = std::move(work), callback = std::move(callback)]() mutable {
+  std::function<void()> job = [guard, work = std::move(work), callback = std::move(callback)]() mutable {
+    // Its page closed while it waited in the queue: nobody wants the answer.
+    if (guard.isNull()) return;
     // An exception escaping this thread would abort the whole app. One from
     // parsing (nlohmann's type errors) becomes the result's error instead.
     Result result{};
@@ -50,7 +74,12 @@ void Run(QObject* context, Work work, std::function<void(Result)> callback) {
       if constexpr (requires { result.error = std::string(); }) result.error = e.what();
     }
     Deliver(guard, [callback, result = std::move(result)]() mutable { callback(std::move(result)); });
-  }).detach();
+  };
+  if (lane == Lane::Slow) {
+    std::thread(std::move(job)).detach();
+  } else {
+    QuickPool()->start(std::move(job));
+  }
 }
 
 }  // namespace mira_gui::async

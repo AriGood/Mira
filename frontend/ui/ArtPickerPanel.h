@@ -11,7 +11,6 @@
 #include <utility>
 #include <vector>
 
-#include "../client/EventStream.h"
 #include "../client/Types.h"
 
 class QButtonGroup;
@@ -111,8 +110,6 @@ private:
   QPushButton* fetch_button_ = nullptr;
   // Drives the pulse drawn on previews still loading.
   QVariantAnimation* pulse_ = nullptr;
-
-  EventStream event_stream_;
 };
 
 }  // namespace mira_gui

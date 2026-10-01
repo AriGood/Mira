@@ -536,18 +536,24 @@ void SettingsPanel::Save() {
     prefs.hidden_sources = std::move(hidden_ids);
     hidden_sources_original_ = hidden;
     prefs.theme = theme_name.toStdString();
-    // Always written, including the -1 that means "theme default": the key
-    // has to be able to go back to unset, and a merge-patch cannot drop one.
-    prefs.tile_spacing = tile_spacing_.spin->value();
-    prefs.grid_margin = grid_margin_.spin->value();
-    prefs.tile_radius = tile_radius_.spin->value();
-    prefs.panel_radius = panel_radius_.spin->value();
-    prefs.control_radius = control_radius_.spin->value();
+    // The spin box's -1 is "theme default": deleted from the file, not stored.
+    const auto store = [&prefs](const ShapeField& field, std::optional<int>& out, const char* key) {
+      if (field.spin->value() < 0) {
+        prefs.clear.push_back(key);
+      } else {
+        out = field.spin->value();
+      }
+    };
+    store(tile_spacing_, prefs.tile_spacing, "tile_spacing");
+    store(grid_margin_, prefs.grid_margin, "grid_margin");
+    store(tile_radius_, prefs.tile_radius, "tile_radius");
+    store(panel_radius_, prefs.panel_radius, "panel_radius");
+    store(control_radius_, prefs.control_radius, "control_radius");
     for (ShapeField* field :
          {&tile_spacing_, &grid_margin_, &tile_radius_, &panel_radius_, &control_radius_}) {
       field->original = field->spin->value();
     }
-    if (shapes_changed) {
+    if (shapes_changed || theme_name != theme_original_) {
       mira_gui::theme::Overrides overrides;
       const auto shape = [](const ShapeField& field) -> std::optional<int> {
         if (field.spin->value() < 0) return std::nullopt;
@@ -558,7 +564,8 @@ void SettingsPanel::Save() {
       overrides.radius_tile = shape(tile_radius_);
       overrides.radius_panel = shape(panel_radius_);
       overrides.radius_control = shape(control_radius_);
-      mira_gui::theme::SetOverrides(overrides);
+      theme_original_ = theme_name;
+      mira_gui::theme::Configure(theme_name, overrides);  // one restyle for both
     }
     if (shortcuts_changed) {
       const QList<mira_gui::keybindings::Binding> bindings = mira_gui::keybindings::All();
@@ -575,11 +582,8 @@ void SettingsPanel::Save() {
       }
       prefs.shortcut_overrides = mira_gui::keybindings::Current();
     }
-    if (theme_name != theme_original_) {
-      theme_original_ = theme_name;
-      mira_gui::theme::Apply(theme_name);
-    }
     mira_gui::MiradClient::SaveFrontendPrefsAsync(this, prefs, [](mira_gui::PatchConfigResult) {});
+    emit PrefsSaved(prefs);
   }
 
   std::vector<mira_gui::ConfigEdit> edits;

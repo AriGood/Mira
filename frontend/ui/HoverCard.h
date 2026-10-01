@@ -27,6 +27,8 @@ void Paint(QWidget* widget);
 // Global top-left for a popup of `size` next to `anchor` (global). `beside`:
 // right of it, else left. Otherwise below it, else above. Kept on screen.
 QPoint Place(const QRect& anchor, QSize size, bool beside);
+// The same, kept inside `area` (global) instead of the screen.
+QPoint Place(const QRect& anchor, QSize size, bool beside, const QRect& area);
 }  // namespace card
 
 // Calls on_hover with an item once the cursor has rested on it, and with

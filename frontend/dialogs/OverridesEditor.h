@@ -6,10 +6,9 @@
 #include <vector>
 
 #include "../client/Types.h"
+#include "../ui/SettingEditor.h"
 
-class QCheckBox;
 class QLabel;
-class QLineEdit;
 class QPushButton;
 
 namespace mira_gui {
@@ -46,25 +45,19 @@ public:
   void MarkSaved();
 
 private:
-  // One row: an overridable schema key with the widget its type calls for,
-  // the layer the shown value came from, and a Clear button that only means
-  // something once that layer is "game".
-  struct Field {
-    ConfigSchemaEntry entry;
-    std::string original;
+  // One row: an overridable schema key with the same editor the settings
+  // screen gives it, the layer the shown value came from, and a Clear button
+  // that only means something once that layer is "game".
+  struct Field : SettingEditor {
     std::string layer;  // "default" | "config" | "game"
-    QCheckBox* check = nullptr;
-    QLineEdit* line = nullptr;
     QLabel* layer_label = nullptr;
     QPushButton* reset_button = nullptr;
-    QWidget* row_widget = nullptr;
   };
 
   void BuildRows(const ConfigSchemaResult& schema);
   void ApplyValues(const GameConfigResult& config);
   void Reload();
   void ResetField(size_t index);
-  std::string CurrentText(const Field& field) const;
 
   std::string game_id_;
   SettingsNavWidget* nav_ = nullptr;

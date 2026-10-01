@@ -27,6 +27,12 @@ void TileView::ForgetItems() {
 }
 
 void TileView::mousePressEvent(QMouseEvent* event) {
+  // A plain click between or below the tiles deselects, like a file manager.
+  if (event->button() == Qt::LeftButton && itemAt(event->pos()) == nullptr &&
+      !(event->modifiers() & (Qt::ControlModifier | Qt::ShiftModifier))) {
+    clearSelection();
+    setCurrentItem(nullptr);
+  }
   if (event->button() == Qt::LeftButton && drag_select_enabled_) {
     drag_origin_ = event->pos() + Offset();
     drag_modifiers_ = event->modifiers();

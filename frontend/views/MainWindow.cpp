@@ -16,6 +16,7 @@
 #include "../client/MiradClient.h"
 #include "../dialogs/GameDetailDialog.h"
 #include "../dialogs/SettingsDialog.h"
+#include "../ui/EventHub.h"
 #include "../ui/GameActions.h"
 #include "../ui/GamePresentation.h"
 #include "../ui/KeyBindings.h"
@@ -24,29 +25,6 @@
 #include "../ui/Tray.h"
 
 #include <QCloseEvent>
-
-namespace {
-
-// A table cell that sorts on a stashed numeric value instead of its display
-// text, needed for Confidence ("70%" vs "100%" sorts wrong as text),
-// Last Played (a formatted date), and Playtime ("1h 5m" vs "45m").
-class NumericTableWidgetItem : public QTableWidgetItem {
-public:
-  NumericTableWidgetItem(const QString& text, double sort_value)
-      : QTableWidgetItem(text), sort_value_(sort_value) {}
-
-  bool operator<(const QTableWidgetItem& other) const override {
-    if (const auto* numeric = dynamic_cast<const NumericTableWidgetItem*>(&other)) {
-      return sort_value_ < numeric->sort_value_;
-    }
-    return QTableWidgetItem::operator<(other);
-  }
-
-private:
-  double sort_value_;
-};
-
-}  // namespace
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   setWindowTitle("Mira");
@@ -117,8 +95,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 
   RefreshHealth();
 
-  event_stream_.Start(this,
-                       [this](std::string type, std::string data) { HandleGameEvent(type, data); });
+  connect(mira_gui::EventHub::Instance(), &mira_gui::EventHub::Received, this,
+          [this](const std::string& type, const std::string& data, bool live) { HandleGameEvent(type, data, live); });
+  mira_gui::EventHub::Instance()->Start();
 }
 
 void MainWindow::closeEvent(QCloseEvent* event) {
@@ -207,12 +186,8 @@ void MainWindow::RefreshHealth() {
 }
 
 void MainWindow::RescanAndRefreshGames() {
-  if (!loaded_) {
-    // First load: a scan only reports changes, not what already existed.
-    mira_gui::MiradClient::ScanLibraryAsync(this, [this](mira_gui::ScanResult) { RefreshGames(); });
-    return;
-  }
-  // Kept in sync since by game.added/.updated/.removed events.
+  // Listed without waiting for the scan: what it changes arrives as events.
+  if (!loaded_) RefreshGames();
   mira_gui::MiradClient::ScanLibraryAsync(this, [](mira_gui::ScanResult) {});
 }
 
@@ -233,6 +208,10 @@ void MainWindow::RefreshGames() {
         // Disabled for the bulk repopulate below: with sorting live, each
         // setItem() call would re-sort mid-loop, so row indices would stop
         // matching what PopulateRow was just given.
+        running_ids_.clear();
+        for (const mira_gui::GameSummary& game : result.games) {
+          if (game.running) running_ids_.insert(game.id);
+        }
         games_table_->setSortingEnabled(false);
         games_table_->setRowCount(static_cast<int>(result.games.size()));
         for (int row = 0; row < static_cast<int>(result.games.size()); ++row) {
@@ -268,11 +247,11 @@ void MainWindow::PopulateRow(int row, const mira_gui::GameSummary& game) {
   auto* runner_item = new QTableWidgetItem(
       game.runner_ref.empty() ? "Auto" : QString::fromStdString(game.runner_ref));
 
-  auto* last_played_item = new NumericTableWidgetItem(
+  auto* last_played_item = new mira_gui::NumericTableItem(
       mira_gui::FormatLastPlayed(game.last_played_at), static_cast<double>(game.last_played_at.value_or(-1)));
 
   auto* playtime_item =
-      new NumericTableWidgetItem(mira_gui::FormatPlaytime(game.play_seconds), static_cast<double>(game.play_seconds));
+      new mira_gui::NumericTableItem(mira_gui::FormatPlaytime(game.play_seconds), static_cast<double>(game.play_seconds));
 
   games_table_->setItem(row, 0, name_item);
   games_table_->setItem(row, 1, status_item);
@@ -347,16 +326,11 @@ void MainWindow::RemoveRow(const std::string& id) {
   if (row >= 0) games_table_->removeRow(row);
 }
 
-void MainWindow::HandleGameEvent(const std::string& type, const std::string& data) {
-  // Before this, events are mirad's replayed history: apply them, announce nothing.
-  if (type == "stream.live") {
-    events_live_ = true;
-    return;
-  }
-
+void MainWindow::HandleGameEvent(const std::string& type, const std::string& data, bool live) {
+  // Replayed history is applied but never announced.
   if (type == "notification") {
     mira_gui::NotificationEvent event;
-    if (events_live_ && mira_gui::MiradClient::ParseNotification(data, &event)) {
+    if (live && mira_gui::MiradClient::ParseNotification(data, &event)) {
       const QString message = QString::fromStdString(event.message);
       const auto level = mira_gui::notify::LevelFromString(QString::fromStdString(event.level));
       if (level == mira_gui::notify::Level::Warning || level == mira_gui::notify::Level::Error) {
@@ -424,7 +398,7 @@ void MainWindow::HandleGameEvent(const std::string& type, const std::string& dat
 }
 
 void MainWindow::DeleteGame(const std::string& id, const QString& name) {
-  mira_gui::actions::Delete(this, id, name, [this] { RefreshGames(); });
+  mira_gui::actions::Delete(this, id, name, [this, id] { RemoveRow(id); });
 }
 
 void MainWindow::LaunchGame(const std::string& id) {

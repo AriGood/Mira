@@ -8,7 +8,34 @@ EventBus::EventBus(size_t capacity)
                    .count()),
       capacity_(capacity) {}
 
+void EventBus::SetGameRecordHook(std::function<void(nlohmann::json& game)> hook) {
+  std::lock_guard lock(hook_mutex_);
+  game_hook_ = std::move(hook);
+}
+
+void EventBus::DecorateGames(const std::string& type, nlohmann::json& payload) {
+  if (!payload.is_object()) return;
+  // A state change says outright whether it runs; asking the supervisor
+  // could race its own bookkeeping.
+  if (type == "game.state") {
+    payload["running"] = payload.value("state", std::string()) == "running";
+    return;
+  }
+  std::function<void(nlohmann::json&)> hook;
+  {
+    std::lock_guard lock(hook_mutex_);
+    hook = game_hook_;
+  }
+  if (!hook) return;
+  if (type == "game.added" || type == "game.updated") {
+    if (payload.contains("id")) hook(payload);
+  } else if (type == "games.updated" && payload.contains("games") && payload["games"].is_array()) {
+    for (nlohmann::json& game : payload["games"]) hook(game);
+  }
+}
+
 model::Event EventBus::Publish(std::string type, nlohmann::json payload) {
+  DecorateGames(type, payload);
   model::Event event;
   {
     std::lock_guard lock(mutex_);

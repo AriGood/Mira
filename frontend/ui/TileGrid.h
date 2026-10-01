@@ -20,6 +20,11 @@ public:
   // A tile's ActionRole pill was clicked (only while ActionEnabledRole).
   std::function<void(QListWidgetItem*)> on_action;
 
+  // Ctrl+wheel: one call per notch, positive to grow. The rest of the wheel
+  // scrolls the page around the grid.
+  std::function<void(int steps)> on_ctrl_wheel;
+
+  // New tile size; the items' covers are the caller's to redraw.
   void SetTileSize(QSize tile);
   // Call after adding, removing or hiding items.
   void FitHeight();

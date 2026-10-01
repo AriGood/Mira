@@ -43,6 +43,9 @@ struct GameSummary {
   // Which importer owns it: "scan", "steam", "epic", "lutris", "battlenet",
   // ... ("launcher" for a store launcher's own install).
   std::string source;
+  // Only GET /v1/games and mirad's own replies carry it; an importer's event
+  // leaves it out, so it reads false there even for a running game.
+  bool running = false;
 };
 
 struct GamesResult {
@@ -561,6 +564,8 @@ struct LutrisImportResult {
   ApiError error;
   int added = 0;
   int updated = 0;
+  int other_runner = 0;  // left to a runner Mira doesn't drive (steam, dosbox, ...)
+  int incomplete = 0;    // wine/linux games whose config can't be imported as-is
 };
 
 // POST /v1/games/{id}/run: an arbitrary executable inside this game's own
@@ -589,9 +594,11 @@ struct FinishInstallResult {
 // or hand-edited: an unset field means "use the built-in default", not
 // zero.
 struct FrontendPrefs {
+  // The unmaximized size, so un-maximizing after a restart has a size to go back to.
   std::optional<int> window_width;
   std::optional<int> window_height;
-  std::optional<int> tile_width;
+  std::optional<bool> window_maximized;
+  std::optional<int> tile_width;  // the library grid's
   std::optional<std::string> library_filter;  // a filter key
   std::optional<int> sidebar_width;
   std::optional<std::string> sort_by;  // "name" | "last_played" | "playtime" | "status"
@@ -644,6 +651,9 @@ struct FrontendPrefs {
   // Synced: every page uses tile_width.
   std::optional<std::map<std::string, int>> source_tile_widths;
   std::optional<bool> tile_size_synced;
+  // Keys to delete from frontend.toml on save (sent as null), so they read
+  // as unset again, e.g. a shape override going back to the theme's.
+  std::vector<std::string> clear;
 };
 
 struct FrontendPrefsResult {

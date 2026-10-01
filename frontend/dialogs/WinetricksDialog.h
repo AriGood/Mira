@@ -5,8 +5,6 @@
 
 #include <string>
 
-#include "../client/EventStream.h"
-
 class QComboBox;
 class QLabel;
 class QPushButton;
@@ -31,8 +29,6 @@ private:
   QComboBox* verb_ = nullptr;
   QPushButton* run_ = nullptr;
   QLabel* status_ = nullptr;
-
-  mira_gui::EventStream event_stream_;
 };
 
 }  // namespace mira_gui

@@ -95,12 +95,15 @@ void FetchQueue::Run(const config::Config& config, api::EventBus& events, const 
   }
 
   if (auto fetched = Fetch(config, game); !fetched) {
-    log::Warn("metadata fetch failed for {}: {}", game.id, fetched.error().message);
-    events.Publish("game.metadata_failed",
-                   {{"id", game.id}, {"code", fetched.error().code}, {"error", fetched.error().message}});
+    const Error& error = fetched.error();
+    log::Warn("metadata fetch failed for {}: {}", game.id, error.message);
+    nlohmann::json failed = {{"id", game.id}, {"code", error.code}, {"error", error.message}};
+    if (!error.hint.empty()) failed["hint"] = error.hint;
+    if (!error.fix.kind.empty()) failed["fix"] = {{"kind", error.fix.kind}, {"target", error.fix.target}};
+    events.Publish("game.metadata_failed", std::move(failed));
     if (job.announce && fetched.error().code != "no_steamgriddb_key") {
       events.PublishNotification(model::NotifyLevel::Warning,
-                                 std::format("No metadata found for \"{}\": {}", game.id,
+                                 std::format("No metadata found for \"{}\": {}", game.name,
                                              fetched.error().message.empty() ? "nothing matched this game"
                                                                              : fetched.error().message));
     }

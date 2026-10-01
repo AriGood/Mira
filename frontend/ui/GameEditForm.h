@@ -71,6 +71,8 @@ private:
   void OnExeComboActivated(int index);
   void OnRunnerComboActivated(int index);
   void BrowseExecutable();
+  // POST /v1/games/{id}/relocate into a folder the user picks.
+  void MoveInstall();
   void ResetScroll();
   mira_gui::GamePatch CurrentPatch() const;
 
@@ -80,6 +82,7 @@ private:
 
   QWidget* art_column_ = nullptr;
   QPushButton* advanced_button_ = nullptr;
+  QPushButton* move_button_ = nullptr;
   QWidget* status_box_ = nullptr;
   HeroArtWidget* hero_art_ = nullptr;
   QLabel* status_label_;

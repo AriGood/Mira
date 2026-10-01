@@ -8,7 +8,9 @@
 #include <QStandardPaths>
 #include <QStringList>
 
+#include "client/MiradClient.h"
 #include "ui/DaemonSupervisor.h"
+#include "ui/KeyBindings.h"
 #include "ui/Notify.h"
 #include "ui/SystemNotifier.h"
 #include "ui/Theme.h"
@@ -16,6 +18,27 @@
 #include "ui/Tray.h"
 #include "views/LibraryWindow.h"
 #include "views/MainWindow.h"
+
+namespace {
+
+// Theme, shape overrides and shortcut overrides from frontend.toml.
+void ApplyAppearance(const mira_gui::FrontendPrefs& prefs) {
+  // Unset leaves it to the theme; a negative value is how older builds wrote that.
+  const auto shape = [](const std::optional<int>& pref) -> std::optional<int> {
+    if (pref && *pref >= 0) return pref;
+    return std::nullopt;
+  };
+  mira_gui::theme::Overrides overrides;
+  overrides.tile_spacing = shape(prefs.tile_spacing);
+  overrides.grid_margin = shape(prefs.grid_margin);
+  overrides.radius_tile = shape(prefs.tile_radius);
+  overrides.radius_panel = shape(prefs.panel_radius);
+  overrides.radius_control = shape(prefs.control_radius);
+  mira_gui::theme::Configure(QString::fromStdString(prefs.theme.value_or("auto")), overrides);
+  if (prefs.shortcut_overrides) mira_gui::keybindings::LoadOverrides(*prefs.shortcut_overrides);
+}
+
+}  // namespace
 
 int main(int argc, char** argv) {
   QApplication app(argc, argv);
@@ -57,8 +80,8 @@ int main(int argc, char** argv) {
   QApplication::setWindowIcon(icon);
 
   // Before any window exists, so nothing is ever painted unthemed. "auto"
-  // follows the desktop's light/dark preference; LibraryWindow re-applies
-  // whatever frontend.toml remembers once the daemon answers (LoadPrefs).
+  // follows the desktop's light/dark preference until frontend.toml is read
+  // below, once mirad answers.
   mira_gui::theme::Apply("auto");
   mira_gui::tooltip::Install();
 
@@ -73,8 +96,13 @@ int main(int argc, char** argv) {
   // self-contained app with no systemd unit required.
   auto* supervisor = new mira_gui::DaemonSupervisor(&app);
   QObject::connect(supervisor, &mira_gui::DaemonSupervisor::Ready, &app, [classic] {
+    // Read once and applied before the window exists, so it opens at its saved
+    // size and look instead of changing once shown.
+    const mira_gui::FrontendPrefsResult saved = mira_gui::MiradClient::GetFrontendPrefsBlocking();
+    const mira_gui::FrontendPrefs prefs = saved.ok ? saved.prefs : mira_gui::FrontendPrefs{};
+    ApplyAppearance(prefs);
     QMainWindow* window = classic ? static_cast<QMainWindow*>(new MainWindow())
-                                  : static_cast<QMainWindow*>(new LibraryWindow());
+                                  : static_cast<QMainWindow*>(new LibraryWindow(prefs));
     window->setAttribute(Qt::WA_DeleteOnClose);
     // A no-op on a desktop with no tray (Tray.cpp): window->close() then
     // means exactly what it always did.

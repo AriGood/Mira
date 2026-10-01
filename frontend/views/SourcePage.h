@@ -3,6 +3,7 @@
 #include <QPoint>
 #include <QHash>
 #include <QSet>
+#include <QSize>
 #include <QString>
 #include <QWidget>
 
@@ -11,7 +12,6 @@
 #include <string>
 #include <vector>
 
-#include "../client/EventStream.h"
 #include "../client/Types.h"
 #include "../ui/Sources.h"
 
@@ -68,6 +68,11 @@ signals:
   void Removed();
   // Right-click on several selected installed games.
   void BatchMenuRequested(QStringList ids, QPoint global_pos);
+  // Ctrl+wheel over a grid, one step per notch; the window owns the zoom.
+  void ZoomRequested(int steps);
+
+protected:
+  bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
   bool IsStore() const { return source_.kind == SourceInfo::Kind::Store; }
@@ -133,6 +138,7 @@ private:
   QLineEdit* filter_ = nullptr;
   QToolButton* settings_button_ = nullptr;
   QToolButton* more_button_ = nullptr;
+  QWidget* content_ = nullptr;
   QVBoxLayout* content_layout_ = nullptr;
   SourceSettingsCard* settings_card_ = nullptr;  // built on first open
 
@@ -179,8 +185,6 @@ private:
   std::vector<GameSummary> games_;
   std::set<std::string> running_;
   HoverCard* hover_card_ = nullptr;
-
-  EventStream event_stream_;
 };
 
 }  // namespace mira_gui

@@ -230,6 +230,12 @@ QWidget#left_sidebar {
   border-right: 1px solid @border;
 }
 
+/* The pinned/sources/recent list scrolls; it shows the sidebar's own surface. */
+QWidget#left_sidebar QScrollArea,
+QWidget#left_sidebar QScrollArea > QWidget > QWidget {
+  background: transparent;
+}
+
 QWidget#left_sidebar QPushButton {
   background: transparent;
   border: none;

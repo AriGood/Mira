@@ -58,6 +58,8 @@ qt_add_executable(mira-gui
   ui/DownloadTracker.h
   ui/DownloadsPanel.cpp
   ui/DownloadsPanel.h
+  ui/EventHub.cpp
+  ui/EventHub.h
   ui/GameActions.cpp
   ui/GameActions.h
   ui/HeroArtWidget.cpp
