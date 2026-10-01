@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <exception>
 #include <format>
 
 #include "core/Log.h"
@@ -50,7 +51,12 @@ std::string JobRegistry::Start(const std::string& kind, const std::string& targe
                                                 .count(),
                                             next_++);
     jobs_.push_back({{"id", id}, {"kind", kind}, {"target", target}, {"label", label}, {"state", "running"}});
-    while (jobs_.size() > kKeptJobs) jobs_.pop_front();
+    // Oldest ended job first: a running one must stay findable.
+    while (jobs_.size() > kKeptJobs) {
+      const auto ended = std::ranges::find_if(jobs_, [](const json& job) { return job.value("state", "") != "running"; });
+      if (ended == jobs_.end()) break;
+      jobs_.erase(ended);
+    }
   }
   const json identity = {{"id", id}, {"kind", kind}, {"target", target}};
   json started = identity;
@@ -59,7 +65,13 @@ std::string JobRegistry::Start(const std::string& kind, const std::string& targe
 
   queue_.Run([this, id, identity, work = std::move(work)] {
     Progress progress(*this, id);
-    Result<json> result = work(progress);
+    Result<json> result;
+    // Caught here so the job still ends: the queue would only log it.
+    try {
+      result = work(progress);
+    } catch (const std::exception& e) {
+      result = std::unexpected(Error{"internal_error", e.what(), "", {}});
+    }
     json event = identity;
     if (result) {
       event["result"] = *result;

@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "api/EventBus.h"
+#include "api/Jobs.h"
 
 using namespace mira;
 
@@ -108,4 +109,33 @@ TEST_CASE("Art events carry the game's current art") {
     CHECK(bus.Publish(type, {{"id", "celeste"}}).payload["art"]["cover"] == "celeste-v2");
   }
   CHECK_FALSE(bus.Publish("game.removed", {{"id", "celeste"}}).payload.contains("art"));
+}
+
+TEST_CASE("A job that throws still fails, and a running job outlives the cap on kept jobs") {
+  api::EventBus bus;
+  std::atomic<bool> release{false};
+  std::string thrower;
+  std::string slow;
+  {
+    api::JobRegistry jobs(bus);
+    thrower = jobs.Start("scan", "", "Scanning", [](auto&) -> Result<nlohmann::json> {
+      throw std::runtime_error("boom");
+    });
+    slow = jobs.Start("import", "", "Importing", [&release](auto&) -> Result<nlohmann::json> {
+      while (!release) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      return nlohmann::json::object();
+    });
+    for (int i = 0; i < 150; ++i) {
+      jobs.Start("scan", "", "Scanning", [](auto&) -> Result<nlohmann::json> { return nlohmann::json::object(); });
+    }
+    CHECK(jobs.Find(slow).has_value());
+    release = true;
+  }
+  bool failed = false;
+  for (const model::Event& event : bus.Since(0)) {
+    if (event.type == "job.failed" && event.payload.value("id", "") == thrower) {
+      failed = event.payload["error"].value("code", "") == "internal_error";
+    }
+  }
+  CHECK(failed);
 }

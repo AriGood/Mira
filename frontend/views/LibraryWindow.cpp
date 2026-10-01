@@ -2849,8 +2849,8 @@ void LibraryWindow::DownloadChanged(const QString& key) {
   const int running = downloads_->RunningCount();
   downloads_button_->setText(running > 0 ? QString::number(running) : QString());
   downloads_button_->setToolButtonStyle(running > 0 ? Qt::ToolButtonTextBesideIcon : Qt::ToolButtonIconOnly);
-  downloads_button_->setToolTip(running == 0 ? QString("Downloads")
-                                             : QString("Downloads: %1 running").arg(running));
+  downloads_button_->setToolTip(running == 0 ? QString("Activity")
+                                             : QString("Activity: %1 running").arg(running));
 
   // That game's row repaints with its new install text.
   if (key.startsWith("game:")) library_->Touch(key.mid(5).toStdString());
