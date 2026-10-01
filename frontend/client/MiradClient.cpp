@@ -118,8 +118,12 @@ void RunJob(QObject* context, const std::string& kind, std::function<transport::
   });
   async::Run(context, [start, token] { return start("?job=" + token); },
              std::function<void(transport::Reply)>([token, callback](transport::Reply reply) {
+               if (reply.ok) {
+                 jobs::Started(token);
+                 return;
+               }
                // Refused before it started (a bad body, an unknown source, mirad down).
-               if (reply.ok || !jobs::Forget(token)) return;
+               if (!jobs::Forget(token)) return;
                R result;
                result.error = reply.error;
                callback(std::move(result));

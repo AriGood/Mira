@@ -1808,6 +1808,7 @@ void LibraryWindow::ConnectionChanged(bool connected) {
   if (std::exchange(stream_dropped_, false)) {
     RefreshGames();
     RefreshSourceNavs();
+    downloads_->RecheckJobs();
   }
 }
 

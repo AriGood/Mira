@@ -28,6 +28,15 @@ std::string NewToken(const std::string& kind);
 // looked up again, and one mirad no longer knows about fails.
 void Await(QObject* context, const std::string& token, std::function<void(Outcome)> done);
 
+// Marks `token`'s request as accepted by mirad. A reconnect only asks about
+// jobs that were, since a job still being sent is not yet known to mirad.
+void Started(const std::string& token);
+
+// Looks `token` up in mirad. Calls `ended` once, on the main thread, if the
+// job has ended or mirad no longer knows it; stays silent while it runs or
+// mirad is unreachable. Dropped if `context` is destroyed first.
+void Check(QObject* context, const std::string& token, std::function<void(Outcome)> ended);
+
 // Stops waiting. False when the job already ended and `done` has run.
 bool Forget(const std::string& token);
 

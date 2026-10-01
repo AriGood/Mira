@@ -8,6 +8,7 @@
 
 #include <algorithm>
 
+#include "../client/Jobs.h"
 #include "../client/MiradClient.h"
 
 namespace mira_gui {
@@ -100,6 +101,20 @@ bool DownloadTracker::HandleJobEvent(const std::string& type, const std::string&
   }
   emit Changed(entry.key);
   return true;
+}
+
+void DownloadTracker::RecheckJobs() {
+  for (const Entry& entry : entries_) {
+    if (entry.kind != Kind::Job || entry.state != State::Running) continue;
+    const QString key = entry.key;
+    jobs::Check(this, entry.ref.toStdString(), [this, key](jobs::Outcome outcome) {
+      const auto found = std::find_if(entries_.begin(), entries_.end(), [&key](const Entry& e) { return e.key == key; });
+      if (found == entries_.end() || found->state != State::Running) return;
+      found->state = outcome.ok ? State::Finished : State::Failed;
+      found->error = QString::fromStdString(outcome.error.message);
+      emit Changed(key);
+    });
+  }
 }
 
 bool DownloadTracker::HandleEvent(const std::string& type, const std::string& data) {

@@ -20,6 +20,7 @@ using nlohmann::json;
 struct Waiter {
   QPointer<QObject> context;
   std::function<void(Outcome)> done;
+  bool started = false;  // mirad accepted the request; before that it can't know the job
 };
 
 // Main thread only.
@@ -48,21 +49,10 @@ Outcome FromRecord(const json& record, bool failed) {
   return outcome;
 }
 
-// Events for jobs missed while disconnected may be gone, so ask for each one.
 void Recheck() {
   for (const auto& [token, waiter] : Pending()) {
-    async::Run(QCoreApplication::instance(), [token] { return transport::Get("/v1/jobs/" + token); },
-               std::function<void(transport::Reply)>([token](transport::Reply reply) {
-                 if (reply.status == 404) {
-                   Outcome lost;
-                   lost.error = ApiError("mirad restarted before this finished.");
-                   Resolve(token, std::move(lost));
-                   return;
-                 }
-                 if (!reply.ok) return;  // still unreachable: the next reconnect asks again
-                 const std::string state = reply.body.value("state", std::string());
-                 if (state == "finished" || state == "failed") Resolve(token, FromRecord(reply.body, state == "failed"));
-               }));
+    if (!waiter.started) continue;
+    Check(QCoreApplication::instance(), token, [token](Outcome outcome) { Resolve(token, std::move(outcome)); });
   }
 }
 
@@ -92,6 +82,25 @@ std::string NewToken(const std::string& kind) {
 void Await(QObject* context, const std::string& token, std::function<void(Outcome)> done) {
   Listen();
   Pending()[token] = {context, std::move(done)};
+}
+
+void Started(const std::string& token) {
+  if (const auto found = Pending().find(token); found != Pending().end()) found->second.started = true;
+}
+
+void Check(QObject* context, const std::string& token, std::function<void(Outcome)> ended) {
+  async::Run(context, [token] { return transport::Get("/v1/jobs/" + token); },
+             std::function<void(transport::Reply)>([token, ended](transport::Reply reply) {
+               if (reply.status == 404) {
+                 Outcome lost;
+                 lost.error = ApiError("mirad restarted before this finished.");
+                 ended(std::move(lost));
+                 return;
+               }
+               if (!reply.ok) return;  // still unreachable: the next reconnect asks again
+               const std::string state = reply.body.value("state", std::string());
+               if (state == "finished" || state == "failed") ended(FromRecord(reply.body, state == "failed"));
+             }));
 }
 
 bool Forget(const std::string& token) { return Pending().erase(token) > 0; }

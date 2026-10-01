@@ -56,6 +56,8 @@ public:
 
   // Returns whether the event was one of ours.
   bool HandleEvent(const std::string& type, const std::string& data);
+  // After a reconnect: ends running jobs whose finish event was missed.
+  void RecheckJobs();
 
   // Newest first.
   const std::vector<Entry>& Entries() const { return entries_; }
