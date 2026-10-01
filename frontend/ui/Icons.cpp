@@ -83,11 +83,6 @@ void PaintGlyph(QPainter& painter, Glyph glyph, const QColor& color) {
           {QPointF(4.0, 7.2), QPointF(4.0, 13.0), QPointF(12.0, 13.0), QPointF(12.0, 7.2)}));
       painter.drawRect(QRectF(6.5, 9.0, 3.0, 4.0));
       return;
-    case Glyph::Table:
-      painter.drawRoundedRect(QRectF(2.5, 3.5, 11.0, 9.0), 1.0, 1.0);
-      painter.drawLine(QPointF(2.5, 6.5), QPointF(13.5, 6.5));
-      painter.drawLine(QPointF(8.0, 6.5), QPointF(8.0, 12.5));
-      return;
     case Glyph::Plus:
       painter.drawLine(QPointF(8.0, 3.0), QPointF(8.0, 13.0));
       painter.drawLine(QPointF(3.0, 8.0), QPointF(13.0, 8.0));
@@ -211,12 +206,6 @@ void PaintGlyph(QPainter& painter, Glyph glyph, const QColor& color) {
       painter.drawEllipse(QPointF(6.0, 6.7), 1.0, 1.0);
       painter.drawPolyline(QPolygonF({QPointF(3.0, 11.0), QPointF(6.5, 7.5), QPointF(9.0, 10.0),
                                       QPointF(11.0, 8.0), QPointF(13.0, 10.0)}));
-      return;
-    case Glyph::Grid:
-      painter.drawRoundedRect(QRectF(2.5, 2.5, 5.0, 5.0), 1.0, 1.0);
-      painter.drawRoundedRect(QRectF(8.5, 2.5, 5.0, 5.0), 1.0, 1.0);
-      painter.drawRoundedRect(QRectF(2.5, 8.5, 5.0, 5.0), 1.0, 1.0);
-      painter.drawRoundedRect(QRectF(8.5, 8.5, 5.0, 5.0), 1.0, 1.0);
       return;
     case Glyph::Trash:
       painter.drawLine(QPointF(3.5, 5.0), QPointF(12.5, 5.0));

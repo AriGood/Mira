@@ -658,6 +658,7 @@ struct FrontendPrefs {
   // What a tile draws over its cover besides the title.
   std::optional<bool> tile_status;
   std::optional<bool> tile_source_mark;
+  std::optional<bool> tile_pin_badge;
   // Source pages split installed and not installed games into tabs; off
   // stacks both sections.
   std::optional<bool> source_page_tabs;

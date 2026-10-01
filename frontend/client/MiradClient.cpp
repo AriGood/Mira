@@ -384,6 +384,7 @@ FrontendPrefsResult GetFrontendPrefsSync() {
   read_int("library_continue_count", result.prefs.library_continue_count);
   read_bool("tile_status", result.prefs.tile_status);
   read_bool("tile_source_mark", result.prefs.tile_source_mark);
+  read_bool("tile_pin_badge", result.prefs.tile_pin_badge);
   read_bool("source_page_tabs", result.prefs.source_page_tabs);
   read_bool("tile_size_synced", result.prefs.tile_size_synced);
   if (table.contains("source_tile_widths") && table["source_tile_widths"].is_object()) {
@@ -459,6 +460,7 @@ PatchConfigResult SaveFrontendPrefsSync(const FrontendPrefs& prefs) {
   if (prefs.library_continue_count) table["library_continue_count"] = *prefs.library_continue_count;
   if (prefs.tile_status) table["tile_status"] = *prefs.tile_status;
   if (prefs.tile_source_mark) table["tile_source_mark"] = *prefs.tile_source_mark;
+  if (prefs.tile_pin_badge) table["tile_pin_badge"] = *prefs.tile_pin_badge;
   if (prefs.source_page_tabs) table["source_page_tabs"] = *prefs.source_page_tabs;
   if (prefs.tile_size_synced) table["tile_size_synced"] = *prefs.tile_size_synced;
   if (prefs.source_tile_widths) table["source_tile_widths"] = *prefs.source_tile_widths;

@@ -159,6 +159,8 @@ void SettingsPanel::BuildInterfaceGroup() {
             "tile status badge", &FrontendPrefs::tile_status, true);
   AddToggle(form, "Source Mark on Tiles", "Show which store or launcher a game came from on its tile.",
             "tile source mark store icon", &FrontendPrefs::tile_source_mark, true);
+  AddToggle(form, "Pin Badge on Tiles", "Show a pin in the corner of a pinned game's tile.",
+            "tile pin badge pinned favorite icon", &FrontendPrefs::tile_pin_badge, true);
   AddToggle(form, "Same Tile Size Everywhere",
             "One tile size for the library and every source page. Off, each page keeps its own.",
             "tile size zoom synced same everywhere source pages", &FrontendPrefs::tile_size_synced, false);

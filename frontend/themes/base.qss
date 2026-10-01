@@ -198,26 +198,16 @@ QWidget#left_sidebar QToolButton#fetch_art:hover {
   background: @surface_alt;
 }
 
-QLabel#sidebar_badge {
+QLabel#brand_badge {
   background: @accent;
   color: @on_accent;
   border-radius: 6px;
   font-weight: 700;
 }
 
-QLabel#sidebar_title {
+QLabel#brand_title {
   font-weight: 700;
   font-size: 15px;
-}
-
-QWidget#view_toggle QToolButton {
-  border: 1px solid @border;
-  padding: 3px 6px;
-  border-radius: 0px;
-}
-
-QWidget#view_toggle QToolButton:checked {
-  background: @surface_alt;
 }
 
 /* --- Left sidebar ---------------------------------------------------------

@@ -18,7 +18,7 @@ constexpr const char* kPinnedTag = "favorite";
 
 }  // namespace
 
-GameLibraryModel::GameLibraryModel(QObject* parent) : QAbstractTableModel(parent) {}
+GameLibraryModel::GameLibraryModel(QObject* parent) : QAbstractListModel(parent) {}
 
 void GameLibraryModel::Replace(const std::vector<GameSummary>& games) {
   std::unordered_map<std::string, bool> listed;
@@ -47,7 +47,7 @@ void GameLibraryModel::Upsert(const std::vector<GameSummary>& games) {
     }
     if (games_[found->second] == game) continue;
     games_[found->second] = game;
-    emit dataChanged(index(found->second, 0), index(found->second, kColumnCount - 1));
+    emit dataChanged(index(found->second, 0), index(found->second, 0));
   }
   if (!added.empty()) {
     const int first = static_cast<int>(games_.size());
@@ -101,7 +101,7 @@ void GameLibraryModel::SetRunning(const std::string& id, bool running) {
   const auto found = rows_.find(id);
   if (found == rows_.end() || games_[found->second].running == running) return;
   games_[found->second].running = running;
-  emit dataChanged(index(found->second, 0), index(found->second, kColumnCount - 1));
+  emit dataChanged(index(found->second, 0), index(found->second, 0));
   NoteChanged();
 }
 
@@ -125,49 +125,20 @@ int GameLibraryModel::rowCount(const QModelIndex& parent) const {
   return parent.isValid() ? 0 : static_cast<int>(games_.size());
 }
 
-int GameLibraryModel::columnCount(const QModelIndex& parent) const { return parent.isValid() ? 0 : kColumnCount; }
-
 QVariant GameLibraryModel::data(const QModelIndex& index, int role) const {
   if (!index.isValid() || index.row() >= static_cast<int>(games_.size())) return {};
   const GameSummary& game = games_[index.row()];
   switch (role) {
     case GameTileDelegate::IdRole: return QString::fromStdString(game.id);
+    case Qt::DisplayRole:
     case GameTileDelegate::NameRole: return QString::fromStdString(game.name);
     case GameTileDelegate::StatusRole: return QString::fromStdString(game.status);
     case GameTileDelegate::RunningRole: return game.running;
     case GameTileDelegate::PinnedRole: return HasTag(game, kPinnedTag);
     case GameTileDelegate::StatusTextRole: return status_text ? status_text(game.id) : QString();
     case GameTileDelegate::SourceRole: return QString::fromStdString(game.source);
-    default: break;
+    default: return {};
   }
-  const int column = index.column();
-  if (role == Qt::DisplayRole) {
-    switch (column) {
-      case kName: return QString::fromStdString(game.name);
-      case kStatus: return game.running ? QString("Playing") : StatusLabel(game.status);
-      case kPlatform: return StatusLabel(game.platform);
-      case kRunner: return game.runner_ref.empty() ? QString("Auto") : QString::fromStdString(game.runner_ref);
-      case kLastPlayed: return FormatLastPlayed(game.last_played_at);
-      case kPlaytime: return FormatPlaytime(game.play_seconds);
-      default: return {};
-    }
-  }
-  if (role == kSortRole) {
-    if (column == kLastPlayed) return static_cast<qlonglong>(game.last_played_at.value_or(-1));
-    if (column == kPlaytime) return static_cast<qlonglong>(game.play_seconds);
-    return data(index, Qt::DisplayRole).toString().toLower();
-  }
-  if (role == Qt::ForegroundRole && column == kStatus) return StatusColor(game.running ? "running" : game.status);
-  if (role == Qt::ToolTipRole && column == kStatus && !game.last_error.empty()) {
-    return QString::fromStdString(game.last_error);
-  }
-  return {};
-}
-
-QVariant GameLibraryModel::headerData(int section, Qt::Orientation orientation, int role) const {
-  if (orientation != Qt::Horizontal || role != Qt::DisplayRole) return {};
-  static const char* const kHeaders[] = {"Name", "Status", "Platform", "Runner", "Last Played", "Playtime"};
-  return section >= 0 && section < kColumnCount ? QString(kHeaders[section]) : QVariant();
 }
 
 void GameLibraryModel::RebuildIndex() {
@@ -233,18 +204,10 @@ void GameFilterProxy::SetSource(const std::string& source) {
 }
 
 void GameFilterProxy::SetSort(const std::string& key, bool descending) {
-  if (key == sort_key_ && descending == descending_ && !column_sort_) return;
+  if (key == sort_key_ && descending == descending_) return;
   sort_key_ = key;
   descending_ = descending;
-  column_sort_ = false;
-  QSortFilterProxyModel::sort(0, Qt::AscendingOrder);
   invalidate();
-}
-
-void GameFilterProxy::sort(int column, Qt::SortOrder order) {
-  // No column (a header with no indicator) means the sidebar's order, not unsorted.
-  column_sort_ = column >= 0;
-  QSortFilterProxyModel::sort(std::max(column, 0), column_sort_ ? order : Qt::AscendingOrder);
 }
 
 const GameSummary* GameFilterProxy::GameAt(const QModelIndex& index) const {
@@ -263,11 +226,6 @@ bool GameFilterProxy::filterAcceptsRow(int source_row, const QModelIndex&) const
 }
 
 bool GameFilterProxy::lessThan(const QModelIndex& left, const QModelIndex& right) const {
-  if (column_sort_) {
-    const QVariant a = left.data(GameLibraryModel::kSortRole);
-    const QVariant b = right.data(GameLibraryModel::kSortRole);
-    if (a != b) return QVariant::compare(a, b) == QPartialOrdering::Less;
-  }
   const auto& games = library_->Games();
   return GameLess(games[left.row()], games[right.row()], sort_key_, descending_);
 }

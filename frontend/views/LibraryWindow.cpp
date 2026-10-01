@@ -39,9 +39,7 @@
 #include <QSplitter>
 #include <QStackedLayout>
 #include <QStackedWidget>
-#include <QHeaderView>
 #include <QStyle>
-#include <QTableView>
 #include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
@@ -386,9 +384,6 @@ LibraryWindow::LibraryWindow(const mira_gui::FrontendPrefs& prefs, QWidget* pare
   connect(library_, &mira_gui::GameLibraryModel::Changed, this, &LibraryWindow::LibraryChanged);
   grid_games_ = new mira_gui::GameFilterProxy(library_, this);
   grid_games_->SetSort(sort_key_, sort_descending_);
-  // Its own proxy, so a header click sorts the table without reordering the grid.
-  table_games_ = new mira_gui::GameFilterProxy(library_, this);
-  table_games_->SetSort(sort_key_, sort_descending_);
 
   // Before the panel and the grid, because both ask it for covers.
   artwork_ = new mira_gui::ArtworkStore(this);
@@ -427,13 +422,10 @@ LibraryWindow::LibraryWindow(const mira_gui::FrontendPrefs& prefs, QWidget* pare
 
   splitter_ = new QSplitter(Qt::Horizontal, this);
   splitter_->addWidget(BuildSidebar());
-  // A source page or the classic table takes the grid's place here, leaving
-  // the sidebar up.
+  // A source page or Runners takes the grid's place here, leaving the sidebar up.
   main_stack_ = new QStackedWidget(this);
   grid_page_ = BuildGrid();
   main_stack_->addWidget(grid_page_);
-  classic_page_ = BuildClassicPage();
-  main_stack_->addWidget(classic_page_);
   splitter_->addWidget(main_stack_);
   splitter_->setStretchFactor(0, 0);
   splitter_->setStretchFactor(1, 1);
@@ -663,6 +655,7 @@ void LibraryWindow::ApplySettingsPrefs(const mira_gui::FrontendPrefs& prefs) {
   tile_size_synced_ = prefs.tile_size_synced.value_or(false);
   delegate_->SetShowStatus(prefs.tile_status.value_or(true));
   delegate_->SetShowSourceMark(prefs.tile_source_mark.value_or(true));
+  delegate_->SetShowPinBadge(prefs.tile_pin_badge.value_or(true));
   drag_select_ = prefs.drag_select.value_or(true);
   grid_->SetDragSelectEnabled(drag_select_);
   if (source_page_ != nullptr) source_page_->SetDragSelectEnabled(drag_select_);
@@ -745,8 +738,6 @@ void LibraryWindow::ApplyTopBarIcons() {
   runners_nav_->setIcon(mira_gui::icons::For(Glyph::Wrench));
   fetch_art_button_->setIcon(mira_gui::icons::For(Glyph::Image));
   manage_sources_button_->setIcon(mira_gui::icons::For(Glyph::Sliders, mira_gui::theme::Current().text_muted));
-  grid_view_button_->setIcon(mira_gui::icons::For(Glyph::Grid));
-  table_view_button_->setIcon(mira_gui::icons::For(Glyph::Table));
 
   // The filter+sort pill's own static icons -- its text and the popover's
   // rows restyle separately (UpdateFilterSortSummary, restyle_filter_rows).
@@ -783,15 +774,6 @@ bool LibraryWindow::eventFilter(QObject* watched, QEvent* event) {
   if ((watched == grid_ || watched == grid_page_) && event->type() == QEvent::MouseButtonPress &&
       static_cast<QMouseEvent*>(event)->button() == Qt::LeftButton) {
     ClearGridSelection();
-    return false;
-  }
-  if (classic_table_ != nullptr && watched == classic_table_->viewport() &&
-      event->type() == QEvent::MouseButtonPress) {
-    const auto* mouse = static_cast<QMouseEvent*>(event);
-    if (mouse->button() == Qt::LeftButton && !classic_table_->indexAt(mouse->position().toPoint()).isValid()) {
-      classic_table_->clearSelection();
-      classic_table_->setCurrentIndex(QModelIndex());
-    }
     return false;
   }
   if (auto* nav = qobject_cast<QPushButton*>(watched); nav != nullptr && source_navs_.contains(nav)) {
@@ -856,9 +838,9 @@ bool LibraryWindow::eventFilter(QObject* watched, QEvent* event) {
         break;
     }
   }
-  // The top bar's and sidebar header's own background, plus labels on them
-  // (a label passes its clicks up); a click on a control goes to it instead.
-  if (watched == top_bar_ || watched == sidebar_header_) {
+  // The top bar's own background, plus labels on it (a label passes its
+  // clicks up); a click on a control goes to it instead.
+  if (watched == top_bar_) {
     if (event->type() == QEvent::MouseButtonPress) {
       auto* mouse = static_cast<QMouseEvent*>(event);
       if (mouse->button() == Qt::LeftButton && windowHandle() != nullptr) {
@@ -968,7 +950,6 @@ void LibraryWindow::OpenRunners() {
     return;
   }
   if (source_page_ != nullptr && !CloseSource([this] { OpenRunners(); })) return;
-  if (ClassicShown()) CloseClassicView();
   runners_page_ = new mira_gui::RunnersPage(downloads_, this);
   runners_page_->SetGames(library_->Games());
   main_stack_->addWidget(runners_page_);
@@ -1110,35 +1091,20 @@ QWidget* LibraryWindow::BuildTopBar() {
   top_bar_->installEventFilter(this);
 
   auto* layout = new QHBoxLayout(top_bar_);
-  layout->setContentsMargins(8, 4, 6, 4);
+  layout->setContentsMargins(12, 4, 6, 4);
   layout->setSpacing(8);
 
-  layout->addStretch(1);
+  // Labels pass their clicks up, so the brand drags the window like the bar.
+  auto* badge = new QLabel("M", top_bar_);
+  badge->setObjectName("brand_badge");
+  badge->setFixedSize(22, 22);
+  badge->setAlignment(Qt::AlignCenter);
+  layout->addWidget(badge);
+  auto* title = new QLabel("Mira", top_bar_);
+  title->setObjectName("brand_title");
+  layout->addWidget(title);
 
-  view_toggle_ = new QWidget(top_bar_);
-  view_toggle_->setObjectName("view_toggle");
-  auto* toggle_layout = new QHBoxLayout(view_toggle_);
-  toggle_layout->setContentsMargins(0, 0, 0, 0);
-  toggle_layout->setSpacing(0);
-  grid_view_button_ = new QToolButton(view_toggle_);
-  grid_view_button_->setToolTip("Grid view");
-  table_view_button_ = new QToolButton(view_toggle_);
-  table_view_button_->setToolTip("Table view");
-  for (QToolButton* button : {grid_view_button_, table_view_button_}) {
-    button->setCheckable(true);
-    button->setAutoRaise(true);
-    toggle_layout->addWidget(button);
-  }
-  connect(grid_view_button_, &QToolButton::clicked, this, &LibraryWindow::ShowLibrary);
-  // A second click on Table goes back to the grid.
-  connect(table_view_button_, &QToolButton::clicked, this, [this] {
-    if (ClassicShown()) {
-      CloseClassicView();
-    } else {
-      OpenClassicView();
-    }
-  });
-  layout->addWidget(view_toggle_);
+  layout->addStretch(1);
 
   zoom_ = new QSlider(Qt::Horizontal, top_bar_);
   zoom_->setRange(kMinTileWidth, kMaxTileWidth);
@@ -1349,25 +1315,8 @@ QWidget* LibraryWindow::BuildSidebar() {
   connect(sidebar, &QWidget::customContextMenuRequested, this,
           [this, sidebar](const QPoint& pos) { ShowSidebarMenu(sidebar->mapToGlobal(pos)); });
   auto* layout = new QVBoxLayout(sidebar);
-  layout->setContentsMargins(10, 14, 10, 10);
+  layout->setContentsMargins(10, 10, 10, 10);
   layout->setSpacing(2);
-
-  auto* header = new QWidget(sidebar);
-  auto* header_layout = new QHBoxLayout(header);
-  header_layout->setContentsMargins(6, 0, 6, 10);
-  header_layout->setSpacing(8);
-  auto* badge = new QLabel("M", header);
-  badge->setObjectName("sidebar_badge");
-  // Like the top bar, the header moves the window.
-  sidebar_header_ = header;
-  header->installEventFilter(this);
-  badge->setFixedSize(22, 22);
-  badge->setAlignment(Qt::AlignCenter);
-  header_layout->addWidget(badge);
-  auto* title = new QLabel("Mira", header);
-  title->setObjectName("sidebar_title");
-  header_layout->addWidget(title, /*stretch=*/1);
-  layout->addWidget(header);
 
   // Always visible (not just a "back" affordance): checked/highlighted
   // exactly when the grid is the current content; see UpdateLibraryNavActive.
@@ -1847,10 +1796,8 @@ void LibraryWindow::ApplyFilter() {
   // Rows the proxy drops leave the selection; nothing else moves.
   const QString key = CurrentFilterKey();
   const QString search = search_->text();
-  for (mira_gui::GameFilterProxy* proxy : {grid_games_, table_games_}) {
-    proxy->SetFilterKey(key);
-    proxy->SetSearch(search);
-  }
+  grid_games_->SetFilterKey(key);
+  grid_games_->SetSearch(search);
   grid_->scrollToTop();  // a new filter or search starts at the top
   UpdateEmptyState();
   RefreshSidebarGames();  // pinned rows follow the Hidden filter
@@ -1859,9 +1806,6 @@ void LibraryWindow::ApplyFilter() {
 
 void LibraryWindow::ApplySort() {
   grid_games_->SetSort(sort_key_, sort_descending_);
-  // The sidebar's sort replaces a column sort the table's header had set.
-  classic_table_->horizontalHeader()->setSortIndicator(-1, Qt::AscendingOrder);
-  table_games_->SetSort(sort_key_, sort_descending_);
   grid_->scrollToTop();
 }
 
@@ -2364,8 +2308,7 @@ void LibraryWindow::SetGridControlsEnabled(bool enabled) {
   // The zoom slider is SyncZoom's.
   for (QWidget* control :
        {filter_sort_button_, static_cast<QWidget*>(add_games_), static_cast<QWidget*>(search_),
-        static_cast<QWidget*>(settings_button_), static_cast<QWidget*>(view_toggle_),
-        static_cast<QWidget*>(fetch_art_button_)}) {
+        static_cast<QWidget*>(settings_button_), static_cast<QWidget*>(fetch_art_button_)}) {
     control->setEnabled(enabled);
   }
   // Back from Settings onto a source page: the grid is still covered.
@@ -2376,8 +2319,7 @@ void LibraryWindow::UpdateLibraryNavActive() {
   using mira_gui::icons::Glyph;
   const mira_gui::theme::Tokens& tokens = mira_gui::theme::Current();
 
-  const bool classic_active = ClassicShown();
-  const bool library_active = (GridShown() || classic_active) && !GameEditOpen();
+  const bool library_active = GridShown() && !GameEditOpen();
   if (library_nav_ != nullptr) {
     library_nav_->setChecked(library_active);
     library_nav_->setIcon(
@@ -2388,16 +2330,11 @@ void LibraryWindow::UpdateLibraryNavActive() {
     runners_nav_->setChecked(runners_active);
     runners_nav_->setIcon(mira_gui::icons::For(Glyph::Wrench, runners_active ? tokens.on_accent : tokens.text));
   }
-  if (grid_view_button_ != nullptr) {
-    grid_view_button_->setChecked(!classic_active);
-    table_view_button_->setChecked(classic_active);
-  }
-  // Only the pages they act on show the view toggle and tile size.
-  if (view_toggle_ != nullptr && zoom_ != nullptr) {
+  // Only the pages it acts on show the tile size.
+  if (zoom_ != nullptr) {
     const bool source_shown = content_stack_->currentWidget() == splitter_ && source_page_ != nullptr &&
                               main_stack_->currentWidget() == source_page_;
-    view_toggle_->setVisible(GridShown() || classic_active);
-    zoom_->setVisible(GridShown() || classic_active || source_shown);
+    zoom_->setVisible(GridShown() || source_shown);
   }
   const QString open_source = content_stack_->currentWidget() == splitter_ && source_page_ != nullptr
                                   ? source_page_->property("source_id").toString()
@@ -2741,7 +2678,6 @@ bool LibraryWindow::LeaveOverlays() {
 void LibraryWindow::OpenSource(const mira_gui::SourceInfo& source) {
   if (!LeaveOverlays()) return;
   if (!ConfirmLeaveSource([this, source] { OpenSource(source); })) return;
-  if (ClassicShown()) CloseClassicView();
   CloseRunners();
   if (source_page_ != nullptr) {
     main_stack_->removeWidget(source_page_);
@@ -2838,10 +2774,6 @@ bool LibraryWindow::GridShown() const {
   return content_stack_->currentWidget() == splitter_ && main_stack_->currentWidget() == grid_page_;
 }
 
-bool LibraryWindow::ClassicShown() const {
-  return content_stack_->currentWidget() == splitter_ && main_stack_->currentWidget() == classic_page_;
-}
-
 QString LibraryWindow::InstallText(const std::string& id) const {
   using State = mira_gui::DownloadTracker::State;
   const mira_gui::DownloadTracker::Entry* entry =
@@ -2866,7 +2798,6 @@ void LibraryWindow::DownloadChanged(const QString& key) {
 void LibraryWindow::ShowGame(const std::string& id) {
   if (!LeaveOverlays()) return;
   if (source_page_ != nullptr && !CloseSource([this, id] { ShowGame(id); })) return;
-  if (ClassicShown()) CloseClassicView();
   CloseRunners();
   if (const QModelIndex tile = grid_games_->mapFromSource(library_->IndexOf(id)); tile.isValid()) {
     grid_->setCurrentIndex(tile);  // ClearAndSelect: this game alone
@@ -3306,82 +3237,12 @@ void LibraryWindow::ShowLibrary() {
     RequestCloseSettings();
   } else if (GameEditOpen()) {
     RequestCloseGameEdit();
-  } else if (ClassicShown()) {
-    CloseClassicView();
   } else if (source_page_ != nullptr) {
     CloseSource();
   } else if (runners_page_ != nullptr) {
     CloseRunners();
   }
   UpdateLibraryNavActive();
-}
-
-// Filter, sort and search apply to the table too; only tile size doesn't.
-void LibraryWindow::OpenClassicView() {
-  if (source_page_ != nullptr && !CloseSource([this] { OpenClassicView(); })) return;
-  CloseRunners();
-  ShowHoverCard(QModelIndex());
-  main_stack_->setCurrentWidget(classic_page_);
-  UpdateLibraryNavActive();
-}
-
-void LibraryWindow::CloseClassicView() {
-  main_stack_->setCurrentWidget(grid_page_);
-  UpdateLibraryNavActive();
-}
-
-QWidget* LibraryWindow::BuildClassicPage() {
-  auto* page = new QWidget(this);
-  auto* layout = new QVBoxLayout(page);
-
-  classic_table_ = new QTableView(page);
-  classic_table_->setModel(table_games_);
-  classic_table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
-  classic_table_->setSelectionBehavior(QAbstractItemView::SelectRows);
-  classic_table_->setSelectionMode(QAbstractItemView::SingleSelection);
-  classic_table_->setAlternatingRowColors(true);
-  classic_table_->verticalHeader()->setVisible(false);
-  classic_table_->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
-  classic_table_->horizontalHeader()->setSectionResizeMode(mira_gui::GameLibraryModel::kName, QHeaderView::Stretch);
-  // No column sort until one is clicked: rows keep the sidebar's sort order.
-  classic_table_->horizontalHeader()->setSortIndicator(-1, Qt::AscendingOrder);
-  classic_table_->setSortingEnabled(true);
-  classic_table_->setShowGrid(false);
-  const auto game_at = [this](const QModelIndex& index) { return table_games_->GameAt(index); };
-  connect(classic_table_, &QAbstractItemView::doubleClicked, this, [this, game_at](const QModelIndex& index) {
-    if (const mira_gui::GameSummary* game = game_at(index)) OpenGameDialog(game->id);
-  });
-  // The same per-game menu as a tile's.
-  classic_table_->setContextMenuPolicy(Qt::CustomContextMenu);
-  connect(classic_table_, &QWidget::customContextMenuRequested, this, [this, game_at](const QPoint& pos) {
-    const QModelIndex index = classic_table_->indexAt(pos);
-    const mira_gui::GameSummary* game = game_at(index);
-    if (game == nullptr) return;
-    classic_table_->selectRow(index.row());
-    ShowGameMenu(game->id, classic_table_->viewport()->mapToGlobal(pos));
-  });
-  // Enter and Delete do what the grid's do, for the row on it.
-  const auto table_key = [this, game_at](QKeySequence keys, auto slot) {
-    auto* action = new QAction(classic_table_);
-    action->setShortcut(keys);
-    action->setShortcutContext(Qt::WidgetWithChildrenShortcut);
-    connect(action, &QAction::triggered, this, [this, game_at, slot] {
-      if (const mira_gui::GameSummary* game = game_at(classic_table_->currentIndex())) slot(*game);
-    });
-    classic_table_->addAction(action);
-  };
-  table_key(QKeySequence(Qt::Key_Return), [this](const mira_gui::GameSummary& game) {
-    if (game.running || game.status == "ready") ToggleRunning(game.id);
-  });
-  table_key(QKeySequence(Qt::Key_Delete), [this](const mira_gui::GameSummary& game) {
-    const std::string id = game.id;
-    mira_gui::actions::Delete(this, id, QString::fromStdString(game.name), [this, id] { RemoveGame(id); });
-  });
-  // Below the last row is background: a click there deselects.
-  classic_table_->viewport()->installEventFilter(this);
-  layout->addWidget(classic_table_, /*stretch=*/1);
-
-  return page;
 }
 
 void LibraryWindow::HandleGameEvent(const std::string& type, const std::string& data, bool live) {

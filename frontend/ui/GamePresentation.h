@@ -4,7 +4,6 @@
 #include <QDateTime>
 #include <QLocale>
 #include <QString>
-#include <QTableWidgetItem>
 
 #include "../client/Types.h"
 #include "Theme.h"
@@ -13,7 +12,7 @@
 #include <optional>
 #include <string>
 
-// Small presentation helpers shared by the grid, the table and a game's
+// Small presentation helpers shared by the grid, the sidebar and a game's
 // card, so a game reads the same way everywhere.
 namespace mira_gui {
 
@@ -65,8 +64,8 @@ inline QColor ContrastingTextColor(const QColor& background) {
   return luminance > 140 ? QColor("#1c1f25") : QColor("#ffffff");
 }
 
-// Shared by both library views so the same game reads identically in the
-// grid, its details panel, and the classic table.
+// Shared so the same game reads identically in the
+// grid, its hover card, and its edit page.
 inline QString StatusLabel(const std::string& status) {
   if (status == "needs_install") return "Needs install";
   if (status == "setting_up") return "Setting up";
@@ -99,20 +98,5 @@ inline QString FormatPlaytime(std::int64_t play_seconds) {
   if (minutes > 0) return QString("%1m").arg(minutes);
   return "<1m";
 }
-
-// A table cell that sorts on a number instead of its text: "1h 5m" before
-// "45m" and a formatted date sort wrong as text.
-class NumericTableItem : public QTableWidgetItem {
-public:
-  NumericTableItem(const QString& text, double sort_value) : QTableWidgetItem(text), sort_value_(sort_value) {}
-
-  bool operator<(const QTableWidgetItem& other) const override {
-    if (const auto* numeric = dynamic_cast<const NumericTableItem*>(&other)) return sort_value_ < numeric->sort_value_;
-    return QTableWidgetItem::operator<(other);
-  }
-
-private:
-  double sort_value_;
-};
 
 }  // namespace mira_gui

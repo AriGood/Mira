@@ -27,7 +27,7 @@ public:
     ActionEnabledRole,
     // Optional: replaces the status line's text ("Installing… 1.2 GB").
     StatusTextRole,
-    // Pinned by the user: a pin badge in the tile's top-left corner.
+    // Pinned by the user: a pin badge in the tile's top-right corner.
     PinnedRole,
     // Optional: the game's source id, drawn as a small colored mark.
     SourceRole,
@@ -43,6 +43,7 @@ public:
   void SetTileSize(QSize tile);
   void SetShowStatus(bool show) { show_status_ = show; }
   void SetShowSourceMark(bool show) { show_source_mark_ = show; }
+  void SetShowPinBadge(bool show) { show_pin_badge_ = show; }
   QSize TileSize() const { return tile_; }
 
   QSize sizeHint(const QStyleOptionViewItem&, const QModelIndex&) const override;
@@ -53,6 +54,7 @@ private:
   QSize tile_;
   bool show_status_ = true;
   bool show_source_mark_ = true;
+  bool show_pin_badge_ = true;
   ArtworkStore* artwork_;
 };
 

@@ -167,9 +167,10 @@ void GameTileDelegate::paint(QPainter* painter, const QStyleOptionViewItem& opti
   }
 
   const QString action = index.data(ActionRole).toString();
+  QRect pill;
   if (!action.isEmpty()) {
     const bool enabled = index.data(ActionEnabledRole).toBool();
-    const QRect pill = ActionRect(option.rect, action, option.font);
+    pill = ActionRect(option.rect, action, option.font);
     QFont pill_font = option.font;
     pill_font.setWeight(QFont::DemiBold);
     painter->setFont(pill_font);
@@ -180,9 +181,10 @@ void GameTileDelegate::paint(QPainter* painter, const QStyleOptionViewItem& opti
     painter->drawText(pill, Qt::AlignCenter, action);
   }
 
-  // Top-left, clear of the ActionRole pill on the right.
-  if (index.data(PinnedRole).toBool()) {
-    const QRect badge(rect.left() + 6, rect.top() + 6, 22, 22);
+  // Top-right, opposite the source mark; left of the ActionRole pill if there is one.
+  if (show_pin_badge_ && index.data(PinnedRole).toBool()) {
+    const int right = pill.isNull() ? rect.right() - 6 : pill.left() - 4;
+    const QRect badge(right - 22 + 1, rect.top() + 6, 22, 22);
     painter->setPen(Qt::NoPen);
     painter->setBrush(QColor(0, 0, 0, 150));
     painter->drawEllipse(badge);
