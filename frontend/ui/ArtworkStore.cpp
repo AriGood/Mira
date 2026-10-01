@@ -102,6 +102,33 @@ void ArtworkStore::EnsureRequested(const std::string& id) {
   if (!answered_.contains(key)) Request(key);
 }
 
+void ArtworkStore::NoteArt(const std::string& id, const std::optional<ArtVersions>& art) {
+  if (!art) return;
+  const QString key = QString::fromStdString(id);
+  const auto cover = art->find("cover");
+  const QString version = cover != art->end() ? QString::fromStdString(cover->second) : QString();
+  const auto known = versions_.constFind(key);
+  const bool first = known == versions_.constEnd();
+  if (!first && *known == version) return;
+  versions_.insert(key, version);
+
+  if (version.isEmpty()) {
+    answered_.insert(key);
+    if (original_.remove(key) > 0) {
+      InvalidateRendering(id);
+      emit CoverChanged(key);
+    }
+    return;
+  }
+  if (queued_.contains(key)) {
+    ask_again_.insert(key);  // its answer may be the old image
+  } else if (answered_.contains(key) && (!first || !original_.contains(key))) {
+    // A first version with an image already in hand is that image.
+    answered_.remove(key);
+    Request(key);
+  }
+}
+
 void ArtworkStore::Invalidate(const std::string& id) {
   const QString key = QString::fromStdString(id);
   original_.remove(key);
@@ -173,8 +200,12 @@ void ArtworkStore::Pump() {
         original_.insert(id, QPixmap::fromImage(std::move(image)));
         InvalidateRendering(id.toStdString());
         emit CoverChanged(id);
+      } else if (original_.remove(id) > 0) {
+        // A refetch found it gone.
+        InvalidateRendering(id.toStdString());
+        emit CoverChanged(id);
       }
-      if (ask_again_.remove(id) && !original_.contains(id)) {
+      if (ask_again_.remove(id)) {
         answered_.remove(id);
         Request(id);
       }

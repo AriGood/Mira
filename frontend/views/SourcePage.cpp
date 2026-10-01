@@ -20,7 +20,7 @@
 #include "../ui/ArtworkStore.h"
 #include "../ui/CoverArt.h"
 #include "../ui/DownloadTracker.h"
-#include "../ui/EventHub.h"
+#include "../client/EventHub.h"
 #include "../ui/GameLibraryModel.h"
 #include "../ui/GameActions.h"
 #include "../ui/GameTileDelegate.h"

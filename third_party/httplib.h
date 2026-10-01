@@ -4384,7 +4384,11 @@ bool read_content(Stream &strm, T &x, size_t payload_max_length, int &status,
         if (is_chunked_transfer_encoding(x.headers)) {
           ret = read_content_chunked(strm, x, out);
         } else if (!has_header(x.headers, "Content-Length")) {
-          ret = read_content_without_length(strm, out);
+          // Mira patch: a request with neither header has no body (RFC 9112
+          // 6.3); reading to EOF stalled a bare POST for the read timeout.
+          if constexpr (!std::is_same_v<T, Request>) {
+            ret = read_content_without_length(strm, out);
+          }
         } else {
           auto len = get_header_value_u64(x.headers, "Content-Length", 0, 0);
           if (len > payload_max_length) {

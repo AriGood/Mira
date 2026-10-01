@@ -70,9 +70,8 @@ struct SourceInfo;
 // native titlebar. Frameless, so it owns its own
 // move/resize/minimize/maximize/close.
 //
-// `mira-gui --classic` still opens MainWindow standalone; the top bar's
-// table toggle instead shows the same table in the grid's place, reading
-// the same library_ model.
+// The top bar's table toggle shows the library as a table in the grid's
+// place, reading the same library_ model; `mira-gui --classic` opens on it.
 //
 // Selection model: one click selects a tile, a second (double) click
 // launches, right-click opens the per-game menu. Hovering a tile shows a
@@ -84,6 +83,9 @@ class LibraryWindow : public QMainWindow {
 public:
   // `prefs` is frontend.toml as read at startup; the theme is already applied.
   explicit LibraryWindow(const mira_gui::FrontendPrefs& prefs, QWidget* parent = nullptr);
+
+  // The table in the grid's place, as the top bar's toggle shows it.
+  void ShowTable() { OpenClassicView(); }
 
 private:
   QWidget* BuildTopBar();
@@ -189,6 +191,7 @@ private:
   // settings_page_: starts synced to what's actually saved, not stale edits
   // from a discarded previous open.
   QWidget* BuildGameEditCard(const std::string& id);
+  void SizeGameEditCard(QWidget* card);
   void CloseGameEdit();
   // Confirms first if game_edit_form_ is dirty; the card's own Back
   // button, the sidebar's Library nav row, and a click on the scrim.
@@ -250,7 +253,11 @@ private:
   void CloseClassicView();
   // A store or launcher's page, rebuilt fresh on each open.
   void OpenSource(const mira_gui::SourceInfo& source);
-  void CloseSource();
+  // False while the page stays: its settings card's edits were kept, or are
+  // saving first, and then `retry` runs (CloseSource itself when empty).
+  bool CloseSource(std::function<void()> retry = {});
+  // Asks about the open source page's unsaved settings; CloseSource's rules.
+  bool ConfirmLeaveSource(std::function<void()> retry);
   // Hides the sources turned off in Settings (`<id>.enabled`), and asks
   // which stores are signed in and which launchers installed.
   void RefreshSourceNavs();

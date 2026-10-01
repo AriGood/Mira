@@ -60,3 +60,37 @@ TEST_CASE("DownloadTracker keeps the newest activity first and tells kinds apart
   CHECK(tracker.Entries().size() == 3);
   CHECK(tracker.Find("launcher:battlenet") == nullptr);
 }
+
+TEST_CASE("DownloadTracker follows a job by its label and steps") {
+  DownloadTracker tracker;
+  CHECK(tracker.HandleEvent("job.started",
+                            R"({"id": "delete-1", "kind": "delete", "target": "", "label": "Removing 4 games"})"));
+  const QString key = DownloadTracker::KeyFor(DownloadTracker::Kind::Job, QString(), "delete-1");
+  REQUIRE(tracker.Find(key) != nullptr);
+  CHECK(tracker.NameFor(*tracker.Find(key)).toStdString() == "Removing 4 games");
+
+  tracker.HandleEvent("job.progress", R"({"id": "delete-1", "done": 1, "total": 4, "message": "Celeste"})");
+  CHECK(tracker.Find(key)->progress == doctest::Approx(0.25));
+  CHECK(tracker.Find(key)->message.toStdString() == "Celeste");
+
+  tracker.HandleEvent("job.failed", R"({"id": "delete-1", "kind": "delete", "error": {"code": "io", "message": "busy"}})");
+  CHECK(StateOf(tracker, key) == State::Failed);
+  CHECK(tracker.Find(key)->error.toStdString() == "busy");
+
+  // Nothing to name a job whose start was never seen.
+  tracker.HandleEvent("job.finished", R"({"id": "scan-9", "kind": "scan", "result": {}})");
+  CHECK(tracker.Find(DownloadTracker::KeyFor(DownloadTracker::Kind::Job, QString(), "scan-9")) == nullptr);
+}
+
+TEST_CASE("DownloadTracker keeps finished jobs with steps and drops routine ones") {
+  DownloadTracker tracker;
+  tracker.HandleEvent("job.started", R"({"id": "scan-1", "kind": "scan", "label": "Scanning your library"})");
+  tracker.HandleEvent("job.started", R"({"id": "move-1", "kind": "relocate", "label": "Moving 2 games"})");
+  tracker.HandleEvent("job.progress", R"({"id": "move-1", "done": 1, "total": 2})");
+  tracker.HandleEvent("job.finished", R"({"id": "scan-1", "kind": "scan", "result": {}})");
+  tracker.HandleEvent("job.finished", R"({"id": "move-1", "kind": "relocate", "result": {}})");
+
+  REQUIRE(tracker.Entries().size() == 1);
+  CHECK(tracker.Entries()[0].ref.toStdString() == "move-1");
+  CHECK(tracker.Entries()[0].state == State::Finished);
+}

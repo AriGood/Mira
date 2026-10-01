@@ -1,0 +1,64 @@
+#pragma once
+
+#include <cstdint>
+#include <deque>
+#include <functional>
+#include <mutex>
+#include <optional>
+#include <string>
+
+#include <json.hpp>
+
+#include "api/EventBus.h"
+#include "core/BackgroundQueue.h"
+#include "core/Result.h"
+
+namespace mira::api {
+
+// Work too long to hold an HTTP request open for (a scan, an import, moving
+// or deleting games): the request answers 202 with the job's id at once, and
+// the outcome arrives as events, or from GET /v1/jobs/{id} for a client that
+// wasn't listening.
+//
+// Events: job.started {id, kind, target, label}, job.progress {id, done,
+// total, message}, then job.finished {id, kind, target, result} or
+// job.failed {id, kind, target, error: {code, message, hint?, fix?}}.
+class JobRegistry {
+public:
+  // What a job's work gets: a way to say how far along it is.
+  class Progress {
+  public:
+    Progress(JobRegistry& registry, std::string id) : registry_(registry), id_(std::move(id)) {}
+    void Report(int done, int total, const std::string& message = std::string());
+
+  private:
+    JobRegistry& registry_;
+    std::string id_;
+  };
+  using Work = std::function<Result<nlohmann::json>(Progress& progress)>;
+
+  explicit JobRegistry(EventBus& events) : events_(events) {}
+
+  // A valid job token from a client: letters, digits, '-' and '_', 1-64 long.
+  static bool IsValidId(const std::string& id);
+
+  // Starts `work` in the background and returns its id: `requested` when the
+  // client picked one (so it can listen before this reply lands), else a new
+  // one. `label` is a human name for it ("Scanning your library").
+  std::string Start(const std::string& kind, const std::string& target, const std::string& label, Work work,
+                    const std::string& requested = std::string());
+
+  // The job as GET /v1/jobs/{id} shows it, while running and for a while after.
+  std::optional<nlohmann::json> Find(const std::string& id) const;
+
+private:
+  void Update(const std::string& id, const std::function<void(nlohmann::json&)>& change);
+
+  EventBus& events_;
+  mutable std::mutex mutex_;
+  std::deque<nlohmann::json> jobs_;  // newest last, capped
+  std::uint64_t next_ = 0;
+  BackgroundQueue queue_;  // declared last: joined before the rest go
+};
+
+}  // namespace mira::api

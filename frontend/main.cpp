@@ -17,7 +17,6 @@
 #include "ui/ToolTip.h"
 #include "ui/Tray.h"
 #include "views/LibraryWindow.h"
-#include "views/MainWindow.h"
 
 namespace {
 
@@ -85,10 +84,9 @@ int main(int argc, char** argv) {
   mira_gui::theme::Apply("auto");
   mira_gui::tooltip::Install();
 
-  // LibraryWindow (the cover grid) is primary; MainWindow (the table) is
-  // kept as a fallback for auditing a fresh scan. `--classic` starts
-  // straight in it. Not QCommandLineParser: one flag doesn't justify it,
-  // and this leaves Qt's own arguments (-style, -platform) alone.
+  // `--classic` opens on the table rather than the cover grid. Not
+  // QCommandLineParser: one flag doesn't justify it, and this leaves Qt's own
+  // arguments (-style, -platform) alone.
   const bool classic = QApplication::arguments().contains("--classic");
 
   // docs/architecture.md's "frontend-managed" daemon path: start mirad
@@ -101,8 +99,8 @@ int main(int argc, char** argv) {
     const mira_gui::FrontendPrefsResult saved = mira_gui::MiradClient::GetFrontendPrefsBlocking();
     const mira_gui::FrontendPrefs prefs = saved.ok ? saved.prefs : mira_gui::FrontendPrefs{};
     ApplyAppearance(prefs);
-    QMainWindow* window = classic ? static_cast<QMainWindow*>(new MainWindow())
-                                  : static_cast<QMainWindow*>(new LibraryWindow(prefs));
+    auto* window = new LibraryWindow(prefs);
+    if (classic) window->ShowTable();
     window->setAttribute(Qt::WA_DeleteOnClose);
     // A no-op on a desktop with no tray (Tray.cpp): window->close() then
     // means exactly what it always did.

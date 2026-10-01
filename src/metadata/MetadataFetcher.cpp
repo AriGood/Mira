@@ -124,6 +124,9 @@ std::string ContentTypeFor(const fs::path& file) {
 bool FetchArtworkInto(const config::Config& config, const std::string& url, const std::string& game_id,
                       std::string_view source, std::string_view slot, json& info,
                       std::optional<std::int64_t> candidate_id = std::nullopt) {
+  const std::string key = slot == "cover" ? "artwork" : std::string(slot);
+  // A slot the user picked by hand (SelectArtwork) stays until they pick again.
+  if (info.contains(key) && Value(info[key], "chosen", false)) return true;
   std::string ext = fs::path(std::string(url)).extension().string();
   if (ext.empty() || ext.size() > 5) ext = ".jpg";
 
@@ -154,7 +157,6 @@ bool FetchArtworkInto(const config::Config& config, const std::string& url, cons
     fs::remove(dir, ec);
     return false;
   }
-  const std::string key = slot == "cover" ? "artwork" : std::string(slot);
   info[key] = {{"file", dest.filename().string()}, {"content_type", ContentTypeFor(dest)},
               {"source", source}};
   if (candidate_id) info[key]["candidate_id"] = *candidate_id;
@@ -770,6 +772,16 @@ std::filesystem::path ArtworkDir(const config::Config& config, const std::string
 
 Result<void> Fetch(const config::Config& config, const model::Game& game) {
   json info = {{"fetched_at", model::NowSeconds()}};
+  // Slots the user picked by hand carry over; FetchArtworkInto then leaves them be.
+  {
+    std::ifstream in(MetadataFile(config, game.id));
+    const json old = in ? json::parse(in, nullptr, false) : json();
+    if (old.is_object()) {
+      for (const auto& [key, value] : old.items()) {
+        if (value.is_object() && Value(value, "chosen", false)) info[key] = value;
+      }
+    }
+  }
   const std::int64_t griddb_id = config::Resolver(config, game.overrides).GetInt("metadata.steamgriddb_id");
 
   // Checked before the steam: prefix below: an Epic game's runner_ref is
@@ -878,9 +890,12 @@ Result<void> SelectArtwork(const config::Config& config, const std::string& game
   // cached, rather than accepting a caller-supplied URL directly -- so the
   // daemon never ends up fetching an arbitrary URL on the API's behalf. No
   // credentials on the download itself -- see FetchArtworkInto.
+  const std::string key = slot == "cover" ? "artwork" : slot;
+  if (info.contains(key) && info[key].is_object()) info[key].erase("chosen");  // or the download skips it
   if (!FetchArtworkInto(config, url, game_id, source, slot, info, candidate_id)) {
     return Err("download_failed", "couldn't download the selected image", kConnectionHint);
   }
+  info[key]["chosen"] = true;  // a refresh (Fetch) keeps it
 
   return WriteMetadataFile(metadata_file, info);
 }

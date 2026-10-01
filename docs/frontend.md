@@ -6,7 +6,7 @@
 
 `mira-gui` opens on the **grid** (`views/LibraryWindow`): cover tiles, a left sidebar and a custom top bar in place of a native titlebar. The window is frameless. Dragging the top bar's empty area or the sidebar header moves it, double-clicking the top bar toggles maximize, and the edges resize. Moves and resizes go through `QWindow::startSystemMove`/`startSystemResize` so they work on Wayland and X11.
 
-The **table** (`views/MainWindow`) shows every field of every game. The top bar's grid/table toggle shows it in the grid's place, filtered and sorted by the same controls. `mira-gui --classic` opens it as its own window.
+The **table** shows the library as rows. The top bar's grid/table toggle shows it in the grid's place, filtered and sorted by the same controls. `mira-gui --classic` opens on it.
 
 ### Library page
 
@@ -41,9 +41,11 @@ The banner's gear opens `views/SourceSettingsCard` under it: the source's runner
 
 A banner offers to install umu-launcher or winetricks when either is missing.
 
-### Downloads
+### Activity
 
-The top bar's download button opens `ui/DownloadsPanel`. It lists everything `ui/DownloadTracker` has seen from the event stream: game installers, store installs and updates, Humble downloads, launcher installs, tool downloads and runner downloads. `mirad` replays recent events on connect, so work started before the GUI opened also shows. Game installers report bytes written; Epic, GOG, Amazon and itch installs report percent, speed and time left (`library.install.progress`), also drawn as a bar on the title's tile. A finished install offers *Show*, which selects the game.
+The top bar's download button opens `ui/DownloadsPanel`, titled Activity. It lists everything `ui/DownloadTracker` has seen from the event stream: game installers, store installs and updates, Humble downloads, launcher installs, tool downloads, runner downloads and `mirad`'s jobs (scans, imports, moving and deleting games, removing a source). `mirad` replays recent events on connect, so work started before the GUI opened also shows. Game installers report bytes written; Epic, GOG, Amazon and itch installs report percent, speed and time left (`library.install.progress`), also drawn as a bar on the title's tile; jobs with steps report how far along they are. A finished install offers *Show*, which selects the game.
+
+Jobs answer `202` at once (see [api.md](api.md#jobs)). `client/Jobs` waits for each one's `job.finished` or `job.failed` on the shared event connection, and after a reconnect asks `GET /v1/jobs/{id}` about any it was still waiting on, so the `MiradClient` calls that start them still hand their caller one result.
 
 ### Selection and hover
 
@@ -142,9 +144,9 @@ On connect, `mirad` replays its event buffer and then sends `stream.live`. Windo
 
 `ui/ArtworkStore` fetches art from `GET /v1/games/{id}/artwork` and always returns a pixmap:
 
-- A 404 is normal. `ui/CoverArt` draws a placeholder with a hue from the game's id, so it stays the same across restarts.
-- Each game is asked once, until `game.metadata_ready` or a refresh.
-- At most four requests are in flight.
+- A game's record says which art it has (`art`, see [api.md](api.md)). A game without a cover is never asked for one; `ui/CoverArt` draws a placeholder with a hue from the game's id, so it stays the same across restarts.
+- A cover is fetched once, and again only when its version changes in a record, `game.metadata_ready` or `game.artwork_selected`. The old image stays on screen until the new one lands.
+- At most eight requests are in flight.
 - The original image is kept and scaled on demand for the zoom slider.
 
 Without `steamgriddb.api_key`, non-Steam games may have no source. `mirad` then fails the fetch with `no_steamgriddb_key`, and the GUI says so once per session: a popup offering Settings when the user asked, a notice after a background scan.

@@ -130,19 +130,13 @@ GameDetailPageDialog::GameDetailPageDialog(std::string game_id, QString game_nam
 
     if (!metadata.requirements_min.empty() || !metadata.requirements_rec.empty()) {
       layout->insertWidget(row++, SectionLabel("PC requirements", body));
-      if (!metadata.requirements_min.empty()) {
-        auto* min_label = BodyLabel(body);
-        min_label->setTextFormat(Qt::RichText);
-        min_label->setText(QString("<b>Minimum:</b> %1")
-                               .arg(QString::fromStdString(metadata.requirements_min)));
-        layout->insertWidget(row++, min_label);
-      }
-      if (!metadata.requirements_rec.empty()) {
-        auto* rec_label = BodyLabel(body);
-        rec_label->setTextFormat(Qt::RichText);
-        rec_label->setText(QString("<b>Recommended:</b> %1")
-                               .arg(QString::fromStdString(metadata.requirements_rec)));
-        layout->insertWidget(row++, rec_label);
+      // Steam's HTML carries its own "Minimum:" / "Recommended:" headings.
+      for (const std::string& html : {metadata.requirements_min, metadata.requirements_rec}) {
+        if (html.empty()) continue;
+        auto* label = BodyLabel(body);
+        label->setTextFormat(Qt::RichText);
+        label->setText(QString::fromStdString(html));
+        layout->insertWidget(row++, label);
       }
     }
 

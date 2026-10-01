@@ -16,7 +16,7 @@ FetchQueue::~FetchQueue() {
 }
 
 void FetchQueue::Enqueue(const config::Config& config, api::EventBus& events, model::Game game, bool force,
-                         bool announce) {
+                         bool announce, Done done) {
   if (!force && !config.GetBool("metadata.enabled")) return;
   std::lock_guard lock(mutex_);
   const auto waiting = std::find_if(games_.begin(), games_.end(), [&game](const Job& job) {
@@ -26,9 +26,12 @@ void FetchQueue::Enqueue(const config::Config& config, api::EventBus& events, mo
     // The newer record (a rename, a new SteamGridDB match) wins.
     waiting->game = std::move(game);
     waiting->announce = waiting->announce || announce;
+    if (done) waiting->done.push_back(std::move(done));
     return;
   }
-  games_.push_back({std::move(game), /*title=*/false, announce});
+  Job job{std::move(game), /*title=*/false, announce, {}};
+  if (done) job.done.push_back(std::move(done));
+  games_.push_back(std::move(job));
   StartWorkers(config, events);
 }
 
@@ -40,7 +43,7 @@ int FetchQueue::EnqueueTitles(const config::Config& config, api::EventBus& event
     if (std::any_of(titles_.begin(), titles_.end(), [&title](const Job& job) { return job.game.id == title.id; })) {
       continue;
     }
-    titles_.push_back({std::move(title), /*title=*/true, /*announce=*/false});
+    titles_.push_back({std::move(title), /*title=*/true, /*announce=*/false, {}});
     ++queued;
   }
   StartWorkers(config, events);
@@ -74,24 +77,25 @@ void FetchQueue::Work(const config::Config& config, api::EventBus& events) {
       from.pop_front();
       ++running_;
     }
-    Run(config, events, job);
+    const bool ok = Run(config, events, job);
+    for (const Done& done : job.done) done(ok);
     std::lock_guard lock(mutex_);
     --running_;
     idle_.notify_all();
   }
 }
 
-void FetchQueue::Run(const config::Config& config, api::EventBus& events, const Job& job) {
+bool FetchQueue::Run(const config::Config& config, api::EventBus& events, const Job& job) {
   const model::Game& game = job.game;
   if (job.title) {
     if (const Result<void> fetched = FetchCover(config, game); !fetched) {
       log::Debug("no cover for {} {}: {}", game.source, game.source_ref, fetched.error().message);
       events.Publish("library.artwork_failed",
                      {{"source", game.source}, {"ref", game.source_ref}, {"code", fetched.error().code}});
-    } else {
-      events.Publish("library.artwork_ready", {{"source", game.source}, {"ref", game.source_ref}});
+      return false;
     }
-    return;
+    events.Publish("library.artwork_ready", {{"source", game.source}, {"ref", game.source_ref}});
+    return true;
   }
 
   if (auto fetched = Fetch(config, game); !fetched) {
@@ -107,9 +111,10 @@ void FetchQueue::Run(const config::Config& config, api::EventBus& events, const 
                                              fetched.error().message.empty() ? "nothing matched this game"
                                                                              : fetched.error().message));
     }
-  } else {
-    events.Publish("game.metadata_ready", {{"id", game.id}});
+    return false;
   }
+  events.Publish("game.metadata_ready", {{"id", game.id}});
+  return true;
 }
 
 }  // namespace mira::metadata

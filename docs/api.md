@@ -27,6 +27,15 @@ curl --unix-socket "$XDG_RUNTIME_DIR/mira/mirad.sock" http://localhost/v1/health
 
 Long-running work (downloads, installs, winetricks) answers `202` straight away and reports progress on the [event stream](#events).
 
+## Jobs
+
+Scans, imports, moving games, removing games, removing a source and bulk metadata refreshes are jobs. The request checks its input as usual (a bad body is still `400`), then answers `202 {"status": "running", "job": "<id>"}` and does the work in the background. Pass `?job=<id>` (letters, digits, `-`, `_`, up to 64) to name the job yourself, so you can listen for it before the reply arrives.
+
+Events: `job.started {id, kind, target, label}`, `job.progress {id, done, total, message}` where the work has steps, then `job.finished {id, kind, target, result}` or `job.failed {id, kind, target, error}`. `result` is what the endpoint describes as its reply; `error` is the usual `{code, message, hint?, fix?}`, or `internal_error` for a bug in mirad. `kind` is `scan`, `import`, `relocate`, `delete`, `remove_source` or `metadata`; `target` is the source or game it's about, or empty.
+
+### `GET /v1/jobs/{id}`
+`{id, kind, target, label, state, progress?, result?, error?}` with `state` `running`, `finished` or `failed`. The last 100 jobs are kept, never dropping one still running; an older one is `404 job_not_found`.
+
 ## Health
 
 ### `GET /v1/health`
@@ -73,11 +82,13 @@ Lists games, optionally filtered by `status` (`setting_up`, `ready`, `broken`, `
   "source": "scan", "exe_path": "Celeste", "args": "", "working_dir": "", "runner_ref": "",
   "data_dir": "", "runner_config": {}, "overrides": {}, "last_error": "",
   "created_at": 0, "updated_at": 0, "last_played_at": null, "play_seconds": 0,
-  "env": {}, "candidates": [], "tags": [], "running": false
+  "env": {}, "candidates": [], "tags": [], "running": false, "art": {"cover": "18f3a2c07d4e1b00-2c41"}
 }
 ```
 
 - `running` is whether Mira is tracking a process for the game right now. Every game record the API returns or an event carries has it.
+
+- `art` lists the art slots Mira has an image cached for, each with a version: `{"cover": "18f3a…-2c41", "hero": "…"}`. A slot left out has no image, so `GET /v1/games/{id}/artwork` for it would 404. The version changes whenever the slot's image does, so a client can keep its copy until then. Every game record has it, and so do `game.metadata_ready`, `game.metadata_failed` and `game.artwork_selected`.
 
 - `confidence` and `reviewed` let a client surface games nobody has checked since detection.
 - `candidates` lists every executable the detector considered.
@@ -119,7 +130,7 @@ Removes the game from the library. Nothing on disk is touched unless asked:
 Files and prefixes are only deleted when they resolve inside a library root or `prefix_root`, and never for a `desktop-entry` game, whose files belong to another app. For Epic games, `delete_files` runs `legendary uninstall` so Legendary's records stay correct. Publishes `game.removed`.
 
 ### `POST /v1/games/delete`
-The same for many games: `{"ids": [...], "delete_files"?, "delete_prefix"?, "delete_metadata"?, "purge"?}`, flags as above. A game whose files or prefix can't be deleted stays in the library. Unknown ids are skipped. Returns `{"removed": [ids], "failed": [{"id", "error": {...}}]}`, with each error shaped like the error envelope, and publishes one `games.removed` event with the removed `ids`.
+The same for many games: `{"ids": [...], "delete_files"?, "delete_prefix"?, "delete_metadata"?, "purge"?}`, flags as above. A game whose files or prefix can't be deleted stays in the library. Unknown ids are skipped. A [job](#jobs) whose result is `{"removed": [ids], "failed": [{"id", "error": {...}}]}`, with each error shaped like the error envelope, and publishes one `games.removed` event with the removed `ids`.
 
 ### `GET /v1/games/{id}/config`
 Every setting as it resolves for this game, with the layer it came from:
@@ -169,7 +180,7 @@ Body (optional) `{"interactive": bool, "installer": "path"}`. Runs a `needs_inst
 Marks a `needs_install` or `broken` game `ready` once `exe_path` points at the installed game. `409 no_executable` if `exe_path` is empty, still an installer, or missing.
 
 ### `POST /v1/games/{id}/relocate`
-Body (optional) `{"install_path"?, "data_dir"?}`. Moves the game's files and prefix to those paths, or with no body into Mira's layout (`relocate.install_root` or the first library root, and `prefix_root`, named per `prefix_naming`). Targets must be inside a library root or `prefix_root`. Store games keep their install folder unless one is given, since their store tool tracks it. Moves across filesystems copy then delete, unless `relocate.allow_copy` is off. Publishes `game.updated`.
+Body (optional) `{"install_path"?, "data_dir"?}`. Moves the game's files and prefix to those paths, or with no body into Mira's layout (`relocate.install_root` or the first library root, and `prefix_root`, named per `prefix_naming`). Targets must be inside a library root or `prefix_root`. Store games keep their install folder unless one is given, since their store tool tracks it. Moves across filesystems copy then delete, unless `relocate.allow_copy` is off. A [job](#jobs) whose result is the moved game; publishes `game.updated`.
 
 ### `POST /v1/games/{id}/tricks`
 Body `{"verb": "corefonts"}`. Runs `winetricks --unattended <verb>` in the game's prefix. Fails if the game has no provisioned Wine or Proton prefix or winetricks isn't available (see `/v1/runners/tools`). Events: `tricks.started`/`finished`/`failed`.
@@ -179,10 +190,10 @@ Body `{"verb": "corefonts"}`. Runs `winetricks --unattended <verb>` in the game'
 `library_roots` is an ordinary setting. Changing it through the API also updates the watcher.
 
 ### `POST /v1/library/scan`
-Scans every library root now: adds new games, marks vanished ones `missing` (or removes them with `library.remove_missing`), restores ones that came back, and provisions games still waiting on a runner. Each change publishes its own event. Returns `{"added": 1, "missing": 0, "restored": 0}`. The watcher runs the same scan on its own when a root changes, but only for new arrivals.
+Scans every library root now: adds new games, marks vanished ones `missing` (or removes them with `library.remove_missing`), restores ones that came back, and provisions games still waiting on a runner. Each change publishes its own event. A [job](#jobs) whose result is `{"added": 1, "missing": 0, "restored": 0}`. The watcher runs the same scan on its own when a root changes, but only for new arrivals.
 
 ### `POST /v1/library/relocate`
-Body (optional) `{"ids": [...]}`. Relocates those games, or every game without a body, into Mira's layout, one at a time, publishing `game.updated` as each one moves. Returns `{"moved": N, "failed": N, "errors": [{"id", "error": {...}}]}`.
+Body (optional) `{"ids": [...]}`. Relocates those games, or every game without a body, into Mira's layout, one at a time, publishing `game.updated` and `job.progress` as each one moves. A [job](#jobs) whose result is `{"moved": N, "failed": N, "errors": [{"id", "error": {...}}]}`.
 
 ### `GET /v1/library[?source=epic|steam|gog|itch|amazon]`
 What each account owns, whether or not it's installed:
@@ -289,12 +300,12 @@ What `runner_config` accepts for a kind: `[{"key": "gameid", "type": "string", "
 Steam games are ordinary games with `runner_ref` `steam:<appid>`.
 
 ### `POST /v1/steam/scan`
-Reads Steam's `libraryfolders.vdf`, `appmanifest_*.acf` and `compatdata/<id>/config_info` directly and adds or updates installed games. Returns `{"added": 2, "updated": 0}`. A rescan updates `name`, `install_path` and `data_dir` and leaves user settings alone. `exe_path` is never filled in, because Steam keeps the launch command in its `appinfo` cache; only `steam.launch_mode: "direct"` needs it.
+Reads Steam's `libraryfolders.vdf`, `appmanifest_*.acf` and `compatdata/<id>/config_info` directly and adds or updates installed games. A [job](#jobs) whose result is `{"added": 2, "updated": 0}`. A rescan updates `name`, `install_path` and `data_dir` and leaves user settings alone. `exe_path` is never filled in, because Steam keeps the launch command in its `appinfo` cache; only `steam.launch_mode: "direct"` needs it.
 
 ## Lutris
 
 ### `POST /v1/lutris/import`
-Reads Lutris's `pga.db` (through the `sqlite3` CLI) and each game's YAML config (`lutris.data_dir` overrides where to look) and imports `wine` and `linux` runner games:
+Reads Lutris's `pga.db` (through the `sqlite3` CLI) and each game's YAML config (`lutris.data_dir` overrides where to look) and imports `wine` and `linux` runner games. A [job](#jobs) whose result is:
 
 ```json
 { "added": 3, "updated": 1, "other_runner": 2, "incomplete": 0 }
@@ -308,7 +319,7 @@ Nothing on disk is moved. `install_path` is the executable's folder and `data_di
 
 ## Store tools
 
-Epic, GOG, itch, Amazon and Humble each wrap a command-line tool. Each has a status call and a setup call that downloads the tool's latest release into `~/.config/mira/tools`; run setup again to update. Status reports the tool as:
+Epic, GOG, itch, Amazon and Humble each wrap a command-line tool. Each store's import is a [job](#jobs) whose result is `{added, updated}`. Each has a status call and a setup call that downloads the tool's latest release into `~/.config/mira/tools`; run setup again to update. Status reports the tool as:
 
 ```json
 { "installed": true, "source": "managed", "path": "...", "version": "..." }
@@ -383,7 +394,7 @@ Battle.net, Ubisoft Connect and the EA app have no Linux client, so each is inst
 Creates the prefix, runs the winetricks steps, then the installer: silent for Ubisoft and EA, shown for Battle.net. Imports games afterwards. `409 install_running`. Events: `launcher.install.*`.
 
 ### `POST /v1/launchers/{id}/import`
-Returns `{added, updated}`. Battle.net games are found by their default folders, Ubisoft games by registry keys and EA games by `__Installer/installerdata.xml`. `409 launcher_not_installed`.
+A [job](#jobs) whose result is `{added, updated}`. Battle.net games are found by their default folders, Ubisoft games by registry keys and EA games by `__Installer/installerdata.xml`. `409 launcher_not_installed`.
 
 ### `POST /v1/launchers/{id}/open`
 Body `{action?: "launch"|"install", ref?}`. Opens the launcher, or asks it to launch or install a game by store id (a Battle.net product code such as `WTCG`, a Ubisoft id or an EA offer id). Not tracked.
@@ -404,7 +415,7 @@ What removing a source would do:
 `deletes` is empty for games that are only dropped from Mira (Steam, Lutris and Humble own their files).
 
 ### `POST /v1/sources/{id}/remove`
-Uninstalls the source's games (through the store tool, or by deleting a folder inside a Mira folder), deletes a launcher's program folder but keeps save folders, signs out, removes the games from Mira and sets `<id>.enabled` to false. Prefixes are never deleted. A failed step is reported and the rest still run: `{"removed": 3, "problems": []}`.
+Uninstalls the source's games (through the store tool, or by deleting a folder inside a Mira folder), deletes a launcher's program folder but keeps save folders, signs out, removes the games from Mira and sets `<id>.enabled` to false. Prefixes are never deleted. A [job](#jobs); a failed step is reported and the rest still run: `{"removed": 3, "problems": []}`.
 
 ### `GET /v1/sources/{id}/runner`
 The runner a source's games use: `{"runner_ref", "games", "differing"}`. `games` counts its Windows games and `differing` the ones on another runner. For Epic, GOG, itch and Amazon this is `<id>.runner`, the default for their games with no runner of their own (empty falls back to `default_runner.windows`). For a launcher it is the runner of its prefix, which its games share. `400 no_runner` for Steam, Lutris and Humble; `409 launcher_not_installed`.
@@ -449,13 +460,13 @@ With a key, SteamGridDB also adds alternates for every game in `art_candidates`,
 New games are fetched when first added, through a queue of three workers. Tracked games go before store titles. `metadata.enabled` turns automatic fetching off.
 
 ### `GET /v1/games/{id}/metadata`
-The cached JSON: `source`, `fetched_at`, and whichever of `steam`, `steam_reviews`, `protondb`, `artwork` (the cover), `hero`, `capsule`, `header`, `logo` and `icon` were found. Art entries look like `{"file", "content_type", "source", "candidate_id"?}`. `art_candidates` maps each slot to `[{"id", "url", "thumb", "width", "height", "style", "nsfw"}]`; adult art is only listed with `steamgriddb.nsfw` on and is never picked by default. `404` when nothing is cached.
+The cached JSON: `source`, `fetched_at`, and whichever of `steam`, `steam_reviews`, `epic`, `protondb`, `artwork` (the cover), `hero`, `capsule`, `header`, `logo` and `icon` were found. Art entries look like `{"file", "content_type", "source", "candidate_id"?, "chosen"?}`; `chosen` marks a slot the user picked. `art_candidates` maps each slot to `[{"id", "url", "thumb", "width", "height", "style", "nsfw"}]`; adult art is only listed with `steamgriddb.nsfw` on and is never picked by default. `404` when nothing is cached.
 
 ### `GET /v1/games/{id}/artwork?type=`
 The cached image for a slot (`cover` by default). `404` if that slot isn't cached.
 
 ### `POST /v1/games/{id}/artwork?type=`
-Body `{"candidate_id": <id>}`. Switches a slot to a cached candidate. Only candidate ids are accepted, never URLs. Events: `game.artwork_selected`/`artwork_select_failed`.
+Body `{"candidate_id": <id>}`. Switches a slot to a cached candidate. Only candidate ids are accepted, never URLs. A metadata refresh keeps the pick; picking again is the only way to change it. Events: `game.artwork_selected`/`artwork_select_failed`.
 
 ### `POST /v1/games/{id}/artwork/candidates?type=&page=&request=`
 Fetches one page (50) of SteamGridDB art for a slot, starting at page 0, and adds it to `art_candidates`. Event: `game.artwork_candidates_ready` with `{id, type, page, request, total, candidates}`, or `code` and `error` (`no_steamgriddb_key`, `no_steamgriddb_match`, `steamgriddb_unreachable`). `request` is echoed back so a caller can match its answer.
@@ -482,10 +493,10 @@ Moves to the next SteamGridDB match, saves it as `metadata.steamgriddb_id` and f
 Body `{"steamgriddb_id": N}`. Uses that SteamGridDB game from now on; `0` goes back to the top match.
 
 ### `POST /v1/games/metadata/refresh`
-Body `{"ids": [...]}`. Fetches each of these games again, like `POST /v1/games/{id}/metadata/refresh` without `announce`. Unknown ids are skipped. Returns `202 {"status": "fetching", "count": n}`.
+Body `{"ids": [...]}`. Fetches each of these games again, like `POST /v1/games/{id}/metadata/refresh` without `announce`. Unknown ids are skipped. A job (see [Jobs](#jobs)) of kind `metadata`: `job.progress` counts games as their fetches end, and the result is `{"refreshed", "failed"}`. Each game still sends its own `game.metadata_ready`/`metadata_failed`.
 
 ### `POST /v1/games/metadata/refresh-missing`
-Queues a fetch for every game without a cover. Returns `202 {"status": "fetching", "count": n}`.
+The same, for every game without a cover.
 
 ## Events
 
@@ -515,6 +526,7 @@ A new connection (no `Last-Event-ID`) first gets the buffered events replayed, t
 | `tricks.*` | See `POST /v1/games/{id}/tricks`. |
 | `library.install.*` | `{source, ref, update}`; `progress` adds `progress`, `eta` and `bps`. |
 | `library.artwork_ready`, `library.artwork_failed` | `{source, ref}`, plus `code` on failure. |
+| `job.started`, `job.progress`, `job.finished`, `job.failed` | See [Jobs](#jobs). |
 | `runners.download.*`, `runners.updated`, `runners.removed` | See the runner endpoints. |
 | `umu.setup.*`, `winetricks.setup.*` | Tool installs. |
 | `epic.legendary.install.*`, `gog.setup.*`, `itch.setup.*`, `amazon.setup.*`, `humble.setup.*` | Store tool downloads. |

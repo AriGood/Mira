@@ -8,9 +8,12 @@
 #include <atomic>
 #include <charconv>
 #include <chrono>
+#include <condition_variable>
 #include <filesystem>
 #include <format>
 #include <fstream>
+#include <memory>
+#include <mutex>
 #include <sstream>
 #include <thread>
 
@@ -125,13 +128,6 @@ void SendResult(Response& res, const Result<void>& result) {
   } else {
     SendError(res, 400, result.error());
   }
-}
-
-// model::ToJson plus whether the game is running, so a client can resync after a reconnect.
-json GameJson(const model::Game& game, const proc::ProcessSupervisor& supervisor) {
-  json body = model::ToJson(game);
-  body["running"] = supervisor.IsRunning(game.id);
-  return body;
 }
 
 model::Game ParseGamePatch(const model::Game& base, const json& patch) {
@@ -426,13 +422,27 @@ Server::Server(config::Config& config, store::GameStore& games, EventBus& events
       events_(events),
       http_(std::make_unique<httplib::Server>()),
       supervisor_(games, events, config.GetInt("launch.stop_timeout_s")) {
-  // Importers and the scanner publish bare records; this makes every game
-  // event say whether the game is running, the same as GET /v1/games.
-  events_.SetGameRecordHook([this](json& game) { game["running"] = supervisor_.IsRunning(game.value("id", "")); });
+  // Importers and the scanner publish bare records; this gives every game
+  // event the same `running` and `art` as GET /v1/games.
+  events_.SetGameRecordHook([this](json& game) {
+    const std::string id = game.value("id", "");
+    game["running"] = supervisor_.IsRunning(id);
+    game["art"] = art_index_.For(id);
+  });
+  events_.SetArtHook([this](const std::string& id) { return art_index_.For(id); });
+}
+
+json Server::Record(const model::Game& game) {
+  json body = model::ToJson(game);
+  // So a client can resync after a reconnect.
+  body["running"] = supervisor_.IsRunning(game.id);
+  body["art"] = art_index_.For(game.id);
+  return body;
 }
 
 Server::~Server() {
   events_.SetGameRecordHook(nullptr);
+  events_.SetArtHook(nullptr);
   stopping_.store(true, std::memory_order_relaxed);
   if (external_watch_.joinable()) external_watch_.join();
 }
@@ -497,7 +507,7 @@ void Server::ReconcileSessions() {
   // the old daemon as running.
   for (const model::Game& game : games_.All()) {
     if (supervisor_.IsRunning(game.id)) continue;
-    json event = GameJson(game, supervisor_);
+    json event = Record(game);
     event["state"] = "idle";
     events_.Publish("game.state", std::move(event));
   }
@@ -536,6 +546,25 @@ void Server::Stop() {
 }
 
 void Server::RegisterRoutes() {
+  // A store's import as a job; `Importer` is its XxxImporter.
+  const auto import_job = [this]<typename Importer>(const Request& req, Response& res, std::type_identity<Importer>,
+                                                    const std::string& source, const std::string& label) {
+    StartJob(req, res, "import", source, label, [this](JobRegistry::Progress&) -> Result<json> {
+      Importer importer(config_, games_, events_);
+      auto summary = importer.Import();
+      if (!summary) return std::unexpected(summary.error());
+      SyncDesktopEntries(config_, games_);
+      for (const model::Game& game : summary->added_games) metadata_fetches_.Enqueue(config_, events_, game);
+      return json{{"added", summary->added}, {"updated", summary->updated}};
+    });
+  };
+
+  http_->Get("/v1/jobs/([A-Za-z0-9_-]+)", [this](const Request& req, Response& res) {
+    const auto job = jobs_.Find(req.matches[1].str());
+    if (!job) return SendError(res, 404, "job_not_found", "no such job, or it finished too long ago");
+    SendJson(res, *job);
+  });
+
   http_->Get("/v1/health", [](const Request&, Response& res) {
     SendJson(res, {{"status", "ok"}});
   });
@@ -621,7 +650,7 @@ void Server::RegisterRoutes() {
       } else if (!include_hidden && std::ranges::contains(game.tags, std::string("hidden"))) {
         continue;
       }
-      out.push_back(GameJson(game, supervisor_));
+      out.push_back(Record(game));
     }
     SendJson(res, std::move(out));
   });
@@ -629,7 +658,7 @@ void Server::RegisterRoutes() {
   http_->Get(R"(/v1/games/([^/]+))", [this](const Request& req, Response& res) {
     auto game = games_.Find(req.matches[1]);
     if (!game) return SendError(res, 404, "game_not_found", "no such game");
-    SendJson(res, GameJson(*game, supervisor_));
+    SendJson(res, Record(*game));
   });
 
   // The tail of mira-run's log for this game. No log yet is an empty list.
@@ -669,8 +698,8 @@ void Server::RegisterRoutes() {
     auto result = games_.Update(id, [&](model::Game& game) { game = ParseGamePatch(game, patch); });
     if (!result) return SendStoreError(res, result.error());
     SyncDesktopEntries(config_, games_);
-    events_.Publish("game.updated", GameJson(*result, supervisor_));
-    SendJson(res, GameJson(*result, supervisor_));
+    events_.Publish("game.updated", Record(*result));
+    SendJson(res, Record(*result));
   });
 
   // One save, one menu sync and one event for any number of games, so a
@@ -700,7 +729,7 @@ void Server::RegisterRoutes() {
     if (!updated) return SendStoreError(res, updated.error());
 
     json games = json::array();
-    for (const model::Game& game : *updated) games.push_back(GameJson(game, supervisor_));
+    for (const model::Game& game : *updated) games.push_back(Record(game));
     if (!updated->empty()) {
       // Tags never change a menu entry; only an override can.
       if (!config.empty()) SyncDesktopEntries(config_, games_);
@@ -730,7 +759,7 @@ void Server::RegisterRoutes() {
     if (!result) return SendStoreError(res, result.error());
     // An override can turn desktop_entries.enabled off for this game.
     SyncDesktopEntries(config_, games_);
-    SendJson(res, GameJson(*result, supervisor_));
+    SendJson(res, Record(*result));
   });
 
   http_->Delete(R"(/v1/games/([^/]+))", [this](const Request& req, Response& res) {
@@ -768,41 +797,46 @@ void Server::RegisterRoutes() {
     const bool prefix = purge || body.value("delete_prefix", false);
     const bool metadata = purge || body.value("delete_metadata", false);
 
-    std::vector<std::string> deletable;
-    json failed = json::array();
-    auto folders_lock = games_.LockFolders();
-    for (const std::string& id : *ids) {
-      const auto game = games_.Find(id);
-      if (!game) continue;
-      if (auto deleted = DeleteGameData(*game, files, prefix, metadata); !deleted) {
-        failed.push_back(BatchFailure(id, deleted.error()));
-        continue;
+    StartJob(req, res, "delete", "", "Removing games", [this, ids = *ids, files, prefix, metadata](
+                                                            JobRegistry::Progress& progress) -> Result<json> {
+      std::vector<std::string> deletable;
+      json failed = json::array();
+      auto folders_lock = games_.LockFolders();
+      int done = 0;
+      for (const std::string& id : ids) {
+        progress.Report(done++, static_cast<int>(ids.size()));
+        const auto game = games_.Find(id);
+        if (!game) continue;
+        if (auto deleted = DeleteGameData(*game, files, prefix, metadata); !deleted) {
+          failed.push_back(BatchFailure(id, deleted.error()));
+          continue;
+        }
+        deletable.push_back(id);
       }
-      deletable.push_back(id);
-    }
-
-    auto removed = games_.RemoveMany(deletable);
-    folders_lock.unlock();
-    if (!removed) return SendStoreError(res, removed.error());
-    if (!removed->empty()) {
-      SyncDesktopEntries(config_, games_);
-      events_.Publish("games.removed", {{"ids", *removed}});
-    }
-    SendJson(res, {{"removed", *removed}, {"failed", std::move(failed)}});
+      auto removed = games_.RemoveMany(deletable);
+      folders_lock.unlock();
+      if (!removed) return std::unexpected(removed.error());
+      if (!removed->empty()) {
+        SyncDesktopEntries(config_, games_);
+        events_.Publish("games.removed", {{"ids", *removed}});
+      }
+      return json{{"removed", *removed}, {"failed", std::move(failed)}};
+    });
   });
 
   // --- library ------------------------------------------------------------
 
-  http_->Post("/v1/library/scan", [this](const Request&, Response& res) {
-    library::Scanner scanner(config_, games_, events_);
-    const library::ScanSummary summary = scanner.ScanAll();
-    for (const model::Game& game : summary.added_games) metadata_fetches_.Enqueue(config_, events_, game);
-    SendJson(res, {{"added", summary.added}, {"missing", summary.missing},
-                   {"restored", summary.restored}});
+  http_->Post("/v1/library/scan", [this](const Request& req, Response& res) {
+    StartJob(req, res, "scan", "", "Scanning your library", [this](JobRegistry::Progress&) -> Result<json> {
+      library::Scanner scanner(config_, games_, events_);
+      const library::ScanSummary summary = scanner.ScanAll();
+      for (const model::Game& game : summary.added_games) metadata_fetches_.Enqueue(config_, events_, game);
+      return json{{"added", summary.added}, {"missing", summary.missing}, {"restored", summary.restored}};
+    });
   });
 
   // One game at a time, since a move can copy a whole game. Each moved game
-  // publishes its own game.updated, so a client sees progress.
+  // publishes its own game.updated.
   http_->Post("/v1/library/relocate", [this](const Request& req, Response& res) {
     const json body = req.body.empty() ? json::object() : json::parse(req.body, nullptr, false);
     const auto ids = body.is_object() ? StringList(body, "ids") : std::nullopt;
@@ -812,55 +846,67 @@ void Server::RegisterRoutes() {
     if (body.contains("ids")) {
       std::erase_if(games, [&](const model::Game& game) { return !std::ranges::contains(*ids, game.id); });
     }
-    int moved = 0;
-    json errors = json::array();
-    for (const model::Game& game : games) {
-      // Per game, so scans can run between moves.
-      auto folders_lock = games_.LockFolders();
-      auto relocated = library::Relocate(config_, game);
-      if (!relocated) {
-        log::Warn("relocate failed for {}: {}", game.id, relocated.error().message);
-        errors.push_back(BatchFailure(game.id, relocated.error()));
-        continue;
-      }
-      if (relocated->install_path == game.install_path && relocated->data_dir == game.data_dir) continue;
-      auto saved = games_.Update(game.id, [&](model::Game& g) {
-        g.install_path = relocated->install_path;
-        g.data_dir = relocated->data_dir;
-        g.updated_at = model::NowSeconds();
-      });
-      if (!saved) {
-        errors.push_back(BatchFailure(game.id, saved.error()));
-        continue;
-      }
-      events_.Publish("game.updated", GameJson(*saved, supervisor_));
-      ++moved;
-    }
-    SyncDesktopEntries(config_, games_);
-    const int failed = static_cast<int>(errors.size());
-    SendJson(res, {{"moved", moved}, {"failed", failed}, {"errors", std::move(errors)}});
+    StartJob(req, res, "relocate", "", "Moving games into Mira's folders",
+             [this, games = std::move(games)](JobRegistry::Progress& progress) -> Result<json> {
+               int moved = 0;
+               int done = 0;
+               json errors = json::array();
+               for (const model::Game& game : games) {
+                 progress.Report(done++, static_cast<int>(games.size()), game.name);
+                 // Per game, so scans can run between moves.
+                 auto folders_lock = games_.LockFolders();
+                 auto relocated = library::Relocate(config_, game);
+                 if (!relocated) {
+                   log::Warn("relocate failed for {}: {}", game.id, relocated.error().message);
+                   errors.push_back(BatchFailure(game.id, relocated.error()));
+                   continue;
+                 }
+                 if (relocated->install_path == game.install_path && relocated->data_dir == game.data_dir) continue;
+                 auto saved = games_.Update(game.id, [&](model::Game& g) {
+                   g.install_path = relocated->install_path;
+                   g.data_dir = relocated->data_dir;
+                   g.updated_at = model::NowSeconds();
+                 });
+                 if (!saved) {
+                   errors.push_back(BatchFailure(game.id, saved.error()));
+                   continue;
+                 }
+                 events_.Publish("game.updated", Record(*saved));
+                 ++moved;
+               }
+               SyncDesktopEntries(config_, games_);
+               const int failed = static_cast<int>(errors.size());
+               return json{{"moved", moved}, {"failed", failed}, {"errors", std::move(errors)}};
+             });
   });
 
   // --- steam ------------------------------------------------------------
 
-  http_->Post("/v1/steam/scan", [this](const Request&, Response& res) {
-    steam::SteamScanner scanner(config_, games_, events_);
-    auto summary = scanner.Scan();
-    if (!summary) return SendError(res, 404, summary.error());
-    SyncDesktopEntries(config_, games_);
-    for (const model::Game& game : summary->added_games) metadata_fetches_.Enqueue(config_, events_, game);
-    SendJson(res, {{"added", summary->added}, {"updated", summary->updated}});
+  http_->Post("/v1/steam/scan", [this](const Request& req, Response& res) {
+    StartJob(req, res, "import", "steam", "Importing from Steam", [this](JobRegistry::Progress&) -> Result<json> {
+      steam::SteamScanner scanner(config_, games_, events_);
+      auto summary = scanner.Scan();
+      if (!summary) return std::unexpected(summary.error());
+      SyncDesktopEntries(config_, games_);
+      for (const model::Game& game : summary->added_games) metadata_fetches_.Enqueue(config_, events_, game);
+      return json{{"added", summary->added}, {"updated", summary->updated}};
+    });
   });
 
   // --- lutris -----------------------------------------------------------
 
-  http_->Post("/v1/lutris/import", [this](const Request&, Response& res) {
-    lutris::LutrisImporter importer(config_, games_, events_);
-    auto summary = importer.Import();
-    if (!summary) return SendError(res, 404, summary.error());
-    SyncDesktopEntries(config_, games_);
-    for (const model::Game& game : summary->added_games) metadata_fetches_.Enqueue(config_, events_, game);
-    SendJson(res, {{"added", summary->added}, {"updated", summary->updated}, {"other_runner", summary->other_runner}, {"incomplete", summary->incomplete}});
+  http_->Post("/v1/lutris/import", [this](const Request& req, Response& res) {
+    StartJob(req, res, "import", "lutris", "Importing from Lutris", [this](JobRegistry::Progress&) -> Result<json> {
+      lutris::LutrisImporter importer(config_, games_, events_);
+      auto summary = importer.Import();
+      if (!summary) return std::unexpected(summary.error());
+      SyncDesktopEntries(config_, games_);
+      for (const model::Game& game : summary->added_games) metadata_fetches_.Enqueue(config_, events_, game);
+      return json{{"added", summary->added},
+                  {"updated", summary->updated},
+                  {"other_runner", summary->other_runner},
+                  {"incomplete", summary->incomplete}};
+    });
   });
 
   // --- store CLI setup ----------------------------------------------------
@@ -1006,22 +1052,20 @@ void Server::RegisterRoutes() {
     SendJson(res, {{"status", "logged_out"}});
   });
 
-  // POST <route> imports what the store's own tool reports as installed.
+  // POST <route> imports what the store's own tool reports as installed, as a job.
   // gog only looks under gog.install_root, since gogdl can't list installed games.
-  const auto register_import = [this](const char* route, auto make_importer) {
-    http_->Post(route, [this, make_importer](const Request&, Response& res) {
-      auto importer = make_importer();
-      auto summary = importer.Import();
-      if (!summary) return SendError(res, 404, summary.error());
-      SyncDesktopEntries(config_, games_);
-      for (const model::Game& game : summary->added_games) metadata_fetches_.Enqueue(config_, events_, game);
-      SendJson(res, {{"added", summary->added}, {"updated", summary->updated}});
-    });
-  };
-  register_import("/v1/epic/import", [this] { return epic::EpicImporter(config_, games_, events_); });
-  register_import("/v1/gog/import", [this] { return gog::GogImporter(config_, games_, events_); });
-  register_import("/v1/amazon/import", [this] { return amazon::AmazonImporter(config_, games_, events_); });
-  register_import("/v1/itch/import", [this] { return itch::ItchImporter(config_, games_, events_); });
+  http_->Post("/v1/epic/import", [import_job](const Request& req, Response& res) {
+    import_job(req, res, std::type_identity<epic::EpicImporter>(), "epic", "Importing from Epic Games");
+  });
+  http_->Post("/v1/gog/import", [import_job](const Request& req, Response& res) {
+    import_job(req, res, std::type_identity<gog::GogImporter>(), "gog", "Importing from GOG");
+  });
+  http_->Post("/v1/amazon/import", [import_job](const Request& req, Response& res) {
+    import_job(req, res, std::type_identity<amazon::AmazonImporter>(), "amazon", "Importing from Amazon Games");
+  });
+  http_->Post("/v1/itch/import", [import_job](const Request& req, Response& res) {
+    import_job(req, res, std::type_identity<itch::ItchImporter>(), "itch", "Importing from itch.io");
+  });
 
   // --- store launchers --------------------------------------------------
 
@@ -1052,7 +1096,7 @@ void Server::RegisterRoutes() {
     std::thread([this, launcher] {
       const auto done = launchers::Install(config_, games_, *launcher);
       if (const auto stored = games_.Find(launchers::GameId(*launcher))) {
-        events_.Publish("game.updated", GameJson(*stored, supervisor_));
+        events_.Publish("game.updated", Record(*stored));
       }
       if (!done) {
         events_.Publish("launcher.install.failed", {{"id", launcher->id}, {"error", done.error().message}});
@@ -1070,11 +1114,14 @@ void Server::RegisterRoutes() {
   http_->Post(R"(/v1/launchers/([^/]+)/import)", [this](const Request& req, Response& res) {
     const launchers::Launcher* launcher = launchers::Find(req.matches[1].str());
     if (!launcher) return SendError(res, 404, "launcher_not_found", "no such launcher");
-    const auto summary = launchers::Import(config_, games_, events_, *launcher);
-    if (!summary) return SendError(res, 409, summary.error());
-    SyncDesktopEntries(config_, games_);
-    for (const model::Game& game : summary->added_games) metadata_fetches_.Enqueue(config_, events_, game);
-    SendJson(res, {{"added", summary->added}, {"updated", summary->updated}});
+    StartJob(req, res, "import", launcher->id, "Importing from " + launcher->name,
+             [this, launcher](JobRegistry::Progress&) -> Result<json> {
+               const auto summary = launchers::Import(config_, games_, events_, *launcher);
+               if (!summary) return std::unexpected(summary.error());
+               SyncDesktopEntries(config_, games_);
+               for (const model::Game& game : summary->added_games) metadata_fetches_.Enqueue(config_, events_, game);
+               return json{{"added", summary->added}, {"updated", summary->updated}};
+             });
   });
 
   http_->Post(R"(/v1/launchers/([^/]+)/open)", [this](const Request& req, Response& res) {
@@ -1148,10 +1195,16 @@ void Server::RegisterRoutes() {
   });
 
   http_->Post(R"(/v1/sources/([a-z]+)/remove)", [this](const Request& req, Response& res) {
-    auto removed = library::RemoveSource(config_, games_, events_, req.matches[1].str());
-    if (!removed) return SendError(res, 404, removed.error());
-    SyncDesktopEntries(config_, games_);
-    SendJson(res, {{"removed", removed->removed}, {"problems", removed->problems}});
+    const std::string source = req.matches[1].str();
+    // Checked now, so an unknown source is a 404 rather than a failed job.
+    if (auto plan = library::PlanRemoval(config_, games_, source); !plan) return SendError(res, 404, plan.error());
+    StartJob(req, res, "remove_source", source, "Removing " + source,
+             [this, source](JobRegistry::Progress&) -> Result<json> {
+               auto removed = library::RemoveSource(config_, games_, events_, source);
+               if (!removed) return std::unexpected(removed.error());
+               SyncDesktopEntries(config_, games_);
+               return json{{"removed", removed->removed}, {"problems", removed->problems}};
+             });
   });
 
   const auto send_source_runner = [](Response& res, const Result<library::SourceRunner>& runner) {
@@ -1176,7 +1229,7 @@ void Server::RegisterRoutes() {
                                                  body.value("apply_to_games", false));
     if (runner) {
       for (const std::string& id : runner->changed) {
-        if (const auto game = games_.Find(id)) events_.Publish("game.updated", GameJson(*game, supervisor_));
+        if (const auto game = games_.Find(id)) events_.Publish("game.updated", Record(*game));
       }
     }
     send_source_runner(res, runner);
@@ -1473,8 +1526,8 @@ void Server::RegisterRoutes() {
 
     SyncDesktopEntries(config_, games_);
     if (!existing) metadata_fetches_.Enqueue(config_, events_, game);
-    events_.Publish(existing ? "game.updated" : "game.added", GameJson(game, supervisor_));
-    SendJson(res, GameJson(game, supervisor_));
+    events_.Publish(existing ? "game.updated" : "game.added", Record(game));
+    SendJson(res, Record(game));
   });
 
   // --- launching ------------------------------------------------------------
@@ -1661,7 +1714,7 @@ void Server::RegisterRoutes() {
       // A client that missed the exit gets told it's stopped instead of an error.
       if (stopped.error().code == "not_running") {
         if (const auto game = games_.Find(req.matches[1])) {
-          json event = GameJson(*game, supervisor_);
+          json event = Record(*game);
           event["state"] = "idle";
           events_.Publish("game.state", std::move(event));
           return SendJson(res, {{"status", "not_running"}});
@@ -1796,10 +1849,10 @@ void Server::RegisterRoutes() {
                                          installer);
       if (done) {
         SyncDesktopEntries(config_, games_);
-        events_.Publish("game.updated", GameJson(*done, supervisor_));
+        events_.Publish("game.updated", Record(*done));
         events_.Publish("game.install.finished", {{"id", id}});
       } else {
-        if (const auto stored = games_.Find(id)) events_.Publish("game.updated", GameJson(*stored, supervisor_));
+        if (const auto stored = games_.Find(id)) events_.Publish("game.updated", Record(*stored));
         json failed = {{"id", id}, {"error", done.error().message}};
         AddHintAndFix(failed, done.error());
         events_.Publish("game.install.failed", std::move(failed));
@@ -1832,8 +1885,8 @@ void Server::RegisterRoutes() {
     });
     if (!result) return SendStoreError(res, result.error());
     SyncDesktopEntries(config_, games_);
-    events_.Publish("game.updated", GameJson(*result, supervisor_));
-    SendJson(res, GameJson(*result, supervisor_));
+    events_.Publish("game.updated", Record(*result));
+    SendJson(res, Record(*result));
   });
 
   http_->Post(R"(/v1/games/([^/]+)/relocate)", [this](const Request& req, Response& res) {
@@ -1854,20 +1907,23 @@ void Server::RegisterRoutes() {
       }
     }
 
-    auto folders_lock = games_.LockFolders();
-    auto relocated = library::Relocate(config_, *game, request);
-    if (!relocated) return SendError(res, 400, relocated.error());
-
-    auto saved = games_.Update(game->id, [&](model::Game& g) {
-      g.install_path = relocated->install_path;
-      g.data_dir = relocated->data_dir;
-      g.updated_at = model::NowSeconds();
-    });
-    folders_lock.unlock();
-    if (!saved) return SendError(res, 404, saved.error());
-    SyncDesktopEntries(config_, games_);
-    events_.Publish("game.updated", GameJson(*saved, supervisor_));
-    SendJson(res, GameJson(*saved, supervisor_));
+    StartJob(req, res, "relocate", game->id, "Moving " + game->name,
+             [this, game = *game, request](JobRegistry::Progress&) -> Result<json> {
+               auto folders_lock = games_.LockFolders();
+               auto relocated = library::Relocate(config_, game, request);
+               if (!relocated) return std::unexpected(relocated.error());
+               auto saved = games_.Update(game.id, [&](model::Game& g) {
+                 g.install_path = relocated->install_path;
+                 g.data_dir = relocated->data_dir;
+                 g.updated_at = model::NowSeconds();
+               });
+               folders_lock.unlock();
+               if (!saved) return std::unexpected(saved.error());
+               SyncDesktopEntries(config_, games_);
+               json record = Record(*saved);
+               events_.Publish("game.updated", record);
+               return record;
+             });
   });
 
   http_->Post(R"(/v1/games/([^/]+)/tricks)", [this](const Request& req, Response& res) {
@@ -2068,29 +2124,26 @@ void Server::RegisterRoutes() {
     SendJson(res, {{"status", "fetching"}, {"steamgriddb_id", id}}, 202);
   });
 
-  // POST /v1/games/{id}/metadata/refresh for many games in one request, unannounced.
+  // POST /v1/games/{id}/metadata/refresh for many games in one request, unannounced, as a job.
   http_->Post("/v1/games/metadata/refresh", [this](const Request& req, Response& res) {
     const json body = json::parse(req.body, nullptr, false);
     const auto ids = body.is_object() ? StringList(body, "ids") : std::nullopt;
     if (!ids) return SendError(res, 400, "invalid_body", R"(expected {"ids": [...]})");
-    std::size_t count = 0;
+    std::vector<model::Game> games;
     for (const std::string& id : *ids) {
-      const auto game = games_.Find(id);
-      if (!game) continue;
-      metadata_fetches_.Enqueue(config_, events_, *game, /*force=*/true);
-      ++count;
+      if (auto game = games_.Find(id)) games.push_back(std::move(*game));
     }
-    SendJson(res, {{"status", "fetching"}, {"count", count}}, 202);
+    StartJob(req, res, "metadata", "", "Refreshing metadata",
+             [this, games = std::move(games)](JobRegistry::Progress& progress) { return RefreshMetadata(games, progress); });
   });
 
-  http_->Post("/v1/games/metadata/refresh-missing", [this](const Request&, Response& res) {
-    std::size_t count = 0;
+  http_->Post("/v1/games/metadata/refresh-missing", [this](const Request& req, Response& res) {
+    std::vector<model::Game> games;
     for (const model::Game& game : games_.All()) {
-      if (HasCachedArtwork(config_, game.id)) continue;
-      metadata_fetches_.Enqueue(config_, events_, game, /*force=*/true);
-      ++count;
+      if (!HasCachedArtwork(config_, game.id)) games.push_back(game);
     }
-    SendJson(res, {{"status", "fetching"}, {"count", count}}, 202);
+    StartJob(req, res, "metadata", "", "Fetching missing cover art",
+             [this, games = std::move(games)](JobRegistry::Progress& progress) { return RefreshMetadata(games, progress); });
   });
 
   // --- runners --------------------------------------------------------------
@@ -2296,6 +2349,48 @@ void Server::RegisterRoutes() {
   });
 }
 
+void Server::StartJob(const Request& req, Response& res, const std::string& kind, const std::string& target,
+                      const std::string& label, JobRegistry::Work work) {
+  const std::string id = jobs_.Start(kind, target, label, std::move(work), req.get_param_value("job"));
+  SendJson(res, {{"status", "running"}, {"job", id}}, 202);
+}
+
+Result<json> Server::RefreshMetadata(std::vector<model::Game> games, JobRegistry::Progress& progress) {
+  struct Tally {
+    std::mutex mutex;
+    std::condition_variable changed;
+    int done = 0;
+    int failed = 0;
+  };
+  const auto tally = std::make_shared<Tally>();
+  const int total = static_cast<int>(games.size());
+  progress.Report(0, total);
+  for (model::Game& game : games) {
+    metadata_fetches_.Enqueue(config_, events_, std::move(game), /*force=*/true, /*announce=*/false,
+                              [tally](bool ok) {
+                                std::lock_guard lock(tally->mutex);
+                                ++tally->done;
+                                if (!ok) ++tally->failed;
+                                tally->changed.notify_all();
+                              });
+  }
+  std::unique_lock lock(tally->mutex);
+  int reported = 0;
+  while (tally->done < total) {
+    // Polled, so quitting mid-refresh doesn't wait out every fetch still queued.
+    if (stopping_.load(std::memory_order_relaxed)) {
+      return Err("shutting_down", "mirad stopped before the refresh finished");
+    }
+    tally->changed.wait_for(lock, std::chrono::milliseconds(250));
+    if (tally->done == reported) continue;
+    reported = tally->done;
+    lock.unlock();
+    progress.Report(reported, total);
+    lock.lock();
+  }
+  return json{{"refreshed", total - tally->failed}, {"failed", tally->failed}};
+}
+
 Result<void> Server::DeleteGameData(const model::Game& game, bool files, bool prefix, bool metadata) {
   // A desktop-entry import only links to another app's own files.
   if (game.source == "desktop-entry") files = prefix = false;
@@ -2353,7 +2448,7 @@ void Server::InstallRunnerAsync(const std::string& kind, const std::string& sour
         for (const model::Game& game : games_.All()) {
           if (game.runner_ref != replacing) continue;
           if (auto updated = games_.Update(game.id, [&](model::Game& g) { g.runner_ref = to; })) {
-            moved.push_back(GameJson(*updated, supervisor_));
+            moved.push_back(Record(*updated));
           }
         }
         if (config_.GetString("default_runner.windows") == replacing) (void)config_.Set("default_runner.windows", to);

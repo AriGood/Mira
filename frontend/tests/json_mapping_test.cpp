@@ -34,6 +34,24 @@ TEST_CASE("ToGameSummary reads the fields a library row shows") {
   CHECK(game.play_seconds == 4210);
 }
 
+TEST_CASE("A record's art tells a game with no art apart from one that didn't say") {
+  const GameSummary with = mapping::ToGameSummary(json::parse(R"({"id": "x", "art": {"cover": "a1-2", "hero": 3}})"));
+  REQUIRE(with.art.has_value());
+  CHECK(with.art->at("cover") == "a1-2");
+  CHECK_FALSE(with.art->contains("hero"));  // not a version
+
+  const GameSummary none = mapping::ToGameSummary(json::parse(R"({"id": "x", "art": {}})"));
+  REQUIRE(none.art.has_value());
+  CHECK(none.art->empty());
+
+  CHECK_FALSE(mapping::ToGameSummary(json::parse(R"({"id": "x"})")).art.has_value());
+
+  MetadataEvent event;
+  REQUIRE(MiradClient::ParseMetadataEvent(R"({"id": "x", "art": {"cover": "b"}})", &event));
+  REQUIRE(event.art.has_value());
+  CHECK(event.art->at("cover") == "b");
+}
+
 TEST_CASE("ToGameSummary tolerates a record missing every optional field") {
   // mirad omits nothing today, but a summary is also built from an SSE
   // payload, and a trimmed event must not produce garbage: every absent

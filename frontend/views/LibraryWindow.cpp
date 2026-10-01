@@ -54,7 +54,6 @@
 #include "../client/MiradClient.h"
 #include "../dialogs/AddManualGameDialog.h"
 #include "../dialogs/DesktopEntryImportDialog.h"
-#include "../dialogs/GameDetailDialog.h"
 #include "../dialogs/GameDetailPageDialog.h"
 #include "../dialogs/ManageSourcesDialog.h"
 
@@ -63,7 +62,7 @@
 #include "../ui/DaemonSupervisor.h"
 #include "../ui/DownloadTracker.h"
 #include "../ui/DownloadsPanel.h"
-#include "../ui/EventHub.h"
+#include "../client/EventHub.h"
 #include "../ui/GameActions.h"
 #include "../ui/GameEditForm.h"
 #include "../ui/GamePresentation.h"
@@ -86,6 +85,7 @@
 #include "../ui/Tray.h"
 #include "RunnersPage.h"
 #include "SourcePage.h"
+#include "SourceSettingsCard.h"
 
 // setViewportMargins is protected on QAbstractScrollArea; this republishes
 // it so ApplyLayoutTokens() can pad the tiles without also insetting the
@@ -559,6 +559,8 @@ void LibraryWindow::BuildShortcuts() {
     if (GameEditOpen()) {
       if (ArtPickerOpen()) {
         CloseArtPicker();
+      } else if (game_edit_form_->AdvancedOpen()) {
+        game_edit_form_->CloseAdvanced();
       } else {
         RequestCloseGameEdit();
       }
@@ -610,8 +612,7 @@ void LibraryWindow::BuildShortcuts() {
   window_action("settings", "Settings", QKeySequence(Qt::CTRL | Qt::Key_Comma), {},
                [this] { OpenSettings(); });
   // F5 is the platform's own Refresh; Ctrl+R is the one every browser
-  // taught, and a second binding costs nothing. Shared id with MainWindow's
-  // own refresh action -- editing either in Settings updates both.
+  // taught, and a second binding costs nothing.
   window_action("refresh", "Refresh the library", QKeySequence(QKeySequence::Refresh),
                {QKeySequence(Qt::CTRL | Qt::Key_R)},
                [this] { Reload(/*force_scan=*/true); });
@@ -713,6 +714,7 @@ mira_gui::FrontendPrefs LibraryWindow::LayoutPrefs() const {
 
 void LibraryWindow::resizeEvent(QResizeEvent* event) {
   QMainWindow::resizeEvent(event);
+  SizeGameEditCard(game_edit_card_);
   ScheduleSavePrefs();
 }
 
@@ -907,6 +909,10 @@ void LibraryWindow::closeEvent(QCloseEvent* event) {
     return;
   }
 
+  if (!ConfirmLeaveSource([this] { close(); })) {
+    event->ignore();
+    return;
+  }
   const bool settings_dirty = settings_panel_ != nullptr && settings_panel_->IsDirty();
   const bool game_dirty =
       game_edit_form_ != nullptr && GameEditOpen() && game_edit_form_->IsDirty();
@@ -953,8 +959,8 @@ void LibraryWindow::OpenRunners() {
     UpdateLibraryNavActive();
     return;
   }
+  if (source_page_ != nullptr && !CloseSource([this] { OpenRunners(); })) return;
   if (ClassicShown()) CloseClassicView();
-  if (source_page_ != nullptr) CloseSource();
   runners_page_ = new mira_gui::RunnersPage(downloads_, this);
   runners_page_->SetGames(library_->Games());
   main_stack_->addWidget(runners_page_);
@@ -1136,7 +1142,7 @@ QWidget* LibraryWindow::BuildTopBar() {
 
   downloads_button_ = new QToolButton(top_bar_);
   downloads_button_->setAutoRaise(true);
-  downloads_button_->setToolTip("Downloads");
+  downloads_button_->setToolTip("Activity");
   // Its count's text is taller than the icon; the bar shouldn't grow for it.
   downloads_button_->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Ignored);
   connect(downloads_button_, &QToolButton::clicked, this,
@@ -1731,21 +1737,19 @@ void LibraryWindow::ShowSteamGridDbNotice(bool asked_for, const mira_gui::ApiErr
 }
 
 void LibraryWindow::FetchMissingArtwork() {
-  // One request for the whole library; mirad decides what's missing.
-  mira_gui::MiradClient::RefreshMissingArtworkAsync(
-      this, [this](mira_gui::RefreshMissingArtworkResult result) {
-        if (!result.ok) {
-          mira_gui::notify::FailedRequest(this, "Could not fetch missing cover art.", result.error);
-          return;
-        }
-        if (result.count == 0) {
-          mira_gui::notify::Notice(this, "Every game already has cover art.");
-          return;
-        }
-        // No notice: covers appear as they arrive. Asked-for, though, so a
-        // missing SteamGridDB key is worth saying (ShowSteamGridDbNotice).
-        artwork_fetch_requested_ = true;
-      });
+  // One job for the whole library; mirad decides what's missing, and Activity shows it going.
+  // Asked for, so a missing SteamGridDB key is worth saying (ShowSteamGridDbNotice).
+  artwork_fetch_requested_ = true;
+  mira_gui::MiradClient::RefreshMissingArtworkAsync(this, [this](mira_gui::MetadataBatchResult result) {
+    artwork_fetch_requested_ = false;
+    if (!result.ok) {
+      mira_gui::notify::FailedRequest(this, "Could not fetch missing cover art.", result.error);
+    } else if (result.refreshed + result.failed == 0) {
+      mira_gui::notify::Notice(this, "Every game already has cover art.");
+    } else {
+      mira_gui::notify::Notice(this, mira_gui::BatchRefreshSummary(result));
+    }
+  });
 }
 
 void LibraryWindow::RefreshMetadata(const std::string& id, bool announce) {
@@ -1785,6 +1789,8 @@ void LibraryWindow::RefreshGames() {
       return;
     }
     loaded_ = true;
+    // Before the tiles paint, so a game without art is never asked for it.
+    for (const mira_gui::GameSummary& game : result.games) artwork_->NoteArt(game.id, game.art);
     library_->Replace(result.games);
   });
 }
@@ -1802,6 +1808,7 @@ void LibraryWindow::ConnectionChanged(bool connected) {
   if (std::exchange(stream_dropped_, false)) {
     RefreshGames();
     RefreshSourceNavs();
+    downloads_->RecheckJobs();
   }
 }
 
@@ -1884,7 +1891,10 @@ const mira_gui::GameSummary* LibraryWindow::FindGame(const std::string& id) cons
 void LibraryWindow::UpsertGames(const std::vector<mira_gui::GameSummary>& games) {
   // A rename changes the placeholder's initials, so the rendered tile is
   // stale even though the fetched artwork behind it isn't.
-  for (const mira_gui::GameSummary& game : games) artwork_->InvalidateRendering(game.id);
+  for (const mira_gui::GameSummary& game : games) {
+    artwork_->InvalidateRendering(game.id);
+    artwork_->NoteArt(game.id, game.art);
+  }
   library_->Upsert(games);
 }
 
@@ -2099,9 +2109,13 @@ void LibraryWindow::ShowBatchMenu(const std::vector<std::string>& ids, const QPo
   QAction* chosen = menu.exec(global_pos);
   if (chosen == nullptr) return;  // dismissed; also keeps it from matching an action left out above
   if (chosen == refresh_metadata) {
-    // No notice: covers visibly update as each fetch lands.
-    mira_gui::MiradClient::RefreshMetadataManyAsync(this, ids, [this](mira_gui::MetadataRefreshResult result) {
-      if (!result.ok) mira_gui::notify::FailedRequest(this, "Could not refresh metadata.", result.error);
+    // Activity shows it going; a notice sums it up at the end.
+    mira_gui::MiradClient::RefreshMetadataManyAsync(this, ids, [this](mira_gui::MetadataBatchResult result) {
+      if (!result.ok) {
+        mira_gui::notify::FailedRequest(this, "Could not refresh metadata.", result.error);
+      } else {
+        mira_gui::notify::Notice(this, mira_gui::BatchRefreshSummary(result));
+      }
     });
   } else if (chosen == pin || chosen == unpin) {
     BatchSetTag(ids, kPinnedTag, chosen == pin);
@@ -2224,7 +2238,8 @@ void LibraryWindow::OpenArtPicker(const std::string& slot) {
     game_edit_picker_ = new mira_gui::ArtPickerPanel(game_edit_form_->id(), game_edit_stack_);
     game_edit_stack_->addWidget(game_edit_picker_);
     connect(game_edit_picker_, &mira_gui::ArtPickerPanel::Previewed, this,
-            [this](const QString& preview_slot, const QPixmap& preview) {              game_edit_backdrop_->SetPreview(preview_slot, preview);
+            [this](const QString& preview_slot, const QPixmap& preview) {
+              game_edit_backdrop_->SetPreview(preview_slot, preview);
               if (preview_slot == "cover") game_edit_cover_->SetPreview(preview);
             });
     // The footer is the picker's only while it's open; an apply can land after.
@@ -2235,7 +2250,8 @@ void LibraryWindow::OpenArtPicker(const std::string& slot) {
       if (ArtPickerOpen()) game_edit_save_->click();
     });
     connect(game_edit_picker_, &mira_gui::ArtPickerPanel::ApplyFailed, this,
-            [this](const QString& failed_slot, const QString& error) {              if (game_edit_backdrop_ != nullptr) game_edit_backdrop_->SetPreview(failed_slot, QPixmap());
+            [this](const QString& failed_slot, const QString& error) {
+              if (game_edit_backdrop_ != nullptr) game_edit_backdrop_->SetPreview(failed_slot, QPixmap());
               if (game_edit_cover_ != nullptr && failed_slot == "cover") game_edit_cover_->SetPreview(QPixmap());
               mira_gui::notify::Failed(this, "Could not change the art.", error);
             });
@@ -2261,7 +2277,7 @@ void LibraryWindow::CloseArtPicker(bool applied) {
   game_edit_hero_button_->setChecked(false);
   game_edit_cover_button_->setChecked(false);
   game_edit_back_->setText("← Back");
-  game_edit_advanced_->show();
+  game_edit_advanced_->setVisible(!game_edit_form_->AdvancedOpen());
   game_edit_save_->setText("Save");
   game_edit_save_->setEnabled(true);
   game_edit_stack_->setCurrentIndex(0);
@@ -2481,7 +2497,8 @@ QWidget* LibraryWindow::BuildSettingsPage() {
   actions_layout->setSpacing(6);
   auto* back = new QPushButton("← Back", actions);
   connect(back, &QPushButton::clicked, this, &LibraryWindow::RequestCloseSettings);
-  auto* reset = new QPushButton("Reset", actions);
+  // Not "Reset": each setting's own Reset button already means "back to the default".
+  auto* reset = new QPushButton("Discard", actions);
   reset->setToolTip("Discard unsaved changes and go back to the last saved settings.");
   connect(reset, &QPushButton::clicked, this, [this] {
     if (settings_panel_ != nullptr) settings_panel_->DiscardChanges();
@@ -2520,6 +2537,11 @@ QWidget* LibraryWindow::BuildGameEditOverlay() {
   return overlay;
 }
 
+// ~70% of the window, following it as it resizes.
+void LibraryWindow::SizeGameEditCard(QWidget* card) {
+  if (card != nullptr) card->setFixedSize(qRound(width() * 0.7), qRound(height() * 0.7));
+}
+
 QWidget* LibraryWindow::BuildGameEditCard(const std::string& id) {
   const mira_gui::theme::Tokens& tokens = mira_gui::theme::Current();
   const mira_gui::GameSummary* game = FindGame(id);
@@ -2529,9 +2551,7 @@ QWidget* LibraryWindow::BuildGameEditCard(const std::string& id) {
   game_edit_backdrop_ = new mira_gui::HeroBackdrop(artwork_);
   QWidget* card = game_edit_backdrop_;
   if (game != nullptr) game_edit_backdrop_->ShowGame(*game);
-  // ~70% of the window, not a hardcoded constant -- recomputed per open
-  // since the window can resize between edits.
-  card->setFixedSize(qRound(width() * 0.7), qRound(height() * 0.7));
+  SizeGameEditCard(card);
 
   auto* layout = new QVBoxLayout(card);
   layout->setContentsMargins(0, 0, 0, 0);
@@ -2671,6 +2691,8 @@ QWidget* LibraryWindow::BuildGameEditCard(const std::string& id) {
   connect(back, &QPushButton::clicked, this, [this] {
     if (ArtPickerOpen()) {
       CloseArtPicker();
+    } else if (game_edit_form_->AdvancedOpen()) {
+      game_edit_form_->CloseAdvanced();
     } else {
       RequestCloseGameEdit();
     }
@@ -2687,6 +2709,9 @@ QWidget* LibraryWindow::BuildGameEditCard(const std::string& id) {
   auto* advanced = new QPushButton("Advanced settings…", footer);
   advanced->setToolTip("Per-game overrides of the global settings.");
   connect(advanced, &QPushButton::clicked, game_edit_form_, &mira_gui::GameEditForm::OpenAdvanced);
+  // Back steps out of the overrides first, as it does out of the art picker.
+  connect(game_edit_form_, &mira_gui::GameEditForm::AdvancedChanged, advanced,
+          [advanced](bool open) { advanced->setVisible(!open); });
   game_edit_back_ = back;
   game_edit_advanced_ = advanced;
   game_edit_save_ = save;
@@ -2708,6 +2733,7 @@ bool LibraryWindow::LeaveOverlays() {
 
 void LibraryWindow::OpenSource(const mira_gui::SourceInfo& source) {
   if (!LeaveOverlays()) return;
+  if (!ConfirmLeaveSource([this, source] { OpenSource(source); })) return;
   if (ClassicShown()) CloseClassicView();
   CloseRunners();
   if (source_page_ != nullptr) {
@@ -2725,6 +2751,7 @@ void LibraryWindow::OpenSource(const mira_gui::SourceInfo& source) {
   connect(source_page_, &mira_gui::SourcePage::OpenSettingsRequested, this,
           [this](const QString& key) { OpenSettings(key); });
   connect(source_page_, &mira_gui::SourcePage::Removed, this, [this, id = source.id] {
+    if (mira_gui::SourceSettingsCard* card = source_page_->SettingsCard()) card->Discard();
     CloseSource();
     ForgetSource(id);
   });
@@ -2755,7 +2782,34 @@ void LibraryWindow::OpenSource(const mira_gui::SourceInfo& source) {
   UpdateLibraryNavActive();
 }
 
-void LibraryWindow::CloseSource() {
+bool LibraryWindow::ConfirmLeaveSource(std::function<void()> retry) {
+  mira_gui::SourceSettingsCard* card = source_page_ != nullptr ? source_page_->SettingsCard() : nullptr;
+  if (card == nullptr || !card->IsDirty()) return true;
+  const mira_gui::notify::UnsavedAction action =
+      mira_gui::notify::ConfirmUnsaved(this, "This source's settings changed but aren't saved.");
+  // The nav row that was clicked checked itself; staying put unchecks it.
+  UpdateLibraryNavActive();
+  switch (action) {
+    case mira_gui::notify::UnsavedAction::Cancel:
+      return false;
+    case mira_gui::notify::UnsavedAction::SaveAndExit:
+      // A failed save stays on the page, with its error on the card.
+      connect(card, &mira_gui::SourceSettingsCard::SaveFinished, this,
+              [retry = std::move(retry)](bool ok) {
+                if (ok) retry();
+              },
+              Qt::SingleShotConnection);
+      card->Save();
+      return false;
+    case mira_gui::notify::UnsavedAction::DiscardAndExit:
+      return true;
+  }
+  return true;
+}
+
+bool LibraryWindow::CloseSource(std::function<void()> retry) {
+  if (!retry) retry = [this] { CloseSource(); };
+  if (!ConfirmLeaveSource(std::move(retry))) return false;
   main_stack_->setCurrentWidget(grid_page_);
   if (source_page_ != nullptr) {
     main_stack_->removeWidget(source_page_);
@@ -2765,6 +2819,7 @@ void LibraryWindow::CloseSource() {
   SetSourceControlsEnabled(true);
   UpdateLibraryNavActive();
   RefreshSourceNavs();  // a sign-in or launcher install there changes the order
+  return true;
 }
 
 // The grid's search and filter leave with its page; the slider is SyncZoom's.
@@ -2794,8 +2849,8 @@ void LibraryWindow::DownloadChanged(const QString& key) {
   const int running = downloads_->RunningCount();
   downloads_button_->setText(running > 0 ? QString::number(running) : QString());
   downloads_button_->setToolButtonStyle(running > 0 ? Qt::ToolButtonTextBesideIcon : Qt::ToolButtonIconOnly);
-  downloads_button_->setToolTip(running == 0 ? QString("Downloads")
-                                             : QString("Downloads: %1 running").arg(running));
+  downloads_button_->setToolTip(running == 0 ? QString("Activity")
+                                             : QString("Activity: %1 running").arg(running));
 
   // That game's row repaints with its new install text.
   if (key.startsWith("game:")) library_->Touch(key.mid(5).toStdString());
@@ -2804,8 +2859,8 @@ void LibraryWindow::DownloadChanged(const QString& key) {
 void LibraryWindow::ShowGame(const std::string& id) {
   if (SettingsOpen()) RequestCloseSettings();
   if (GameEditOpen()) RequestCloseGameEdit();
+  if (source_page_ != nullptr && !CloseSource([this, id] { ShowGame(id); })) return;
   if (ClassicShown()) CloseClassicView();
-  if (source_page_ != nullptr) CloseSource();
   CloseRunners();
   if (const QModelIndex tile = grid_games_->mapFromSource(library_->IndexOf(id)); tile.isValid()) {
     grid_->setCurrentIndex(tile);  // ClearAndSelect: this game alone
@@ -3128,6 +3183,12 @@ void LibraryWindow::FillSidebarSection(QLabel* heading, QVBoxLayout* layout,
   // first: a popup's nested event loop would otherwise keep it painted.
   while (QLayoutItem* item = layout->takeAt(0)) {
     if (QWidget* row = item->widget()) {
+      // The hovered row is going away without a Leave, so its card would stay up.
+      if (row == recent_hover_row_) {
+        if (recent_hover_ != nullptr) recent_hover_->stop();
+        recent_hover_row_ = nullptr;
+        ShowHoverCard(QModelIndex());
+      }
       row->hide();
       row->deleteLater();
     }
@@ -3249,7 +3310,7 @@ void LibraryWindow::ShowLibrary() {
 
 // Filter, sort and search apply to the table too; only tile size doesn't.
 void LibraryWindow::OpenClassicView() {
-  if (source_page_ != nullptr) CloseSource();
+  if (source_page_ != nullptr && !CloseSource([this] { OpenClassicView(); })) return;
   CloseRunners();
   ShowHoverCard(QModelIndex());
   main_stack_->setCurrentWidget(classic_page_);
@@ -3320,11 +3381,12 @@ void LibraryWindow::HandleGameEvent(const std::string& type, const std::string& 
     mira_gui::NotificationEvent event;
     if (live && mira_gui::MiradClient::ParseNotification(data, &event)) {
       const QString message = QString::fromStdString(event.message);
+      // Only an error stays until dismissed; a warning ("no metadata found") is an answer, not an alarm.
       const auto level = mira_gui::notify::LevelFromString(QString::fromStdString(event.level));
-      if (level == mira_gui::notify::Level::Warning || level == mira_gui::notify::Level::Error) {
+      if (level == mira_gui::notify::Level::Error) {
         mira_gui::notify::Warn(this, message);
       } else {
-        mira_gui::notify::Notice(this, message);
+        mira_gui::notify::Notice(this, message, level);
       }
     }
     return;
@@ -3392,12 +3454,9 @@ void LibraryWindow::HandleGameEvent(const std::string& type, const std::string& 
     // History's outcomes are already in what the grid fetched at startup.
     mira_gui::MetadataEvent event;
     if (!live || !mira_gui::MiradClient::ParseMetadataEvent(data, &event)) return;
-    if (type == "game.metadata_ready") {
-      // Only the artwork is refetched here; the rest of the metadata isn't
-      // part of the game record, so nothing else in the library view changes.
-      artwork_->Invalidate(event.id);
-      return;
-    }
+    // The cover is fetched again only if this one changed it.
+    artwork_->NoteArt(event.id, event.art);
+    if (type == "game.metadata_ready") return;
     // The one failure worth interrupting for: it's fixable and never
     // transient: no SteamGridDB key means every non-Steam game keeps its
     // placeholder forever.
@@ -3417,7 +3476,7 @@ void LibraryWindow::HandleGameEvent(const std::string& type, const std::string& 
     mira_gui::ArtworkSelectEvent event;
     if (!live || !mira_gui::MiradClient::ParseArtworkSelectEvent(data, &event)) return;
     if (event.slot == "cover") {
-      artwork_->Invalidate(event.id);
+      artwork_->NoteArt(event.id, event.art);
     } else if (event.slot == "hero") {
       if (game_edit_form_ != nullptr) game_edit_form_->RefreshBanner(event.id);
       if (game_edit_backdrop_ != nullptr) game_edit_backdrop_->RefreshHero(event.id);

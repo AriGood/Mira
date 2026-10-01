@@ -3,6 +3,7 @@
 #include <atomic>
 #include <condition_variable>
 #include <deque>
+#include <functional>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -28,9 +29,12 @@ public:
   // should work even with automatic fetching turned off. `announce`
   // publishes a "notification" event on failure. Set for a user-initiated
   // fetch, left off for a background/bulk one so a fresh scan's fetches
-  // don't each pop one. Success needs none: the cover changes.
+  // don't each pop one. Success needs none: the cover changes. `done` runs on
+  // a worker once this game's fetch ends, with whether it worked; a fetch
+  // dropped at shutdown never calls it.
+  using Done = std::function<void(bool ok)>;
   void Enqueue(const config::Config& config, api::EventBus& events, model::Game game, bool force = false,
-               bool announce = false);
+               bool announce = false, Done done = nullptr);
 
   // Store titles not installed yet, cover only (FetchCover). Each game is
   // synthetic: id "<source>-<ref>", the id it gets once installed. Publishes
@@ -46,6 +50,7 @@ private:
     model::Game game;
     bool title = false;
     bool announce = false;
+    std::vector<Done> done;  // one per Enqueue merged into this job
   };
 
   static constexpr int kWorkers = 3;
@@ -53,7 +58,8 @@ private:
   // Starts workers up to kWorkers while there's work for them. Needs mutex_.
   void StartWorkers(const config::Config& config, api::EventBus& events);
   void Work(const config::Config& config, api::EventBus& events);
-  static void Run(const config::Config& config, api::EventBus& events, const Job& job);
+  // Whether the fetch worked.
+  static bool Run(const config::Config& config, api::EventBus& events, const Job& job);
 
   std::mutex mutex_;
   std::condition_variable idle_;

@@ -7,9 +7,11 @@
 #include <thread>
 
 #include "api/EventBus.h"
+#include "api/Jobs.h"
 #include "config/Config.h"
 #include "core/BackgroundQueue.h"
 #include "core/Result.h"
+#include "metadata/ArtIndex.h"
 #include "metadata/FetchQueue.h"
 #include "proc/ProcessSupervisor.h"
 #include "runner/Downloader.h"
@@ -20,6 +22,8 @@
 // translation unit that wires up a daemon.
 namespace httplib {
 class Server;
+struct Request;
+struct Response;
 }
 
 namespace mira::api {
@@ -58,18 +62,30 @@ private:
   // With `replacing` ("kind:name"), games and the default using it move over.
   void InstallRunnerAsync(const std::string& kind, const std::string& source, const runner::ReleaseAsset& asset,
                           const std::string& replacing);
+  // Runs `work` as a job and answers 202 {status, job}. The request's ?job=
+  // names the job, so its client can listen for it before this reply lands.
+  void StartJob(const httplib::Request& req, httplib::Response& res, const std::string& kind,
+                const std::string& target, const std::string& label, JobRegistry::Work work);
+  // Queues a full metadata fetch for each game and reports as each finishes,
+  // for a job: {refreshed, failed} once all have.
+  Result<nlohmann::json> RefreshMetadata(std::vector<model::Game> games, JobRegistry::Progress& progress);
   // Deletes what DELETE /v1/games/{id} was asked to, before the game itself is removed.
   Result<void> DeleteGameData(const model::Game& game, bool files, bool prefix, bool metadata);
+  // A game as the API shows it: model::ToJson plus `running` and `art`.
+  nlohmann::json Record(const model::Game& game);
 
   config::Config& config_;
   store::GameStore& games_;
   EventBus& events_;
   std::unique_ptr<httplib::Server> http_;
   proc::ProcessSupervisor supervisor_;
+  metadata::ArtIndex art_index_{config_};
   metadata::FetchQueue metadata_fetches_;
   BackgroundQueue tricks_queue_;
   BackgroundQueue artwork_selects_;
   BackgroundQueue artwork_thumbs_;
+  // After everything a job's work touches, so it's joined first on the way down.
+  JobRegistry jobs_{events_};
   std::function<void()> on_roots_changed_;
   std::atomic<bool> stopping_{false};  // checked by open SSE connections; see EventBus::WaitNext
   std::thread external_watch_;

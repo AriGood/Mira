@@ -53,7 +53,17 @@ GameSummary ToGameSummary(const json& entry) {
   game.tags = ReadTags(entry);
   game.source = entry.value("source", std::string("scan"));
   game.running = entry.value("running", false);
+  game.art = ToArtVersions(entry);
   return game;
+}
+
+std::optional<ArtVersions> ToArtVersions(const json& entry) {
+  if (!entry.is_object() || !entry.contains("art") || !entry["art"].is_object()) return std::nullopt;
+  ArtVersions art;
+  for (const auto& [slot, version] : entry["art"].items()) {
+    if (version.is_string()) art[slot] = version.get<std::string>();
+  }
+  return art;
 }
 
 GameDetail ToGameDetail(const json& entry) {

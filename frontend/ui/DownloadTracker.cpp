@@ -4,8 +4,11 @@
 #include <QStringList>
 #include <QTimer>
 
+#include <json.hpp>
+
 #include <algorithm>
 
+#include "../client/Jobs.h"
 #include "../client/MiradClient.h"
 
 namespace mira_gui {
@@ -47,6 +50,7 @@ QString DownloadTracker::KeyFor(Kind kind, const QString& source, const QString&
     case Kind::Launcher: return "launcher:" + source;
     case Kind::Tool: return "tool:" + source;
     case Kind::Runner: return "runner:" + source + "/" + ref;
+    case Kind::Job: return "job:" + ref;
   }
   return QString();
 }
@@ -65,7 +69,56 @@ QString DownloadTracker::ProgressText(const Entry& entry, bool short_form) {
   return parts.join(" · ");
 }
 
+bool DownloadTracker::HandleJobEvent(const std::string& type, const std::string& data) {
+  if (!type.starts_with("job.")) return false;
+  const nlohmann::json event = nlohmann::json::parse(data, nullptr, false);
+  if (!event.is_object()) return true;
+  const QString id = QString::fromStdString(event.value("id", std::string()));
+  const QString key = KeyFor(Kind::Job, QString(), id);
+  // Progress for a job whose start this stream never saw has no name to show.
+  if (type != "job.started" && Find(key) == nullptr) return true;
+  Entry& entry = Upsert(Kind::Job, QString::fromStdString(event.value("kind", std::string())), id);
+  if (type == "job.started") {
+    entry.state = State::Running;
+    NoteTitle("job", id, QString::fromStdString(event.value("label", std::string())));
+  } else if (type == "job.progress") {
+    const int total = event.value("total", 0);
+    entry.progress = total > 0 ? static_cast<double>(event.value("done", 0)) / total : -1;
+    entry.message = QString::fromStdString(event.value("message", std::string()));
+  } else if (type == "job.finished") {
+    // A job without steps (a scan, an import) is routine: its caller reports
+    // the outcome, and a "Done" row per startup scan would only pile up.
+    if (entry.progress < 0) {
+      std::erase_if(entries_, [&key](const Entry& e) { return e.key == key; });
+      emit Changed(key);
+      return true;
+    }
+    entry.state = State::Finished;
+  } else if (type == "job.failed") {
+    entry.state = State::Failed;
+    const nlohmann::json error = event.value("error", nlohmann::json::object());
+    entry.error = QString::fromStdString(error.is_object() ? error.value("message", std::string()) : std::string());
+  }
+  emit Changed(entry.key);
+  return true;
+}
+
+void DownloadTracker::RecheckJobs() {
+  for (const Entry& entry : entries_) {
+    if (entry.kind != Kind::Job || entry.state != State::Running) continue;
+    const QString key = entry.key;
+    jobs::Check(this, entry.ref.toStdString(), [this, key](jobs::Outcome outcome) {
+      const auto found = std::find_if(entries_.begin(), entries_.end(), [&key](const Entry& e) { return e.key == key; });
+      if (found == entries_.end() || found->state != State::Running) return;
+      found->state = outcome.ok ? State::Finished : State::Failed;
+      found->error = QString::fromStdString(outcome.error.message);
+      emit Changed(key);
+    });
+  }
+}
+
 bool DownloadTracker::HandleEvent(const std::string& type, const std::string& data) {
+  if (HandleJobEvent(type, data)) return true;
   State state;
   if (InstallEvent install; MiradClient::ParseInstallEvent(type, data, &install)) {
     if (!ToState(install.state, &state)) return true;
@@ -192,6 +245,10 @@ QString DownloadTracker::NameFor(const Entry& entry) const {
     case Kind::Tool: return ToolName(entry.source);
     case Kind::Runner: {
       const QString label = titles_.value("runner:" + entry.source + ":" + entry.ref);
+      return label.isEmpty() ? entry.ref : label;
+    }
+    case Kind::Job: {
+      const QString label = titles_.value("job:" + entry.ref);
       return label.isEmpty() ? entry.ref : label;
     }
   }

@@ -24,9 +24,8 @@ class QWidget;
 
 namespace mira_gui {
 
-// One game's editable record (GET/PATCH /v1/games/{id}), with no QDialog
-// machinery, embeddable in a dialog shell (dialogs/GameDetailDialog) or
-// directly in a window (LibraryWindow, full-width).
+// One game's editable record (GET/PATCH /v1/games/{id}), shown in
+// LibraryWindow's game card.
 class GameEditForm : public QWidget {
   Q_OBJECT
 
@@ -40,10 +39,12 @@ public:
   void SetArtworkStore(ArtworkStore* store);
   // Off when the host already shows the art (LibraryWindow's hero card).
   void SetArtColumnVisible(bool visible);
-  // Off when the host puts its own button in its footer, calling OpenAdvanced.
+  // Off when the host's footer opens and leaves Advanced itself (OpenAdvanced, CloseAdvanced).
   void SetAdvancedButtonVisible(bool visible);
-  // Swaps the fields for the per-game overrides; their own Back returns.
+  // Swaps the fields for the per-game overrides, and back.
   void OpenAdvanced();
+  void CloseAdvanced();
+  bool AdvancedOpen() const;
 
   void Save();
 
@@ -61,6 +62,7 @@ signals:
   void Loaded(QString name);
   void LoadFailed(QString error);
   void SaveFinished(bool ok, QString error);
+  void AdvancedChanged(bool open);
 
 private:
   void Load();
@@ -82,6 +84,7 @@ private:
 
   QWidget* art_column_ = nullptr;
   QPushButton* advanced_button_ = nullptr;
+  QPushButton* advanced_back_ = nullptr;  // the overrides page's own way out
   QPushButton* move_button_ = nullptr;
   QWidget* status_box_ = nullptr;
   HeroArtWidget* hero_art_ = nullptr;

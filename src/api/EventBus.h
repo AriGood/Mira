@@ -62,13 +62,17 @@ public:
   // each of games.updated's), whoever published it, so every record comes
   // out the same shape. Empty clears it.
   void SetGameRecordHook(std::function<void(nlohmann::json& game)> hook);
+  // Gives game.metadata_ready, game.metadata_failed and game.artwork_selected
+  // the game's `art`, as its record would show it now. Empty clears it.
+  void SetArtHook(std::function<nlohmann::json(const std::string& id)> hook);
 
 private:
-  // Fills `running` on the game records in `payload`, as SetGameRecordHook says.
+  // Applies the two hooks above to `payload`.
   void DecorateGames(const std::string& type, nlohmann::json& payload);
 
   std::mutex hook_mutex_;
   std::function<void(nlohmann::json& game)> game_hook_;
+  std::function<nlohmann::json(const std::string& id)> art_hook_;
   mutable std::mutex mutex_;
   std::condition_variable cv_;
   std::deque<model::Event> events_;

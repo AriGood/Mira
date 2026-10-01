@@ -188,22 +188,30 @@ bool GameFilterProxy::MatchesKey(const GameSummary& game, const QString& key) {
   return key.toStdString() == game.status;
 }
 
+void GameFilterProxy::ChangeFilter(const std::function<void()>& change) {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 10, 0)
+  beginFilterChange();
+  change();
+  endFilterChange(Direction::Rows);
+#else
+  change();
+  invalidateFilter();
+#endif
+}
+
 void GameFilterProxy::SetFilterKey(const QString& key) {
   if (key == key_) return;
-  key_ = key;
-  invalidateFilter();
+  ChangeFilter([&] { key_ = key; });
 }
 
 void GameFilterProxy::SetSearch(const QString& text) {
   const QString trimmed = text.trimmed();
   if (trimmed == search_) return;
-  search_ = trimmed;
-  invalidateFilter();
+  ChangeFilter([&] { search_ = trimmed; });
 }
 
 void GameFilterProxy::SetSource(const std::string& source) {
-  source_ = source;
-  invalidateFilter();
+  ChangeFilter([&] { source_ = source; });
 }
 
 void GameFilterProxy::SetSort(const std::string& key, bool descending) {

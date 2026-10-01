@@ -1,8 +1,12 @@
 #include <doctest.h>
 #include <httplib.h>
 #include <sys/socket.h>
+#include <sys/time.h>
+#include <sys/un.h>
+#include <unistd.h>
 
 #include <chrono>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <thread>
@@ -25,6 +29,24 @@ fs::path TempDir(const char* name) {
   fs::remove_all(dir);
   fs::create_directories(dir);
   return dir;
+}
+
+// A long request answers 202 {job}; this waits for the job and returns it
+// as GET /v1/jobs/{id} shows it once done (`state`, then `result` or `error`).
+nlohmann::json AwaitJob(httplib::Client& client, const httplib::Result& started) {
+  REQUIRE(started != nullptr);
+  REQUIRE(started->status == 202);
+  const std::string id = nlohmann::json::parse(started->body).value("job", "");
+  REQUIRE_FALSE(id.empty());
+  for (int attempt = 0; attempt < 300; ++attempt) {
+    auto job = client.Get("/v1/jobs/" + id);
+    REQUIRE(job != nullptr);
+    nlohmann::json state = nlohmann::json::parse(job->body);
+    if (state.value("state", "") != "running") return state;
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  }
+  FAIL("job never finished");
+  return {};
 }
 
 // Runs a real Server over a real UDS socket for the lifetime of the test,
@@ -59,6 +81,7 @@ public:
   }
 
   store::GameStore& games() { return games_; }
+  const fs::path& socket_path() const { return socket_path_; }
   const config::Config& config() const { return config_; }
   config::Config& MutableConfig() { return config_; }
 
@@ -120,7 +143,33 @@ fs::path WriteEnvCheckScript(const fs::path& dir, std::string_view expect_foo) {
   return script;
 }
 
+// Sends `request` as-is over the socket and returns what came back within
+// `wait`. For requests httplib's client won't send, e.g. without Content-Length.
+std::string RawRequest(const fs::path& socket_path, const std::string& request, std::chrono::seconds wait) {
+  const int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+  REQUIRE(fd >= 0);
+  sockaddr_un address{};
+  address.sun_family = AF_UNIX;
+  std::strncpy(address.sun_path, socket_path.c_str(), sizeof(address.sun_path) - 1);
+  REQUIRE(connect(fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0);
+  const timeval timeout{.tv_sec = wait.count(), .tv_usec = 0};
+  setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+  REQUIRE(write(fd, request.data(), request.size()) == static_cast<ssize_t>(request.size()));
+  char buffer[4096];
+  const ssize_t got = read(fd, buffer, sizeof(buffer));
+  close(fd);
+  return got > 0 ? std::string(buffer, static_cast<size_t>(got)) : std::string();
+}
+
 }  // namespace
+
+TEST_CASE("A POST with no body and no Content-Length is answered without waiting for one") {
+  LiveServer server(TempDir("server-bare-post"));
+  // mirad's read timeout is 5 s; waiting 2 means an answer only counts if it didn't wait for a body.
+  const std::string reply = RawRequest(
+      server.socket_path(), "POST /v1/games/nope/stop HTTP/1.1\r\nHost: x\r\n\r\n", std::chrono::seconds(2));
+  CHECK(reply.starts_with("HTTP/1.1 "));
+}
 
 TEST_CASE("PATCH /v1/games/{id} env: per-key null removes just that key") {
   LiveServer server(TempDir("server-env-patch"));
@@ -199,18 +248,61 @@ TEST_CASE("GET /v1/games excludes hidden-tagged games by default; ?tag= filters,
   CHECK(everything->body.find("\"umu-launcher\"") != std::string::npos);
 }
 
-TEST_CASE("POST /v1/games/metadata/refresh queues known ids and skips unknown ones") {
+TEST_CASE("A game record lists its cached art slots, with a version that changes with the image") {
+  LiveServer server(TempDir("server-art"));
+  for (const char* id : {"celeste", "hollow"}) {
+    model::Game game;
+    game.id = id;
+    game.name = id;
+    REQUIRE(server.games().Upsert(game).has_value());
+  }
+  // Only celeste has art: a cover, plus a hero whose file has gone missing.
+  const fs::path art_dir = metadata::ArtworkDir(server.config(), "celeste");
+  fs::create_directories(art_dir);
+  std::ofstream(art_dir / "cover.jpg") << "first";
+  fs::create_directories(metadata::MetadataFile(server.config(), "celeste").parent_path());
+  std::ofstream(metadata::MetadataFile(server.config(), "celeste"))
+      << R"({"artwork": {"file": "cover.jpg"}, "hero": {"file": "hero.jpg"}})";
+
+  httplib::Client client = server.Client();
+  const auto art_of = [&client](const std::string& id) {
+    auto res = client.Get("/v1/games/" + id);
+    REQUIRE(res != nullptr);
+    return nlohmann::json::parse(res->body).value("art", nlohmann::json());
+  };
+  const nlohmann::json first = art_of("celeste");
+  CHECK(first.contains("cover"));
+  CHECK_FALSE(first.contains("hero"));
+  CHECK(art_of("hollow") == nlohmann::json::object());
+
+  // A new image in the slot, as a refresh or a pick writes it: the file, then the metadata.
+  std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  std::ofstream(art_dir / "cover.jpg") << "second, larger";
+  std::ofstream(metadata::MetadataFile(server.config(), "celeste"))
+      << R"({"artwork": {"file": "cover.jpg"}, "hero": {"file": "hero.jpg"}})";
+  const nlohmann::json second = art_of("celeste");
+  REQUIRE(second.contains("cover"));
+  CHECK(second["cover"] != first["cover"]);
+
+  // Unchanged art keeps its version.
+  CHECK(art_of("celeste") == second);
+}
+
+TEST_CASE("POST /v1/games/metadata/refresh is a job that reports each known game's outcome") {
   LiveServer server(TempDir("server-refresh-many"));
+  // Offline: with no SteamGridDB key and no lookup by name, a non-Steam fetch fails at once.
+  REQUIRE(server.MutableConfig().Set("metadata.steam_art_by_name", false).has_value());
   model::Game game;
   game.id = "celeste";
   game.name = "Celeste";
   REQUIRE(server.games().Upsert(game).has_value());
 
   httplib::Client client = server.Client();
-  auto res = client.Post("/v1/games/metadata/refresh", R"({"ids": ["celeste", "nope"]})", "application/json");
-  REQUIRE(res != nullptr);
-  CHECK(res->status == 202);
-  CHECK(nlohmann::json::parse(res->body).value("count", -1) == 1);
+  const auto job = AwaitJob(
+      client, client.Post("/v1/games/metadata/refresh", R"({"ids": ["celeste", "nope"]})", "application/json"));
+  CHECK(job.value("state", std::string()) == "finished");
+  CHECK(job["result"].value("refreshed", -1) == 0);
+  CHECK(job["result"].value("failed", -1) == 1);
 
   auto bad = client.Post("/v1/games/metadata/refresh", R"({"ids": "celeste"})", "application/json");
   REQUIRE(bad != nullptr);
@@ -730,12 +822,11 @@ TEST_CASE("POST /v1/games/delete removes many games, deletes files only where al
   add("kept", library_root / "Kept", "scan");
 
   httplib::Client client = server.Client();
-  auto res = client.Post("/v1/games/delete",
-                         R"({"ids": ["inside", "linked", "outside", "nope"], "delete_files": true})",
-                         "application/json");
-  REQUIRE(res != nullptr);
-  CHECK(res->status == 200);
-  const auto body = nlohmann::json::parse(res->body);
+  const auto job = AwaitJob(client, client.Post("/v1/games/delete",
+                                                R"({"ids": ["inside", "linked", "outside", "nope"], "delete_files": true})",
+                                                "application/json"));
+  REQUIRE(job["state"] == "finished");
+  const auto& body = job["result"];
   CHECK(body["removed"] == nlohmann::json::array({"inside", "linked"}));
   REQUIRE(body["failed"].size() == 1);
   CHECK(body["failed"][0]["id"] == "outside");
@@ -774,11 +865,11 @@ TEST_CASE("POST /v1/library/relocate with ids moves only those games") {
   }
 
   httplib::Client client = server.Client();
-  client.set_read_timeout(std::chrono::seconds(30));
-  auto res = client.Post("/v1/library/relocate", R"({"ids": ["picked"]})", "application/json");
-  REQUIRE(res != nullptr);
-  CHECK(res->status == 200);
-  const auto body = nlohmann::json::parse(res->body);
+  const auto job =
+      AwaitJob(client, client.Post("/v1/library/relocate?job=my-move", R"({"ids": ["picked"]})", "application/json"));
+  CHECK(job["id"] == "my-move");  // the client's own token, so it can listen before the reply
+  REQUIRE(job["state"] == "finished");
+  const auto& body = job["result"];
   CHECK(body["moved"] == 1);
   CHECK(body["failed"] == 0);
 
