@@ -78,22 +78,19 @@ QPoint Place(const QRect& anchor, QSize size, bool beside, const QRect& area) {
 
 }  // namespace card
 
-HoverDwell::HoverDwell(std::function<void(QListWidgetItem*)> on_hover) : on_hover_(std::move(on_hover)) {
+HoverDwell::HoverDwell(std::function<void(const QModelIndex&)> on_hover) : on_hover_(std::move(on_hover)) {
   timer_.setSingleShot(true);
-  QObject::connect(&timer_, &QTimer::timeout, [this] { on_hover_(last_); });
+  QObject::connect(&timer_, &QTimer::timeout, [this] {
+    if (last_.isValid()) on_hover_(last_);
+  });
 }
 
-void HoverDwell::Track(QListWidgetItem* hovered) {
-  if (hovered == last_) return;
+void HoverDwell::Track(const QModelIndex& hovered) {
+  if (QPersistentModelIndex(hovered) == last_) return;
   last_ = hovered;
   timer_.stop();
-  on_hover_(nullptr);  // hide at once on change or leave
-  if (hovered != nullptr) timer_.start(card::kDwellMs);
-}
-
-void HoverDwell::Forget() {
-  timer_.stop();
-  last_ = nullptr;
+  on_hover_(QModelIndex());  // hide at once on change or leave
+  if (hovered.isValid()) timer_.start(card::kDwellMs);
 }
 
 HoverCard::HoverCard(QWidget* parent) : QWidget(parent != nullptr ? parent->window() : nullptr) {

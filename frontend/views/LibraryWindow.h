@@ -36,7 +36,8 @@ class QVBoxLayout;
 class QAction;
 class QToolButton;
 class QListWidgetItem;
-class QTableWidget;
+class QModelIndex;
+class QTableView;
 class QTimer;
 
 // QListWidget with setViewportMargins made public: Qt keeps it protected on
@@ -47,6 +48,8 @@ class LibraryGrid;
 namespace mira_gui {
 class ArtPickerPanel;
 class ContinueRow;
+class GameFilterProxy;
+class GameLibraryModel;
 class CoverChip;
 class DaemonSupervisor;
 class DownloadTracker;
@@ -69,7 +72,7 @@ struct SourceInfo;
 //
 // `mira-gui --classic` still opens MainWindow standalone; the top bar's
 // table toggle instead shows the same table in the grid's place, reading
-// this window's own games_/running_ids_.
+// the same library_ model.
 //
 // Selection model: one click selects a tile, a second (double) click
 // launches, right-click opens the per-game menu. Hovering a tile shows a
@@ -126,29 +129,21 @@ private:
   void RefreshGames();
   void ConnectionChanged(bool connected);
 
-  // games_ is the whole library as last fetched; the grid is a filtered
-  // projection of it. Filtering client-side keeps the search box instant and
-  // lets "Playing now"/"Never played" be filters at all.
-  void ApplyFilter();
-  // ApplyFilter once the event loop is idle: a scan or import publishes one
-  // event per game, and each would otherwise re-sort and rebuild every view.
-  void ScheduleApplyFilter();
-  bool MatchesFilter(const mira_gui::GameSummary& game) const;
-  // The part of MatchesFilter that doesn't depend on the search box, shared
-  // with UpdateFilterCounts, which needs every key's count, not just the
-  // active one's.
-  bool MatchesFilterKey(const mira_gui::GameSummary& game, const QString& key) const;
+  // library_ is the whole library as last heard; the grid and table show it
+  // through their proxies. Filtering client-side keeps the search box instant
+  // and lets "Playing now"/"Never played" be filters at all.
+  void ApplyFilter();  // the filter key and search, into both proxies
+  void ApplySort();    // the sidebar's sort, into both proxies
+  // After any change to library_: counts, footer, sidebar rows, source rows.
+  void LibraryChanged();
   void UpdateFilterCounts();
+  void UpdateEmptyState();
   void UpdateFooter();
   QString CurrentFilterKey() const;
-  void UpsertGame(const mira_gui::GameSummary& game);
-  // Many games, one grid rebuild.
   void UpsertGames(const std::vector<mira_gui::GameSummary>& games);
   void RemoveGame(const std::string& id);
-  void RemoveGames(const std::vector<std::string>& ids);
   const mira_gui::GameSummary* FindGame(const std::string& id) const;
 
-  QPixmap CoverFor(const mira_gui::GameSummary& game);
   // The library grid's.
   void SetTileWidth(int width);
   // The slider moved: resizes whichever page is showing.
@@ -159,13 +154,14 @@ private:
   bool SourcePageShown() const;
   QSize TileSize() const;
 
-  void SelectionChanged();
   void ClearGridSelection();
   // The selected tiles' ids and names, in grid order.
   std::vector<std::pair<std::string, QString>> SelectedGames() const;
-  // nullptr hides it; otherwise positions and fills a persistent HoverCard
-  // for that tile. Called by LibraryGrid::on_hover_item after its dwell.
-  void ShowHoverCard(QListWidgetItem* item);
+  // The one selected tile's id; empty with none or several.
+  std::string SelectedId() const;
+  // An invalid index hides it; otherwise positions and fills a persistent
+  // HoverCard for that tile. Called by LibraryGrid::on_hover after its dwell.
+  void ShowHoverCard(const QModelIndex& index);
   // `anchor` is global; the card goes beside it.
   void ShowHoverCardFor(const mira_gui::GameSummary& game, const QRect& anchor,
                         const QString& hint = QString());
@@ -217,8 +213,6 @@ private:
   void OpenManageSources();
   // A source was removed: drop its games and turn its sidebar row off.
   void ForgetSource(const QString& id);
-  // Everything a tile shows except its id.
-  void FillTile(QListWidgetItem* item, const mira_gui::GameSummary& game);
   // The sidebar's PINNED and RECENTLY PLAYED rows.
   void RefreshSidebarGames();
   QPushButton* MakeSidebarGameRow(const mira_gui::GameSummary& game, QWidget* parent);
@@ -252,9 +246,6 @@ private:
   void ImportDesktopEntries();
   void AddGameManually();
   QWidget* BuildClassicPage();
-  // Repopulates classic_table_ from the same filtered games_ the grid just
-  // rebuilt, called at the end of ApplyFilter so the two views never drift.
-  void RefreshClassicTable();
   void OpenClassicView();
   void CloseClassicView();
   // A store or launcher's page, rebuilt fresh on each open.
@@ -415,23 +406,19 @@ private:
   QPushButton* game_edit_back_ = nullptr;
   QPushButton* game_edit_advanced_ = nullptr;
   QPushButton* game_edit_save_ = nullptr;
-  // Built once at startup, not per-open like settings_page_/game_edit_card_
-  // since it has no per-session state to go stale, so it just stays synced via
-  // RefreshClassicTable().
+  // Built once at startup: a view on table_games_, so it's always current.
   QWidget* classic_page_ = nullptr;
-  QTableWidget* classic_table_ = nullptr;
+  QTableView* classic_table_ = nullptr;
   QLabel* footer_ = nullptr;
-  int shown_count_ = 0;  // tiles the last ApplyFilter showed, for the footer
   QLabel* empty_hint_ = nullptr;
-  // The filter, search and sort the grid was last built for; see ApplyFilter.
-  QString grid_view_;
   mira_gui::HoverCard* hover_card_ = nullptr;
   // Dwell before a recently played row's hover card.
   QTimer* recent_hover_ = nullptr;
   QPointer<QWidget> recent_hover_row_;
 
-  std::vector<mira_gui::GameSummary> games_;
-  std::set<std::string> running_ids_;
+  mira_gui::GameLibraryModel* library_ = nullptr;
+  mira_gui::GameFilterProxy* grid_games_ = nullptr;
+  mira_gui::GameFilterProxy* table_games_ = nullptr;
   mira_gui::DownloadTracker* downloads_ = nullptr;
   mira_gui::DaemonSupervisor* daemon_supervisor_ = nullptr;  // "Start mirad" from a failure
   bool mirad_reachable_ = true;  // as of the last request or event connection, for the footer
@@ -444,7 +431,6 @@ private:
   // so a scan's burst of them opens nothing.
   std::vector<std::string> pending_added_;
   QTimer* added_timer_ = nullptr;
-  QTimer* filter_timer_ = nullptr;  // ScheduleApplyFilter's
   // Whether RefreshGames() has ever completed successfully.
   bool loaded_ = false;
   // Games the user explicitly asked to refresh: a metadata failure for one
@@ -454,7 +440,6 @@ private:
   // Set by "Fetch missing cover art": its fetches were asked for, so a
   // missing SteamGridDB key is worth reporting.
   bool artwork_fetch_requested_ = false;
-  std::string selected_id_;
   // The tile width Ctrl+0 returns to, and the one a frontend.toml with
   // no tile_width starts at.
   static constexpr int kDefaultTileWidth = 168;

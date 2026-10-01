@@ -1,7 +1,6 @@
 #include "TileView.h"
 
 #include <QApplication>
-#include <QItemSelection>
 #include <QMouseEvent>
 #include <QRubberBand>
 #include <QScrollBar>
@@ -11,7 +10,7 @@
 
 namespace mira_gui {
 
-TileView::TileView(QWidget* parent) : QListWidget(parent) {
+TileView::TileView(QWidget* parent) : QListView(parent) {
   setSelectionMode(QAbstractItemView::ExtendedSelection);
   setMouseTracking(true);
 }
@@ -21,24 +20,19 @@ void TileView::SetDragSelectEnabled(bool enabled) {
   if (!enabled) EndDrag();
 }
 
-void TileView::ForgetItems() {
-  hover_.Forget();
-  EndDrag();
-}
-
 void TileView::mousePressEvent(QMouseEvent* event) {
   // A plain click between or below the tiles deselects, like a file manager.
-  if (event->button() == Qt::LeftButton && itemAt(event->pos()) == nullptr &&
+  if (event->button() == Qt::LeftButton && !indexAt(event->pos()).isValid() &&
       !(event->modifiers() & (Qt::ControlModifier | Qt::ShiftModifier))) {
     clearSelection();
-    setCurrentItem(nullptr);
+    setCurrentIndex(QModelIndex());
   }
   if (event->button() == Qt::LeftButton && drag_select_enabled_) {
     drag_origin_ = event->pos() + Offset();
     drag_modifiers_ = event->modifiers();
     tracking_drag_ = true;
   }
-  QListWidget::mousePressEvent(event);
+  QListView::mousePressEvent(event);
 }
 
 void TileView::mouseMoveEvent(QMouseEvent* event) {
@@ -52,39 +46,40 @@ void TileView::mouseMoveEvent(QMouseEvent* event) {
     }
     return;
   }
-  hover_.Track(itemAt(event->pos()));
-  QListWidget::mouseMoveEvent(event);
+  hover_.Track(indexAt(event->pos()));
+  QListView::mouseMoveEvent(event);
 }
 
 void TileView::mouseReleaseEvent(QMouseEvent* event) {
   const bool was_dragging = rubber_band_ != nullptr;
   EndDrag();
   if (was_dragging) return;  // the drag already applied the selection; not a click
-  QListWidget::mouseReleaseEvent(event);
+  QListView::mouseReleaseEvent(event);
 }
 
 void TileView::leaveEvent(QEvent* event) {
-  hover_.Track(nullptr);
-  QListWidget::leaveEvent(event);
+  hover_.Track(QModelIndex());
+  QListView::leaveEvent(event);
 }
 
 void TileView::focusOutEvent(QFocusEvent* event) {
   EndDrag();
-  QListWidget::focusOutEvent(event);
+  QListView::focusOutEvent(event);
 }
 
 void TileView::changeEvent(QEvent* event) {
   if (event->type() == QEvent::ActivationChange && !isActiveWindow()) EndDrag();
-  QListWidget::changeEvent(event);
+  QListView::changeEvent(event);
 }
 
 void TileView::wheelEvent(QWheelEvent* event) {
-  hover_.Track(nullptr);
-  QListWidget::wheelEvent(event);
+  hover_.Track(QModelIndex());
+  QListView::wheelEvent(event);
   if (rubber_band_ != nullptr) UpdateDrag();
 }
 
 void TileView::UpdateDrag() {
+  if (model() == nullptr) return;
   const QPoint current = drag_pos_ + Offset();
   if (rubber_band_ == nullptr) {
     // A click that wobbles a few pixels stays a click.
@@ -93,9 +88,8 @@ void TileView::UpdateDrag() {
     // modifier held; either way, what's selected now is the floor a
     // shrinking rect won't clear again.
     if (!(drag_modifiers_ & (Qt::ControlModifier | Qt::ShiftModifier))) clearSelection();
-    base_selection_.clear();
-    for (QListWidgetItem* selected : selectedItems()) base_selection_.insert(selected);
-    hover_.Track(nullptr);  // a dwell started before the drag would pop up mid-drag
+    base_selection_ = selectionModel()->selection();
+    hover_.Track(QModelIndex());  // a dwell started before the drag would pop up mid-drag
     rubber_band_ = new QRubberBand(QRubberBand::Rectangle, viewport());
     rubber_band_->show();
     if (autoscroll_timer_ == nullptr) {
@@ -107,16 +101,13 @@ void TileView::UpdateDrag() {
   }
   const QRect rect = QRect(drag_origin_, current).normalized();
   rubber_band_->setGeometry(rect.translated(-Offset()));
-  // One select() call, not a setSelected per tile: each of those emits
-  // its own itemSelectionChanged.
-  QItemSelection selection;
-  for (int row = 0; row < count(); ++row) {
-    QListWidgetItem* it = item(row);
-    if (it->isHidden()) continue;
-    if (base_selection_.contains(it) || rect.intersects(visualItemRect(it).translated(Offset()))) {
-      const QModelIndex index = indexFromItem(it);
-      selection.select(index, index);
-    }
+  // One select() call, not one per tile: each of those emits its own
+  // selectionChanged.
+  QItemSelection selection = base_selection_;
+  for (int row = 0; row < model()->rowCount(rootIndex()); ++row) {
+    if (isRowHidden(row)) continue;
+    const QModelIndex index = model()->index(row, 0, rootIndex());
+    if (rect.intersects(visualRect(index).translated(Offset()))) selection.select(index, index);
   }
   selectionModel()->select(selection, QItemSelectionModel::ClearAndSelect);
 }

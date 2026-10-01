@@ -29,7 +29,7 @@ ContinueRow::ContinueRow(ArtworkStore* artwork, QWidget* parent) : QWidget(paren
   layout->addLayout(cards_);
 }
 
-void ContinueRow::SetGames(const std::vector<const GameSummary*>& games, const std::set<std::string>& running) {
+void ContinueRow::SetGames(const std::vector<const GameSummary*>& games) {
   // deleteLater: a card's own button may be what got us here.
   while (QLayoutItem* item = cards_->takeAt(0)) {
     if (item->widget() != nullptr) item->widget()->deleteLater();
@@ -38,7 +38,7 @@ void ContinueRow::SetGames(const std::vector<const GameSummary*>& games, const s
   shown_.clear();
   for (const GameSummary* game : games) {
     shown_.insert(game->id);
-    cards_->addWidget(MakeCard(*game, running.contains(game->id)));
+    cards_->addWidget(MakeCard(*game, game->running));
   }
   cards_->addStretch(1);  // cards pack to the left
   setVisible(!games.empty());

@@ -8,6 +8,7 @@
 #include <QPainterPath>
 #include <QPixmap>
 
+#include "ArtworkStore.h"
 #include "GamePresentation.h"
 #include "Icons.h"
 #include "Sources.h"
@@ -28,8 +29,8 @@ QRect GameTileDelegate::ActionRect(const QRect& cell, const QString& text, const
   return QRect(cell.right() - inset - 6 - width + 1, cell.top() + inset + 6, width, 24);
 }
 
-GameTileDelegate::GameTileDelegate(QObject* parent, QSize tile)
-    : QStyledItemDelegate(parent), tile_(tile) {}
+GameTileDelegate::GameTileDelegate(QObject* parent, QSize tile, ArtworkStore* artwork)
+    : QStyledItemDelegate(parent), tile_(tile), artwork_(artwork) {}
 
 void GameTileDelegate::SetTileSize(QSize tile) { tile_ = tile; }
 
@@ -91,7 +92,11 @@ void GameTileDelegate::paint(QPainter* painter, const QStyleOptionViewItem& opti
   painter->setRenderHint(QPainter::Antialiasing);
   painter->setClipPath(path);
 
-  const QPixmap cover = index.data(Qt::DecorationRole).value<QPixmap>();
+  QPixmap cover = index.data(Qt::DecorationRole).value<QPixmap>();
+  if (cover.isNull() && artwork_ != nullptr) {
+    const qreal dpr = painter->device() != nullptr ? painter->device()->devicePixelRatioF() : 1.0;
+    cover = artwork_->CoverById(index.data(IdRole).toString(), name, tile_, dpr);
+  }
   if (cover.isNull()) {
     painter->fillRect(rect, tokens.tile_placeholder);
   } else {

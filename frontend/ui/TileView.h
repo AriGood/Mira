@@ -1,7 +1,7 @@
 #pragma once
 
-#include <QListWidget>
-#include <QSet>
+#include <QItemSelection>
+#include <QListView>
 
 #include <functional>
 
@@ -12,23 +12,20 @@ class QTimer;
 
 namespace mira_gui {
 
-// A grid of cover tiles with the hover card dwell and drag-to-select that
-// every tile grid shares. Tiles fill their whole cell, so Qt's own rubber
-// band (empty-space presses only) has nowhere to start; this one starts on
-// a tile too. Left-button moves never reach QListWidget, because Qt's own
-// drag-select state survives a swallowed release and then draws a second,
-// dead rubber band on the next plain hover.
-class TileView : public QListWidget {
+// A grid of cover tiles over any model, with the hover card dwell and
+// drag-to-select that every tile grid shares. Tiles fill their whole cell,
+// so Qt's own rubber band (empty-space presses only) has nowhere to start;
+// this one starts on a tile too. Left-button moves never reach QListView,
+// because Qt's own drag-select state survives a swallowed release and then
+// draws a second, dead rubber band on the next plain hover.
+class TileView : public QListView {
 public:
   explicit TileView(QWidget* parent = nullptr);
 
-  // An item after the cursor rests on it, nullptr once it moves off.
-  std::function<void(QListWidgetItem*)> on_hover_item;
+  // An index after the cursor rests on it, an invalid one once it moves off.
+  std::function<void(const QModelIndex&)> on_hover;
 
   void SetDragSelectEnabled(bool enabled);
-  // Before clear() deletes every item: a pending dwell or a drag in
-  // progress could still hold one of them.
-  void ForgetItems();
 
 protected:
   void mousePressEvent(QMouseEvent* event) override;
@@ -39,7 +36,7 @@ protected:
   void changeEvent(QEvent* event) override;
   void wheelEvent(QWheelEvent* event) override;
   // The tile is about to scroll out from under its card.
-  void StopHover() { hover_.Track(nullptr); }
+  void StopHover() { hover_.Track(QModelIndex()); }
 
 private:
   // Within this far of the top/bottom edge (or past it), a drag scrolls.
@@ -59,9 +56,9 @@ private:
   Qt::KeyboardModifiers drag_modifiers_;  // at the press
   QRubberBand* rubber_band_ = nullptr;
   QTimer* autoscroll_timer_ = nullptr;
-  QSet<QListWidgetItem*> base_selection_;
-  HoverDwell hover_{[this](QListWidgetItem* item) {
-    if (on_hover_item) on_hover_item(item);
+  QItemSelection base_selection_;  // what was selected when the drag began
+  HoverDwell hover_{[this](const QModelIndex& index) {
+    if (on_hover) on_hover(index);
   }};
 };
 

@@ -40,32 +40,30 @@ const std::vector<SortOption>& SortOptions() {
   return options;
 }
 
-void SortGames(std::vector<GameSummary>& games, const std::string& key, bool descending) {
+bool GameLess(const GameSummary& a, const GameSummary& b, const std::string& key, bool descending) {
   // `descending` inverts the primary key only; the name tiebreak always
   // reads A to Z. Reversing the whole result instead would flip the
   // tiebreak too, so games sharing a timestamp would come out Z to A.
-  const auto ordered = [descending](auto left, auto right) {
-    return descending ? right < left : left < right;
-  };
+  const auto ordered = [descending](auto left, auto right) { return descending ? right < left : left < right; };
+  if (key == "last_played") {
+    const std::int64_t ra = LastPlayedRank(a);
+    const std::int64_t rb = LastPlayedRank(b);
+    if (ra != rb) return ordered(ra, rb);
+  } else if (key == "playtime") {
+    if (a.play_seconds != b.play_seconds) return ordered(a.play_seconds, b.play_seconds);
+  } else if (key == "status") {
+    if (a.status != b.status) return ordered(a.status, b.status);
+  } else {
+    const int by_name = CompareNames(a.name, b.name);
+    if (by_name != 0) return ordered(by_name, 0);
+  }
+  return CompareNames(a.name, b.name) < 0;
+}
 
-  std::stable_sort(games.begin(), games.end(),
-                   [&](const GameSummary& a, const GameSummary& b) {
-                     if (key == "last_played") {
-                       const std::int64_t ra = LastPlayedRank(a);
-                       const std::int64_t rb = LastPlayedRank(b);
-                       if (ra != rb) return ordered(ra, rb);
-                     } else if (key == "playtime") {
-                       if (a.play_seconds != b.play_seconds) {
-                         return ordered(a.play_seconds, b.play_seconds);
-                       }
-                     } else if (key == "status") {
-                       if (a.status != b.status) return ordered(a.status, b.status);
-                     } else {
-                       const int by_name = CompareNames(a.name, b.name);
-                       if (by_name != 0) return ordered(by_name, 0);
-                     }
-                     return CompareNames(a.name, b.name) < 0;
-                   });
+void SortGames(std::vector<GameSummary>& games, const std::string& key, bool descending) {
+  std::stable_sort(games.begin(), games.end(), [&](const GameSummary& a, const GameSummary& b) {
+    return GameLess(a, b, key, descending);
+  });
 }
 
 }  // namespace mira_gui
