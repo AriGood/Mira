@@ -25,8 +25,6 @@ class GameLibraryModel : public QAbstractTableModel {
 
 public:
   enum Column { kName, kStatus, kPlatform, kRunner, kLastPlayed, kPlaytime, kColumnCount };
-  // A column's value to sort by, where its text would sort wrong.
-  static constexpr int kSortRole = Qt::UserRole + 50;
 
   explicit GameLibraryModel(QObject* parent = nullptr);
 

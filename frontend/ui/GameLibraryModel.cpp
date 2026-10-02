@@ -152,11 +152,6 @@ QVariant GameLibraryModel::data(const QModelIndex& index, int role) const {
       default: return {};
     }
   }
-  if (role == kSortRole) {
-    if (column == kLastPlayed) return static_cast<qlonglong>(game.last_played_at.value_or(-1));
-    if (column == kPlaytime) return static_cast<qlonglong>(game.play_seconds);
-    return data(index, Qt::DisplayRole).toString().toLower();
-  }
   if (role == Qt::ForegroundRole && column == kStatus) return StatusColor(game.running ? "running" : game.status);
   if (role == Qt::ToolTipRole && column == kStatus && !game.last_error.empty()) {
     return QString::fromStdString(game.last_error);
@@ -263,13 +258,20 @@ bool GameFilterProxy::filterAcceptsRow(int source_row, const QModelIndex&) const
 }
 
 bool GameFilterProxy::lessThan(const QModelIndex& left, const QModelIndex& right) const {
-  if (column_sort_) {
-    const QVariant a = left.data(GameLibraryModel::kSortRole);
-    const QVariant b = right.data(GameLibraryModel::kSortRole);
-    if (a != b) return QVariant::compare(a, b) == QPartialOrdering::Less;
-  }
   const auto& games = library_->Games();
-  return GameLess(games[left.row()], games[right.row()], sort_key_, descending_);
+  const GameSummary& a = games[left.row()];
+  const GameSummary& b = games[right.row()];
+  if (column_sort_) {
+    if (left.column() == GameLibraryModel::kLastPlayed) {
+      if (a.last_played_at != b.last_played_at) return a.last_played_at.value_or(-1) < b.last_played_at.value_or(-1);
+    } else if (left.column() == GameLibraryModel::kPlaytime) {
+      if (a.play_seconds != b.play_seconds) return a.play_seconds < b.play_seconds;
+    } else if (const int order = QString::compare(left.data().toString(), right.data().toString(), Qt::CaseInsensitive);
+               order != 0) {
+      return order < 0;
+    }
+  }
+  return GameLess(a, b, sort_key_, descending_);
 }
 
 }  // namespace mira_gui
