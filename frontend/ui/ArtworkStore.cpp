@@ -18,10 +18,6 @@ namespace {
 
 const QSize kMaxArt(800, 1200);
 
-QString ScaleKey(const QString& id, QSize tile) {
-  return QString("%1@%2").arg(id).arg(tile.width());
-}
-
 // Real artwork isn't always 2:3 like the tile, so it's scaled to cover and
 // centre-cropped rather than letterboxed: a cropped edge reads as a cover,
 // a background band reads as a broken image.
@@ -117,9 +113,8 @@ QPixmap ArtworkStore::TitleCover(const QString& source, const QString& ref, cons
 }
 
 QPixmap ArtworkStore::CoverById(const QString& id, const QString& name, QSize tile, qreal device_pixel_ratio) {
-  const QString key = ScaleKey(id, tile);
-
-  if (const auto cached = scaled_.constFind(key); cached != scaled_.constEnd()) return *cached;
+  QHash<int, QPixmap>& sizes = scaled_[id];
+  if (const auto cached = sizes.constFind(tile.width()); cached != sizes.constEnd()) return *cached;
 
   if (!answered_.contains(id)) Request(id);
 
@@ -131,7 +126,7 @@ QPixmap ArtworkStore::CoverById(const QString& id, const QString& name, QSize ti
     cover = PlaceholderCover(name, id,
                              QSize(tile.width() - 10, tile.height() - 10), device_pixel_ratio);
   }
-  scaled_.insert(key, cover);
+  scaled_[id].insert(tile.width(), cover);
   return cover;
 }
 
@@ -245,10 +240,7 @@ void ArtworkStore::TitleArtworkReady(const std::string& id) {
 void ArtworkStore::InvalidateRendering(const std::string& id) {
   // Every scaled copy, not just the current tile size: the zoom slider
   // leaves entries behind at every size it passed through.
-  const QString prefix = QString::fromStdString(id) + "@";
-  for (auto it = scaled_.begin(); it != scaled_.end();) {
-    it = it.key().startsWith(prefix) ? scaled_.erase(it) : std::next(it);
-  }
+  scaled_.remove(QString::fromStdString(id));
   colors_.remove(QString::fromStdString(id));
 }
 

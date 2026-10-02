@@ -173,6 +173,7 @@ Result<model::Game> RunInstaller(config::Config& config, const model::Game& game
   }
 
   const std::set<fs::path> before = InstallDirs(config.GetStringArray("install.detect_dirs"), provisioned.data_dir);
+  const std::uintmax_t baseline_bytes = TreeBytes(game.install_path);
   {
     const std::lock_guard lock(tracked_mutex);
     Tracked& entry = tracked[game.id];
@@ -180,7 +181,7 @@ Result<model::Game> RunInstaller(config::Config& config, const model::Game& game
     entry.progress.mode = silent ? "silent" : "interactive";
     entry.progress.started_at = model::NowSeconds();
     entry.install_path = game.install_path;
-    entry.baseline_bytes = TreeBytes(game.install_path);
+    entry.baseline_bytes = baseline_bytes;
     entry.data_dir = provisioned.data_dir;
     entry.detect_dirs = config.GetStringArray("install.detect_dirs");
     entry.drive_c_before = before;

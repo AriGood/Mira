@@ -111,7 +111,7 @@ private:
   static constexpr int kMaxInFlight = 8;
 
   QHash<QString, QPixmap> original_;  // by id, at whatever size mirad sent
-  QHash<QString, QPixmap> scaled_;    // by "id@tile_width"
+  QHash<QString, QHash<int, QPixmap>> scaled_;  // by id, then tile width
   QHash<QString, QColor> colors_;     // CoverColor's, by id
   // SlotArt's, by "id#slot", which also keys answered_/queued_/pending_.
   QHash<QString, QPixmap> slot_original_;
