@@ -121,6 +121,11 @@ int CmdStatus() {
     return 1;
   }
   std::puts("mirad is running");
+  const json health = json::parse(res->body, nullptr, false);
+  if (!health.is_object() || health.value("api", 0) != mira::kApiVersion) {
+    std::fprintf(stderr, "mira: mirad's API doesn't match this mira; restart it (systemctl --user restart mirad)\n");
+    return 1;
+  }
   return 0;
 }
 

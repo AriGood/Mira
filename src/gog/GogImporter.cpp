@@ -120,7 +120,7 @@ Result<model::Game> GogImporter::ImportPath(const std::string& id, const std::fi
     game.status = model::GameStatus::Ready;
   }
 
-  auto result = games_.Upsert(game);
+  auto result = games_.Merge(existing, game);
   if (!result) return std::unexpected(result.error());
 
   events_.Publish(existing ? "game.updated" : "game.added", model::ToJson(game));

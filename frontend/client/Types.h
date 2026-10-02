@@ -20,8 +20,12 @@ namespace mira_gui {
 // A game's `art`: slot -> version of its cached image (docs/api.md).
 using ArtVersions = std::map<std::string, std::string>;
 
+// Matches mira::kApiVersion in src/core/Result.h.
+inline constexpr int kExpectedApiVersion = 1;
+
 struct HealthStatus {
   bool reachable = false;
+  int api = 0;  // 0 when mirad predates the field
   std::string detail;
 };
 

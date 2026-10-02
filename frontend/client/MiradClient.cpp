@@ -28,6 +28,9 @@ HealthStatus GetHealthSync() {
   const transport::Reply reply = transport::Get("/v1/health");
   status.reachable = reply.ok;
   status.detail = reply.ok ? reply.body.value("status", std::string("ok")) : reply.error.message;
+  if (reply.ok && reply.body.is_object() && reply.body.contains("api") && reply.body["api"].is_number_integer()) {
+    status.api = reply.body["api"].get<int>();
+  }
   return status;
 }
 

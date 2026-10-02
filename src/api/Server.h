@@ -53,6 +53,9 @@ public:
 
   // Called after a request changes library_roots, so the watcher can follow.
   // Set once, before Serve().
+  // Queues metadata and art for games added outside a request (the startup scan).
+  void QueueMetadata(const std::vector<model::Game>& games);
+
   void SetOnLibraryRootsChanged(std::function<void()> callback) { on_roots_changed_ = std::move(callback); }
 
 private:

@@ -27,6 +27,10 @@ DaemonSupervisor::~DaemonSupervisor() { StopIfSelfStarted(); }
 void DaemonSupervisor::EnsureRunning() {
   MiradClient::CheckHealthAsync(this, [this](HealthStatus status) {
     if (status.reachable) {
+      if (status.api != kExpectedApiVersion) {
+        emit Outdated(status.api);
+        return;
+      }
       emit Ready();
       return;
     }

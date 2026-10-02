@@ -129,6 +129,14 @@ int main(int argc, char** argv) {
         "systemctl --user enable --now mirad.service to start it with your session.");
     QApplication::quit();
   });
+  QObject::connect(supervisor, &mira_gui::DaemonSupervisor::Outdated, &app, [](int api) {
+    mira_gui::notify::FailedWithHint(
+        nullptr, "The running mirad doesn't match this version of Mira.",
+        QString("It speaks API %1; this app needs API %2.").arg(api).arg(mira_gui::kExpectedApiVersion),
+        "Restart it so it picks up the update: systemctl --user restart mirad.service, or stop the mirad "
+        "process and start Mira again.");
+    QApplication::quit();
+  });
   supervisor->EnsureRunning();
 
   return QApplication::exec();

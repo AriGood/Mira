@@ -118,7 +118,7 @@ Result<ItchImportSummary> ItchImporter::Import() {
       game.status = model::GameStatus::Ready;
     }
 
-    auto result = games_.Upsert(game);
+    auto result = games_.Merge(existing, game);
     if (!result) {
       log::Error("failed to save itch game {}: {}", id, result.error().message);
       continue;

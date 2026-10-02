@@ -119,6 +119,7 @@ int main(int argc, char** argv) {
     const mira::library::ScanSummary summary = startup_scan.ScanAll();
     mira::log::Info("startup scan: added {}, missing {}, restored {}", summary.added,
                     summary.missing, summary.restored);
+    server.QueueMetadata(summary.added_games);
   });
 
   mira::library::Watcher watcher(config, games, events);

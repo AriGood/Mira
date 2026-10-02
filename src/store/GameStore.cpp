@@ -142,6 +142,39 @@ Result<void> GameStore::Upsert(model::Game game) {
   return Save();
 }
 
+Result<void> GameStore::Merge(const std::optional<model::Game>& base, model::Game& game) {
+  {
+    std::lock_guard lock(mutex_);
+    auto it = std::ranges::find(games_, game.id, &model::Game::id);
+    if (it == games_.end() || !base) {
+      if (it == games_.end()) {
+        games_.push_back(game);
+      } else {
+        *it = game;
+      }
+    } else {
+      const nlohmann::json before = model::ToJson(*base);
+      const nlohmann::json edited = model::ToJson(game);
+      nlohmann::json live = model::ToJson(*it);
+      for (const auto& [key, value] : edited.items()) {
+        if (key != "tags" && before.value(key, nlohmann::json()) != value) live[key] = value;
+      }
+      model::Game merged = model::GameFromJson(live);
+      for (const std::string& tag : game.tags) {
+        if (std::ranges::find(base->tags, tag) == base->tags.end() && std::ranges::find(merged.tags, tag) == merged.tags.end()) {
+          merged.tags.push_back(tag);
+        }
+      }
+      std::erase_if(merged.tags, [&](const std::string& tag) {
+        return std::ranges::find(base->tags, tag) != base->tags.end() && std::ranges::find(game.tags, tag) == game.tags.end();
+      });
+      *it = std::move(merged);
+    }
+    game = *std::ranges::find(games_, game.id, &model::Game::id);
+  }
+  return Save();
+}
+
 Result<model::Game> GameStore::Update(const std::string& id,
                                        std::function<void(model::Game&)> mutator) {
   model::Game updated;

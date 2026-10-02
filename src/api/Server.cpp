@@ -501,6 +501,10 @@ void Server::WatchExternalGames() {
   }
 }
 
+void Server::QueueMetadata(const std::vector<model::Game>& games) {
+  for (const model::Game& game : games) metadata_fetches_.Enqueue(config_, events_, game);
+}
+
 void Server::ReconcileSessions() {
   supervisor_.Reconcile(games_.Dir() / "sessions");
   // A client that stayed open across a restart may still show games from
@@ -566,7 +570,7 @@ void Server::RegisterRoutes() {
   });
 
   http_->Get("/v1/health", [](const Request&, Response& res) {
-    SendJson(res, {{"status", "ok"}});
+    SendJson(res, {{"status", "ok"}, {"api", kApiVersion}});
   });
 
   http_->Get("/v1/gamemode/status", [](const Request&, Response& res) {

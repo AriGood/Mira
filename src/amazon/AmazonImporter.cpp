@@ -104,7 +104,7 @@ Result<AmazonImportSummary> AmazonImporter::Import() {
       game.status = model::GameStatus::Ready;
     }
 
-    if (auto saved = games_.Upsert(game); !saved) {
+    if (auto saved = games_.Merge(existing, game); !saved) {
       log::Error("failed to import amazon game {}: {}", product_id, saved.error().message);
       continue;
     }

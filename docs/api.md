@@ -39,7 +39,7 @@ Events: `job.started {id, kind, target, label}`, `job.progress {id, done, total,
 ## Health
 
 ### `GET /v1/health`
-`{"status": "ok"}`.
+`{"status": "ok", "api": 1}`. `api` is an integer bumped on a breaking change; the GUI and CLI compare it with their own and report a daemon that doesn't match.
 
 ## Settings
 
