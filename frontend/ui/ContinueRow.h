@@ -4,13 +4,14 @@
 #include <QString>
 #include <QWidget>
 
-#include <set>
+#include <map>
 #include <string>
 #include <vector>
 
 #include "../client/Types.h"
 
 class QHBoxLayout;
+class QLabel;
 
 namespace mira_gui {
 
@@ -25,7 +26,8 @@ public:
   ContinueRow(ArtworkStore* artwork, QWidget* parent = nullptr);
 
   void SetGames(const std::vector<const GameSummary*>& games);
-  bool Shows(const std::string& id) const { return shown_.contains(id); }
+  // Redraws `id`'s cover if it has a card.
+  void RefreshCover(const std::string& id);
 
 signals:
   void PlayToggled(QString id);
@@ -36,7 +38,8 @@ private:
 
   ArtworkStore* artwork_ = nullptr;
   QHBoxLayout* cards_ = nullptr;
-  std::set<std::string> shown_;
+  std::vector<GameSummary> shown_;
+  std::map<std::string, QLabel*> covers_;  // by game id
 };
 
 }  // namespace mira_gui

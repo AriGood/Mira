@@ -30,6 +30,8 @@ signals:
 private:
   void Rebuild();
   QWidget* BuildRow(int index);
+  // Refreshes a still-running row in place; false when it needs a Rebuild.
+  bool UpdateRow(const QString& key);
 
   DownloadTracker* tracker_;
   ArtworkStore* artwork_;

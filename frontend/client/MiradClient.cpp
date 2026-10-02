@@ -19,6 +19,12 @@ namespace {
 
 using nlohmann::json;
 
+QImage DecodeImage(const std::string& bytes) {
+  QImage image;
+  image.loadFromData(reinterpret_cast<const uchar*>(bytes.data()), static_cast<int>(bytes.size()));
+  return image;
+}
+
 // Percent-encodes everything outside RFC 3986's unreserved set.
 std::string QueryEncode(const std::string& text) {
   static constexpr char kHex[] = "0123456789ABCDEF";
@@ -1412,10 +1418,14 @@ void MiradClient::ClearArtThumbsBlocking() {
 
 FrontendPrefsResult MiradClient::GetFrontendPrefsBlocking() { return GetFrontendPrefsSync(); }
 
-void MiradClient::GetArtworkSlotAsync(QObject* context, const std::string& id,
-                                      const std::string& slot,
-                                      std::function<void(ArtworkResult)> callback) {
-  async::Run(context, [id, slot] { return GetArtworkSync(id, slot); }, std::move(callback));
+void MiradClient::GetArtworkImageAsync(QObject* context, const std::string& id, const std::string& slot,
+                                       std::function<void(QImage)> callback) {
+  async::Run<QImage>(
+      context, [id, slot] {
+        const ArtworkResult result = GetArtworkSync(id, slot);
+        return result.ok ? DecodeImage(result.bytes) : QImage();
+      },
+      std::move(callback));
 }
 
 void MiradClient::GetMetadataAsync(QObject* context, const std::string& id,
@@ -1460,9 +1470,16 @@ void MiradClient::FetchArtThumbsAsync(QObject* context, const std::string& id, c
 
 void MiradClient::GetArtThumbsAsync(QObject* context, const std::string& id, const std::string& slot,
                                     const std::vector<std::int64_t>& candidate_ids,
-                                    std::function<void(ArtThumbsResult)> callback) {
-  async::Run(context, [id, slot, candidate_ids] { return GetArtThumbsSync(id, slot, candidate_ids); },
-             std::move(callback));
+                                    std::function<void(std::vector<std::pair<std::int64_t, QImage>>)> callback) {
+  async::Run<std::vector<std::pair<std::int64_t, QImage>>>(
+      context, [id, slot, candidate_ids] {
+        std::vector<std::pair<std::int64_t, QImage>> images;
+        for (const auto& [candidate_id, bytes] : GetArtThumbsSync(id, slot, candidate_ids).images) {
+          if (QImage image = DecodeImage(bytes); !image.isNull()) images.emplace_back(candidate_id, std::move(image));
+        }
+        return images;
+      },
+      std::move(callback));
 }
 
 void MiradClient::RefreshMissingArtworkAsync(QObject* context,

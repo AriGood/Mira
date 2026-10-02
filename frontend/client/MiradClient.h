@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QImage>
 #include <QObject>
 
 #include <functional>
@@ -115,9 +116,10 @@ public:
 
   // One named art slot: "cover", "hero", "capsule", "header", "logo",
   // "icon". Which ones exist depends on the source; GetMetadataAsync's
-  // art_slots says which were cached.
-  static void GetArtworkSlotAsync(QObject* context, const std::string& id, const std::string& slot,
-                                  std::function<void(ArtworkResult)> callback);
+  // art_slots says which were cached. Decoded off the UI thread; a null
+  // image when missing or undecodable.
+  static void GetArtworkImageAsync(QObject* context, const std::string& id, const std::string& slot,
+                                   std::function<void(QImage)> callback);
   // The same two fetches on the calling thread, for a caller that decodes
   // the image on its own worker thread too.
   static ArtworkResult GetArtworkBlocking(const std::string& id, const std::string& slot);
@@ -165,10 +167,11 @@ public:
   static void FetchArtThumbsAsync(QObject* context, const std::string& id, const std::string& slot,
                                   const std::vector<std::int64_t>& candidate_ids,
                                   std::function<void(GameActionResult)> callback);
-  // GET .../artwork/thumb for each id, in one round of requests.
+  // GET .../artwork/thumb for each id, in one round of requests, decoded off
+  // the UI thread. An id without a decodable preview is left out.
   static void GetArtThumbsAsync(QObject* context, const std::string& id, const std::string& slot,
                                 const std::vector<std::int64_t>& candidate_ids,
-                                std::function<void(ArtThumbsResult)> callback);
+                                std::function<void(std::vector<std::pair<std::int64_t, QImage>>)> callback);
 
   // POST /v1/games/metadata/refresh-missing: every game without a cover, as one job.
   static void RefreshMissingArtworkAsync(QObject* context, std::function<void(MetadataBatchResult)> callback);

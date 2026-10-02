@@ -53,13 +53,9 @@ void HeroBackdrop::RefreshHero(const std::string& id) {
 void HeroBackdrop::LoadHero() {
   const std::string id = game_.id;
   // A game with no hero is a 404 here, when its record didn't already say so.
-  MiradClient::GetArtworkSlotAsync(this, id, "hero", [this, id](ArtworkResult art) {
-    if (game_.id != id || !art.ok) return;
-    QPixmap pixmap;
-    if (!pixmap.loadFromData(reinterpret_cast<const uchar*>(art.bytes.data()), static_cast<uint>(art.bytes.size()))) {
-      return;
-    }
-    hero_ = pixmap;
+  MiradClient::GetArtworkImageAsync(this, id, "hero", [this, id](QImage image) {
+    if (game_.id != id || image.isNull()) return;
+    hero_ = QPixmap::fromImage(std::move(image));
     hero_preview_ = QPixmap();
     rendered_ = QPixmap();
     update();
@@ -134,17 +130,20 @@ CoverChip::CoverChip(ArtworkStore* artwork, QWidget* parent) : QWidget(parent), 
 void CoverChip::ShowGame(const GameSummary& game) {
   game_ = game;
   preview_ = QPixmap();
+  preview_filled_ = QPixmap();
   update();
 }
 
 void CoverChip::RefreshCover(const std::string& id) {
   if (id != game_.id) return;
   preview_ = QPixmap();
+  preview_filled_ = QPixmap();
   update();
 }
 
 void CoverChip::SetPreview(const QPixmap& preview) {
   preview_ = preview;
+  preview_filled_ = QPixmap();
   update();
 }
 
@@ -158,8 +157,12 @@ void CoverChip::paintEvent(QPaintEvent*) {
   path.addRoundedRect(box, tokens.radius_tile, tokens.radius_tile);
   painter.setClipPath(path);
   if (!preview_.isNull()) {
-    const QPixmap filled =
-        preview_.scaled(size() * devicePixelRatioF(), Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
+    if (preview_filled_.isNull() || preview_dpr_ != devicePixelRatioF()) {
+      preview_filled_ =
+          preview_.scaled(size() * devicePixelRatioF(), Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
+      preview_dpr_ = devicePixelRatioF();
+    }
+    const QPixmap& filled = preview_filled_;
     const QRectF source((filled.width() - width() * devicePixelRatioF()) / 2,
                         (filled.height() - height() * devicePixelRatioF()) / 2, width() * devicePixelRatioF(),
                         height() * devicePixelRatioF());
