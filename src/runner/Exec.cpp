@@ -1,12 +1,14 @@
 #include "runner/Exec.h"
 
 #include <fcntl.h>
+#include <poll.h>
 #include <signal.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cerrno>
 #include <cstdlib>
 #include <cstring>
@@ -184,6 +186,8 @@ Result<ExecResult> RunAndWait(const Command& command, const OutputFn& on_output)
     // O_CLOEXEC on the copies, so stdout/stderr survive exec while the
     // originals close themselves.
     UnblockSignals();
+    // Its own group, so a timeout also kills whatever it spawned.
+    if (command.timeout_s > 0) setpgid(0, 0);
     dup2(pipe_fds[1], STDOUT_FILENO);
     dup2(pipe_fds[1], STDERR_FILENO);
     if (!cwd.empty() && chdir(cwd.c_str()) != 0) _exit(127);
@@ -193,17 +197,40 @@ Result<ExecResult> RunAndWait(const Command& command, const OutputFn& on_output)
 
   // Parent.
   close(pipe_fds[1]);
+  if (command.timeout_s > 0) setpgid(pid, pid);
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(command.timeout_s);
+  bool timed_out = false;
   ExecResult result;
   char buffer[4096];
-  ssize_t n;
-  while ((n = read(pipe_fds[0], buffer, sizeof(buffer))) > 0) {
+  for (;;) {
+    if (command.timeout_s > 0) {
+      const auto left =
+          std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now()).count();
+      pollfd ready{.fd = pipe_fds[0], .events = POLLIN, .revents = 0};
+      const int polled = left > 0 ? poll(&ready, 1, static_cast<int>(left)) : 0;
+      if (polled < 0 && errno == EINTR) continue;
+      if (polled == 0) {
+        timed_out = true;
+        break;
+      }
+    }
+    const ssize_t n = read(pipe_fds[0], buffer, sizeof(buffer));
+    if (n < 0 && errno == EINTR) continue;
+    if (n <= 0) break;
     result.output.append(buffer, static_cast<size_t>(n));
     if (on_output) on_output(std::string_view(buffer, static_cast<size_t>(n)));
   }
   close(pipe_fds[0]);
+  if (timed_out) {
+    kill(-pid, SIGKILL);
+    kill(pid, SIGKILL);
+  }
 
   int status = 0;
   if (waitpid(pid, &status, 0) < 0) return Err("exec_wait_failed", std::strerror(errno));
+  if (timed_out) {
+    return Err("exec_timeout", std::format("{} gave no result within {}s", command.argv[0], command.timeout_s));
+  }
   result.exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
   return result;
 }

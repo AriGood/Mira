@@ -1,11 +1,13 @@
 #include <doctest.h>
 
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <system_error>
 #include <vector>
 
 #include "config/Config.h"
+#include "runner/Exec.h"
 #include "runner/NativeRunner.h"
 #include "runner/RunnerRegistry.h"
 
@@ -315,4 +317,15 @@ TEST_CASE("NativeRunner runs an absolute exe_path as-is, in its own folder, what
   REQUIRE(command.has_value());
   CHECK(command->argv == std::vector<std::string>{"/usr/bin/flatpak", "run", "com.example.App"});
   CHECK(command->cwd == "/usr/bin");
+}
+
+TEST_CASE("RunAndWait kills a timed-out command and what it spawned") {
+  mira::Command command;
+  command.argv = {"sh", "-c", "sleep 30 & sleep 30"};
+  command.timeout_s = 1;
+  const auto started = std::chrono::steady_clock::now();
+  const auto result = mira::runner::RunAndWait(command);
+  REQUIRE_FALSE(result.has_value());
+  CHECK(result.error().code == "exec_timeout");
+  CHECK(std::chrono::steady_clock::now() - started < std::chrono::seconds(5));
 }
