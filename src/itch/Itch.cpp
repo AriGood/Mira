@@ -8,8 +8,10 @@
 #include <algorithm>
 #include <cctype>
 #include <fstream>
+#include <mutex>
 #include <ranges>
 #include <regex>
+#include <utility>
 
 #include <json.hpp>
 
@@ -120,12 +122,23 @@ Result<std::int64_t> CurrentProfileId(const config::Config& config) {
 
   // No separate persisted profile id (see this function's header comment)
   // -- re-authenticating with the stored key is how butlerd hands it back.
+  // Remembered per key, so one listing or install logs in once.
+  static std::mutex cache_mutex;
+  static std::pair<std::string, std::int64_t> cached;
+  {
+    const std::lock_guard lock(cache_mutex);
+    if (cached.first == api_key) return cached.second;
+  }
   const Result<nlohmann::json> result = Call(config, "Profile.LoginWithAPIKey", {{"apiKey", api_key}});
   if (!result) return std::unexpected(result.error());
-  if (!result->contains("profile") || !(*result)["profile"].contains("id")) {
+  if (!result->contains("profile") || !(*result)["profile"].contains("id") ||
+      !(*result)["profile"]["id"].is_number_integer()) {
     return Err("itch_profile_missing", "butlerd didn't return a profile id");
   }
-  return (*result)["profile"]["id"].get<std::int64_t>();
+  const std::int64_t id = (*result)["profile"]["id"].get<std::int64_t>();
+  const std::lock_guard lock(cache_mutex);
+  cached = {api_key, id};
+  return id;
 }
 
 Result<void> EnsureInstallLocation(const config::Config& config) {
