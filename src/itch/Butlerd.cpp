@@ -6,6 +6,7 @@
 #include <poll.h>
 #include <signal.h>
 #include <sys/socket.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -44,10 +45,21 @@ struct Connection {
   std::condition_variable replied;
   bool connected = false;
   int socket_fd = -1;
+  pid_t daemon_pid = -1;
   int next_id = 1;
   std::map<int, Pending*> pending;
   std::mutex write_mutex;  // one message on the socket at a time
 };
+
+// Kills and reaps a butlerd that is no longer usable, so a retry doesn't
+// leave it running beside the next one on the same butler.db.
+void StopDaemon(pid_t& pid) {
+  if (pid <= 0) return;
+  kill(-pid, SIGKILL);  // its own session and group (setsid)
+  kill(pid, SIGKILL);
+  waitpid(pid, nullptr, 0);
+  pid = -1;
+}
 
 Connection& GlobalConnection() {
   static Connection connection;
@@ -56,12 +68,16 @@ Connection& GlobalConnection() {
 
 // Forks `argv`, redirecting only the child's stdout to a pipe (stderr goes
 // to mirad's own, same posture as runner::SpawnDetached) -- the caller
-// gets that pipe's read end and owns closing it. The child is left
-// running; nothing here waits on it. Not built on runner::SpawnDetached*,
+// gets that pipe's read end and owns closing it, and the pid to stop it. Not built on runner::SpawnDetached*,
 // which don't offer a way to read a long-lived child's stdout while it
 // keeps running -- this is the one place in this codebase that needs
 // that shape (see Butlerd.h's class comment).
-Result<int> SpawnCapturingStdout(const std::vector<std::string>& argv) {
+struct Spawned {
+  pid_t pid;
+  int stdout_fd;
+};
+
+Result<Spawned> SpawnCapturingStdout(const std::vector<std::string>& argv) {
   // Built before fork(): the child of a threaded process mustn't allocate.
   std::vector<char*> args;
   args.reserve(argv.size() + 1);
@@ -90,7 +106,7 @@ Result<int> SpawnCapturingStdout(const std::vector<std::string>& argv) {
     _exit(127);
   }
   close(pipe_fds[1]);
-  return pipe_fds[0];
+  return Spawned{pid, pipe_fds[0]};
 }
 
 // Reads from `fd` until a full line is available or `deadline` passes,
@@ -240,6 +256,7 @@ void ReadLoop(Connection& connection, int fd) {
   if (connection.socket_fd == fd) {
     connection.connected = false;
     connection.socket_fd = -1;
+    StopDaemon(connection.daemon_pid);
   }
   close(fd);
   for (const auto& [id, call] : connection.pending) {
@@ -293,10 +310,12 @@ Result<void> EnsureConnectedLocked(const config::Config& config, Connection& con
   std::error_code ec;
   fs::create_directories(db_path.parent_path(), ec);
 
-  const Result<int> stdout_fd =
+  const Result<Spawned> spawned =
     SpawnCapturingStdout({status.path, "daemon", "--json", "--dbpath", db_path.string(), "--keep-alive",
                           "--destiny-pid", std::to_string(getpid())});
-  if (!stdout_fd) return std::unexpected(stdout_fd.error());
+  if (!spawned) return std::unexpected(spawned.error());
+  pid_t pid = spawned->pid;
+  const int stdout_fd = spawned->stdout_fd;
 
   // butlerd mixes its own JSON log lines in with the one
   // butlerd/listen-notification line we need; read until we see it or run
@@ -305,9 +324,10 @@ Result<void> EnsureConnectedLocked(const config::Config& config, Connection& con
   std::string secret;
   std::string address;
   while (secret.empty()) {
-    const Result<std::string> line = ReadLine(*stdout_fd, deadline);
+    const Result<std::string> line = ReadLine(stdout_fd, deadline);
     if (!line) {
-      close(*stdout_fd);
+      close(stdout_fd);
+      StopDaemon(pid);
       return Err("butlerd_start_failed", "butlerd didn't print its listen address in time: " + line.error().message);
     }
     const json parsed = json::parse(*line, nullptr, false);
@@ -320,7 +340,7 @@ Result<void> EnsureConnectedLocked(const config::Config& config, Connection& con
   // butlerd keeps logging to its stdout for as long as it runs -- drain it
   // in the background forever so the child never blocks writing to a full
   // pipe once we stop reading it ourselves.
-  const int drain_fd = *stdout_fd;
+  const int drain_fd = stdout_fd;
   std::thread([drain_fd] {
     char buffer[4096];
     while (read(drain_fd, buffer, sizeof(buffer)) > 0) {
@@ -329,27 +349,36 @@ Result<void> EnsureConnectedLocked(const config::Config& config, Connection& con
   }).detach();
 
   const size_t colon = address.rfind(':');
-  if (colon == std::string::npos) return Err("butlerd_start_failed", "unexpected listen address: " + address);
+  if (colon == std::string::npos) {
+    StopDaemon(pid);
+    return Err("butlerd_start_failed", "unexpected listen address: " + address);
+  }
   const std::string host = address.substr(0, colon);
   const int port = std::atoi(address.substr(colon + 1).c_str());
 
   int socket_fd = -1;
-  if (auto connected = ConnectSocket(socket_fd, host, port); !connected) return std::unexpected(connected.error());
+  if (auto connected = ConnectSocket(socket_fd, host, port); !connected) {
+    StopDaemon(pid);
+    return std::unexpected(connected.error());
+  }
 
   const int auth_id = connection.next_id++;
   if (auto sent = SendLine(socket_fd, {{"jsonrpc", "2.0"}, {"id", auth_id}, {"method", "Meta.Authenticate"},
                                        {"params", {{"secret", secret}}}});
       !sent) {
     close(socket_fd);
+    StopDaemon(pid);
     return std::unexpected(sent.error());
   }
   const Result<json> auth_result = ReadResponse(socket_fd, auth_id, deadline);
   if (!auth_result) {
     close(socket_fd);
+    StopDaemon(pid);
     return std::unexpected(auth_result.error());
   }
 
   connection.socket_fd = socket_fd;
+  connection.daemon_pid = pid;
   connection.connected = true;
   std::thread(ReadLoop, std::ref(connection), socket_fd).detach();
   log::Info("connected to butlerd at {}", address);
