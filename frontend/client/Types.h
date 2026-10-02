@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <map>
 #include <optional>
@@ -58,6 +59,11 @@ struct GameSummary {
   bool operator==(const GameSummary&) const = default;
 };
 
+// A program rather than a game ("app" tag): kept out of Continue, with no playtime shown.
+inline bool IsApp(const GameSummary& game) {
+  return std::ranges::find(game.tags, "app") != game.tags.end();
+}
+
 struct GamesResult {
   bool ok = false;
   ApiError error;
@@ -107,6 +113,14 @@ struct LaunchResult {
 struct GameLaunchedEvent {
   std::string id;
   bool tracked = false;
+};
+
+// game.install_detected: a launched game exited and had added a program
+// folder to its prefix, so it was an installer.
+struct InstallDetectedEvent {
+  std::string id;
+  std::string install_path;  // absolute, inside the game's prefix
+  std::string exe_path;      // relative to install_path; empty when none was found
 };
 
 // GET /v1/games/{id}/artwork: the cached cover image itself, as bytes.
@@ -784,20 +798,6 @@ struct TricksEvent {
   std::string verb;
   std::string state;  // "started" | "finished" | "failed"
   std::string error;  // only on "failed"
-};
-
-// One accepted config key for a runner kind. Informational only: no
-// structured editor exists; runner_config stays free-text JSON.
-struct RunnerSchemaEntry {
-  std::string key;
-  std::string type;
-  std::string doc;
-};
-
-struct RunnerSchemaResult {
-  bool ok = false;
-  ApiError error;
-  std::vector<RunnerSchemaEntry> entries;
 };
 
 // DELETE /v1/runners/{kind}:{name}: synchronous, 200 on success.

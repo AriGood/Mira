@@ -65,7 +65,7 @@ private:
   void RebuildChips();
   void ApplyFilter(const QString& style);
   void RequestVisible();
-  void ShowThumbs(const std::string& slot, const ArtThumbsResult& result);
+  void ShowThumbs(const std::string& slot, const std::vector<std::pair<std::int64_t, QImage>>& images);
   void MarkFailed(const std::vector<std::int64_t>& ids);
   QListWidgetItem* ItemFor(std::int64_t id) const;
   void Pick(QListWidgetItem* item);

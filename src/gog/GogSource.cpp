@@ -8,7 +8,6 @@
 
 #include <json.hpp>
 
-#include "core/Command.h"
 #include "gog/Gog.h"
 #include "gog/GogInstaller.h"
 #include "runner/Exec.h"
@@ -18,10 +17,8 @@ namespace {
 using nlohmann::json;
 
 Result<json> GetJson(const std::string& url, const std::string& bearer_token) {
-  Command command;
-  command.argv = {"curl", "-sSL", "--max-time", "10", "-H", std::format("Authorization: Bearer {}", bearer_token),
-                  url};
-  const Result<runner::ExecResult> result = runner::RunAndWait(command);
+  const Result<runner::ExecResult> result = runner::RunCurlWithSecrets(
+      {"-sSL", "--max-time", "10", url}, runner::CurlConfigLine("header", "Authorization: Bearer " + bearer_token));
   if (!result) return std::unexpected(result.error());
   const json parsed = json::parse(result->output, nullptr, false);
   if (parsed.is_discarded()) return Err("gog_api_error", "GOG's API didn't return valid JSON");

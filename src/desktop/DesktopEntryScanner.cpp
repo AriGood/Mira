@@ -108,14 +108,10 @@ std::optional<DesktopFile> ParseDesktopFile(const fs::path& path) {
 
     const size_t eq = trimmed.find('=');
     if (eq == std::string::npos) continue;
-    std::string key = Trim(trimmed.substr(0, eq));
-    const std::string value = Trim(trimmed.substr(eq + 1));
-
-    // Drop a localized variant's [locale] suffix -- keep only the bare key,
-    // and never let a localized line overwrite an already-seen bare one.
-    const size_t bracket = key.find('[');
-    if (bracket != std::string::npos) key = key.substr(0, bracket);
-    if (!file.entries.contains(key)) file.entries[key] = value;
+    const std::string key = Trim(trimmed.substr(0, eq));
+    // Bare keys only: a Name[de]= before Name= must not win.
+    if (key.find('[') != std::string::npos) continue;
+    if (!file.entries.contains(key)) file.entries[key] = Trim(trimmed.substr(eq + 1));
   }
   return file;
 }

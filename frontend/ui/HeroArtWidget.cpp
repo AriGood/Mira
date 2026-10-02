@@ -134,14 +134,13 @@ void HeroArtWidget::LoadBanner(const std::string& id) {
     RenderBanner();
     return;
   }
-  MiradClient::GetArtworkSlotAsync(this, id, "hero", [this, id, key](ArtworkResult result) {
-    QPixmap pixmap;
-    if (!result.ok || !pixmap.loadFromData(reinterpret_cast<const uchar*>(result.bytes.data()),
-                                           static_cast<uint>(result.bytes.size()))) {
+  MiradClient::GetArtworkImageAsync(this, id, "hero", [this, id, key](QImage image) {
+    if (image.isNull()) {
       hero_known_[key] = false;  // set by RefreshBanner on the expectation of a hero
       if (game_id_ == id) UpdateImageVisibility();
       return;
     }
+    const QPixmap pixmap = QPixmap::fromImage(std::move(image));
     banners_.insert(key, pixmap);
     if (game_id_ != id) return;
     banner_source_ = pixmap;
@@ -186,6 +185,8 @@ void HeroArtWidget::UpdateImageVisibility() {
 
 void HeroArtWidget::resizeEvent(QResizeEvent* event) {
   QWidget::resizeEvent(event);
+  if (ImageBoxSize() == rendered_box_) return;
+  rendered_box_ = ImageBoxSize();
   RenderBanner();
   RefreshCover();
   // ImageBoxSize()'s height tracks width, so the placeholder's fixed height

@@ -1,6 +1,7 @@
 #include "core/Json.h"
 #include "desktop/DesktopEntries.h"
 
+#include <algorithm>
 #include <format>
 #include <fstream>
 #include <optional>
@@ -82,7 +83,9 @@ std::string DesktopEntries::Render(const model::Game& game) const {
                                ? std::format("mira-gui --launch {}", game.id)
                                : std::format("mira launch {}", game.id);
   const std::optional<fs::path> artwork = CachedArtwork(config_, game.id);
-  const std::string icon = artwork ? artwork->string() : "applications-games";
+  const bool app = std::ranges::contains(game.tags, "app");
+  const std::string icon = artwork ? artwork->string() : app ? "application-x-executable" : "applications-games";
+  const std::string categories = app ? "Utility;" : resolver.GetString("desktop_entries.categories");
 
   return std::format(
       "[Desktop Entry]\n"
@@ -95,7 +98,7 @@ std::string DesktopEntries::Render(const model::Game& game) const {
       "Terminal=false\n"
       "X-Mira-Game-Id={}\n",
       Sanitize(game.name), Sanitize(game.name), exec, icon,
-      Sanitize(resolver.GetString("desktop_entries.categories")), game.id);
+      Sanitize(categories), game.id);
 }
 
 Result<void> DesktopEntries::Sync(const std::vector<model::Game>& games) {

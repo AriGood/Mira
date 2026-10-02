@@ -102,8 +102,8 @@ DownloadsPanel::DownloadsPanel(DownloadTracker* tracker, ArtworkStore* artwork, 
   scroll->setWidget(list);
   layout->addWidget(scroll);
 
-  connect(tracker_, &DownloadTracker::Changed, this, [this] {
-    if (isVisible()) Rebuild();
+  connect(tracker_, &DownloadTracker::Changed, this, [this](const QString& key) {
+    if (isVisible() && !UpdateRow(key)) Rebuild();
   });
   connect(artwork_, &ArtworkStore::CoverChanged, this, [this] {
     if (isVisible()) Rebuild();
@@ -140,6 +140,29 @@ void DownloadsPanel::Rebuild() {
   adjustSize();
 }
 
+bool DownloadsPanel::UpdateRow(const QString& key) {
+  const DownloadTracker::Entry* entry = tracker_->Find(key);
+  if (entry == nullptr || entry->state != State::Running) return false;
+  for (int i = 0; i < rows_->count(); ++i) {
+    QWidget* row = rows_->itemAt(i)->widget();
+    if (row == nullptr || row->property("download_key").toString() != key) continue;
+    if (!row->property("download_running").toBool()) return false;
+    const QString origin = Origin(*tracker_, *entry);
+    const QString state = RunningText(*entry);
+    row->findChild<QLabel*>("download_title")->setText(tracker_->NameFor(*entry));
+    row->findChild<QLabel*>("download_status")->setText(origin.isEmpty() ? state : origin + "  ·  " + state);
+    auto* bar = row->findChild<QProgressBar*>();
+    if (entry->progress >= 0) {
+      bar->setRange(0, 100);
+      bar->setValue(qRound(entry->progress * 100));
+    } else {
+      bar->setRange(0, 0);
+    }
+    return true;
+  }
+  return false;
+}
+
 QWidget* DownloadsPanel::BuildRow(int index) {
   const DownloadTracker::Entry& entry = tracker_->Entries()[static_cast<size_t>(index)];
   const theme::Tokens& tokens = theme::Current();
@@ -147,6 +170,8 @@ QWidget* DownloadsPanel::BuildRow(int index) {
 
   auto* row = new QFrame();
   row->setObjectName("download_row");
+  row->setProperty("download_key", entry.key);
+  row->setProperty("download_running", entry.state == State::Running);
   auto* layout = new QHBoxLayout(row);
   layout->setContentsMargins(8, 8, 8, 8);
   layout->setSpacing(10);
@@ -178,6 +203,7 @@ QWidget* DownloadsPanel::BuildRow(int index) {
   auto* text = new QVBoxLayout();
   text->setSpacing(3);
   auto* title = new QLabel(name, row);
+  title->setObjectName("download_title");
   title->setStyleSheet("font-weight: 600;");
   title->setToolTip(name);
   text->addWidget(title);
@@ -195,6 +221,7 @@ QWidget* DownloadsPanel::BuildRow(int index) {
   }
   const QString origin = Origin(*tracker_, entry);
   auto* status = new QLabel(origin.isEmpty() ? state : origin + "  ·  " + state, row);
+  status->setObjectName("download_status");
   status->setProperty("role", role);
   status->setWordWrap(true);
   text->addWidget(status);

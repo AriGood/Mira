@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <optional>
+#include <set>
 #include <string>
 
 #include "config/Config.h"
@@ -36,6 +37,19 @@ struct InstallProgress {
   std::string error;
   std::uintmax_t bytes_written = 0;  // growth of the install folder and new drive_c folders
 };
+
+// Top-level folders under install.detect_dirs in `prefix`'s drive_c: taken
+// before a launch, so NewInstall can tell what the run installed.
+std::set<std::filesystem::path> InstallFolders(const config::Config& config, const std::filesystem::path& prefix);
+
+struct InstalledApp {
+  std::filesystem::path dir;
+  std::string exe_path;  // relative to dir; empty when no program was found
+};
+
+// A folder added to `prefix` since `before`, preferring one with a program in it.
+std::optional<InstalledApp> NewInstall(const config::Config& config, const std::filesystem::path& prefix,
+                                       const std::set<std::filesystem::path>& before);
 
 // The latest install for `id` since mirad started, if any.
 std::optional<InstallProgress> Progress(const std::string& id);

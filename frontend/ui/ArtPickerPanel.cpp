@@ -494,12 +494,9 @@ void ArtPickerPanel::RequestVisible() {
   });
 }
 
-void ArtPickerPanel::ShowThumbs(const std::string& slot, const ArtThumbsResult& result) {
-  for (const auto& [candidate_id, bytes] : result.images) {
-    QPixmap pixmap;
-    if (!pixmap.loadFromData(reinterpret_cast<const uchar*>(bytes.data()), static_cast<uint>(bytes.size()))) {
-      continue;
-    }
+void ArtPickerPanel::ShowThumbs(const std::string& slot, const std::vector<std::pair<std::int64_t, QImage>>& images) {
+  for (const auto& [candidate_id, image] : images) {
+    const QPixmap pixmap = QPixmap::fromImage(image);
     thumbs_[{slot, candidate_id}] = pixmap;
     if (slot != slot_) continue;
     if (QListWidgetItem* item = ItemFor(candidate_id)) {
@@ -654,8 +651,8 @@ void ArtPickerPanel::HandleEvent(const std::string& type, const std::string& dat
     if (event.ready.empty()) return;
     const std::string slot = event.slot;
     const std::vector<std::int64_t> ready = event.ready;
-    MiradClient::GetArtThumbsAsync(this, id_, slot, ready, [this, slot, ready](ArtThumbsResult result) {
-      ShowThumbs(slot, result);
+    MiradClient::GetArtThumbsAsync(this, id_, slot, ready, [this, slot, ready](std::vector<std::pair<std::int64_t, QImage>> images) {
+      ShowThumbs(slot, images);
       if (slot != slot_) return;
       std::vector<std::int64_t> missing;
       for (const std::int64_t candidate_id : ready) {

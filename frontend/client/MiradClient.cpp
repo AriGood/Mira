@@ -19,6 +19,12 @@ namespace {
 
 using nlohmann::json;
 
+QImage DecodeImage(const std::string& bytes) {
+  QImage image;
+  image.loadFromData(reinterpret_cast<const uchar*>(bytes.data()), static_cast<int>(bytes.size()));
+  return image;
+}
+
 // Percent-encodes everything outside RFC 3986's unreserved set.
 std::string QueryEncode(const std::string& text) {
   static constexpr char kHex[] = "0123456789ABCDEF";
@@ -790,8 +796,13 @@ RunInPrefixResult RunInPrefixSync(const std::string& id, const std::string& exe_
   return {reply.ok, reply.error};
 }
 
-FinishInstallResult FinishInstallSync(const std::string& id) {
-  const transport::Reply reply = transport::Post("/v1/games/" + id + "/finish-install");
+FinishInstallResult FinishInstallSync(const std::string& id, const std::string& install_path,
+                                      const std::string& exe_path) {
+  json body = json::object();
+  if (!install_path.empty()) body["install_path"] = install_path;
+  if (!exe_path.empty()) body["exe_path"] = exe_path;
+  const transport::Reply reply = body.empty() ? transport::Post("/v1/games/" + id + "/finish-install")
+                                              : transport::PostJson("/v1/games/" + id + "/finish-install", body);
   return {reply.ok, reply.error};
 }
 
@@ -872,29 +883,6 @@ TricksResult RunWinetricksSync(const std::string& id, const std::string& verb) {
 RunnerRemoveResult DeleteRunnerSync(const std::string& kind, const std::string& name) {
   const transport::Reply reply = transport::Delete("/v1/runners/" + kind + ":" + QueryEncode(name));
   return {reply.ok, reply.error};
-}
-
-RunnerSchemaResult GetRunnerSchemaSync(const std::string& kind) {
-  RunnerSchemaResult result;
-  const transport::Reply reply = transport::Get("/v1/runners/" + kind + "/schema");
-  if (!reply.ok) {
-    result.error = reply.error;
-    return result;
-  }
-  if (!reply.body.is_array()) {
-    result.error = transport::UnexpectedResponse("GET /v1/runners/" + kind + "/schema");
-    return result;
-  }
-
-  result.ok = true;
-  for (const json& entry : reply.body) {
-    RunnerSchemaEntry e;
-    e.key = entry.value("key", std::string());
-    e.type = entry.value("type", std::string());
-    e.doc = entry.value("doc", std::string());
-    result.entries.push_back(std::move(e));
-  }
-  return result;
 }
 
 GameDetailResult AddManualGameSync(const std::string& install_path, const std::string& exe_path,
@@ -1360,12 +1348,6 @@ void MiradClient::CheckHealthAsync(QObject* context, std::function<void(HealthSt
   async::Run(context, [] { return GetHealthSync(); }, std::move(callback));
 }
 
-void MiradClient::ListGamesAsync(QObject* context, std::function<void(GamesResult)> callback,
-                                 const std::string& status_filter, const std::string& tag_filter) {
-  async::Run(context, [status_filter, tag_filter] { return GetGamesSync(status_filter, tag_filter, false); },
-             std::move(callback));
-}
-
 void MiradClient::ListAllGamesAsync(QObject* context, std::function<void(GamesResult)> callback) {
   async::Run(context, [] { return GetGamesSync(std::string(), std::string(), true); }, std::move(callback));
 }
@@ -1449,15 +1431,14 @@ void MiradClient::ClearArtThumbsBlocking() {
 
 FrontendPrefsResult MiradClient::GetFrontendPrefsBlocking() { return GetFrontendPrefsSync(); }
 
-void MiradClient::GetArtworkAsync(QObject* context, const std::string& id,
-                                  std::function<void(ArtworkResult)> callback) {
-  async::Run(context, [id] { return GetArtworkSync(id, "cover"); }, std::move(callback));
-}
-
-void MiradClient::GetArtworkSlotAsync(QObject* context, const std::string& id,
-                                      const std::string& slot,
-                                      std::function<void(ArtworkResult)> callback) {
-  async::Run(context, [id, slot] { return GetArtworkSync(id, slot); }, std::move(callback));
+void MiradClient::GetArtworkImageAsync(QObject* context, const std::string& id, const std::string& slot,
+                                       std::function<void(QImage)> callback) {
+  async::Run<QImage>(
+      context, [id, slot] {
+        const ArtworkResult result = GetArtworkSync(id, slot);
+        return result.ok ? DecodeImage(result.bytes) : QImage();
+      },
+      std::move(callback));
 }
 
 void MiradClient::GetMetadataAsync(QObject* context, const std::string& id,
@@ -1502,9 +1483,16 @@ void MiradClient::FetchArtThumbsAsync(QObject* context, const std::string& id, c
 
 void MiradClient::GetArtThumbsAsync(QObject* context, const std::string& id, const std::string& slot,
                                     const std::vector<std::int64_t>& candidate_ids,
-                                    std::function<void(ArtThumbsResult)> callback) {
-  async::Run(context, [id, slot, candidate_ids] { return GetArtThumbsSync(id, slot, candidate_ids); },
-             std::move(callback));
+                                    std::function<void(std::vector<std::pair<std::int64_t, QImage>>)> callback) {
+  async::Run<std::vector<std::pair<std::int64_t, QImage>>>(
+      context, [id, slot, candidate_ids] {
+        std::vector<std::pair<std::int64_t, QImage>> images;
+        for (const auto& [candidate_id, bytes] : GetArtThumbsSync(id, slot, candidate_ids).images) {
+          if (QImage image = DecodeImage(bytes); !image.isNull()) images.emplace_back(candidate_id, std::move(image));
+        }
+        return images;
+      },
+      std::move(callback));
 }
 
 void MiradClient::RefreshMissingArtworkAsync(QObject* context,
@@ -1572,8 +1560,9 @@ void MiradClient::RunInPrefixAsync(QObject* context, const std::string& id,
 }
 
 void MiradClient::FinishInstallAsync(QObject* context, const std::string& id,
-                                     std::function<void(FinishInstallResult)> callback) {
-  async::Run(context, [id] { return FinishInstallSync(id); }, std::move(callback));
+                                     std::function<void(FinishInstallResult)> callback,
+                                     const std::string& install_path, const std::string& exe_path) {
+  async::Run(context, [id, install_path, exe_path] { return FinishInstallSync(id, install_path, exe_path); }, std::move(callback));
 }
 
 void MiradClient::GetGameConfigAsync(QObject* context, const std::string& id,
@@ -1612,11 +1601,6 @@ void MiradClient::DeleteRunnerAsync(QObject* context, const std::string& kind,
                                     const std::string& name,
                                     std::function<void(RunnerRemoveResult)> callback) {
   async::Run(context, [kind, name] { return DeleteRunnerSync(kind, name); }, std::move(callback));
-}
-
-void MiradClient::GetRunnerSchemaAsync(QObject* context, const std::string& kind,
-                                       std::function<void(RunnerSchemaResult)> callback) {
-  async::Run(context, [kind] { return GetRunnerSchemaSync(kind); }, std::move(callback));
 }
 
 void MiradClient::AddManualGameAsync(QObject* context, const std::string& install_path,
@@ -1687,6 +1671,15 @@ bool MiradClient::ParseGameLaunched(const std::string& data, GameLaunchedEvent* 
   if (out->id.empty()) return false;
   out->tracked = entry.value("tracked", false);
   return true;
+}
+
+bool MiradClient::ParseInstallDetected(const std::string& data, InstallDetectedEvent* out) {
+  const json entry = json::parse(data, nullptr, false);
+  if (entry.is_discarded() || !entry.is_object()) return false;
+  out->id = mapping::Str(entry, "id");
+  out->install_path = mapping::Str(entry, "install_path");
+  out->exe_path = mapping::Str(entry, "exe_path");
+  return !out->id.empty() && !out->install_path.empty();
 }
 
 std::string MiradClient::ParseRemovedId(const std::string& data) {
@@ -1826,11 +1819,6 @@ void MiradClient::GetGriddbMatchesAsync(QObject* context, const std::string& id,
 void MiradClient::SetGriddbMatchAsync(QObject* context, const std::string& id, std::int64_t griddb_id,
                                       std::function<void(GameActionResult)> callback) {
   async::Run(context, [id, griddb_id] { return SetGriddbMatchSync(id, griddb_id); }, std::move(callback));
-}
-
-void MiradClient::GetTitleArtworkAsync(QObject* context, const std::string& source, const std::string& ref,
-                                       std::function<void(ArtworkResult)> callback) {
-  async::Run(context, [source, ref] { return GetTitleArtworkSync(source, ref); }, std::move(callback));
 }
 
 void MiradClient::QueueTitleArtworkAsync(QObject* context, const std::string& source,

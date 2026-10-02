@@ -6,6 +6,8 @@
 #include <QPushButton>
 #include <QVBoxLayout>
 
+#include <algorithm>
+
 #include "ArtworkStore.h"
 #include "GamePresentation.h"
 #include "Icons.h"
@@ -30,18 +32,27 @@ ContinueRow::ContinueRow(ArtworkStore* artwork, QWidget* parent) : QWidget(paren
 }
 
 void ContinueRow::SetGames(const std::vector<const GameSummary*>& games) {
+  if (std::ranges::equal(games, shown_, [](const GameSummary* a, const GameSummary& b) { return *a == b; })) return;
   // deleteLater: a card's own button may be what got us here.
   while (QLayoutItem* item = cards_->takeAt(0)) {
     if (item->widget() != nullptr) item->widget()->deleteLater();
     delete item;
   }
   shown_.clear();
+  covers_.clear();
   for (const GameSummary* game : games) {
-    shown_.insert(game->id);
+    shown_.push_back(*game);
     cards_->addWidget(MakeCard(*game, game->running));
   }
   cards_->addStretch(1);  // cards pack to the left
   setVisible(!games.empty());
+}
+
+void ContinueRow::RefreshCover(const std::string& id) {
+  const auto cover = covers_.find(id);
+  if (cover == covers_.end()) return;
+  const auto game = std::ranges::find(shown_, id, &GameSummary::id);
+  cover->second->setPixmap(artwork_->Cover(*game, kCover, devicePixelRatioF()));
 }
 
 QWidget* ContinueRow::MakeCard(const GameSummary& game, bool running) {
@@ -60,6 +71,7 @@ QWidget* ContinueRow::MakeCard(const GameSummary& game, bool running) {
   auto* cover = new QLabel(card);
   cover->setFixedSize(kCover);
   cover->setPixmap(artwork_->Cover(game, kCover, devicePixelRatioF()));
+  covers_[game.id] = cover;
   layout->addWidget(cover);
 
   auto* text = new QVBoxLayout();

@@ -20,14 +20,6 @@ std::string Trim(std::string text) {
   return text;
 }
 
-std::string VersionOf(const std::string& path) {
-  Command command;
-  command.argv = {path, "--version"};
-  const Result<runner::ExecResult> result = runner::RunAndWait(command);
-  if (!result || result->exit_code != 0) return {};
-  return Trim(result->output);
-}
-
 // humble-cli's --field output is plain CSV, not a padded
 // table (no header row either) -- "pS5kGAW5APbRTHH7,Surviving Mars -
 // Deluxe Edition,Yes". Handles a quoted field (a title containing a
@@ -72,14 +64,14 @@ std::filesystem::path ManagedHumbleCliPath(const config::Config& config) {
 HumbleStatus DetectHumbleCli(const config::Config& config) {
   const std::string override_path = config.GetString("humble.humble_cli_bin");
   if (!override_path.empty() && fs::exists(override_path)) {
-    return {.installed = true, .source = "override", .path = override_path, .version = VersionOf(override_path)};
+    return {.installed = true, .source = "override", .path = override_path, .version = runner::ToolVersion(override_path)};
   }
   const fs::path managed = ManagedHumbleCliPath(config);
   if (fs::exists(managed)) {
-    return {.installed = true, .source = "managed", .path = managed.string(), .version = VersionOf(managed.string())};
+    return {.installed = true, .source = "managed", .path = managed.string(), .version = runner::ToolVersion(managed.string())};
   }
   if (const auto on_path = runner::FindOnPath("humble-cli")) {
-    return {.installed = true, .source = "path", .path = *on_path, .version = VersionOf(*on_path)};
+    return {.installed = true, .source = "path", .path = *on_path, .version = runner::ToolVersion(*on_path)};
   }
   return {.installed = false, .source = "none", .path = "", .version = ""};
 }

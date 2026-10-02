@@ -8,8 +8,10 @@
 #include <algorithm>
 #include <cctype>
 #include <fstream>
+#include <mutex>
 #include <ranges>
 #include <regex>
+#include <utility>
 
 #include <json.hpp>
 
@@ -20,22 +22,6 @@
 namespace mira::itch {
 namespace {
 namespace fs = std::filesystem;
-
-std::string Trim(std::string text) {
-  const auto not_space = [](unsigned char c) { return !std::isspace(c); };
-  text.erase(text.begin(), std::ranges::find_if(text, not_space));
-  text.erase(std::ranges::find_if(text | std::views::reverse, not_space).base(), text.end());
-  return text;
-}
-
-std::string VersionOf(const std::string& path) {
-  Command command;
-  command.argv = {path, "--version"};
-  const Result<runner::ExecResult> result = runner::RunAndWait(command);
-  if (!result || result->exit_code != 0) return {};
-  return Trim(result->output);
-}
-
 }  // namespace
 
 std::filesystem::path ManagedButlerPath(const config::Config& config) {
@@ -54,15 +40,15 @@ std::filesystem::path ManagedButlerPath(const config::Config& config) {
 ItchStatus DetectButler(const config::Config& config) {
   const std::string override_path = config.GetString("itch.butler_bin");
   if (!override_path.empty() && fs::exists(override_path)) {
-    return {.installed = true, .source = "override", .path = override_path, .version = VersionOf(override_path)};
+    return {.installed = true, .source = "override", .path = override_path, .version = runner::ToolVersion(override_path)};
   }
 
   const fs::path managed = ManagedButlerPath(config);
   if (fs::exists(managed)) {
-    return {.installed = true, .source = "managed", .path = managed.string(), .version = VersionOf(managed.string())};
+    return {.installed = true, .source = "managed", .path = managed.string(), .version = runner::ToolVersion(managed.string())};
   }
   if (const auto on_path = runner::FindOnPath("butler")) {
-    return {.installed = true, .source = "path", .path = *on_path, .version = VersionOf(*on_path)};
+    return {.installed = true, .source = "path", .path = *on_path, .version = runner::ToolVersion(*on_path)};
   }
   return {.installed = false, .source = "none", .path = "", .version = ""};
 }
@@ -119,12 +105,23 @@ Result<std::int64_t> CurrentProfileId(const config::Config& config) {
 
   // No separate persisted profile id (see this function's header comment)
   // -- re-authenticating with the stored key is how butlerd hands it back.
+  // Remembered per key, so one listing or install logs in once.
+  static std::mutex cache_mutex;
+  static std::pair<std::string, std::int64_t> cached;
+  {
+    const std::lock_guard lock(cache_mutex);
+    if (cached.first == api_key) return cached.second;
+  }
   const Result<nlohmann::json> result = Call(config, "Profile.LoginWithAPIKey", {{"apiKey", api_key}});
   if (!result) return std::unexpected(result.error());
-  if (!result->contains("profile") || !(*result)["profile"].contains("id")) {
+  if (!result->contains("profile") || !(*result)["profile"].contains("id") ||
+      !(*result)["profile"]["id"].is_number_integer()) {
     return Err("itch_profile_missing", "butlerd didn't return a profile id");
   }
-  return (*result)["profile"]["id"].get<std::int64_t>();
+  const std::int64_t id = (*result)["profile"]["id"].get<std::int64_t>();
+  const std::lock_guard lock(cache_mutex);
+  cached = {api_key, id};
+  return id;
 }
 
 Result<void> EnsureInstallLocation(const config::Config& config) {

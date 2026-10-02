@@ -14,6 +14,7 @@ struct Command {
   std::vector<std::string> argv;
   std::map<std::string, std::string> env;  // overlay on the daemon's environment
   std::filesystem::path cwd;
+  int timeout_s = 0;  // RunAndWait only: kill the child's process group after this long (0 = never)
 };
 
 }  // namespace mira

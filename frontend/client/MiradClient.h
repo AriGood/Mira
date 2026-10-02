@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QImage>
 #include <QObject>
 
 #include <functional>
@@ -26,13 +27,6 @@ public:
   // GET /v1/health.
   static void CheckHealthAsync(QObject* context, std::function<void(HealthStatus)> callback);
 
-  // GET /v1/games[?status=...][?tag=...]. An empty filter omits that query
-  // param entirely. `tag_filter` composes with `status_filter` the way
-  // mirad does (docs/api.md); `?tag=hidden` is the only call that returns a
-  // hidden-tagged game at all.
-  static void ListGamesAsync(QObject* context, std::function<void(GamesResult)> callback,
-                             const std::string& status_filter = std::string(),
-                             const std::string& tag_filter = std::string());
   // GET /v1/games?include_hidden=true: the whole library, hidden games included.
   static void ListAllGamesAsync(QObject* context, std::function<void(GamesResult)> callback);
 
@@ -119,16 +113,13 @@ public:
   // it at its real size.
   static FrontendPrefsResult GetFrontendPrefsBlocking();
 
-  // GET /v1/games/{id}/artwork. Binary, not JSON, and a 404 is the ordinary
-  // answer for a game nothing has been fetched for yet; see ArtworkResult.
-  static void GetArtworkAsync(QObject* context, const std::string& id,
-                              std::function<void(ArtworkResult)> callback);
 
   // One named art slot: "cover", "hero", "capsule", "header", "logo",
   // "icon". Which ones exist depends on the source; GetMetadataAsync's
-  // art_slots says which were cached.
-  static void GetArtworkSlotAsync(QObject* context, const std::string& id, const std::string& slot,
-                                  std::function<void(ArtworkResult)> callback);
+  // art_slots says which were cached. Decoded off the UI thread; a null
+  // image when missing or undecodable.
+  static void GetArtworkImageAsync(QObject* context, const std::string& id, const std::string& slot,
+                                   std::function<void(QImage)> callback);
   // The same two fetches on the calling thread, for a caller that decodes
   // the image on its own worker thread too.
   static ArtworkResult GetArtworkBlocking(const std::string& id, const std::string& slot);
@@ -176,10 +167,11 @@ public:
   static void FetchArtThumbsAsync(QObject* context, const std::string& id, const std::string& slot,
                                   const std::vector<std::int64_t>& candidate_ids,
                                   std::function<void(GameActionResult)> callback);
-  // GET .../artwork/thumb for each id, in one round of requests.
+  // GET .../artwork/thumb for each id, in one round of requests, decoded off
+  // the UI thread. An id without a decodable preview is left out.
   static void GetArtThumbsAsync(QObject* context, const std::string& id, const std::string& slot,
                                 const std::vector<std::int64_t>& candidate_ids,
-                                std::function<void(ArtThumbsResult)> callback);
+                                std::function<void(std::vector<std::pair<std::int64_t, QImage>>)> callback);
 
   // POST /v1/games/metadata/refresh-missing: every game without a cover, as one job.
   static void RefreshMissingArtworkAsync(QObject* context, std::function<void(MetadataBatchResult)> callback);
@@ -238,8 +230,12 @@ public:
   // POST /v1/games/{id}/finish-install: flips a needs_install game to
   // ready once exe_path points at whatever the installer produced. 409 if
   // exe_path is still empty.
+  // With `install_path` and `exe_path`, first switches the game to that
+  // program installed in its prefix (game.install_detected).
   static void FinishInstallAsync(QObject* context, const std::string& id,
-                                 std::function<void(FinishInstallResult)> callback);
+                                 std::function<void(FinishInstallResult)> callback,
+                                 const std::string& install_path = std::string(),
+                                 const std::string& exe_path = std::string());
 
   // GET /v1/games/{id}/config: this game's resolved settings, tagged by
   // layer (see GameConfigEntry).
@@ -275,11 +271,6 @@ public:
   // files are actually gone.
   static void DeleteRunnerAsync(QObject* context, const std::string& kind, const std::string& name,
                                 std::function<void(RunnerRemoveResult)> callback);
-
-  // GET /v1/runners/{kind}/schema: the config keys that runner kind accepts
-  // in a game's runner_config. 404 for an unknown kind surfaces as !ok.
-  static void GetRunnerSchemaAsync(QObject* context, const std::string& kind,
-                                   std::function<void(RunnerSchemaResult)> callback);
 
   // GET /v1/desktop-entries/candidates: already-installed .desktop entries
   // (including Flatpak apps, via their X-Flatpak key) that could become
@@ -353,10 +344,6 @@ public:
   static void InstallStoreTitleAsync(QObject* context, const std::string& source,
                                      const std::string& ref, bool update,
                                      std::function<void(StoreActionResult)> callback);
-  // GET /v1/library/artwork: a not-installed title's cached cover. 404
-  // (missing) until POST has fetched it.
-  static void GetTitleArtworkAsync(QObject* context, const std::string& source, const std::string& ref,
-                                   std::function<void(ArtworkResult)> callback);
   // POST /v1/library/artwork: fetch covers for these titles, one at a time.
   // Each one ends in a library.artwork_ready/_failed event.
   static void QueueTitleArtworkAsync(QObject* context, const std::string& source,
@@ -423,6 +410,7 @@ public:
   // omits it: an older daemon published this event only for the case where
   // nothing was watching, so that is what its silence meant.
   static bool ParseGameLaunched(const std::string& data, GameLaunchedEvent* out);
+  static bool ParseInstallDetected(const std::string& data, InstallDetectedEvent* out);
 
   // Parses `game.removed`'s payload (`{"id": "..."}`, Server.cpp).
   static std::string ParseRemovedId(const std::string& data);

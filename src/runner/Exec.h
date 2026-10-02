@@ -7,6 +7,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "core/Command.h"
 #include "core/Result.h"
@@ -30,6 +31,17 @@ Result<ExecResult> RunAndWait(const Command& command, const OutputFn& on_output 
 // launching a game: unlike provisioning, the caller must not block, and the
 // child's output is left on the daemon's own stdout/stderr rather than
 // captured, so it lands in journalctl next to everything else.
+// `path --version`, trimmed; "" when it fails. Cached by resolved path and
+// mtime, since tool status and every store call ask for it.
+std::string ToolVersion(const std::string& path);
+
+// One `name = "value"` line of a curl config file (curl -K).
+std::string CurlConfigLine(std::string_view name, std::string_view value);
+
+// Runs curl with `args`, passing `secret_config` (curl -K lines) through a
+// private temp file so keys and tokens stay off the process list.
+Result<ExecResult> RunCurlWithSecrets(const std::vector<std::string>& args, std::string_view secret_config);
+
 Result<pid_t> SpawnDetached(const Command& command);
 
 // Like SpawnDetached, but the child's file descriptor 3 is connected to a

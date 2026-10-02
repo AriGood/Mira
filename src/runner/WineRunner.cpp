@@ -46,13 +46,6 @@ namespace fs = std::filesystem;
 // for the system wine and any custom build found under wine_search_paths:
 // every full Wine install has an internal wineboot component reachable this
 // way, whether or not a standalone `wineboot` binary sits next to it.
-std::string VersionOf(const std::string& wine_binary) {
-  Command command;
-  command.argv = {wine_binary, "--version"};
-  auto result = RunAndWait(command);
-  return result ? strings::Trim(result->output) : std::string();
-}
-
 // Scanned on top of wine_search_paths unless runner_scan_common_dirs is off. /opt holds distro builds such as
 // wine-cachyos-opt's /opt/wine-cachyos.
 constexpr const char* kKnownWineDirs[] = {
@@ -69,7 +62,7 @@ std::vector<model::RunnerBuild> WineRunner::Discover(const config::Config& confi
 
   if (auto system_wine = FindOnPath("wine")) {
     builds.push_back({.kind = "wine", .name = "system", .path = *system_wine,
-                      .version = VersionOf(*system_wine)});
+                      .version = ToolVersion(*system_wine)});
   }
 
   std::vector<fs::path> search_dirs = config.GetPathArray("wine_search_paths");
@@ -85,7 +78,7 @@ std::vector<model::RunnerBuild> WineRunner::Discover(const config::Config& confi
       const fs::path wine_binary = entry.path() / "bin" / "wine";
       if (!fs::exists(wine_binary, ec)) continue;
       builds.push_back({.kind = "wine", .name = entry.path().filename().string(),
-                        .path = wine_binary.string(), .version = VersionOf(wine_binary.string())});
+                        .path = wine_binary.string(), .version = ToolVersion(wine_binary.string())});
     }
   }
   return builds;
@@ -109,6 +102,7 @@ Result<void> WineRunner::Provision(const model::Game& game,
   // desktop for a prefix they didn't know was being created). Neither DLL
   // is needed for a plain wineboot init.
   command.env["WINEDLLOVERRIDES"] = "mscoree,mshtml=";
+  command.timeout_s = 300;
 
   auto result = RunAndWait(command);
   if (!result) return std::unexpected(result.error());

@@ -1,17 +1,21 @@
 #include "runner/Exec.h"
 
 #include <fcntl.h>
+#include <poll.h>
 #include <signal.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cerrno>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <format>
+#include <map>
+#include <mutex>
 #include <vector>
 
 #include "core/Strings.h"
@@ -184,6 +188,8 @@ Result<ExecResult> RunAndWait(const Command& command, const OutputFn& on_output)
     // O_CLOEXEC on the copies, so stdout/stderr survive exec while the
     // originals close themselves.
     UnblockSignals();
+    // Its own group, so a timeout also kills whatever it spawned.
+    if (command.timeout_s > 0) setpgid(0, 0);
     dup2(pipe_fds[1], STDOUT_FILENO);
     dup2(pipe_fds[1], STDERR_FILENO);
     if (!cwd.empty() && chdir(cwd.c_str()) != 0) _exit(127);
@@ -193,18 +199,93 @@ Result<ExecResult> RunAndWait(const Command& command, const OutputFn& on_output)
 
   // Parent.
   close(pipe_fds[1]);
+  if (command.timeout_s > 0) setpgid(pid, pid);
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(command.timeout_s);
+  bool timed_out = false;
   ExecResult result;
   char buffer[4096];
-  ssize_t n;
-  while ((n = read(pipe_fds[0], buffer, sizeof(buffer))) > 0) {
+  for (;;) {
+    if (command.timeout_s > 0) {
+      const auto left =
+          std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now()).count();
+      pollfd ready{.fd = pipe_fds[0], .events = POLLIN, .revents = 0};
+      const int polled = left > 0 ? poll(&ready, 1, static_cast<int>(left)) : 0;
+      if (polled < 0 && errno == EINTR) continue;
+      if (polled == 0) {
+        timed_out = true;
+        break;
+      }
+    }
+    const ssize_t n = read(pipe_fds[0], buffer, sizeof(buffer));
+    if (n < 0 && errno == EINTR) continue;
+    if (n <= 0) break;
     result.output.append(buffer, static_cast<size_t>(n));
     if (on_output) on_output(std::string_view(buffer, static_cast<size_t>(n)));
   }
   close(pipe_fds[0]);
+  if (timed_out) {
+    kill(-pid, SIGKILL);
+    kill(pid, SIGKILL);
+  }
 
   int status = 0;
   if (waitpid(pid, &status, 0) < 0) return Err("exec_wait_failed", std::strerror(errno));
+  if (timed_out) {
+    return Err("exec_timeout", std::format("{} gave no result within {}s", command.argv[0], command.timeout_s));
+  }
   result.exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+  return result;
+}
+
+std::string ToolVersion(const std::string& path) {
+  static std::mutex mutex;
+  static std::map<std::filesystem::path, std::pair<std::filesystem::file_time_type, std::string>> cache;
+  std::error_code ec;
+  const std::filesystem::path resolved = std::filesystem::canonical(path, ec);
+  const std::filesystem::file_time_type mtime =
+      ec ? std::filesystem::file_time_type() : std::filesystem::last_write_time(resolved, ec);
+  if (!ec) {
+    const std::lock_guard lock(mutex);
+    if (const auto found = cache.find(resolved); found != cache.end() && found->second.first == mtime) {
+      return found->second.second;
+    }
+  }
+  Command command;
+  command.argv = {path, "--version"};
+  command.timeout_s = 15;  // a hung tool must not block its status
+  const auto result = RunAndWait(command);
+  std::string version = result && result->exit_code == 0 ? strings::Trim(result->output) : std::string();
+  if (!ec && !version.empty()) {
+    const std::lock_guard lock(mutex);
+    cache[resolved] = {mtime, version};
+  }
+  return version;
+}
+
+std::string CurlConfigLine(std::string_view name, std::string_view value) {
+  std::string line = std::string(name) + " = \"";
+  for (const char c : value) {
+    if (c == '\\' || c == '"') line += '\\';
+    line += c;
+  }
+  return line + "\"\n";
+}
+
+Result<ExecResult> RunCurlWithSecrets(const std::vector<std::string>& args, std::string_view secret_config) {
+  std::string path = (std::filesystem::temp_directory_path() / "mira-curl-XXXXXX").string();
+  const int fd = mkostemp(path.data(), O_CLOEXEC);  // created 0600
+  if (fd < 0) return Err("exec_temp_failed", std::strerror(errno));
+  const bool written = write(fd, secret_config.data(), secret_config.size()) ==
+                       static_cast<ssize_t>(secret_config.size());
+  close(fd);
+  Result<ExecResult> result = Err("exec_temp_failed", "couldn't write curl's config");
+  if (written) {
+    Command command;
+    command.argv = {"curl", "-K", path};
+    command.argv.insert(command.argv.end(), args.begin(), args.end());
+    result = RunAndWait(command);
+  }
+  unlink(path.c_str());
   return result;
 }
 

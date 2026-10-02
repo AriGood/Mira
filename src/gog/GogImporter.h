@@ -38,8 +38,9 @@ public:
   // what GogInstaller calls right after a fresh download (already knows
   // `id`, GOG's product id), and what `mira gog import <id> <path>` uses
   // for an install living somewhere else. A missing/unparseable title
-  // falls back to `id`, same as every other source here.
-  Result<model::Game> ImportPath(const std::string& id, const std::filesystem::path& path);
+  // falls back to `id`, same as every other source here. `refresh` false
+  // skips gogdl for a game already imported from this folder with an exe.
+  Result<model::Game> ImportPath(const std::string& id, const std::filesystem::path& path, bool refresh = true);
 
 private:
   config::Config& config_;

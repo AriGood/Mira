@@ -179,6 +179,8 @@ Body (optional) `{"interactive": bool, "installer": "path"}`. Runs a `needs_inst
 ### `POST /v1/games/{id}/finish-install`
 Marks a `needs_install` or `broken` game `ready` once `exe_path` points at the installed game. `409 no_executable` if `exe_path` is empty, still an installer, or missing.
 
+An optional body `{"install_path"?, "exe_path"?}` switches the game to a program installed in its prefix first: `install_path` must be inside the game's `data_dir` (`400` otherwise, `409` while the game runs), and the game's candidates are detected again there.
+
 ### `POST /v1/games/{id}/relocate`
 Body (optional) `{"install_path"?, "data_dir"?}`. Moves the game's files and prefix to those paths, or with no body into Mira's layout (`relocate.install_root` or the first library root, and `prefix_root`, named per `prefix_naming`). Targets must be inside a library root or `prefix_root`. Store games keep their install folder unless one is given, since their store tool tracks it. Moves across filesystems copy then delete, unless `relocate.allow_copy` is off. A [job](#jobs) whose result is the moved game; publishes `game.updated`.
 
@@ -519,6 +521,7 @@ A new connection (no `Last-Event-ID`) first gets the buffered events replayed, t
 | `game.removed` | `{id}`. |
 | `games.removed` | `{ids}`, from `POST /v1/games/delete`. |
 | `game.state` | The game plus `state` (`running`, `exited`, `crashed`, `idle`) and, after an exit, `exit_code`, `signal`, `played_seconds` and `error`. |
+| `game.install_detected` | `{id, install_path, exe_path}`, after a launched Windows game exits and its prefix gained a program folder, i.e. the "game" was an installer. `exe_path` is relative to `install_path`, empty when no program was found. Adopt it with `finish-install`. |
 | `game.launched` | `{id, via, tracked}` for launches handed to Steam or a store launcher. |
 | `game.install.*` | See `POST /v1/games/{id}/install`. |
 | `game.metadata_ready`, `game.metadata_failed` | See metadata refresh. |

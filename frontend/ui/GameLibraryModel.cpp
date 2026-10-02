@@ -11,10 +11,10 @@
 namespace mira_gui {
 namespace {
 
-bool HasTag(const GameSummary& game, const char* tag) { return std::ranges::contains(game.tags, std::string(tag)); }
+bool HasTag(const GameSummary& game, std::string_view tag) { return std::ranges::contains(game.tags, tag); }
 
 // A pinned game's tag. "favorite" because Lutris imports its favorites under it.
-constexpr const char* kPinnedTag = "favorite";
+constexpr std::string_view kPinnedTag = "favorite";
 
 }  // namespace
 
@@ -172,9 +172,10 @@ bool GameFilterProxy::MatchesKey(const GameSummary& game, const QString& key) {
   if (HasTag(game, "hidden")) return false;
   if (key == "all") return true;
   if (key == "running") return game.running;
-  if (key == "never") return !game.last_played_at.has_value();
+  if (key == "apps") return IsApp(game);
+  if (key == "never") return !game.last_played_at.has_value() && !IsApp(game);
   if (key == "attention") return game.status == "needs_install" || game.status == "broken" || game.status == "missing";
-  return key.toStdString() == game.status;
+  return key == QLatin1StringView(game.status.data(), static_cast<qsizetype>(game.status.size()));
 }
 
 void GameFilterProxy::ChangeFilter(const std::function<void()>& change) {

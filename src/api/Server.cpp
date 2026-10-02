@@ -21,12 +21,14 @@
 
 #include "config/Resolver.h"
 #include "config/Schema.h"
+#include "core/Json.h"
 #include "core/Log.h"
 #include "core/Paths.h"
 #include "core/Strings.h"
 #include "desktop/DesktopEntries.h"
 #include "library/Catalog.h"
 #include "library/AutoInstall.h"
+#include "library/Detector.h"
 #include "library/PrefixNaming.h"
 #include "library/Relocate.h"
 #include "library/Scanner.h"
@@ -435,6 +437,24 @@ Server::Server(config::Config& config, store::GameStore& games, EventBus& events
     game["art"] = art_index_.For(id);
   });
   events_.SetArtHook([this](const std::string& id) { return art_index_.For(id); });
+  supervisor_.SetExitHook([this](const std::string& id) { CheckForInstall(id); });
+}
+
+void Server::CheckForInstall(const std::string& game_id) {
+  std::set<std::filesystem::path> before;
+  {
+    const std::lock_guard lock(install_watch_mutex_);
+    auto watched = install_watch_.extract(game_id);
+    if (watched.empty()) return;
+    before = std::move(watched.mapped());
+  }
+  const auto game = games_.Find(game_id);
+  if (!game) return;
+  const auto installed = library::NewInstall(config_, game->data_dir, before);
+  if (!installed) return;
+  log::Info("{} installed {} when run; asking whether to use it", game_id, installed->dir.string());
+  events_.Publish("game.install_detected",
+                  {{"id", game_id}, {"install_path", installed->dir.string()}, {"exe_path", installed->exe_path}});
 }
 
 json Server::Record(const model::Game& game) {
@@ -1674,6 +1694,15 @@ void Server::RegisterRoutes() {
     ApplyLaunchEnv(*command, resolver.GetStringArray("launch.env"));
     ApplyCommandWrappers(*command, wrappers);
 
+    // A Windows "game" that turns out to be an installer is caught at exit (CheckForInstall).
+    // Only for an existing prefix: a new one's own Program Files would all look installed.
+    if (std::error_code ec; game->platform == model::Platform::Windows && !game->data_dir.empty() &&
+                            std::filesystem::exists(std::filesystem::path(game->data_dir) / "drive_c", ec)) {
+      auto folders = library::InstallFolders(config_, game->data_dir);
+      const std::lock_guard lock(install_watch_mutex_);
+      install_watch_[game->id] = std::move(folders);
+    }
+
     // mira-run owns the session so it survives mirad dying. Without it the game is
     // launched directly, with no session record.
     const auto mira_run = runner::ResolveSiblingBinary(OwnBinaryDir(), "mira-run");
@@ -1913,6 +1942,29 @@ void Server::RegisterRoutes() {
                       "Choose the installed game's executable, then mark it installed again.",
                       Fix::Game(game->id, "exe")});
     };
+    // Optionally adopting what the game's installer put in its prefix (game.install_detected).
+    if (!req.body.empty()) {
+      const json body = json::parse(req.body, nullptr, false);
+      if (!body.is_object()) {
+        return SendError(res, 400, "invalid_body", R"(expected {"install_path"?: "...", "exe_path"?: "..."})");
+      }
+      if (const std::string install_path = core::JsonString(body, "install_path"); !install_path.empty()) {
+        if (!paths::IsWithin(install_path, {game->data_dir})) {
+          return SendError(res, 400, "invalid_install_path", "the install folder must be inside the game's prefix");
+        }
+        if (supervisor_.IsRunning(game->id)) return SendError(res, 409, GameRunningError(game->id));
+        const library::Detector::Result detected =
+            library::Detector(library::SettingsFromConfig(config_)).Detect(install_path);
+        game->install_path = install_path;
+        game->working_dir.clear();
+        game->candidates = detected.candidates;
+        game->confidence = detected.confidence;
+      }
+      if (const std::string exe_path = core::JsonString(body, "exe_path"); !exe_path.empty()) {
+        game->exe_path = exe_path;
+      }
+      for (model::Candidate& candidate : game->candidates) candidate.chosen = candidate.rel_path == game->exe_path;
+    }
     if (game->exe_path.empty()) return needs_exe("this game has no executable set");
     const bool still_installer = std::ranges::any_of(game->candidates, [&](const model::Candidate& c) {
       return c.is_installer && c.rel_path == game->exe_path;
@@ -1922,7 +1974,12 @@ void Server::RegisterRoutes() {
     if (!std::filesystem::exists(std::filesystem::path(game->install_path) / game->exe_path, ec)) {
       return needs_exe("the game's executable isn't in its install folder");
     }
-    auto result = games_.Update(game->id, [](model::Game& g) {
+    auto result = games_.Update(game->id, [&](model::Game& g) {
+      g.install_path = game->install_path;
+      g.working_dir = game->working_dir;
+      g.exe_path = game->exe_path;
+      g.candidates = game->candidates;
+      g.confidence = game->confidence;
       g.status = model::GameStatus::Ready;
       g.last_error.clear();
     });

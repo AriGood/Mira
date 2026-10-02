@@ -173,6 +173,7 @@ Result<model::Game> RunInstaller(config::Config& config, const model::Game& game
   }
 
   const std::set<fs::path> before = InstallDirs(config.GetStringArray("install.detect_dirs"), provisioned.data_dir);
+  const std::uintmax_t baseline_bytes = TreeBytes(game.install_path);
   {
     const std::lock_guard lock(tracked_mutex);
     Tracked& entry = tracked[game.id];
@@ -180,7 +181,7 @@ Result<model::Game> RunInstaller(config::Config& config, const model::Game& game
     entry.progress.mode = silent ? "silent" : "interactive";
     entry.progress.started_at = model::NowSeconds();
     entry.install_path = game.install_path;
-    entry.baseline_bytes = TreeBytes(game.install_path);
+    entry.baseline_bytes = baseline_bytes;
     entry.data_dir = provisioned.data_dir;
     entry.detect_dirs = config.GetStringArray("install.detect_dirs");
     entry.drive_c_before = before;
@@ -231,6 +232,27 @@ std::string_view ToString(InstallerFormat format) {
       return "unknown";
   }
   return "unknown";
+}
+
+std::set<fs::path> InstallFolders(const config::Config& config, const fs::path& prefix) {
+  return InstallDirs(config.GetStringArray("install.detect_dirs"), prefix);
+}
+
+std::optional<InstalledApp> NewInstall(const config::Config& config, const fs::path& prefix,
+                                       const std::set<fs::path>& before) {
+  // Wine's own, which a Proton or Wine update can add to an existing prefix.
+  static const std::set<std::string> kWineFolders = {"Common Files", "Internet Explorer", "Windows Media Player",
+                                                     "Windows NT"};
+  const Detector detector(SettingsFromConfig(config));
+  std::optional<InstalledApp> found;
+  for (const fs::path& dir : InstallFolders(config, prefix)) {
+    if (before.contains(dir) || kWineFolders.contains(dir.filename().string())) continue;
+    const Detector::Result detected = detector.Detect(dir);
+    const auto exe = std::ranges::find(detected.candidates, false, &model::Candidate::is_installer);
+    if (exe != detected.candidates.end()) return InstalledApp{dir, exe->rel_path};
+    if (!found) found = InstalledApp{dir, ""};
+  }
+  return found;
 }
 
 Result<InstallerInfo> DescribeInstaller(const config::Config& config, const model::Game& game) {
