@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <map>
 #include <optional>
@@ -57,6 +58,11 @@ struct GameSummary {
 
   bool operator==(const GameSummary&) const = default;
 };
+
+// A program rather than a game ("app" tag): kept out of Continue, with no playtime shown.
+inline bool IsApp(const GameSummary& game) {
+  return std::ranges::find(game.tags, "app") != game.tags.end();
+}
 
 struct GamesResult {
   bool ok = false;

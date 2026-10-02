@@ -148,7 +148,7 @@ QVariant GameLibraryModel::data(const QModelIndex& index, int role) const {
       case kPlatform: return StatusLabel(game.platform);
       case kRunner: return game.runner_ref.empty() ? QString("Auto") : QString::fromStdString(game.runner_ref);
       case kLastPlayed: return FormatLastPlayed(game.last_played_at);
-      case kPlaytime: return FormatPlaytime(game.play_seconds);
+      case kPlaytime: return IsApp(game) ? QString() : FormatPlaytime(game.play_seconds);
       default: return {};
     }
   }
@@ -196,7 +196,8 @@ bool GameFilterProxy::MatchesKey(const GameSummary& game, const QString& key) {
   if (HasTag(game, "hidden")) return false;
   if (key == "all") return true;
   if (key == "running") return game.running;
-  if (key == "never") return !game.last_played_at.has_value();
+  if (key == "apps") return IsApp(game);
+  if (key == "never") return !game.last_played_at.has_value() && !IsApp(game);
   if (key == "attention") return game.status == "needs_install" || game.status == "broken" || game.status == "missing";
   return key == QLatin1StringView(game.status.data(), static_cast<qsizetype>(game.status.size()));
 }
