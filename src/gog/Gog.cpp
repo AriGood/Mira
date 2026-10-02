@@ -26,15 +26,6 @@ std::string Trim(std::string text) {
   return text;
 }
 
-std::string VersionOf(const std::string& path) {
-  Command command;
-  command.argv = {path, "--version"};
-  command.timeout_s = 15;  // a hung tool must not block its status
-  const Result<runner::ExecResult> result = runner::RunAndWait(command);
-  if (!result || result->exit_code != 0) return {};
-  return Trim(result->output);
-}
-
 std::optional<json> ReadAuthConfig(const config::Config& config) {
   std::ifstream file(AuthConfigPath(config));
   if (!file) return std::nullopt;
@@ -57,16 +48,16 @@ std::filesystem::path ManagedGogPath(const config::Config& config) {
 GogStatus DetectGog(const config::Config& config) {
   const std::string override_path = config.GetString("gog.gogdl_bin");
   if (!override_path.empty() && fs::exists(override_path)) {
-    return {.installed = true, .source = "override", .path = override_path, .version = VersionOf(override_path)};
+    return {.installed = true, .source = "override", .path = override_path, .version = runner::ToolVersion(override_path)};
   }
 
   const fs::path managed = ManagedGogPath(config);
   if (fs::exists(managed)) {
-    return {.installed = true, .source = "managed", .path = managed.string(), .version = VersionOf(managed.string())};
+    return {.installed = true, .source = "managed", .path = managed.string(), .version = runner::ToolVersion(managed.string())};
   }
 
   if (const auto on_path = runner::FindOnPath("gogdl")) {
-    return {.installed = true, .source = "path", .path = *on_path, .version = VersionOf(*on_path)};
+    return {.installed = true, .source = "path", .path = *on_path, .version = runner::ToolVersion(*on_path)};
   }
 
   return {.installed = false, .source = "none", .path = "", .version = ""};
