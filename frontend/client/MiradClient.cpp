@@ -788,8 +788,13 @@ RunInPrefixResult RunInPrefixSync(const std::string& id, const std::string& exe_
   return {reply.ok, reply.error};
 }
 
-FinishInstallResult FinishInstallSync(const std::string& id) {
-  const transport::Reply reply = transport::Post("/v1/games/" + id + "/finish-install");
+FinishInstallResult FinishInstallSync(const std::string& id, const std::string& install_path,
+                                      const std::string& exe_path) {
+  json body = json::object();
+  if (!install_path.empty()) body["install_path"] = install_path;
+  if (!exe_path.empty()) body["exe_path"] = exe_path;
+  const transport::Reply reply = body.empty() ? transport::Post("/v1/games/" + id + "/finish-install")
+                                              : transport::PostJson("/v1/games/" + id + "/finish-install", body);
   return {reply.ok, reply.error};
 }
 
@@ -1547,8 +1552,9 @@ void MiradClient::RunInPrefixAsync(QObject* context, const std::string& id,
 }
 
 void MiradClient::FinishInstallAsync(QObject* context, const std::string& id,
-                                     std::function<void(FinishInstallResult)> callback) {
-  async::Run(context, [id] { return FinishInstallSync(id); }, std::move(callback));
+                                     std::function<void(FinishInstallResult)> callback,
+                                     const std::string& install_path, const std::string& exe_path) {
+  async::Run(context, [id, install_path, exe_path] { return FinishInstallSync(id, install_path, exe_path); }, std::move(callback));
 }
 
 void MiradClient::GetGameConfigAsync(QObject* context, const std::string& id,
@@ -1657,6 +1663,15 @@ bool MiradClient::ParseGameLaunched(const std::string& data, GameLaunchedEvent* 
   if (out->id.empty()) return false;
   out->tracked = entry.value("tracked", false);
   return true;
+}
+
+bool MiradClient::ParseInstallDetected(const std::string& data, InstallDetectedEvent* out) {
+  const json entry = json::parse(data, nullptr, false);
+  if (entry.is_discarded() || !entry.is_object()) return false;
+  out->id = mapping::Str(entry, "id");
+  out->install_path = mapping::Str(entry, "install_path");
+  out->exe_path = mapping::Str(entry, "exe_path");
+  return !out->id.empty() && !out->install_path.empty();
 }
 
 std::string MiradClient::ParseRemovedId(const std::string& data) {

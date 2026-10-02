@@ -55,6 +55,7 @@
 #include "../dialogs/AddManualGameDialog.h"
 #include "../dialogs/DesktopEntryImportDialog.h"
 #include "../dialogs/GameDetailPageDialog.h"
+#include "../dialogs/InstallDetectedDialog.h"
 #include "../dialogs/ManageSourcesDialog.h"
 
 #include "../ui/AboutPanel.h"
@@ -2171,6 +2172,26 @@ void LibraryWindow::ToggleTag(const std::string& id, const std::string& tag) {
   if (game != nullptr) BatchSetTag({id}, tag, !HasTag(*game, tag));
 }
 
+void LibraryWindow::AskAboutInstall(const mira_gui::InstallDetectedEvent& event) {
+  const mira_gui::GameSummary* game = FindGame(event.id);
+  if (game == nullptr) return;
+  mira_gui::InstallDetectedDialog dialog(QString::fromStdString(game->name), event.install_path, event.exe_path,
+                                         this);
+  if (dialog.exec() != QDialog::Accepted) return;
+  const std::string id = event.id;
+  const bool is_app = dialog.IsApp();
+  mira_gui::MiradClient::FinishInstallAsync(
+      this, id,
+      [this, id, is_app](mira_gui::FinishInstallResult result) {
+        if (!result.ok) {
+          mira_gui::notify::FailedRequest(this, "Could not switch to the installed program.", result.error);
+          return;
+        }
+        if (is_app) BatchSetTag({id}, "app", true);
+      },
+      event.install_path, dialog.ExePath());
+}
+
 void LibraryWindow::ToggleRunning(const std::string& id) {
   const mira_gui::GameSummary* game = FindGame(id);
   if (game != nullptr && game->running) {
@@ -3490,6 +3511,14 @@ void LibraryWindow::HandleGameEvent(const std::string& type, const std::string& 
       if (game_edit_form_ != nullptr) game_edit_form_->RefreshBanner(event.id);
       if (game_edit_backdrop_ != nullptr) game_edit_backdrop_->RefreshHero(event.id);
     }
+    return;
+  }
+
+  if (type == "game.install_detected") {
+    // History's would ask again after every reconnect.
+    mira_gui::InstallDetectedEvent event;
+    if (!live || !mira_gui::MiradClient::ParseInstallDetected(data, &event)) return;
+    QTimer::singleShot(0, this, [this, event] { AskAboutInstall(event); });
     return;
   }
 

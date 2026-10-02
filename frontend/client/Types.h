@@ -109,6 +109,14 @@ struct GameLaunchedEvent {
   bool tracked = false;
 };
 
+// game.install_detected: a launched game exited and had added a program
+// folder to its prefix, so it was an installer.
+struct InstallDetectedEvent {
+  std::string id;
+  std::string install_path;  // absolute, inside the game's prefix
+  std::string exe_path;      // relative to install_path; empty when none was found
+};
+
 // GET /v1/games/{id}/artwork: the cached cover image itself, as bytes.
 //
 // `missing` is the 404 case and is not an error: most games have no cached

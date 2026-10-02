@@ -182,6 +182,8 @@ private:
   void ToggleTag(const std::string& id, const std::string& tag);
   // Adds (`present`) or removes `tag` on each id in one request.
   void BatchSetTag(const std::vector<std::string>& ids, const std::string& tag, bool present);
+  // game.install_detected: offers to switch a game that was an installer to what it installed.
+  void AskAboutInstall(const mira_gui::InstallDetectedEvent& event);
   void LaunchGame(const std::string& id);
   void OpenGameDialog(const std::string& id);
   // Scrim + centered card slot, built once. Shown/hidden per open rather
