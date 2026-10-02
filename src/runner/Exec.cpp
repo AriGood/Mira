@@ -14,6 +14,8 @@
 #include <cstring>
 #include <filesystem>
 #include <format>
+#include <map>
+#include <mutex>
 #include <vector>
 
 #include "core/Strings.h"
@@ -233,6 +235,31 @@ Result<ExecResult> RunAndWait(const Command& command, const OutputFn& on_output)
   }
   result.exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
   return result;
+}
+
+std::string ToolVersion(const std::string& path) {
+  static std::mutex mutex;
+  static std::map<std::filesystem::path, std::pair<std::filesystem::file_time_type, std::string>> cache;
+  std::error_code ec;
+  const std::filesystem::path resolved = std::filesystem::canonical(path, ec);
+  const std::filesystem::file_time_type mtime =
+      ec ? std::filesystem::file_time_type() : std::filesystem::last_write_time(resolved, ec);
+  if (!ec) {
+    const std::lock_guard lock(mutex);
+    if (const auto found = cache.find(resolved); found != cache.end() && found->second.first == mtime) {
+      return found->second.second;
+    }
+  }
+  Command command;
+  command.argv = {path, "--version"};
+  command.timeout_s = 15;  // a hung tool must not block its status
+  const auto result = RunAndWait(command);
+  std::string version = result && result->exit_code == 0 ? strings::Trim(result->output) : std::string();
+  if (!ec && !version.empty()) {
+    const std::lock_guard lock(mutex);
+    cache[resolved] = {mtime, version};
+  }
+  return version;
 }
 
 std::string CurlConfigLine(std::string_view name, std::string_view value) {

@@ -22,23 +22,6 @@
 namespace mira::itch {
 namespace {
 namespace fs = std::filesystem;
-
-std::string Trim(std::string text) {
-  const auto not_space = [](unsigned char c) { return !std::isspace(c); };
-  text.erase(text.begin(), std::ranges::find_if(text, not_space));
-  text.erase(std::ranges::find_if(text | std::views::reverse, not_space).base(), text.end());
-  return text;
-}
-
-std::string VersionOf(const std::string& path) {
-  Command command;
-  command.argv = {path, "--version"};
-  command.timeout_s = 15;  // a hung tool must not block its status
-  const Result<runner::ExecResult> result = runner::RunAndWait(command);
-  if (!result || result->exit_code != 0) return {};
-  return Trim(result->output);
-}
-
 }  // namespace
 
 std::filesystem::path ManagedButlerPath(const config::Config& config) {
@@ -57,15 +40,15 @@ std::filesystem::path ManagedButlerPath(const config::Config& config) {
 ItchStatus DetectButler(const config::Config& config) {
   const std::string override_path = config.GetString("itch.butler_bin");
   if (!override_path.empty() && fs::exists(override_path)) {
-    return {.installed = true, .source = "override", .path = override_path, .version = VersionOf(override_path)};
+    return {.installed = true, .source = "override", .path = override_path, .version = runner::ToolVersion(override_path)};
   }
 
   const fs::path managed = ManagedButlerPath(config);
   if (fs::exists(managed)) {
-    return {.installed = true, .source = "managed", .path = managed.string(), .version = VersionOf(managed.string())};
+    return {.installed = true, .source = "managed", .path = managed.string(), .version = runner::ToolVersion(managed.string())};
   }
   if (const auto on_path = runner::FindOnPath("butler")) {
-    return {.installed = true, .source = "path", .path = *on_path, .version = VersionOf(*on_path)};
+    return {.installed = true, .source = "path", .path = *on_path, .version = runner::ToolVersion(*on_path)};
   }
   return {.installed = false, .source = "none", .path = "", .version = ""};
 }
