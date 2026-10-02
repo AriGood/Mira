@@ -1,11 +1,9 @@
 #include "core/Json.h"
 #include "steam/SteamWebApi.h"
 
-#include <format>
 
 #include <json.hpp>
 
-#include "core/Command.h"
 #include "runner/Exec.h"
 
 namespace mira::steam {
@@ -30,12 +28,11 @@ Result<std::vector<OwnedGame>> ListOwnedGames(const config::Config& config) {
                "Add the account's 64-bit Steam ID.", Fix::Setting("steam.steamid64"));
   }
 
-  Command command;
-  command.argv = {"curl", "-sSL", "--max-time", std::string(kMaxTime),
-                  std::format("https://api.steampowered.com/IPlayerService/GetOwnedGames/v1/"
-                             "?key={}&steamid={}&include_appinfo=1&include_played_free_games=1&format=json",
-                             key, steamid)};
-  const Result<runner::ExecResult> result = runner::RunAndWait(command);
+  const Result<runner::ExecResult> result = runner::RunCurlWithSecrets(
+      {"-sSL", "--max-time", std::string(kMaxTime), "--get", "--data-urlencode", "steamid=" + steamid, "--data",
+       "include_appinfo=1&include_played_free_games=1&format=json",
+       "https://api.steampowered.com/IPlayerService/GetOwnedGames/v1/"},
+      runner::CurlConfigLine("data-urlencode", "key=" + key));
   if (!result) return std::unexpected(result.error());
 
   const json parsed = json::parse(result->output, nullptr, false);
