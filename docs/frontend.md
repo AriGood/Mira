@@ -16,7 +16,7 @@ From top to bottom: the Mira header, the Library, Runners and Settings rows, pin
 
 Pinning a game (game menu, or several at once from the batch menu, which offers Pin/Unpin and Hide/Unhide for whichever selected games each would change) adds the `favorite` tag, the same one Lutris imports its favorites under. Pinned games list by name under PINNED and get a pin badge on their tile. PINNED follows the grid's filter: hidden pinned games show only under the Hidden filter, and only they do. Clicking a pinned or recently played row plays the game; the second click of a double click is ignored, since the list can reorder under it. Source rows show the source's colored initial and an orange dot for a store that has games but is signed out.
 
-Only sources that are set up show in the sidebar. *Manage sources* (`dialogs/ManageSourcesDialog`) lists every source, sets which ones show and their order, and opens the page of one that isn't set up yet. `ui/Sources` lists them for every view.
+Only sources that are set up show in the sidebar. *Manage sources* (`ui/ManageSourcesCard`) is an in-window card over the content, sharing the sidebar style card's overlay so the sidebar stays bright beside it. It lists every source in sidebar order as one freely reorderable list (drag the grip or Alt+Up/Down), each row with its kind tag and status inline, a switch that turns the source on or off, Set up for one that isn't set up yet, and a ⋯ menu for open, import, show in sidebar and remove. Every change applies at once. `ui/Sources` lists them for every view.
 
 ### Source pages
 

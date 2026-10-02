@@ -54,7 +54,6 @@
 #include "../dialogs/DesktopEntryImportDialog.h"
 #include "../dialogs/GameDetailPageDialog.h"
 #include "../dialogs/InstallDetectedDialog.h"
-#include "../dialogs/ManageSourcesDialog.h"
 
 #include "../ui/AboutPanel.h"
 #include "../ui/CoverArt.h"
@@ -565,8 +564,8 @@ void LibraryWindow::BuildShortcuts() {
   // settings first, then clear the search, then clear the selection.
   window_action("clear_or_deselect", "Clear the search, then the selection",
                QKeySequence(Qt::Key_Escape), {}, [this] {
-    if (SidebarStyleOpen()) {
-      CloseSidebarStyle();
+    if (SidebarCardOpen()) {
+      CloseSidebarCard();
       return;
     }
     if (SettingsOpen()) {
@@ -2566,7 +2565,7 @@ QWidget* LibraryWindow::BuildGameEditOverlay() {
   return overlay;
 }
 
-QWidget* LibraryWindow::BuildSidebarStyleOverlay() {
+QWidget* LibraryWindow::BuildSidebarCardOverlay() {
   auto* overlay = new ModalOverlay(nullptr);
   overlay->scrim = QColor(0, 0, 0, 150);
   // The sidebar stays bright: it is the preview.
@@ -2576,18 +2575,28 @@ QWidget* LibraryWindow::BuildSidebarStyleOverlay() {
                  sidebar->size());
   };
   overlay->hide();
-  overlay->on_backdrop_clicked = [this] { CloseSidebarStyle(); };
-  sidebar_style_layout_ = new QGridLayout(overlay);
+  overlay->on_backdrop_clicked = [this] { CloseSidebarCard(); };
+  sidebar_card_layout_ = new QGridLayout(overlay);
   return overlay;
+}
+
+void LibraryWindow::ShowSidebarCard(QWidget* card) {
+  if (sidebar_card_overlay_ == nullptr) {
+    sidebar_card_overlay_ = BuildSidebarCardOverlay();
+    root_stack_->addWidget(sidebar_card_overlay_);
+  }
+  if (sidebar_card_ != nullptr) sidebar_card_->deleteLater();
+  sidebar_card_ = card;
+  // Centred over the content, beside the sidebar it changes.
+  sidebar_card_layout_->setContentsMargins(splitter_->widget(0)->width() + kResizeMargin + 24, 24, 24, 24);
+  sidebar_card_layout_->addWidget(card, 0, 0, Qt::AlignCenter);
+  SetGridControlsEnabled(false);
+  root_stack_->setCurrentWidget(sidebar_card_overlay_);
+  sidebar_card_overlay_->show();
 }
 
 void LibraryWindow::OpenSidebarStyle() {
   if (!LeaveOverlays()) return;
-  if (sidebar_style_overlay_ == nullptr) {
-    sidebar_style_overlay_ = BuildSidebarStyleOverlay();
-    root_stack_->addWidget(sidebar_style_overlay_);
-  }
-  if (sidebar_style_card_ != nullptr) sidebar_style_card_->deleteLater();
   const auto copies = [](const std::vector<const mira_gui::GameSummary*>& games) {
     std::vector<mira_gui::GameSummary> out;
     for (const mira_gui::GameSummary* game : games) out.push_back(*game);
@@ -2595,7 +2604,6 @@ void LibraryWindow::OpenSidebarStyle() {
   };
   auto* card = new mira_gui::SidebarStyleCard({pinned_style_, recent_style_, recent_count_, recent_when_},
                                               copies(PinnedGames()), copies(RecentGames(10)), artwork_);
-  sidebar_style_card_ = card;
   connect(card, &mira_gui::SidebarStyleCard::Changed, this, [this](const mira_gui::SidebarStyleCard::Choices& choices) {
     pinned_style_ = choices.pinned;
     recent_style_ = choices.recent;
@@ -2603,28 +2611,23 @@ void LibraryWindow::OpenSidebarStyle() {
     recent_when_ = choices.recent_when;
     SaveSidebarStyle();
   });
-  connect(card, &mira_gui::SidebarStyleCard::CloseRequested, this, &LibraryWindow::CloseSidebarStyle);
-  // Centred over the content, beside the sidebar it changes.
-  sidebar_style_layout_->setContentsMargins(splitter_->widget(0)->width() + kResizeMargin + 24, 24, 24, 24);
-  sidebar_style_layout_->addWidget(card, 0, 0, Qt::AlignCenter);
-  SetGridControlsEnabled(false);
-  root_stack_->setCurrentWidget(sidebar_style_overlay_);
-  sidebar_style_overlay_->show();
+  connect(card, &mira_gui::SidebarStyleCard::CloseRequested, this, &LibraryWindow::CloseSidebarCard);
+  ShowSidebarCard(card);
 }
 
-void LibraryWindow::CloseSidebarStyle() {
-  if (!SidebarStyleOpen()) return;
-  sidebar_style_overlay_->hide();
+void LibraryWindow::CloseSidebarCard() {
+  if (!SidebarCardOpen()) return;
+  sidebar_card_overlay_->hide();
   root_stack_->setCurrentIndex(0);
   SetGridControlsEnabled(true);
-  if (sidebar_style_card_ != nullptr) {
-    sidebar_style_card_->deleteLater();  // its own Close may be what got us here
-    sidebar_style_card_ = nullptr;
+  if (sidebar_card_ != nullptr) {
+    sidebar_card_->deleteLater();  // its own Close may be what got us here
+    sidebar_card_ = nullptr;
   }
 }
 
-bool LibraryWindow::SidebarStyleOpen() const {
-  return sidebar_style_overlay_ != nullptr && sidebar_style_overlay_->isVisible();
+bool LibraryWindow::SidebarCardOpen() const {
+  return sidebar_card_overlay_ != nullptr && sidebar_card_overlay_->isVisible();
 }
 
 void LibraryWindow::SaveSidebarStyle() {
@@ -2816,7 +2819,7 @@ QWidget* LibraryWindow::BuildGameEditCard(const std::string& id) {
 }
 
 bool LibraryWindow::LeaveOverlays() {
-  CloseSidebarStyle();  // nothing unsaved: every choice is stored as it's made
+  CloseSidebarCard();  // nothing unsaved: every choice is stored as it's made
   if (SettingsOpen()) RequestCloseSettings();
   if (GameEditOpen()) RequestCloseGameEdit();
   // Still open: cancelled, or saving first.
@@ -3050,12 +3053,13 @@ void LibraryWindow::UpdateSourceNavs() {
     }
   }
   UpdateLibraryNavActive();
+  if (auto* card = qobject_cast<mira_gui::ManageSourcesCard*>(sidebar_card_)) card->SetEntries(SourceEntries());
 }
 
-std::vector<ManageSourcesDialog::Entry> LibraryWindow::SourceEntries() const {
+std::vector<mira_gui::ManageSourcesCard::Entry> LibraryWindow::SourceEntries() const {
   std::map<std::string, int> counts;
   for (const mira_gui::GameSummary& game : library_->Games()) ++counts[game.source];
-  std::vector<ManageSourcesDialog::Entry> entries;
+  std::vector<mira_gui::ManageSourcesCard::Entry> entries;
   for (const QString& id : SourceOrder()) {
     const auto source = std::ranges::find(mira_gui::AllSources(), id, &mira_gui::SourceInfo::id);
     const auto count = counts.find(id.toStdString());
@@ -3082,66 +3086,39 @@ void LibraryWindow::NoteImported(const QString& id) {
   mira_gui::MiradClient::SaveFrontendPrefsAsync(this, prefs, [](mira_gui::PatchConfigResult) {});
 }
 
-void LibraryWindow::MoveSourceBy(const QString& id, int delta) {
-  // Among sources of the same kind, as the dialog groups them.
-  const auto kind_of = [](const QString& source_id) {
-    return std::ranges::find(mira_gui::AllSources(), source_id, &mira_gui::SourceInfo::id)->kind;
-  };
-  std::vector<QString> order = SourceOrder();
-  const auto at = std::ranges::find(order, id);
-  if (at == order.end()) return;
-  auto neighbour = at;
-  do {
-    if (delta < 0 && neighbour == order.begin()) return;
-    neighbour += delta < 0 ? -1 : 1;
-    if (neighbour == order.end()) return;
-  } while (kind_of(*neighbour) != kind_of(id));
-  std::iter_swap(at, neighbour);
-  source_order_ = order;
-  UpdateSourceNavs();
-  mira_gui::FrontendPrefs prefs;
-  std::vector<std::string> ids;
-  for (const QString& source : order) ids.push_back(source.toStdString());
-  prefs.source_order = std::move(ids);
-  mira_gui::MiradClient::SaveFrontendPrefsAsync(this, prefs, [](mira_gui::PatchConfigResult) {});
-}
-
 void LibraryWindow::OpenManageSources() {
-  ManageSourcesDialog dialog(this);
-  dialog.SetEntries(SourceEntries());
-  const auto refresh = [this, &dialog] { dialog.SetEntries(SourceEntries()); };
-  connect(&dialog, &ManageSourcesDialog::SidebarToggled, this,
+  if (!LeaveOverlays()) return;
+  auto* card = new mira_gui::ManageSourcesCard();
+  card->SetEntries(SourceEntries());
+  connect(card, &mira_gui::ManageSourcesCard::CloseRequested, this, &LibraryWindow::CloseSidebarCard);
+  connect(card, &mira_gui::ManageSourcesCard::SidebarToggled, this,
           [this](const QString& id, bool shown) { SetSourceHidden(id, !shown); });
-  connect(&dialog, &ManageSourcesDialog::EnabledToggled, this, [this, refresh](const QString& id, bool on) {
+  connect(card, &mira_gui::ManageSourcesCard::OrderChanged, this, [this](const QStringList& ids) {
+    SetSourceOrder(std::vector<QString>(ids.begin(), ids.end()));
+  });
+  connect(card, &mira_gui::ManageSourcesCard::EnabledToggled, this, [this](const QString& id, bool on) {
     if (on) {
       disabled_sources_.remove(id);
     } else {
       disabled_sources_.insert(id);
     }
     UpdateSourceNavs();
-    refresh();
     const mira_gui::ConfigEdit edit{(id + ".enabled").toStdString(), "a boolean", on ? "true" : "false"};
     mira_gui::MiradClient::PatchConfigAsync(this, {edit}, [this](mira_gui::PatchConfigResult result) {
       if (!result.ok) mira_gui::notify::FailedRequest(this, "Could not change that source.", result.error);
       RefreshSourceNavs();
     });
   });
-  connect(&dialog, &ManageSourcesDialog::MoveRequested, this, [this, refresh](const QString& id, int delta) {
-    MoveSourceBy(id, delta);
-    refresh();
-  });
-  connect(&dialog, &ManageSourcesDialog::Imported, this, [this](const QString& id) { NoteImported(id); });
-  connect(&dialog, &ManageSourcesDialog::Removed, this, [this, refresh](const QString& id) {
+  connect(card, &mira_gui::ManageSourcesCard::Imported, this, [this](const QString& id) { NoteImported(id); });
+  connect(card, &mira_gui::ManageSourcesCard::Removed, this, [this](const QString& id) {
     ForgetSource(id);
-    refresh();
+    UpdateSourceNavs();
   });
-  QString open_id;
-  connect(&dialog, &ManageSourcesDialog::OpenRequested, this, [&open_id](const QString& id) { open_id = id; });
-  dialog.exec();
-  if (open_id.isEmpty()) return;
-  for (const mira_gui::SourceInfo& source : mira_gui::AllSources()) {
-    if (source.id == open_id) OpenSource(source);
-  }
+  connect(card, &mira_gui::ManageSourcesCard::OpenRequested, this, [this](const QString& id) {
+    CloseSidebarCard();
+    if (const mira_gui::SourceInfo* source = mira_gui::FindSourceInfo(id)) OpenSource(*source);
+  });
+  ShowSidebarCard(card);
 }
 
 void LibraryWindow::ForgetSource(const QString& id) {
@@ -3191,9 +3168,12 @@ void LibraryWindow::MoveSource(const QString& id, int before) {
   std::erase(order, id);
   const auto at = before_id.isEmpty() ? order.end() : std::ranges::find(order, before_id);
   order.insert(at, id);
+  SetSourceOrder(std::move(order));
+}
+
+void LibraryWindow::SetSourceOrder(std::vector<QString> order) {
   source_order_ = order;
   UpdateSourceNavs();
-
   mira_gui::FrontendPrefs prefs;
   std::vector<std::string> ids;
   for (const QString& source : order) ids.push_back(source.toStdString());

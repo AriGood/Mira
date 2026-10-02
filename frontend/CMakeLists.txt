@@ -84,6 +84,8 @@ qt_add_executable(mira-gui
   ui/PopupDialog.h
   ui/SidebarGames.cpp
   ui/SidebarGames.h
+  ui/ManageSourcesCard.cpp
+  ui/ManageSourcesCard.h
   ui/SidebarStyleCard.cpp
   ui/SidebarStyleCard.h
   ui/Sources.cpp
@@ -156,8 +158,6 @@ qt_add_executable(mira-gui
   dialogs/ItchCollectionsDialog.h
   dialogs/LogViewerDialog.cpp
   dialogs/LogViewerDialog.h
-  dialogs/ManageSourcesDialog.cpp
-  dialogs/ManageSourcesDialog.h
   dialogs/InstallDetectedDialog.cpp
   dialogs/InstallDetectedDialog.h
   dialogs/RunInPrefixDialog.cpp

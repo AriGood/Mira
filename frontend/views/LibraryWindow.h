@@ -19,7 +19,7 @@
 
 #include "../client/Types.h"
 #include "../ui/ArtworkStore.h"
-#include "../dialogs/ManageSourcesDialog.h"
+#include "../ui/ManageSourcesCard.h"
 #include "../ui/Shortcuts.h"
 #include "../ui/SidebarGames.h"
 
@@ -233,12 +233,14 @@ private:
   void FillSidebarSection(QWidget* heading, QVBoxLayout* layout,
                           const std::vector<const mira_gui::GameSummary*>& games, mira_gui::sidebar::Style style,
                           bool recent, QString& signature);
-  // The customize card for PINNED and RECENTLY PLAYED, over the content
-  // with the sidebar left undimmed as its preview.
-  QWidget* BuildSidebarStyleOverlay();
+  // A card that changes the sidebar (the pinned and recently played style,
+  // Manage sources), over the content with the sidebar left undimmed as its
+  // preview. Showing one replaces any other.
+  QWidget* BuildSidebarCardOverlay();
+  void ShowSidebarCard(QWidget* card);
+  void CloseSidebarCard();
+  bool SidebarCardOpen() const;
   void OpenSidebarStyle();
-  void CloseSidebarStyle();
-  bool SidebarStyleOpen() const;
   // Redraws both sections and stores their styles and the recent count.
   void SaveSidebarStyle();
   void RefreshContinue();
@@ -248,8 +250,9 @@ private:
   QIcon SourceIcon(const mira_gui::SourceInfo& source, bool active) const;
   void SetSourceHidden(const QString& id, bool hidden);
   std::vector<QString> SourceOrder() const;
-  std::vector<ManageSourcesDialog::Entry> SourceEntries() const;
-  void MoveSourceBy(const QString& id, int delta);
+  std::vector<mira_gui::ManageSourcesCard::Entry> SourceEntries() const;
+  // Shows and stores a new sidebar order.
+  void SetSourceOrder(std::vector<QString> order);
   void NoteImported(const QString& id);
   // Moves `id` to just before the visible row `before` (end if -1).
   void MoveSource(const QString& id, int before);
@@ -379,9 +382,9 @@ private:
   mira_gui::sidebar::Style pinned_style_ = mira_gui::sidebar::Style::Covers;
   mira_gui::sidebar::Style recent_style_ = mira_gui::sidebar::Style::Covers;
   bool recent_when_ = true;
-  QWidget* sidebar_style_overlay_ = nullptr;
-  QGridLayout* sidebar_style_layout_ = nullptr;
-  QWidget* sidebar_style_card_ = nullptr;
+  QWidget* sidebar_card_overlay_ = nullptr;
+  QGridLayout* sidebar_card_layout_ = nullptr;
+  QWidget* sidebar_card_ = nullptr;
   bool show_source_counts_ = true;
   bool source_icons_ = true;
   QElapsedTimer last_row_click_;

@@ -32,6 +32,8 @@ QString KindLabel(SourceInfo::Kind kind);
 
 // The source's initial on its color, `size` pixels square; faded when `dim`.
 QLabel* MakeSourceBadge(const SourceInfo& source, int size, QWidget* parent, bool dim = false);
+// Fades a badge from MakeSourceBadge, e.g. while its source is off or not set up.
+void SetSourceBadgeDim(QLabel* badge, const SourceInfo& source, bool dim);
 // The kind tag itself.
 QLabel* MakeKindTag(const SourceInfo& source, QWidget* parent);
 

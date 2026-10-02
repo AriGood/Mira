@@ -45,12 +45,16 @@ QLabel* MakeSourceBadge(const SourceInfo& source, int size, QWidget* parent, boo
   auto* badge = new QLabel(source.name.left(1), parent);
   badge->setFixedSize(size, size);
   badge->setAlignment(Qt::AlignCenter);
+  SetSourceBadgeDim(badge, source, dim);
+  return badge;
+}
+
+void SetSourceBadgeDim(QLabel* badge, const SourceInfo& source, bool dim) {
   QColor fill = source.color;
   if (dim) fill.setAlphaF(0.55);
   badge->setStyleSheet(QString("background: %1; color: white; border-radius: %2px; font-weight: 700;")
                            .arg(fill.name(QColor::HexArgb))
-                           .arg(size / 4));
-  return badge;
+                           .arg(badge->width() / 4));
 }
 
 QLabel* MakeKindTag(const SourceInfo& source, QWidget* parent) {
