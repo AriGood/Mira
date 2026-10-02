@@ -5,6 +5,7 @@
 
 #include <httplib.h>
 #include <json.hpp>
+#include <toml.hpp>
 
 #include <algorithm>
 #include <cctype>
@@ -18,7 +19,8 @@
 #include <vector>
 #include <unistd.h>
 
-#include "config/Config.h"
+#include "config/Schema.h"
+#include "core/TomlJson.h"
 #include "core/Paths.h"
 #include "epic/Legendary.h"
 #include "gog/Gog.h"
@@ -28,10 +30,19 @@
 namespace {
 using nlohmann::json;
 
+// Read-only: Config::Load would write defaults or quarantine a bad file
+// under the running daemon.
 std::filesystem::path ResolveSocketPath() {
-  mira::config::Config config(mira::paths::SettingsFile());
-  config.Load();
-  return mira::paths::Expand(config.GetString("socket_path"));
+  static const std::filesystem::path path = [] {
+    const auto pointer = mira::config::Schema::Pointer("socket_path");
+    json settings = mira::config::Schema::Instance().Defaults();
+    if (toml::parse_result parsed = toml::parse_file(mira::paths::SettingsFile().string()); parsed) {
+      const json saved = mira::tomljson::ToJson(parsed.table());
+      if (saved.contains(pointer) && saved[pointer].is_string()) settings[pointer] = saved[pointer];
+    }
+    return mira::paths::Expand(settings[pointer].get<std::string>());
+  }();
+  return path;
 }
 
 httplib::Client Connect() {
