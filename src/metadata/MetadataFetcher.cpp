@@ -21,6 +21,7 @@
 #include <cstring>
 
 #include "amazon/Nile.h"
+#include "core/AtomicFile.h"
 #include "core/Command.h"
 #include "config/Resolver.h"
 #include "core/Log.h"
@@ -225,21 +226,7 @@ std::mutex& MetadataFileMutex() {
 // Written beside it and renamed over it: a reader (GET .../metadata) must
 // never see the file half-written.
 Result<void> WriteMetadataFile(const fs::path& file, const json& info) {
-  static std::atomic<unsigned> next{0};
-  const fs::path part = file.string() + std::format(".part{}", next++);
-  {
-    std::ofstream out(part, std::ios::trunc);
-    if (!out) return Err("metadata_write_failed", "couldn't open " + part.string() + " for writing");
-    out << info.dump(2, ' ', false, json::error_handler_t::replace);
-    if (!out.flush()) return Err("metadata_write_failed", "couldn't write " + part.string());
-  }
-  std::error_code ec;
-  fs::rename(part, file, ec);
-  if (ec) {
-    fs::remove(part, ec);
-    return Err("metadata_write_failed", "couldn't replace " + file.string());
-  }
-  return {};
+  return WriteFileAtomic(file, info.dump(2, ' ', false, json::error_handler_t::replace), "metadata_write_failed");
 }
 
 void FetchGriddbSlot(const config::Config& config, const std::string& auth_header, std::int64_t griddb_id,
