@@ -21,6 +21,7 @@
 #include "../ui/ArtworkStore.h"
 #include "../dialogs/ManageSourcesDialog.h"
 #include "../ui/Shortcuts.h"
+#include "../ui/SidebarGames.h"
 
 class QLabel;
 class QMenu;
@@ -37,7 +38,6 @@ class QAction;
 class QToolButton;
 class QListWidgetItem;
 class QModelIndex;
-class QTableView;
 class QTimer;
 
 // QListWidget with setViewportMargins made public: Qt keeps it protected on
@@ -66,12 +66,9 @@ struct SourceInfo;
 }
 
 // Primary library view: cover-art grid, a left sidebar (filters, sort,
-// search, Library/Classic-view nav, Settings), custom top bar in place of a
+// search, Library/Runners nav, Settings), custom top bar in place of a
 // native titlebar. Frameless, so it owns its own
 // move/resize/minimize/maximize/close.
-//
-// The top bar's table toggle shows the library as a table in the grid's
-// place, reading the same library_ model; `mira-gui --classic` opens on it.
 //
 // Selection model: one click selects a tile, a second (double) click
 // launches, right-click opens the per-game menu. Hovering a tile shows a
@@ -83,9 +80,6 @@ class LibraryWindow : public QMainWindow {
 public:
   // `prefs` is frontend.toml as read at startup; the theme is already applied.
   explicit LibraryWindow(const mira_gui::FrontendPrefs& prefs, QWidget* parent = nullptr);
-
-  // The table in the grid's place, as the top bar's toggle shows it.
-  void ShowTable() { OpenClassicView(); }
 
 private:
   QWidget* BuildTopBar();
@@ -132,11 +126,11 @@ private:
   void RefreshGames();
   void ConnectionChanged(bool connected);
 
-  // library_ is the whole library as last heard; the grid and table show it
-  // through their proxies. Filtering client-side keeps the search box instant
+  // library_ is the whole library as last heard; the grid shows it
+  // through its proxy. Filtering client-side keeps the search box instant
   // and lets "Playing now"/"Never played" be filters at all.
-  void ApplyFilter();  // the filter key and search, into both proxies
-  void ApplySort();    // the sidebar's sort, into both proxies
+  void ApplyFilter();  // the filter key and search, into the grid's proxy
+  void ApplySort();    // the sidebar's sort, into the grid's proxy
   // After any change to library_: counts, footer, sidebar rows, source rows.
   void LibraryChanged();
   void UpdateFilterCounts();
@@ -219,10 +213,25 @@ private:
   void ForgetSource(const QString& id);
   // The sidebar's PINNED and RECENTLY PLAYED rows.
   void RefreshSidebarGames();
-  QPushButton* MakeSidebarGameRow(const mira_gui::GameSummary& game, QWidget* parent);
-  // Rebuilds one section's rows, only if what they'd show differs from `signature`.
-  void FillSidebarSection(QLabel* heading, QVBoxLayout* layout,
-                          const std::vector<const mira_gui::GameSummary*>& games, QString& signature);
+  // What PINNED lists, and what RECENTLY PLAYED would list showing `count`
+  // (with `running_counts`, running games are part of the count, as on a shelf).
+  std::vector<const mira_gui::GameSummary*> PinnedGames() const;
+  std::vector<const mira_gui::GameSummary*> RecentGames(int count, bool running_counts = false) const;
+  // A row or cover's click, menu and hover card.
+  void WireSidebarGame(QPushButton* row, const mira_gui::GameSummary& game);
+  // Rebuilds one section's rows in `style`, only if what they'd show differs
+  // from `signature`. `recent` rows say when each was last played.
+  void FillSidebarSection(QWidget* heading, QVBoxLayout* layout,
+                          const std::vector<const mira_gui::GameSummary*>& games, mira_gui::sidebar::Style style,
+                          bool recent, QString& signature);
+  // The customize card for PINNED and RECENTLY PLAYED, over the content
+  // with the sidebar left undimmed as its preview.
+  QWidget* BuildSidebarStyleOverlay();
+  void OpenSidebarStyle();
+  void CloseSidebarStyle();
+  bool SidebarStyleOpen() const;
+  // Redraws both sections and stores their styles and the recent count.
+  void SaveSidebarStyle();
   void RefreshContinue();
   // A sidebar row or card's click. Ignores the second click of a double
   // click, which would otherwise land on whatever row moved under it.
@@ -249,9 +258,6 @@ private:
   void ImportLutrisLibrary();
   void ImportDesktopEntries();
   void AddGameManually();
-  QWidget* BuildClassicPage();
-  void OpenClassicView();
-  void CloseClassicView();
   // A store or launcher's page, rebuilt fresh on each open.
   void OpenSource(const mira_gui::SourceInfo& source);
   // False while the page stays: its settings card's edits were kept, or are
@@ -265,9 +271,8 @@ private:
   // Greys out and moves down the sources with nothing set up yet.
   void UpdateSourceNavs();
   void SetSourceControlsEnabled(bool enabled);
-  // The grid is what's on screen: not Settings, the classic table, or a source page.
+  // The grid is what's on screen: not Settings, Runners, or a source page.
   bool GridShown() const;
-  bool ClassicShown() const;
   void RelocateLibrary();
   // A download or install moved along: tile text and the top bar's count.
   void DownloadChanged(const QString& key);
@@ -294,7 +299,6 @@ private:
   int FilterRow(const QString& key) const;
 
   QWidget* top_bar_ = nullptr;
-  QWidget* sidebar_header_ = nullptr;  // Mira badge + name; drags the window
   QLineEdit* search_ = nullptr;
   // One row per kFilters entry, each carrying its key in Qt::UserRole and a
   // live count via a custom row widget (see UpdateFilterCounts), which lives
@@ -339,10 +343,6 @@ private:
   QPushButton* runners_nav_ = nullptr;
   QToolButton* manage_sources_button_ = nullptr;
   QToolButton* fetch_art_button_ = nullptr;
-  // Top bar grid/table switch, in place of the old classic view row.
-  QWidget* view_toggle_ = nullptr;
-  QToolButton* grid_view_button_ = nullptr;
-  QToolButton* table_view_button_ = nullptr;
   // One sidebar row per mira_gui::AllSources() entry, same order; only set up
   // sources that aren't hidden are visible.
   QList<QPushButton*> source_navs_;
@@ -356,13 +356,21 @@ private:
   QWidget* source_drop_line_ = nullptr;
   QPushButton* source_drag_row_ = nullptr;
   QPoint source_drag_start_;
-  QLabel* pinned_heading_ = nullptr;
+  QWidget* pinned_heading_ = nullptr;
   QVBoxLayout* pinned_layout_ = nullptr;
   QString pinned_signature_;  // what the rows show now; see FillSidebarSection
-  QLabel* recent_heading_ = nullptr;
+  QWidget* recent_heading_ = nullptr;
   QString recent_signature_;
   QVBoxLayout* recent_layout_ = nullptr;
   int recent_count_ = 0;  // besides running games
+  QToolButton* pinned_customize_ = nullptr;
+  QToolButton* recent_customize_ = nullptr;
+  mira_gui::sidebar::Style pinned_style_ = mira_gui::sidebar::Style::Covers;
+  mira_gui::sidebar::Style recent_style_ = mira_gui::sidebar::Style::Covers;
+  bool recent_when_ = true;
+  QWidget* sidebar_style_overlay_ = nullptr;
+  QGridLayout* sidebar_style_layout_ = nullptr;
+  QWidget* sidebar_style_card_ = nullptr;
   bool show_source_counts_ = true;
   bool source_icons_ = true;
   QElapsedTimer last_row_click_;
@@ -382,7 +390,7 @@ private:
   mira_gui::RunnersPage* runners_page_ = nullptr;
 
   QSplitter* splitter_ = nullptr;
-  // The splitter's right side: grid_page_, classic_page_, or source_page_.
+  // The splitter's right side: grid_page_, source_page_, or runners_page_.
   QStackedWidget* main_stack_ = nullptr;
   QWidget* grid_page_ = nullptr;
   // Swaps the splitter out for Settings, full-screen. A
@@ -414,9 +422,6 @@ private:
   QPushButton* game_edit_back_ = nullptr;
   QPushButton* game_edit_advanced_ = nullptr;
   QPushButton* game_edit_save_ = nullptr;
-  // Built once at startup: a view on table_games_, so it's always current.
-  QWidget* classic_page_ = nullptr;
-  QTableView* classic_table_ = nullptr;
   QLabel* footer_ = nullptr;
   QLabel* empty_hint_ = nullptr;
   mira_gui::HoverCard* hover_card_ = nullptr;
@@ -426,7 +431,6 @@ private:
 
   mira_gui::GameLibraryModel* library_ = nullptr;
   mira_gui::GameFilterProxy* grid_games_ = nullptr;
-  mira_gui::GameFilterProxy* table_games_ = nullptr;
   mira_gui::DownloadTracker* downloads_ = nullptr;
   mira_gui::DaemonSupervisor* daemon_supervisor_ = nullptr;  // "Start mirad" from a failure
   bool mirad_reachable_ = true;  // as of the last request or event connection, for the footer

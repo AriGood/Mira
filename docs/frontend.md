@@ -4,9 +4,7 @@
 
 ## Windows
 
-`mira-gui` opens on the **grid** (`views/LibraryWindow`): cover tiles, a left sidebar and a custom top bar in place of a native titlebar. The window is frameless. Dragging the top bar's empty area or the sidebar header moves it, double-clicking the top bar toggles maximize, and the edges resize. Moves and resizes go through `QWindow::startSystemMove`/`startSystemResize` so they work on Wayland and X11.
-
-The **table** shows the library as rows. The top bar's grid/table toggle shows it in the grid's place, filtered and sorted by the same controls. `mira-gui --classic` opens on it.
+`mira-gui` opens on the **grid** (`views/LibraryWindow`): cover tiles, a left sidebar and a custom top bar in place of a native titlebar. The window is frameless. The top bar carries the Mira badge and name; dragging its empty area moves the window, double-clicking the top bar toggles maximize, and the edges resize. Moves and resizes go through `QWindow::startSystemMove`/`startSystemResize` so they work on Wayland and X11.
 
 ### Library page
 
@@ -118,8 +116,9 @@ Only `game.added` and `game.updated` carry a game record, so views check the eve
 | `source_imported_at` | When each source last imported. |
 | `sidebar_recent_count`, `sidebar_source_counts` | How many recently played games to list (0 hides them), and whether source rows show counts. |
 | `sidebar_source_icons` | Colored initials on source rows. |
+| `sidebar_pinned_style`, `sidebar_recent_style`, `sidebar_recent_when` | How PINNED and RECENTLY PLAYED draw their games (`covers`, the default, `hero` or `shelf`), and whether recent rows say when each was played. |
 | `library_filter_tabs`, `library_continue_row`, `library_continue_count` | The library's tabs and its Continue playing cards. |
-| `tile_status`, `tile_source_mark` | What a tile draws besides its title. |
+| `tile_status`, `tile_source_mark`, `tile_pin_badge` | What a tile draws besides its title. |
 | `source_page_tabs` | Installed and Not installed as tabs on source pages. |
 
 Every field is optional; a missing one means the default. Values go through the widget that owns them, so a hand-edited value is still clamped.

@@ -1,6 +1,6 @@
 #pragma once
 
-#include <QAbstractTableModel>
+#include <QAbstractListModel>
 #include <QSortFilterProxyModel>
 #include <QString>
 
@@ -14,20 +14,16 @@
 namespace mira_gui {
 
 // The whole library as last heard from mirad, once for the whole window:
-// the grid, the table, the source pages and the sidebar all read this one
-// copy through their own GameFilterProxy.
+// the grid, the source pages and the sidebar all read this one copy through
+// their own GameFilterProxy.
 //
 // Every change is a row insert, update or removal, never a rebuild, so views
 // keep their selection and scroll position through it. A row's roles are
-// GameTileDelegate's; its columns are the classic table's.
-class GameLibraryModel : public QAbstractTableModel {
+// GameTileDelegate's.
+class GameLibraryModel : public QAbstractListModel {
   Q_OBJECT
 
 public:
-  enum Column { kName, kStatus, kPlatform, kRunner, kLastPlayed, kPlaytime, kColumnCount };
-  // A column's value to sort by, where its text would sort wrong.
-  static constexpr int kSortRole = Qt::UserRole + 50;
-
   explicit GameLibraryModel(QObject* parent = nullptr);
 
   // A fresh GET /v1/games: becomes the library, as updates, inserts and
@@ -50,9 +46,7 @@ public:
   std::function<QString(const std::string& id)> status_text;
 
   int rowCount(const QModelIndex& parent = QModelIndex()) const override;
-  int columnCount(const QModelIndex& parent = QModelIndex()) const override;
   QVariant data(const QModelIndex& index, int role) const override;
-  QVariant headerData(int section, Qt::Orientation orientation, int role) const override;
 
 signals:
   // Once per burst of changes (a scan, mirad's replay), after the rows moved.
@@ -82,10 +76,8 @@ public:
   void SetSearch(const QString& text);
   // Only this source's games, hidden ones included; empty for every source.
   void SetSource(const std::string& source);
-  // The sidebar's sort. Undoes a column sort the table's header set.
+  // The sidebar's sort.
   void SetSort(const std::string& key, bool descending);
-  // A table header click: that column, that way.
-  void sort(int column, Qt::SortOrder order = Qt::AscendingOrder) override;
 
   const GameSummary* GameAt(const QModelIndex& index) const;
 
@@ -102,8 +94,6 @@ private:
   QString search_;
   std::string source_;
   std::string sort_key_ = "name";
-  bool descending_ = false;
-  bool column_sort_ = false;  // the table's header chose the order
-};
+  bool descending_ = false;};
 
 }  // namespace mira_gui

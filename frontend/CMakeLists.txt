@@ -1,5 +1,4 @@
-# The Qt frontend: a cover-art library grid (LibraryWindow), with a table
-# view in the grid's place (`mira-gui --classic` opens on it). See
+# The Qt frontend: a cover-art library grid (LibraryWindow). See
 # docs/architecture.md for what it still grows into: a tray-capable process
 # that can supervise mirad itself when systemd isn't managing it.
 # It is a separate binary and a separate CMake project scope
@@ -85,6 +84,10 @@ qt_add_executable(mira-gui
   ui/Notify.h
   ui/PopupDialog.cpp
   ui/PopupDialog.h
+  ui/SidebarGames.cpp
+  ui/SidebarGames.h
+  ui/SidebarStyleCard.cpp
+  ui/SidebarStyleCard.h
   ui/Sources.cpp
   ui/Sources.h
   ui/SystemNotifier.cpp

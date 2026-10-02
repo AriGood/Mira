@@ -100,6 +100,13 @@ private:
     int fallback = 0;
     int original = 0;
   };
+  // A frontend.toml string with fixed choices; each item's data is its stored value.
+  struct PrefChoice {
+    QComboBox* combo = nullptr;
+    std::optional<std::string> FrontendPrefs::*member = nullptr;
+    QString fallback;
+    QString original;
+  };
 
   struct ShortcutField {
     QString id;
@@ -120,6 +127,10 @@ private:
                        std::optional<bool> FrontendPrefs::*member, bool fallback);
   QSpinBox* AddCount(QFormLayout* form, const QString& label, const QString& tip, const QString& search,
                      std::optional<int> FrontendPrefs::*member, int fallback, int minimum, int maximum);
+  // `choices` are {stored value, label}.
+  QComboBox* AddChoice(QFormLayout* form, const QString& label, const QString& tip, const QString& search,
+                       std::optional<std::string> FrontendPrefs::*member, const QString& fallback,
+                       const std::vector<std::pair<QString, QString>>& choices);
   QWidget* MakeShapeControl(ShapeField& field, const QString& label, int maximum,
                             const QString& tip);
   // Shows each shape spinbox's special "unset" value as the actual number
@@ -144,6 +155,7 @@ private:
   QString theme_original_;
   std::vector<PrefToggle> toggles_;
   std::vector<PrefCount> counts_;
+  std::vector<PrefChoice> choices_;
   QWidget* sidebar_first_row_ = nullptr;  // kSidebarKey's target
   std::vector<std::pair<QString, QCheckBox*>> source_checks_;  // source id, "show in sidebar"
   QSet<QString> hidden_sources_original_;

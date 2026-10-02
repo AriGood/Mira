@@ -84,23 +84,17 @@ int main(int argc, char** argv) {
   mira_gui::theme::Apply("auto");
   mira_gui::tooltip::Install();
 
-  // `--classic` opens on the table rather than the cover grid. Not
-  // QCommandLineParser: one flag doesn't justify it, and this leaves Qt's own
-  // arguments (-style, -platform) alone.
-  const bool classic = QApplication::arguments().contains("--classic");
-
   // docs/architecture.md's "frontend-managed" daemon path: start mirad
   // ourselves if nothing is already listening, so the AppImage works as one
   // self-contained app with no systemd unit required.
   auto* supervisor = new mira_gui::DaemonSupervisor(&app);
-  QObject::connect(supervisor, &mira_gui::DaemonSupervisor::Ready, &app, [classic] {
+  QObject::connect(supervisor, &mira_gui::DaemonSupervisor::Ready, &app, [] {
     // Read once and applied before the window exists, so it opens at its saved
     // size and look instead of changing once shown.
     const mira_gui::FrontendPrefsResult saved = mira_gui::MiradClient::GetFrontendPrefsBlocking();
     const mira_gui::FrontendPrefs prefs = saved.ok ? saved.prefs : mira_gui::FrontendPrefs{};
     ApplyAppearance(prefs);
     auto* window = new LibraryWindow(prefs);
-    if (classic) window->ShowTable();
     window->setAttribute(Qt::WA_DeleteOnClose);
     // A no-op on a desktop with no tray (Tray.cpp): window->close() then
     // means exactly what it always did.
