@@ -2497,16 +2497,16 @@ QWidget* LibraryWindow::BuildSettingsPage() {
   layout->addWidget(settings_panel_, /*stretch=*/1);
 
   settings_panel_->AddSectionAction(
-      "Library", "Move Games into Mira's Folders",
+      "Library", "Move games into Mira's folders",
       "Moves each game's files into the library folder and its prefix into the prefix folder. "
       "Changing those folders does not move anything until you run this.",
       "Move games…", [this] { RelocateLibrary(); });
   settings_panel_->AddSectionAction(
-      "Desktop Entries", "Regenerate Desktop Entries",
+      "Desktop entries", "Regenerate desktop entries",
       "Rewrites Mira's desktop entries now, so changes to the desktop entry settings apply "
       "without waiting for the next library change.",
       "Regenerate", [this] { SyncDesktopEntries(); });
-  settings_panel_->AddSectionAction("Desktop Entries", "Remove All Desktop Entries",
+  settings_panel_->AddSectionAction("Desktop entries", "Remove all desktop entries",
                                     "Turns off desktop entries and deletes every one Mira generated.",
                                     "Remove…", [this] { RemoveAllDesktopEntries(); });
 

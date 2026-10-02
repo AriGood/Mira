@@ -639,6 +639,7 @@ void Server::RegisterRoutes() {
           {"doc", entry.doc},
           {"category", entry.category},
           {"group", entry.group},
+          {"group_label", entry.group_label},
       });
       // Present only when there's a shape to describe.
       if (!entry.constraint.one_of.empty()) entries.back()["one_of"] = entry.constraint.one_of;
@@ -649,6 +650,11 @@ void Server::RegisterRoutes() {
       if (entry.is_runner_ref) entries.back()["is_runner_ref"] = true;
       if (!entry.link.empty()) entries.back()["link"] = entry.link;
       if (!entry.keywords.empty()) entries.back()["keywords"] = entry.keywords;
+      if (entry.group_collapsed) entries.back()["group_collapsed"] = true;
+      if (!entry.source.empty()) entries.back()["source"] = entry.source;
+      if (entry.path != config::PathKind::None) {
+        entries.back()["path"] = entry.path == config::PathKind::Folder ? "folder" : "file";
+      }
     }
     SendJson(res, std::move(entries));
   });
