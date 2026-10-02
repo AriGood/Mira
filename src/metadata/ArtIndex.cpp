@@ -1,5 +1,7 @@
 #include "metadata/ArtIndex.h"
 
+#include "core/Json.h"
+
 #include <array>
 #include <cstdint>
 #include <format>
@@ -29,7 +31,7 @@ json ReadArt(const config::Config& config, const std::string& game_id, const fs:
   if (!info.is_object()) return art;
   for (const auto& [key, slot] : kSlots) {
     if (!info.contains(key) || !info[key].is_object()) continue;
-    const fs::path file = ArtworkDir(config, game_id) / info[key].value("file", std::string());
+    const fs::path file = ArtworkDir(config, game_id) / core::JsonString(info[key], "file");
     std::error_code ec;
     const auto written = fs::last_write_time(file, ec);
     if (ec) continue;
@@ -47,15 +49,18 @@ json ArtIndex::For(const std::string& game_id) {
   const fs::path metadata_file = MetadataFile(config_, game_id);
   std::error_code ec;
   const auto stamp = fs::last_write_time(metadata_file, ec);
+  {
+    std::lock_guard lock(mutex_);
+    if (ec) {
+      entries_.erase(game_id);
+      return json::object();
+    }
+    if (const auto found = entries_.find(game_id); found != entries_.end() && found->second.stamp == stamp) {
+      return found->second.art;
+    }
+  }
+  json art = ReadArt(config_, game_id, metadata_file);  // file I/O stays outside the lock
   std::lock_guard lock(mutex_);
-  if (ec) {
-    entries_.erase(game_id);
-    return json::object();
-  }
-  if (const auto found = entries_.find(game_id); found != entries_.end() && found->second.stamp == stamp) {
-    return found->second.art;
-  }
-  json art = ReadArt(config_, game_id, metadata_file);
   entries_[game_id] = {stamp, art};
   return art;
 }

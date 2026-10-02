@@ -9,10 +9,12 @@
 #include <map>
 #include <mutex>
 #include <optional>
+#include <set>
 
 #include <json.hpp>
 
 #include "config/RunnerSources.h"
+#include "core/Json.h"
 #include "core/Log.h"
 #include "core/Strings.h"
 #include "runner/Exec.h"
@@ -97,7 +99,8 @@ bool Excluded(const std::vector<std::string>& exclude, const std::string& text) 
 Result<std::vector<ReleaseAsset>> FetchReleases(const std::string& repo, const std::string& pattern,
                                                 const std::vector<std::string>& exclude) {
   Command command;
-  command.argv = {"curl", "-sSL", std::format("https://api.github.com/repos/{}/releases?per_page=10", repo)};
+  command.argv = {"curl", "-sSL", "--connect-timeout", "10", "--max-time", "30",
+                  std::format("https://api.github.com/repos/{}/releases?per_page=10", repo)};
   const Result<ExecResult> result = RunAndWait(command);
   if (!result) return std::unexpected(result.error());
 
@@ -109,17 +112,18 @@ Result<std::vector<ReleaseAsset>> FetchReleases(const std::string& repo, const s
 
   std::vector<ReleaseAsset> releases;
   for (const auto& release : parsed) {
-    const json& assets = release.value("assets", json::array());
+    if (!release.is_object() || !release.contains("assets") || !release["assets"].is_array()) continue;
+    const json& assets = release["assets"];
     for (const auto& asset : assets) {
-      const std::string name = asset.value("name", std::string());
+      const std::string name = core::JsonString(asset, "name");
       if (!strings::GlobMatch(pattern, name) || Excluded(exclude, name)) continue;
 
       ReleaseAsset entry;
-      entry.tag = release.value("tag_name", std::string());
+      entry.tag = core::JsonString(release, "tag_name");
       entry.asset_name = name;
-      entry.download_url = asset.value("browser_download_url", std::string());
-      entry.size_bytes = asset.value("size", std::int64_t{0});
-      entry.published_at = release.value("published_at", std::string());
+      entry.download_url = core::JsonString(asset, "browser_download_url");
+      entry.size_bytes = core::JsonInt(asset, "size");
+      entry.published_at = core::JsonString(release, "published_at");
       FindChecksum(assets, name, entry);
       releases.push_back(std::move(entry));
       break;  // one matching asset per release is expected
@@ -139,7 +143,7 @@ Result<void> DownloadVerified(const ReleaseAsset& asset, const fs::path& target)
   std::error_code ec;
   Command download;
   // -f: an HTTP error must fail here, not get saved as the "archive".
-  download.argv = {"curl", "-sSLf", "-o", target.string(), asset.download_url};
+  download.argv = {"curl", "-sSLf", "--connect-timeout", "10", "--max-time", "1800", "-o", target.string(), asset.download_url};
   if (Result<ExecResult> result = RunAndWait(download); !result || result->exit_code != 0) {
     fs::remove(target, ec);
     return Err("download_failed",
@@ -157,7 +161,7 @@ Result<void> DownloadVerified(const ReleaseAsset& asset, const fs::path& target)
   const fs::path checksum_file =
       target.parent_path() / (asset.asset_name + (asset.checksum_is_sha256 ? ".sha256sum" : ".sha512sum"));
   Command fetch_checksum;
-  fetch_checksum.argv = {"curl", "-sSLf", "-o", checksum_file.string(), asset.checksum_url};
+  fetch_checksum.argv = {"curl", "-sSLf", "--connect-timeout", "10", "--max-time", "60", "-o", checksum_file.string(), asset.checksum_url};
   if (Result<ExecResult> result = RunAndWait(fetch_checksum); !result || result->exit_code != 0) {
     fs::remove(target, ec);
     fs::remove(checksum_file, ec);
@@ -342,6 +346,24 @@ Result<std::vector<ReleaseAsset>> ListFamilyReleases(const RunnerFamily& family)
 
 Result<void> DownloadAndInstall(const config::Config& config, const std::string& kind,
                                 const ReleaseAsset& asset) {
+  // Two requests for one build would download and extract into the same folder.
+  static std::mutex in_flight_mutex;
+  static std::set<std::string> in_flight;
+  const std::string in_flight_key = kind + "|" + asset.tag;
+  {
+    const std::lock_guard lock(in_flight_mutex);
+    if (!in_flight.insert(in_flight_key).second) {
+      return Err("already_installing", std::format("{} {} is already being installed", kind, asset.tag));
+    }
+  }
+  const struct Release {
+    const std::string& key;
+    ~Release() {
+      const std::lock_guard lock(in_flight_mutex);
+      in_flight.erase(key);
+    }
+  } release{in_flight_key};
+
   const fs::path install_dir = InstallDirFor(config, kind);
   if (install_dir.empty()) {
     return Err("no_search_path", std::format("no {} search path configured to install into", kind));
@@ -357,8 +379,22 @@ Result<void> DownloadAndInstall(const config::Config& config, const std::string&
   const fs::path archive = install_dir / asset.asset_name;
   if (auto downloaded = DownloadVerified(asset, archive); !downloaded) return downloaded;
 
-  const Result<void> extracted = Extract(archive, install_dir);
+  // Extracted aside and moved in, so a failed extraction never leaves a half-built runner Discover accepts.
+  const fs::path staging = install_dir / (".extracting-" + asset.asset_name);
+  fs::remove_all(staging, ec);
+  fs::create_directories(staging, ec);
+  Result<void> extracted = Extract(archive, staging);
   fs::remove(archive, ec);
+  if (extracted) {
+    for (const auto& entry : fs::directory_iterator(staging, ec)) {
+      fs::rename(entry.path(), install_dir / entry.path().filename(), ec);
+      if (ec) {
+        extracted = Err("install_failed", std::format("couldn't move {} into place: {}", entry.path().filename().string(), ec.message()));
+        break;
+      }
+    }
+  }
+  fs::remove_all(staging, ec);
   return extracted;
 }
 

@@ -202,6 +202,15 @@ ProcessSupervisor::~ProcessSupervisor() {
   }
 }
 
+// A record still unfinished once its mira-run is gone (killed with the game) has only its start; close it out with the elapsed time.
+static void CloseOutUnfinished(SessionRecord& record) {
+  if (record.finished) return;
+  const std::int64_t now = model::NowSeconds();
+  record.finished = true;
+  record.ended_at = now;
+  record.duration_seconds = std::max<std::int64_t>(0, now - record.started_at);
+}
+
 void ProcessSupervisor::AdoptWatcher(const std::string& game_id, std::thread watcher) {
   // The previous watcher for this id has erased itself from running_, but may
   // still be recording its exit, so it is kept to be joined, not detached.
@@ -322,8 +331,11 @@ Result<void> ProcessSupervisor::Stop(const std::string& game_id) {
   }
   {
     std::lock_guard lock(mutex_);
-    kill_deadlines_[game_id] = model::NowSeconds() + stop_timeout_s_;
-    stop_requested_.insert(game_id);
+    // Skipped if the game exited meanwhile: its watcher already cleaned up, and these would outlive it.
+    if (running_.contains(game_id)) {
+      kill_deadlines_[game_id] = model::NowSeconds() + stop_timeout_s_;
+      stop_requested_.insert(game_id);
+    }
   }
   return {};
 }
@@ -487,6 +499,7 @@ void ProcessSupervisor::WatchWrapped(std::string game_id, pid_t wrapper_pid,
     log::Warn("mira-run for {} exited with no session record ({})", game_id, record.error().message);
     return;
   }
+  CloseOutUnfinished(*record);
   FinalizeWrappedSession(game_id, *record, session_path);
 }
 
@@ -564,6 +577,7 @@ void ProcessSupervisor::WatchReconciledLive(std::string game_id, pid_t wrapper_p
              record.error().message);
     return;
   }
+  CloseOutUnfinished(*record);
   FinalizeWrappedSession(game_id, *record, session_path);
 }
 
@@ -609,7 +623,7 @@ void ProcessSupervisor::Reconcile(const std::filesystem::path& sessions_dir) {
                "as incomplete",
                record->game_id, record->wrapper_pid);
       record->incomplete = true;
-      record->finished = true;
+      CloseOutUnfinished(*record);
       FinalizeWrappedSession(record->game_id, *record, path);
     }
   }

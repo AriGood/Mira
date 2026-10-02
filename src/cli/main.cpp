@@ -88,7 +88,8 @@ bool AwaitJob(httplib::Client& client, const httplib::Result& res, json& result)
     result = started;
     return true;
   }
-  while (true) {
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::hours(1);
+  while (std::chrono::steady_clock::now() < deadline) {
     auto job = client.Get("/v1/jobs/" + id);
     if (!Ok(job)) {
       PrintError(job);
@@ -111,6 +112,8 @@ bool AwaitJob(httplib::Client& client, const httplib::Result& res, json& result)
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
   }
+  std::fprintf(stderr, "mira: gave up waiting for job %s; it may still be running\n", id.c_str());
+  return false;
 }
 
 int CmdStatus() {
@@ -676,15 +679,18 @@ int CmdLauncher(int argc, char** argv) {
   }
   if ((sub == "install" || sub == "import") && argc >= 2) {
     auto res = client.Post(std::format("/v1/launchers/{}/{}", argv[1], sub));
+    if (sub == "import") {
+      json summary;
+      if (!AwaitJob(client, res, summary)) return 1;
+      std::printf("added: %lld  updated: %lld\n", summary.value("added", 0LL), summary.value("updated", 0LL));
+      return 0;
+    }
     if (!Ok(res)) {
       PrintError(res);
       return 1;
     }
     if (sub == "install") {
       std::printf("installing: `mira launcher list` to check on it\n");
-    } else {
-      const json summary = json::parse(res->body);
-      std::printf("added: %lld  updated: %lld\n", summary.value("added", 0LL), summary.value("updated", 0LL));
     }
     return 0;
   }
@@ -1831,7 +1837,7 @@ void PrintUsage() {
 
 }  // namespace
 
-int main(int argc, char** argv) {
+int Dispatch(int argc, char** argv) {
   if (argc < 2) {
     PrintUsage();
     return 2;
@@ -1880,4 +1886,14 @@ int main(int argc, char** argv) {
               command.data());
   PrintUsage();
   return 2;
+}
+
+int main(int argc, char** argv) {
+  // A reply that isn't the JSON it should be throws out of whichever command read it.
+  try {
+    return Dispatch(argc, argv);
+  } catch (const std::exception& error) {
+    std::fprintf(stderr, "mira: unexpected reply from mirad: %s\n", error.what());
+    return 1;
+  }
 }

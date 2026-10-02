@@ -4,6 +4,8 @@
 #include <filesystem>
 #include <charconv>
 #include <format>
+#include <map>
+#include <memory>
 #include <set>
 #include <system_error>
 #include <tuple>
@@ -182,6 +184,19 @@ std::string RunnerRegistry::ResolveRef(const model::Game& game) const {
   return ref;
 }
 
+std::unique_lock<std::mutex> LockPrefix(const std::string& data_dir) {
+  static std::mutex map_mutex;
+  static std::map<std::string, std::unique_ptr<std::mutex>> locks;
+  std::mutex* lock = nullptr;
+  {
+    const std::lock_guard guard(map_mutex);
+    auto& entry = locks[data_dir];
+    if (!entry) entry = std::make_unique<std::mutex>();
+    lock = entry.get();
+  }
+  return std::unique_lock(*lock);
+}
+
 model::Game RunnerRegistry::ProvisionGame(model::Game game) const {
   const std::string ref = ResolveRef(game);
   const Result<Resolved> resolved = Resolve(ref);
@@ -196,6 +211,8 @@ model::Game RunnerRegistry::ProvisionGame(model::Game game) const {
   game.runner_ref = resolved->build ? std::format("{}:{}", resolved->runner->kind(), resolved->build->name)
                                     : ref;
 
+  std::unique_lock<std::mutex> prefix_lock;
+  if (!game.data_dir.empty()) prefix_lock = LockPrefix(game.data_dir);
   const Result<void> provisioned = resolved->runner->Provision(game, resolved->build);
   if (!provisioned) {
     game.status = model::GameStatus::Broken;

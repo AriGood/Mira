@@ -227,6 +227,8 @@ int main(int argc, char** argv) {
   }
   const Args& args = *parsed;
   SetProcessTitle(argc, argv, "mira-run: " + args.game_id);
+  // Otherwise a pre-script that backgrounds something inherits the pipe and holds mirad waiting for EOF.
+  if (args.status_fd >= 0) ::fcntl(args.status_fd, F_SETFD, FD_CLOEXEC);
 
   // Computed before --pre runs so the session path can ride along on the
   // "ok" status message -- otherwise mirad has no way to know which file in

@@ -4,30 +4,13 @@
 #include <format>
 #include <system_error>
 
+#include "core/Paths.h"
 #include "launchers/Launchers.h"
 #include "library/PrefixNaming.h"
 
 namespace mira::library {
 namespace {
 namespace fs = std::filesystem;
-
-// Same containment idiom api::DeleteUnderRoot uses for a delete target:
-// weakly_canonical both sides, then a prefix match, so a symlink or a
-// relative "../.." in a request body can't move a game's files outside a
-// configured root.
-bool Contained(const fs::path& target, const fs::path& root) {
-  std::error_code ec;
-  const fs::path resolved = fs::weakly_canonical(target, ec);
-  if (ec) return false;
-  const fs::path canon_root = fs::weakly_canonical(root, ec);
-  if (ec) return false;
-  const auto [root_end, nothing] = std::mismatch(canon_root.begin(), canon_root.end(), resolved.begin());
-  return root_end == canon_root.end();
-}
-
-bool ContainedInAny(const fs::path& target, const std::vector<fs::path>& roots) {
-  return std::ranges::any_of(roots, [&](const fs::path& root) { return Contained(target, root); });
-}
 
 Result<void> Move(const fs::path& from, const fs::path& to, bool allow_copy) {
   std::error_code ec;
@@ -69,7 +52,7 @@ Result<model::Game> Relocate(const config::Config& config, model::Game game, con
       target = NamedDir(config, game, library_roots.front(), game.install_path);
     }
     if (target.empty()) return Err("no_library_roots", "no library_roots configured to relocate into");
-    if (!ContainedInAny(target, library_roots)) {
+    if (!paths::IsWithin(target, library_roots)) {
       return Err("path_outside_root",
                 std::format("\"{}\" is not inside a configured library root", target.string()));
     }
@@ -87,7 +70,7 @@ Result<model::Game> Relocate(const config::Config& config, model::Game game, con
     const auto undo_install = [&] {
       if (game.install_path != original_install) (void)Move(game.install_path, original_install, true);
     };
-    if (!Contained(target, prefix_root)) {
+    if (!paths::IsWithin(target, {prefix_root})) {
       undo_install();
       return Err("path_outside_root", std::format("\"{}\" is not inside prefix_root", target.string()));
     }

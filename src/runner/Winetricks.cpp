@@ -1,5 +1,7 @@
 #include "runner/Winetricks.h"
 
+#include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <format>
 
@@ -98,6 +100,12 @@ Result<void> RunTricksVerb(const RunnerRegistry& runners, const model::Game& gam
   if (winetricks.empty()) {
     return Err("winetricks_missing", "winetricks isn't installed", "Install winetricks.", Fix::Runners("winetricks"));
   }
+
+  if (verb.empty() || verb.front() == '-' ||
+      !std::ranges::all_of(verb, [](unsigned char c) { return std::isalnum(c) || c == '_' || c == '.' || c == '=' || c == '-'; })) {
+    return Err("invalid_verb", "that isn't a winetricks verb");
+  }
+  const auto prefix_lock = LockPrefix(game.data_dir);
 
   Command command;
   command.argv = {winetricks, "--unattended", verb};

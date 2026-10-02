@@ -104,6 +104,10 @@ std::optional<std::vector<std::string>> StringList(const json& body, const char*
   return out;
 }
 
+Error GameRunningError(const std::string& id) {
+  return Error{"game_running", std::format("\"{}\" is running", id), "Stop the game first.", {}};
+}
+
 // One game's failure inside a batch reply: {id, error: {code, message, hint?, fix?}}.
 json BatchFailure(const std::string& id, const Error& error) {
   json body = ErrorBody(error.code, error.message);
@@ -294,18 +298,6 @@ json CollectionJson(const itch::ItchCollection& collection) {
           {"games_count", collection.games_count},
           {"own", collection.own},
           {"url", std::format("https://itch.io/c/{}", collection.id)}};
-}
-
-// Same check as GET /v1/games/{id}/artwork's default slot.
-bool HasCachedArtwork(const config::Config& config, const std::string& id) {
-  const std::filesystem::path metadata_file = metadata::MetadataFile(config, id);
-  std::ifstream meta_in(metadata_file);
-  if (!meta_in) return false;
-  const json info = json::parse(meta_in, nullptr, false);
-  if (info.is_discarded() || !info.contains("artwork")) return false;
-  const std::filesystem::path file =
-      metadata::ArtworkDir(config, id) / info["artwork"].value("file", std::string());
-  return std::ifstream(file, std::ios::binary).good();
 }
 
 // A preview is saved without an extension, so its type comes from its bytes.
@@ -537,6 +529,7 @@ Result<void> Server::Serve(const std::filesystem::path& socket_path) {
                                ec);
 
   log::Info("listening on {}", socket_path.string());
+  if (stopping_) return {};  // Stop() came before listening, where it would have done nothing
   external_watch_ = std::thread(&Server::WatchExternalGames, this);
   if (!http_->listen_after_bind()) {
     return Err("socket_listen_failed", "httplib server exited unexpectedly");
@@ -550,6 +543,22 @@ void Server::Stop() {
 }
 
 void Server::RegisterRoutes() {
+  // A body field of the wrong type throws out of a route; answer in the JSON envelope instead of a bare 500.
+  http_->set_exception_handler([](const Request&, Response& res, std::exception_ptr error) {
+    try {
+      std::rethrow_exception(error);
+    } catch (const json::exception& e) {
+      SendError(res, 400, "invalid_body", e.what());
+    } catch (const std::exception& e) {
+      SendError(res, 500, "internal_error", e.what());
+    }
+  });
+  // Unknown paths and wrong methods arrive with no body.
+  http_->set_error_handler([](const Request&, Response& res) {
+    if (!res.body.empty()) return;
+    SendError(res, res.status, res.status == 405 ? "method_not_allowed" : "not_found",
+              res.status == 405 ? "that method isn't supported here" : "no such endpoint");
+  });
   // A store's import as a job; `Importer` is its XxxImporter.
   const auto import_job = [this]<typename Importer>(const Request& req, Response& res, std::type_identity<Importer>,
                                                     const std::string& source, const std::string& label) {
@@ -777,7 +786,7 @@ void Server::RegisterRoutes() {
     const auto folders_lock = games_.LockFolders();
     if (auto deleted = DeleteGameData(*game, flag("delete_files"), flag("delete_prefix"), flag("delete_metadata"));
         !deleted) {
-      return SendError(res, 400, deleted.error());
+      return SendError(res, deleted.error().code == "game_running" ? 409 : 400, deleted.error());
     }
 
     auto result = games_.Remove(req.matches[1]);
@@ -857,6 +866,10 @@ void Server::RegisterRoutes() {
                json errors = json::array();
                for (const model::Game& game : games) {
                  progress.Report(done++, static_cast<int>(games.size()), game.name);
+                 if (supervisor_.IsRunning(game.id)) {
+                   errors.push_back(BatchFailure(game.id, GameRunningError(game.id)));
+                   continue;
+                 }
                  // Per game, so scans can run between moves.
                  auto folders_lock = games_.LockFolders();
                  auto relocated = library::Relocate(config_, game);
@@ -1184,7 +1197,7 @@ void Server::RegisterRoutes() {
 
   // --- sources --------------------------------------------------------------
 
-  http_->Get(R"(/v1/sources/([a-z]+)/removal)", [this](const Request& req, Response& res) {
+  http_->Get(R"(/v1/sources/([a-z0-9-]+)/removal)", [this](const Request& req, Response& res) {
     auto plan = library::PlanRemoval(config_, games_, req.matches[1].str());
     if (!plan) return SendError(res, 404, plan.error());
     json games = json::array();
@@ -1198,7 +1211,7 @@ void Server::RegisterRoutes() {
                    {"signs_out", plan->signs_out}});
   });
 
-  http_->Post(R"(/v1/sources/([a-z]+)/remove)", [this](const Request& req, Response& res) {
+  http_->Post(R"(/v1/sources/([a-z0-9-]+)/remove)", [this](const Request& req, Response& res) {
     const std::string source = req.matches[1].str();
     // Checked now, so an unknown source is a 404 rather than a failed job.
     if (auto plan = library::PlanRemoval(config_, games_, source); !plan) return SendError(res, 404, plan.error());
@@ -1219,11 +1232,11 @@ void Server::RegisterRoutes() {
     SendJson(res, {{"runner_ref", runner->runner_ref}, {"games", runner->games}, {"differing", runner->differing}});
   };
 
-  http_->Get(R"(/v1/sources/([a-z]+)/runner)", [this, send_source_runner](const Request& req, Response& res) {
+  http_->Get(R"(/v1/sources/([a-z0-9-]+)/runner)", [this, send_source_runner](const Request& req, Response& res) {
     send_source_runner(res, library::GetSourceRunner(config_, games_, req.matches[1].str()));
   });
 
-  http_->Post(R"(/v1/sources/([a-z]+)/runner)", [this, send_source_runner](const Request& req, Response& res) {
+  http_->Post(R"(/v1/sources/([a-z0-9-]+)/runner)", [this, send_source_runner](const Request& req, Response& res) {
     const json body = json::parse(req.body, nullptr, false);
     if (!body.is_object() || !body.contains("runner_ref") || !body["runner_ref"].is_string()) {
       return SendError(res, 400, "invalid_body", R"(expected {"runner_ref": "kind:name", "apply_to_games"?: bool})");
@@ -1305,7 +1318,14 @@ void Server::RegisterRoutes() {
       return SendError(res, 400, "invalid_body", R"(expected {"bundle_key": "...", "item_numbers": "..."})");
     }
     const std::string bundle_key = body["bundle_key"];
-    const std::string item_numbers = body.value("item_numbers", std::string());
+    const std::string item_numbers = body.contains("item_numbers") && body["item_numbers"].is_string()
+                                         ? body["item_numbers"].get<std::string>()
+                                         : std::string();
+    // The key becomes a folder name and a humble-cli argument.
+    if (bundle_key.empty() || !std::ranges::all_of(bundle_key, [](unsigned char c) { return std::isalnum(c); }) ||
+        !std::ranges::all_of(item_numbers, [](unsigned char c) { return std::isdigit(c) || c == ',' || c == ' ' || c == '-'; })) {
+      return SendError(res, 400, "invalid_body", "bundle_key must be letters and digits, and item_numbers digits, commas and dashes");
+    }
 
     events_.Publish("humble.download.started", {{"bundle_key", bundle_key}});
     operations_.Run([this, bundle_key, item_numbers] {
@@ -1419,7 +1439,7 @@ void Server::RegisterRoutes() {
       title.source_ref = text(entry, "ref");
       title.name = text(entry, "title");
       title.id = source + "-" + title.source_ref;
-      if (!IsSafeRef(title.source_ref) || title.name.empty() || HasCachedArtwork(config_, title.id)) continue;
+      if (!IsSafeRef(title.source_ref) || title.name.empty() || art_index_.For(title.id).contains("cover")) continue;
       // How Fetch tells a Steam game apart.
       if (source == "steam") title.runner_ref = "steam:" + title.source_ref;
       titles.push_back(std::move(title));
@@ -1834,6 +1854,9 @@ void Server::RegisterRoutes() {
     if (body.contains("installer")) {
       if (!body["installer"].is_string()) return SendError(res, 400, "invalid_body", "installer must be a string");
       installer = std::filesystem::path(game->install_path) / body["installer"].get<std::string>();
+      if (!paths::IsWithin(*installer, {std::filesystem::path(game->install_path)})) {
+        return SendError(res, 400, "invalid_body", "installer must be inside the game's folder");
+      }
       std::error_code ec;
       if (!std::filesystem::is_regular_file(*installer, ec)) {
         return SendError(res, 404,
@@ -1913,6 +1936,8 @@ void Server::RegisterRoutes() {
       }
     }
 
+    if (supervisor_.IsRunning(game->id)) return SendError(res, 409, GameRunningError(game->id));
+
     StartJob(req, res, "relocate", game->id, "Moving " + game->name,
              [this, game = *game, request](JobRegistry::Progress&) -> Result<json> {
                auto folders_lock = games_.LockFolders();
@@ -1947,7 +1972,10 @@ void Server::RegisterRoutes() {
     tricks_queue_.Run([this, id, verb] {
       const runner::RunnerRegistry registry(config_);
       const auto game = games_.Find(id);
-      if (!game) return;  // removed while queued
+      if (!game) {  // removed while queued
+        events_.Publish("tricks.failed", {{"id", id}, {"verb", verb}, {"error", "the game was removed"}});
+        return;
+      }
       if (auto ran = runner::RunTricksVerb(registry, *game, verb); !ran) {
         log::Error("winetricks {} failed for {}: {}", verb, id, ran.error().message);
         events_.Publish("tricks.failed", {{"id", id}, {"verb", verb}, {"error", ran.error().message}});
@@ -2146,7 +2174,7 @@ void Server::RegisterRoutes() {
   http_->Post("/v1/games/metadata/refresh-missing", [this](const Request& req, Response& res) {
     std::vector<model::Game> games;
     for (const model::Game& game : games_.All()) {
-      if (!HasCachedArtwork(config_, game.id)) games.push_back(game);
+      if (!art_index_.For(game.id).contains("cover")) games.push_back(game);
     }
     StartJob(req, res, "metadata", "", "Fetching missing cover art",
              [this, games = std::move(games)](JobRegistry::Progress& progress) { return RefreshMetadata(games, progress); });
@@ -2398,6 +2426,7 @@ Result<json> Server::RefreshMetadata(std::vector<model::Game> games, JobRegistry
 }
 
 Result<void> Server::DeleteGameData(const model::Game& game, bool files, bool prefix, bool metadata) {
+  if (supervisor_.IsRunning(game.id)) return std::unexpected(GameRunningError(game.id));
   // A desktop-entry import only links to another app's own files.
   if (game.source == "desktop-entry") files = prefix = false;
   if (files && game.source == "epic" && !game.source_ref.empty()) {
@@ -2451,6 +2480,7 @@ void Server::InstallRunnerAsync(const std::string& kind, const std::string& sour
       if (fresh != builds.end()) {
         const std::string to = fresh->Reference();
         json moved = json::array();
+        const auto batch = games_.BatchSaves();
         for (const model::Game& game : games_.All()) {
           if (game.runner_ref != replacing) continue;
           if (auto updated = games_.Update(game.id, [&](model::Game& g) { g.runner_ref = to; })) {

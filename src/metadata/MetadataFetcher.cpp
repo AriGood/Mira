@@ -144,10 +144,26 @@ bool FetchArtworkInto(const config::Config& config, const std::string& url, cons
   const fs::path part = dir / std::format("{}{}.part{}", slot, ext, next_part++);
 
   Command command;
-  command.argv = {"curl", "-sSL",         "-f", "--max-time", std::string(kMaxTime),
-                  "-o",   part.string(), url};
+  // A URL from a store's JSON is http(s) only. Lutris's cached art is a file:// URL we built, and a
+  // SteamGridDB candidate was checked as http(s) when it was recorded.
+  const bool trusted = source == "lutris" || source == "steamgriddb";
+  command.argv = {"curl", "-sSL", "-f", "--proto", trusted ? "=file,https,http" : "=https,http", "--max-time",
+                  std::string(kMaxTime), "-o", part.string(), "--url", url};
   const Result<runner::ExecResult> result = runner::RunAndWait(command);
-  if (result && result->exit_code == 0) fs::rename(part, dest, ec);
+  if (result && result->exit_code == 0) {
+    fs::rename(part, dest, ec);
+    if (!ec) {
+      // A slot that changed type (.png to .jpg) must not leave the old file behind.
+      for (const auto& entry : fs::directory_iterator(dir, ec)) {
+        const std::string name = entry.path().filename().string();
+        if (entry.path() != dest && entry.path().stem() == std::string(slot) && !name.ends_with(".part")) {
+          std::error_code remove_ec;
+          fs::remove(entry.path(), remove_ec);
+        }
+      }
+      ec.clear();
+    }
+  }
   if (!result || result->exit_code != 0 || ec) {
     log::Warn("couldn't download artwork for {} from {}", game_id, url);
     fs::remove(part, ec);
@@ -186,11 +202,12 @@ json FetchGriddbPage(const config::Config& config, const std::string& auth_heade
 // A SteamGridDB result as an art_candidates entry; null without a url.
 json GriddbCandidate(const json& item) {
   const std::string url = Value(item, "url", std::string());
-  if (url.empty()) return nullptr;
+  if (!url.starts_with("https://") && !url.starts_with("http://")) return nullptr;
+  const std::string thumb = Value(item, "thumb", std::string());
   return {
       {"id", Value(item, "id", std::int64_t{0})},
       {"url", url},
-      {"thumb", Value(item, "thumb", std::string())},
+      {"thumb", thumb.starts_with("http") ? thumb : std::string()},
       {"width", Value(item, "width", 0)},
       {"height", Value(item, "height", 0)},
       {"style", Value(item, "style", std::string())},
@@ -1023,7 +1040,7 @@ Result<ThumbBatch> FetchCandidateThumbs(const config::Config& config, const std:
   // One curl for the whole batch, fetching in parallel. -w reports each
   // transfer's own exit code, since the process's only says whether any failed.
   Command command;
-  command.argv = {"curl", "-sSL", "-f", "--max-time", std::string(kMaxTime), "--parallel", "--parallel-max", "8",
+  command.argv = {"curl", "-sSL", "-f", "--proto", "=file,https,http", "--max-time", std::string(kMaxTime), "--parallel", "--parallel-max", "8",
                   "-w", "%{exitcode} %{filename_effective}\n"};
   std::set<std::int64_t> seen;
   for (const std::int64_t id : candidate_ids) {
@@ -1045,7 +1062,7 @@ Result<ThumbBatch> FetchCandidateThumbs(const config::Config& config, const std:
     }
     const std::string part = ThumbPath(config, game_id, slot, id).string() + suffix;
     pending[part] = id;
-    command.argv.insert(command.argv.end(), {"-o", part, url});
+    command.argv.insert(command.argv.end(), {"-o", part, "--url", url});
   }
   if (pending.empty()) return batch;
 
