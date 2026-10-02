@@ -239,6 +239,7 @@ struct ScannedEntry {
 
 std::vector<ScannedEntry> ScanAll(const config::Config& config) {
   std::vector<ScannedEntry> out;
+  std::set<std::string> seen_ids;  // the first directory with an id wins, as the spec says
   std::error_code ec;
 
   for (const fs::path& dir : SearchDirs(config)) {
@@ -249,6 +250,7 @@ std::vector<ScannedEntry> ScanAll(const config::Config& config) {
 
       const auto file = ParseDesktopFile(entry.path());
       if (!file || !file->has_desktop_entry_section) continue;
+      if (!seen_ids.insert(DesktopFileId(dir, entry.path())).second) continue;
       if (const std::string type = file->Get("Type"); !type.empty() && type != "Application") continue;
       if (file->Get("NoDisplay") == "true" || file->Get("Hidden") == "true") continue;
       if (file->Has("X-Mira-Game-Id")) continue;  // our own entry -- never re-import it

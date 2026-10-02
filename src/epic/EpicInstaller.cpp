@@ -10,6 +10,8 @@ EpicInstaller::EpicInstaller(config::Config& config, store::GameStore& games, ap
     : config_(config), games_(games), events_(events) {}
 
 Result<void> EpicInstaller::Run(const std::string& verb, const std::string& app_name) {
+  // A leading '-' would be read as an option.
+  if (app_name.empty() || app_name.starts_with('-')) return Err("invalid_ref", "that isn't an Epic app name");
   library::StoreProgress progress(events_, "epic", app_name);
   if (auto output = RunLegendary(config_, {verb, app_name, "-y"},
                                  [&progress](std::string_view chunk) { progress.Feed(chunk); });

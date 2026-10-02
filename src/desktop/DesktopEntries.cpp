@@ -1,3 +1,4 @@
+#include "core/Json.h"
 #include "desktop/DesktopEntries.h"
 
 #include <format>
@@ -39,7 +40,9 @@ std::optional<fs::path> CachedArtwork(const config::Config& config, const std::s
   if (!meta_in) return std::nullopt;
   const nlohmann::json info = nlohmann::json::parse(meta_in, nullptr, false);
   if (info.is_discarded() || !info.contains("artwork")) return std::nullopt;
-  const fs::path file = metadata::ArtworkDir(config, game_id) / info["artwork"].value("file", std::string());
+  const std::string name = core::JsonString(info["artwork"], "file");
+  if (name.empty()) return std::nullopt;  // otherwise the artwork directory itself
+  const fs::path file = metadata::ArtworkDir(config, game_id) / name;
   return std::ifstream(file, std::ios::binary).good() ? std::make_optional(file) : std::nullopt;
 }
 

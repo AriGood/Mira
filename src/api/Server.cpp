@@ -170,8 +170,21 @@ model::Game ParseGamePatch(const model::Game& base, const json& patch) {
       }
     }
   }
-  game.reviewed = true;  // any correction counts as the human having looked
+  // A correction counts as the human having looked; a patch that changed nothing doesn't.
+  if (model::ToJson(game) != model::ToJson(base)) game.reviewed = true;
   return game;
+}
+
+// The first wrong-typed field of a game patch, named, so a bad body is a 400 rather than silently ignored.
+std::optional<std::string> GamePatchProblem(const json& patch) {
+  if (!patch.is_object()) return "expected a JSON object";
+  for (const char* key : {"name", "exe_path", "args", "working_dir", "runner_ref", "data_dir"}) {
+    if (patch.contains(key) && !patch[key].is_string()) return std::format("\"{}\" must be a string", key);
+  }
+  if (patch.contains("tags") && !patch["tags"].is_array()) return "\"tags\" must be an array";
+  if (patch.contains("runner_config") && !patch["runner_config"].is_object()) return "\"runner_config\" must be an object";
+  if (patch.contains("env") && !patch["env"].is_object() && !patch["env"].is_null()) return "\"env\" must be an object or null";
+  return std::nullopt;
 }
 
 // Applies a flat {"dotted.key": value} overrides patch; null removes an override.
@@ -707,6 +720,7 @@ void Server::RegisterRoutes() {
     const std::string id = req.matches[1];
     json patch = json::parse(req.body, nullptr, false);
     if (patch.is_discarded()) return SendError(res, 400, "invalid_json", "body is not valid JSON");
+    if (const auto problem = GamePatchProblem(patch)) return SendError(res, 400, "invalid_body", *problem);
 
     auto result = games_.Update(id, [&](model::Game& game) { game = ParseGamePatch(game, patch); });
     if (!result) return SendStoreError(res, result.error());

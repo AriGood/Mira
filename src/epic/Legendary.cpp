@@ -75,13 +75,21 @@ Result<void> InstallLegendaryBinary(const config::Config& config, const runner::
   fs::create_directories(target.parent_path(), ec);
   if (ec) return Err("install_dir_failed", ec.message());
 
+  // Downloaded beside the target, so a failed or stalled download never leaves a broken binary there.
+  const fs::path part = target.string() + ".part";
   Command download;
-  download.argv = {"curl", "-fsSL", "-o", target.string(), asset.download_url};
+  download.argv = {"curl", "-fsSL", "--connect-timeout", "10", "--max-time", "600", "-o", part.string(), asset.download_url};
   const Result<runner::ExecResult> result = runner::RunAndWait(download);
   if (!result || result->exit_code != 0) {
-    fs::remove(target, ec);
+    fs::remove(part, ec);
     return Err("download_failed", !result ? result.error().message
                                           : std::format("curl exited {}: {}", result->exit_code, result->output));
+  }
+
+  fs::rename(part, target, ec);
+  if (ec) {
+    fs::remove(part, ec);
+    return Err("install_failed", ec.message());
   }
 
   // Legendary's releases ship no checksum, so it's installed unverified.

@@ -55,6 +55,7 @@ public:
   // Set once, before Serve().
   // Queues metadata and art for games added outside a request (the startup scan).
   void QueueMetadata(const std::vector<model::Game>& games);
+  metadata::FetchQueue& MetadataQueue() { return metadata_fetches_; }
 
   void SetOnLibraryRootsChanged(std::function<void()> callback) { on_roots_changed_ = std::move(callback); }
 

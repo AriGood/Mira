@@ -126,6 +126,7 @@ int main(int argc, char** argv) {
   });
 
   mira::library::Watcher watcher(config, games, events);
+  watcher.UseMetadataQueue(server.MetadataQueue());
   server.SetOnLibraryRootsChanged([&watcher] { watcher.ReloadRoots(); });
   std::thread watcher_thread([&] { watcher.Run(); });
 

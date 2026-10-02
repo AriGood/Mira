@@ -38,6 +38,10 @@ public:
   void Stop();
   void ReloadRoots();
 
+  // Fetch through `queue` instead of a queue of its own, so one set of workers and one dedupe serve everything.
+  // Before Run().
+  void UseMetadataQueue(metadata::FetchQueue& queue) { metadata_fetches_ = &queue; }
+
 private:
   struct Pending {
     std::filesystem::path root;
@@ -56,7 +60,8 @@ private:
   config::Config& config_;
   store::GameStore& games_;
   api::EventBus& events_;
-  metadata::FetchQueue metadata_fetches_;
+  metadata::FetchQueue own_fetches_;
+  metadata::FetchQueue* metadata_fetches_ = &own_fetches_;
 
   int inotify_fd_ = -1;
   int epoll_fd_ = -1;
