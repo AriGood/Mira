@@ -26,13 +26,6 @@ public:
   // GET /v1/health.
   static void CheckHealthAsync(QObject* context, std::function<void(HealthStatus)> callback);
 
-  // GET /v1/games[?status=...][?tag=...]. An empty filter omits that query
-  // param entirely. `tag_filter` composes with `status_filter` the way
-  // mirad does (docs/api.md); `?tag=hidden` is the only call that returns a
-  // hidden-tagged game at all.
-  static void ListGamesAsync(QObject* context, std::function<void(GamesResult)> callback,
-                             const std::string& status_filter = std::string(),
-                             const std::string& tag_filter = std::string());
   // GET /v1/games?include_hidden=true: the whole library, hidden games included.
   static void ListAllGamesAsync(QObject* context, std::function<void(GamesResult)> callback);
 
@@ -119,10 +112,6 @@ public:
   // it at its real size.
   static FrontendPrefsResult GetFrontendPrefsBlocking();
 
-  // GET /v1/games/{id}/artwork. Binary, not JSON, and a 404 is the ordinary
-  // answer for a game nothing has been fetched for yet; see ArtworkResult.
-  static void GetArtworkAsync(QObject* context, const std::string& id,
-                              std::function<void(ArtworkResult)> callback);
 
   // One named art slot: "cover", "hero", "capsule", "header", "logo",
   // "icon". Which ones exist depends on the source; GetMetadataAsync's
@@ -276,11 +265,6 @@ public:
   static void DeleteRunnerAsync(QObject* context, const std::string& kind, const std::string& name,
                                 std::function<void(RunnerRemoveResult)> callback);
 
-  // GET /v1/runners/{kind}/schema: the config keys that runner kind accepts
-  // in a game's runner_config. 404 for an unknown kind surfaces as !ok.
-  static void GetRunnerSchemaAsync(QObject* context, const std::string& kind,
-                                   std::function<void(RunnerSchemaResult)> callback);
-
   // GET /v1/desktop-entries/candidates: already-installed .desktop entries
   // (including Flatpak apps, via their X-Flatpak key) that could become
   // games. An empty list when desktop_import.enabled is off, not an error.
@@ -353,10 +337,6 @@ public:
   static void InstallStoreTitleAsync(QObject* context, const std::string& source,
                                      const std::string& ref, bool update,
                                      std::function<void(StoreActionResult)> callback);
-  // GET /v1/library/artwork: a not-installed title's cached cover. 404
-  // (missing) until POST has fetched it.
-  static void GetTitleArtworkAsync(QObject* context, const std::string& source, const std::string& ref,
-                                   std::function<void(ArtworkResult)> callback);
   // POST /v1/library/artwork: fetch covers for these titles, one at a time.
   // Each one ends in a library.artwork_ready/_failed event.
   static void QueueTitleArtworkAsync(QObject* context, const std::string& source,

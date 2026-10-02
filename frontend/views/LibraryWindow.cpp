@@ -1786,7 +1786,6 @@ void LibraryWindow::RefreshGames() {
       mira_gui::notify::FailedRequest(this, "Could not list games.", result.error);
       return;  // what's shown stays, rather than emptying the library
     }
-    loaded_ = true;
     // Before the tiles paint, so a game without art is never asked for it.
     for (const mira_gui::GameSummary& game : result.games) artwork_->NoteArt(game.id, game.art);
     library_->Replace(result.games);
