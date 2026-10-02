@@ -31,6 +31,7 @@ std::string Trim(std::string text) {
 std::string VersionOf(const std::string& path) {
   Command command;
   command.argv = {path, "--version"};
+  command.timeout_s = 15;  // a hung tool must not block its status
   const Result<runner::ExecResult> result = runner::RunAndWait(command);
   if (!result || result->exit_code != 0) return {};
   return Trim(result->output);

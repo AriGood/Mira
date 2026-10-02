@@ -63,6 +63,7 @@ std::string VersionOf(const std::string& wine_binary) {
   }
   Command command;
   command.argv = {wine_binary, "--version"};
+  command.timeout_s = 15;  // a hung tool must not block its status
   auto result = RunAndWait(command);
   std::string version = result ? strings::Trim(result->output) : std::string();
   if (!ec && !version.empty()) {
@@ -128,6 +129,7 @@ Result<void> WineRunner::Provision(const model::Game& game,
   // desktop for a prefix they didn't know was being created). Neither DLL
   // is needed for a plain wineboot init.
   command.env["WINEDLLOVERRIDES"] = "mscoree,mshtml=";
+  command.timeout_s = 300;
 
   auto result = RunAndWait(command);
   if (!result) return std::unexpected(result.error());
