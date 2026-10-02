@@ -149,8 +149,6 @@ qt_add_executable(mira-gui
   dialogs/RunInPrefixDialog.h
   dialogs/OverridesEditor.cpp
   dialogs/OverridesEditor.h
-  dialogs/SettingsDialog.cpp
-  dialogs/SettingsDialog.h
   dialogs/WinetricksDialog.cpp
   dialogs/WinetricksDialog.h
 )

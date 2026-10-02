@@ -50,6 +50,7 @@ Outcome FromRecord(const json& record, bool failed) {
 }
 
 void Recheck() {
+  std::erase_if(Pending(), [](const auto& entry) { return entry.second.context.isNull(); });
   for (const auto& [token, waiter] : Pending()) {
     if (!waiter.started) continue;
     Check(QCoreApplication::instance(), token, [token](Outcome outcome) { Resolve(token, std::move(outcome)); });

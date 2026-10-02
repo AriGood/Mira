@@ -779,20 +779,6 @@ struct TricksEvent {
   std::string error;  // only on "failed"
 };
 
-// One accepted config key for a runner kind. Informational only: no
-// structured editor exists; runner_config stays free-text JSON.
-struct RunnerSchemaEntry {
-  std::string key;
-  std::string type;
-  std::string doc;
-};
-
-struct RunnerSchemaResult {
-  bool ok = false;
-  ApiError error;
-  std::vector<RunnerSchemaEntry> entries;
-};
-
 // DELETE /v1/runners/{kind}:{name}: synchronous, 200 on success.
 struct RunnerRemoveResult {
   bool ok = false;

@@ -22,7 +22,6 @@ void EventHub::Start() {
         emit Received(type, data, live_);
       },
       [this](bool connected) {
-        connected_ = connected;
         emit ConnectionChanged(connected);
       });
 }

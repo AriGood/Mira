@@ -28,8 +28,7 @@ namespace mira_gui {
 
 class SettingsNavWidget;
 
-// The settings screen's content, with no QDialog machinery, embeddable in
-// a dialog shell (dialogs/SettingsDialog) or directly in a window (the
+// The settings screen's content, embedded directly in a window (the
 // library grid, taking over its body). Owns loading the schema, building
 // one form per category, and saving both the backend config and the
 // frontend-only prefs above it.

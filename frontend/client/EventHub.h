@@ -19,9 +19,6 @@ public:
 
   // Connects on the first call; later calls do nothing.
   void Start();
-  // Past the first connection's replayed history (`stream.live`).
-  bool Live() const { return live_; }
-  bool Connected() const { return connected_; }
 
 signals:
   // Every event, replayed history included. `live` is false for history.
@@ -35,7 +32,6 @@ private:
   EventStream stream_;
   bool started_ = false;
   bool live_ = false;
-  bool connected_ = false;
 };
 
 }  // namespace mira_gui

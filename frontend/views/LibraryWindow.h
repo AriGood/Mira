@@ -439,8 +439,6 @@ private:
   // so a scan's burst of them opens nothing.
   std::vector<std::string> pending_added_;
   QTimer* added_timer_ = nullptr;
-  // Whether RefreshGames() has ever completed successfully.
-  bool loaded_ = false;
   // Games the user explicitly asked to refresh: a metadata failure for one
   // of these is worth a toast; the dozens from an automatic scan are not.
   std::set<std::string> awaiting_metadata_;
