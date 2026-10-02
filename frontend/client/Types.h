@@ -54,6 +54,8 @@ struct GameSummary {
   // Slot ("cover", "hero", ...) -> version, only for slots with an image.
   // Unset when the record didn't say, which means nothing is known either way.
   std::optional<ArtVersions> art;
+
+  bool operator==(const GameSummary&) const = default;
 };
 
 struct GamesResult {

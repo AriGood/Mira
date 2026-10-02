@@ -107,7 +107,8 @@ void SourceSettingsCard::Discard() {
 }
 
 void SourceSettingsCard::Save() {
-  if (saving_ || !IsDirty()) {
+  if (saving_) return;  // the running save reports its own result
+  if (!IsDirty()) {
     emit SaveFinished(true);
     return;
   }

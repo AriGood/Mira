@@ -966,7 +966,10 @@ void SourcePage::StartInstall(const QString& ref, bool update) {
                                         if (r.ok) return;  // events report the rest
                                         owned_state_.remove(ref);
                                         if (owned_grid_ != nullptr) RebuildOwnedTiles();
-                                        ShowError(import_result_, "Could not start it.", r.error);
+                                        // import_result_ is hidden with its section on the owned tab.
+                                        ShowError(owned_note_ != nullptr && !library_section_->isVisibleTo(this) ? owned_note_
+                                                                                                                  : import_result_,
+                                                  "Could not start it.", r.error);
                                       });
 }
 
@@ -1078,7 +1081,6 @@ void SourcePage::HandleEvent(const std::string& type, const std::string& data) {
       launcher_installing_ = false;
       tool_updating_ = false;
       RefreshStatus();
-      if (IsLauncher()) emit LibraryChanged();
     } else if (event.state == "failed") {
       launcher_installing_ = false;
       tool_updating_ = false;
@@ -1107,7 +1109,6 @@ void SourcePage::HandleEvent(const std::string& type, const std::string& data) {
       // Now a tracked game: it moves to "In your library" on the next relist.
       owned_state_.remove(ref);
       std::erase_if(owned_, [&ref](const auto& entry) { return entry.first == ref; });
-      emit LibraryChanged();
     }
   } else {
     return;

@@ -582,7 +582,9 @@ void SettingsPanel::Save() {
       }
       prefs.shortcut_overrides = mira_gui::keybindings::Current();
     }
-    mira_gui::MiradClient::SaveFrontendPrefsAsync(this, prefs, [](mira_gui::PatchConfigResult) {});
+    mira_gui::MiradClient::SaveFrontendPrefsAsync(this, prefs, [this](mira_gui::PatchConfigResult result) {
+      if (!result.ok) mira_gui::notify::FailedRequest(this, "Could not save the display settings.", result.error);
+    });
     emit PrefsSaved(prefs);
   }
 

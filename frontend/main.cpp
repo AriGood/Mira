@@ -114,6 +114,8 @@ int main(int argc, char** argv) {
     activation_server->listen("mira-gui-activate");
     QObject::connect(activation_server, &QLocalServer::newConnection, window, [activation_server, window] {
       QLocalSocket* client = activation_server->nextPendingConnection();
+      QObject::connect(client, &QLocalSocket::disconnected, client, &QObject::deleteLater);
+      if (window->isMinimized()) window->showNormal();
       window->show();
       window->raise();
       window->activateWindow();

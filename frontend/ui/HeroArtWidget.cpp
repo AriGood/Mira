@@ -135,10 +135,11 @@ void HeroArtWidget::LoadBanner(const std::string& id) {
     return;
   }
   MiradClient::GetArtworkSlotAsync(this, id, "hero", [this, id, key](ArtworkResult result) {
-    if (!result.ok) return;
     QPixmap pixmap;
-    if (!pixmap.loadFromData(reinterpret_cast<const uchar*>(result.bytes.data()),
-                             static_cast<uint>(result.bytes.size()))) {
+    if (!result.ok || !pixmap.loadFromData(reinterpret_cast<const uchar*>(result.bytes.data()),
+                                           static_cast<uint>(result.bytes.size()))) {
+      hero_known_[key] = false;  // set by RefreshBanner on the expectation of a hero
+      if (game_id_ == id) UpdateImageVisibility();
       return;
     }
     banners_.insert(key, pixmap);
@@ -193,7 +194,9 @@ void HeroArtWidget::resizeEvent(QResizeEvent* event) {
 }
 
 void HeroArtWidget::RefreshBanner(const std::string& id) {
-  banners_.remove(QString::fromStdString(id));
+  const QString key = QString::fromStdString(id);
+  banners_.remove(key);
+  hero_known_[key] = true;  // a hero was just picked, whatever was cached before
   if (game_id_ == id) LoadBanner(id);
 }
 

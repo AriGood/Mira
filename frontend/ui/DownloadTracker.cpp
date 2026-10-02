@@ -6,6 +6,8 @@
 
 #include <json.hpp>
 
+#include "../client/JsonMapping.h"
+
 #include <algorithm>
 
 #include "../client/Jobs.h"
@@ -73,18 +75,18 @@ bool DownloadTracker::HandleJobEvent(const std::string& type, const std::string&
   if (!type.starts_with("job.")) return false;
   const nlohmann::json event = nlohmann::json::parse(data, nullptr, false);
   if (!event.is_object()) return true;
-  const QString id = QString::fromStdString(event.value("id", std::string()));
+  const QString id = QString::fromStdString(mapping::Str(event, "id"));
   const QString key = KeyFor(Kind::Job, QString(), id);
   // Progress for a job whose start this stream never saw has no name to show.
   if (type != "job.started" && Find(key) == nullptr) return true;
-  Entry& entry = Upsert(Kind::Job, QString::fromStdString(event.value("kind", std::string())), id);
+  Entry& entry = Upsert(Kind::Job, QString::fromStdString(mapping::Str(event, "kind")), id);
   if (type == "job.started") {
     entry.state = State::Running;
-    NoteTitle("job", id, QString::fromStdString(event.value("label", std::string())));
+    NoteTitle("job", id, QString::fromStdString(mapping::Str(event, "label")));
   } else if (type == "job.progress") {
-    const int total = event.value("total", 0);
-    entry.progress = total > 0 ? static_cast<double>(event.value("done", 0)) / total : -1;
-    entry.message = QString::fromStdString(event.value("message", std::string()));
+    const int total = mapping::Int(event, "total");
+    entry.progress = total > 0 ? static_cast<double>(mapping::Int(event, "done")) / total : -1;
+    entry.message = QString::fromStdString(mapping::Str(event, "message"));
   } else if (type == "job.finished") {
     // A job without steps (a scan, an import) is routine: its caller reports
     // the outcome, and a "Done" row per startup scan would only pile up.
@@ -96,8 +98,8 @@ bool DownloadTracker::HandleJobEvent(const std::string& type, const std::string&
     entry.state = State::Finished;
   } else if (type == "job.failed") {
     entry.state = State::Failed;
-    const nlohmann::json error = event.value("error", nlohmann::json::object());
-    entry.error = QString::fromStdString(error.is_object() ? error.value("message", std::string()) : std::string());
+    const nlohmann::json error = event.contains("error") ? event["error"] : nlohmann::json::object();
+    entry.error = QString::fromStdString(mapping::Str(error, "message"));
   }
   emit Changed(entry.key);
   return true;

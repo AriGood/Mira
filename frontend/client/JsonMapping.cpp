@@ -24,13 +24,12 @@ std::vector<std::string> ReadTags(const json& entry) {
 
 ApiError ToApiError(const json& error) {
   ApiError out;
-  out.message = error.contains("message") ? error.value("message", std::string())
-                                          : error.value("error", std::string());
-  out.code = error.value("code", std::string());
-  out.hint = error.value("hint", std::string());
+  out.message = error.contains("message") ? Str(error, "message") : Str(error, "error");
+  out.code = Str(error, "code");
+  out.hint = Str(error, "hint");
   if (error.contains("fix") && error["fix"].is_object()) {
     const json& fix = error["fix"];
-    out.fix = {fix.value("kind", std::string()), fix.value("target", std::string()), fix.value("step", std::string())};
+    out.fix = {Str(fix, "kind"), Str(fix, "target"), Str(fix, "step")};
   }
   return out;
 }

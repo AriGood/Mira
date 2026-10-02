@@ -1793,8 +1793,7 @@ void LibraryWindow::RefreshGames() {
     mirad_reachable_ = result.ok;
     if (!result.ok) {
       mira_gui::notify::FailedRequest(this, "Could not list games.", result.error);
-      library_->Replace({});
-      return;
+      return;  // what's shown stays, rather than emptying the library
     }
     loaded_ = true;
     // Before the tiles paint, so a game without art is never asked for it.
@@ -1867,6 +1866,8 @@ void LibraryWindow::ApplySort() {
 }
 
 void LibraryWindow::LibraryChanged() {
+  // Its game was removed elsewhere (a source, the CLI): saving would only fail.
+  if (game_edit_form_ != nullptr && library_->Find(game_edit_form_->id()) == nullptr) CloseGameEdit();
   UpdateFilterCounts();
   UpdateEmptyState();
   if (runners_page_ != nullptr) runners_page_->SetGames(library_->Games());
@@ -2189,11 +2190,9 @@ void LibraryWindow::LaunchGame(const std::string& id) {
 }
 
 void LibraryWindow::OpenGameDialog(const std::string& id) {
+  if (!LeaveOverlays()) return;  // a dirty card or Settings page was kept
   // Fresh instance each time: GameEditForm loads its id at construction.
-  if (game_edit_card_ != nullptr) {
-    game_edit_overlay_layout_->removeWidget(game_edit_card_);
-    game_edit_card_->deleteLater();
-  }
+  if (game_edit_card_ != nullptr) CloseGameEdit();
   SetGridControlsEnabled(false);
   game_edit_card_ = BuildGameEditCard(id);
   game_edit_overlay_layout_->addWidget(game_edit_card_, 0, 0, Qt::AlignCenter);
@@ -2865,8 +2864,7 @@ void LibraryWindow::DownloadChanged(const QString& key) {
 }
 
 void LibraryWindow::ShowGame(const std::string& id) {
-  if (SettingsOpen()) RequestCloseSettings();
-  if (GameEditOpen()) RequestCloseGameEdit();
+  if (!LeaveOverlays()) return;
   if (source_page_ != nullptr && !CloseSource([this, id] { ShowGame(id); })) return;
   if (ClassicShown()) CloseClassicView();
   CloseRunners();
@@ -2929,12 +2927,14 @@ void LibraryWindow::RefreshSourceNavs() {
     const QString id = source.id;
     mira_gui::MiradClient::GetStoreStatusAsync(
         this, id.toStdString(), [this, id](mira_gui::StoreStatusResult status) {
-          source_ready_[id] = status.ok && status.authenticated;
+          if (!status.ok) return;  // a failed request says nothing about the account
+          source_ready_[id] = status.authenticated;
           source_account_[id] = QString::fromStdString(status.account);
           UpdateSourceNavs();
         });
   }
   mira_gui::MiradClient::GetLaunchersAsync(this, [this](mira_gui::LaunchersResult result) {
+    if (!result.ok) return;
     for (const mira_gui::LauncherInfo& launcher : result.launchers) {
       source_ready_[QString::fromStdString(launcher.id)] = launcher.installed;
     }

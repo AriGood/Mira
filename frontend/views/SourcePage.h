@@ -62,7 +62,7 @@ public:
   SourceSettingsCard* SettingsCard() const { return settings_card_; }
 
 signals:
-  // Games were imported or installed; the grid should relist.
+  // An import added or changed games.
   void LibraryChanged();
   void OpenSettingsRequested(QString focus_key);
   void PlayRequested(QString id);
