@@ -84,6 +84,7 @@ private:
   BackgroundQueue tricks_queue_;
   BackgroundQueue artwork_selects_;
   BackgroundQueue artwork_thumbs_;
+  BackgroundQueue operations_;  // installs and downloads; joined with the Server so none outlive it
   // After everything a job's work touches, so it's joined first on the way down.
   JobRegistry jobs_{events_};
   std::function<void()> on_roots_changed_;

@@ -899,6 +899,14 @@ bool LibraryWindow::eventFilter(QObject* watched, QEvent* event) {
   return QMainWindow::eventFilter(watched, event);
 }
 
+void LibraryWindow::QuitOrClose() {
+  if (mira_gui::tray::IsManaged(this)) {
+    mira_gui::tray::RequestQuit();
+  } else {
+    close();
+  }
+}
+
 void LibraryWindow::closeEvent(QCloseEvent* event) {
   // Only for the window Attach() made the tray's; a secondary window
   // closes for real either way, since nothing would bring it back.
@@ -930,14 +938,14 @@ void LibraryWindow::closeEvent(QCloseEvent* event) {
         if (settings_dirty) {
           connect(settings_panel_, &mira_gui::SettingsPanel::SaveFinished, this,
                   [this](bool ok, QString) {
-                    if (ok) close();
+                    if (ok) QuitOrClose();
                   },
                   Qt::SingleShotConnection);
           settings_panel_->Save();
         } else {
           connect(game_edit_form_, &mira_gui::GameEditForm::SaveFinished, this,
                   [this](bool ok, QString) {
-                    if (ok) close();
+                    if (ok) QuitOrClose();
                   },
                   Qt::SingleShotConnection);
           game_edit_form_->Save();

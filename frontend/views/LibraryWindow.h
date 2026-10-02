@@ -117,6 +117,7 @@ private:
   void FlushPrefs();
   void resizeEvent(QResizeEvent* event) override;
   void closeEvent(QCloseEvent* event) override;
+  void QuitOrClose();
   void changeEvent(QEvent* event) override;
   bool eventFilter(QObject* watched, QEvent* event) override;
   void ToggleMaximize();

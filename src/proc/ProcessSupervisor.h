@@ -7,8 +7,12 @@
 #include <map>
 #include <set>
 #include <mutex>
+#include <optional>
+#include <optional>
 #include <string>
 #include <thread>
+#include <utility>
+#include <utility>
 #include <vector>
 
 #include "api/EventBus.h"
@@ -92,7 +96,27 @@ public:
 
   bool IsRunning(const std::string& game_id) const;
 
+  // Claims a game's launch slot before anything is spawned, so two quick
+  // launches can't both start it. Empty if it is running or already claimed.
+  class Reservation {
+  public:
+    Reservation(ProcessSupervisor& supervisor, std::string game_id)
+        : supervisor_(&supervisor), game_id_(std::move(game_id)) {}
+    Reservation(Reservation&& other) noexcept : supervisor_(std::exchange(other.supervisor_, nullptr)), game_id_(std::move(other.game_id_)) {}
+    Reservation(const Reservation&) = delete;
+    Reservation& operator=(const Reservation&) = delete;
+    ~Reservation() {
+      if (supervisor_) supervisor_->Release(game_id_);
+    }
+
+  private:
+    ProcessSupervisor* supervisor_;
+    std::string game_id_;
+  };
+  std::optional<Reservation> Reserve(const std::string& game_id);
+
 private:
+  void Release(const std::string& game_id);
   // Registers `watcher` for `game_id`; mutex_ must be held.
   void AdoptWatcher(const std::string& game_id, std::thread watcher);
   void Watch(std::string game_id, pid_t pid, std::int64_t started_at, std::string post_script);
@@ -113,6 +137,7 @@ private:
   std::map<std::string, std::string> prefixes_;  // game id -> data_dir, for Stop()
   std::map<std::string, ExternalMatch> external_;  // game id -> match, for Stop()/WatchExternal()
   std::map<std::string, std::int64_t> kill_deadlines_;  // game id -> when to SIGKILL
+  std::set<std::string> reserved_;  // launches claimed by Reserve()
   std::set<std::string> stop_requested_;  // Stop() was called; the exit isn't a crash
   std::map<std::string, std::thread> watchers_;
   // Watchers replaced by a relaunch of the same game; joined at destruction.

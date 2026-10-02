@@ -1,5 +1,7 @@
 #include "Tray.h"
 
+#include <algorithm>
+
 #include <QAction>
 #include <QApplication>
 #include <QIcon>
@@ -32,6 +34,15 @@ bool Quitting() { return g_quitting; }
 void RequestQuit() {
   g_quitting = true;
   QApplication::closeAllWindows();
+  // A window that refused to close (cancelled, or saving first) keeps the app alive.
+  const QWidgetList windows = QApplication::topLevelWidgets();
+  const bool refused = std::ranges::any_of(windows, [](QWidget* widget) {
+    return qobject_cast<QMainWindow*>(widget) != nullptr && widget->isVisible();
+  });
+  if (refused) {
+    g_quitting = false;
+    return;
+  }
   QApplication::quit();  // needed since Attach() disables quitOnLastWindowClosed
 }
 

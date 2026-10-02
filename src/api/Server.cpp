@@ -926,7 +926,7 @@ void Server::RegisterRoutes() {
 
       const runner::ReleaseAsset asset = releases->front();  // newest first
       events_.Publish(event_prefix + ".started", {{"tag", asset.tag}});
-      std::thread([this, asset, tool, event_prefix, install] {
+      operations_.Run([this, asset, tool, event_prefix, install] {
         if (auto installed = install(config_, asset); !installed) {
           log::Error("{} install failed ({}): {}", tool, asset.tag, installed.error().message);
           events_.Publish(event_prefix + ".failed", {{"tag", asset.tag}, {"error", installed.error().message}});
@@ -934,7 +934,7 @@ void Server::RegisterRoutes() {
           log::Info("installed {} {}", tool, asset.tag);
           events_.Publish(event_prefix + ".finished", {{"tag", asset.tag}});
         }
-      }).detach();
+      });
 
       SendJson(res, {{"status", "downloading"}, {"tag", asset.tag}}, 202);
     });
@@ -1093,7 +1093,7 @@ void Server::RegisterRoutes() {
       return SendError(res, 409, "install_running", std::format("{} is already installing", launcher->name));
     }
     events_.Publish("launcher.install.started", {{"id", launcher->id}});
-    std::thread([this, launcher] {
+    operations_.Run([this, launcher] {
       const auto done = launchers::Install(config_, games_, *launcher);
       if (const auto stored = games_.Find(launchers::GameId(*launcher))) {
         events_.Publish("game.updated", Record(*stored));
@@ -1107,7 +1107,7 @@ void Server::RegisterRoutes() {
       }
       SyncDesktopEntries(config_, games_);
       events_.Publish("launcher.install.finished", {{"id", launcher->id}});
-    }).detach();
+    });
     SendJson(res, {{"status", "installing"}, {"id", launcher->id}}, 202);
   });
 
@@ -1304,7 +1304,7 @@ void Server::RegisterRoutes() {
     const std::string item_numbers = body.value("item_numbers", std::string());
 
     events_.Publish("humble.download.started", {{"bundle_key", bundle_key}});
-    std::thread([this, bundle_key, item_numbers] {
+    operations_.Run([this, bundle_key, item_numbers] {
       const Result<bool> result = humble::Download(config_, bundle_key, item_numbers);
       if (!result) {
         log::Error("humble download failed ({}): {}", bundle_key, result.error().message);
@@ -1324,7 +1324,7 @@ void Server::RegisterRoutes() {
                         {"path", humble::DownloadDir(config_, bundle_key).string()},
                         {"downloaded", true}});
       }
-    }).detach();
+    });
 
     SendJson(res, {{"status", "downloading"}, {"bundle_key", bundle_key},
                   {"path", humble::DownloadDir(config_, bundle_key).string()}},
@@ -1368,7 +1368,7 @@ void Server::RegisterRoutes() {
     if (!IsSafeRef(ref)) return SendError(res, 400, "invalid_ref", "that ref isn't a store id");
 
     events_.Publish("library.install.started", {{"source", source}, {"ref", ref}, {"update", is_update}});
-    std::thread([this, src, source, ref, is_update] {
+    operations_.Run([this, src, source, ref, is_update] {
       const Result<void> result = is_update ? src->Update(config_, games_, events_, ref)
                                             : src->Install(config_, games_, events_, ref);
       if (!result) {
@@ -1381,7 +1381,7 @@ void Server::RegisterRoutes() {
         if (const auto game = games_.Find(source + "-" + ref)) metadata_fetches_.Enqueue(config_, events_, *game);
         events_.Publish("library.install.finished", {{"source", source}, {"ref", ref}, {"update", is_update}});
       }
-    }).detach();
+    });
 
     SendJson(res, {{"status", is_update ? "updating" : "installing"}, {"ref", ref}}, 202);
   };
@@ -1549,6 +1549,11 @@ void Server::RegisterRoutes() {
                                   model::ToString(game->status)));
     }
 
+    const auto reservation = supervisor_.Reserve(game->id);
+    if (!reservation) {
+      return SendError(res, 409, "already_running", std::format("\"{}\" is already running", game->id));
+    }
+
     const config::Resolver resolver(config_, game->overrides);
     const std::string pre_script = resolver.GetString("launch.pre_script");
     const std::string post_script = resolver.GetString("launch.post_script");
@@ -1556,9 +1561,6 @@ void Server::RegisterRoutes() {
     // A launcher game is started by its launcher, which keeps running after the
     // game exits; the game's own processes are tracked.
     if (launchers::ForGame(*game)) {
-      if (supervisor_.IsRunning(game->id)) {
-        return SendError(res, 409, "already_running", std::format("\"{}\" is already running", game->id));
-      }
       auto command = launchers::BuildCommand(config_, games_, *game);
       if (!command) return SendError(res, 409, command.error());
       if (auto ran = RunPreScriptInline(pre_script); !ran) {
@@ -1843,7 +1845,7 @@ void Server::RegisterRoutes() {
     }
 
     events_.Publish("game.install.started", {{"id", game->id}});
-    std::thread([this, id = game->id, interactive, installer] {
+    operations_.Run([this, id = game->id, interactive, installer] {
       const auto done = library::Install(config_, games_, id,
                                          interactive ? library::InstallMode::kInteractive : library::InstallMode::kAuto,
                                          installer);
@@ -1857,7 +1859,7 @@ void Server::RegisterRoutes() {
         AddHintAndFix(failed, done.error());
         events_.Publish("game.install.failed", std::move(failed));
       }
-    }).detach();
+    });
     SendJson(res, {{"status", "installing"}, {"id", game->id}}, 202);
   });
 
@@ -2266,7 +2268,7 @@ void Server::RegisterRoutes() {
       asset = releases->front();
     }
     events_.Publish(id + ".setup.started", json::object());
-    std::thread([this, id, asset] {
+    operations_.Run([this, id, asset] {
       Result<void> installed;
       if (asset) {
         auto path = runner::InstallToolBinary(config_, "umu", *asset, "umu-run");
@@ -2280,7 +2282,7 @@ void Server::RegisterRoutes() {
       } else {
         events_.Publish(id + ".setup.finished", json::object());
       }
-    }).detach();
+    });
     SendJson(res, {{"status", "installing"}}, 202);
   });
 
@@ -2424,7 +2426,7 @@ void Server::InstallRunnerAsync(const std::string& kind, const std::string& sour
   const json base = {{"kind", kind}, {"tag", asset.tag}, {"name", name},
                      {"label", runner::BuildLabel(kind, name)}, {"source", source}};
   events_.Publish("runners.download.started", base);
-  std::thread([this, kind, asset, replacing, base] {
+  operations_.Run([this, kind, asset, replacing, base] {
     if (auto installed = runner::DownloadAndInstall(config_, kind, asset); !installed) {
       log::Error("runner download failed ({} {}): {}", kind, asset.tag, installed.error().message);
       json failed = base;
@@ -2459,7 +2461,7 @@ void Server::InstallRunnerAsync(const std::string& kind, const std::string& sour
       }
     }
     events_.Publish("runners.download.finished", finished);
-  }).detach();
+  });
 }
 
 }  // namespace mira::api

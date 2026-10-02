@@ -328,6 +328,19 @@ Result<void> ProcessSupervisor::Stop(const std::string& game_id) {
   return {};
 }
 
+std::optional<ProcessSupervisor::Reservation> ProcessSupervisor::Reserve(const std::string& game_id) {
+  {
+    std::lock_guard lock(mutex_);
+    if (running_.contains(game_id) || !reserved_.insert(game_id).second) return std::nullopt;
+  }
+  return Reservation(*this, game_id);
+}
+
+void ProcessSupervisor::Release(const std::string& game_id) {
+  std::lock_guard lock(mutex_);
+  reserved_.erase(game_id);
+}
+
 bool ProcessSupervisor::IsRunning(const std::string& game_id) const {
   std::lock_guard lock(mutex_);
   return running_.contains(game_id);
