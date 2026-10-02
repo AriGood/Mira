@@ -108,6 +108,16 @@ qt_add_executable(mira-gui
   ui/Tray.h
   ui/SettingsNav.cpp
   ui/SettingsNav.h
+  ui/SettingsCard.cpp
+  ui/SettingsCard.h
+  ui/SettingsColumns.cpp
+  ui/SettingsColumns.h
+  ui/ShortcutEdit.cpp
+  ui/ShortcutEdit.h
+  ui/AppearancePreviews.cpp
+  ui/AppearancePreviews.h
+  ui/ListEdit.cpp
+  ui/ListEdit.h
   ui/SettingsSearch.cpp
   ui/SettingsSearch.h
   ui/HelpButton.cpp
@@ -231,6 +241,7 @@ add_executable(mira_gui_tests
   ui/DaemonSupervisor.cpp
   ui/DownloadTracker.cpp
   ui/SettingsSearch.cpp
+  ui/SettingsColumns.cpp
   ui/ErrorHelp.cpp
   client/Transport.cpp
 )

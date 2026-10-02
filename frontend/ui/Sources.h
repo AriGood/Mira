@@ -5,6 +5,9 @@
 
 #include <vector>
 
+class QLabel;
+class QWidget;
+
 namespace mira_gui {
 
 struct SourceInfo {
@@ -23,5 +26,13 @@ const std::vector<SourceInfo>& AllSources();
 
 // nullptr for a source id Mira doesn't list (a scanned or manual game).
 const SourceInfo* FindSourceInfo(const QString& id);
+
+// "Store", "Launcher" or "Local", for the small tag beside a source's name.
+QString KindLabel(SourceInfo::Kind kind);
+
+// The source's initial on its color, `size` pixels square; faded when `dim`.
+QLabel* MakeSourceBadge(const SourceInfo& source, int size, QWidget* parent, bool dim = false);
+// The kind tag itself.
+QLabel* MakeKindTag(const SourceInfo& source, QWidget* parent);
 
 }  // namespace mira_gui

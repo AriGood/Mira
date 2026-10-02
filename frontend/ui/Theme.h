@@ -104,6 +104,10 @@ void Configure(const QString& name, const Overrides& overrides);
 // The name last passed to Apply(), so the settings picker can show it.
 QString CurrentName();
 
+// The colors `name` would draw with, without applying it; "auto" resolves to
+// the desktop's light or dark theme. For previewing a theme before picking it.
+Tokens Peek(const QString& name);
+
 // Sets one of the stylesheet's own properties on a widget: "role" for a text
 // style (muted, heading, section, error, keys), "status" for a lifecycle
 // color. Qt does not restyle a widget when a property changes after it has
