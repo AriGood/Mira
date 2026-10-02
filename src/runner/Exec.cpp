@@ -235,6 +235,33 @@ Result<ExecResult> RunAndWait(const Command& command, const OutputFn& on_output)
   return result;
 }
 
+std::string CurlConfigLine(std::string_view name, std::string_view value) {
+  std::string line = std::string(name) + " = \"";
+  for (const char c : value) {
+    if (c == '\\' || c == '"') line += '\\';
+    line += c;
+  }
+  return line + "\"\n";
+}
+
+Result<ExecResult> RunCurlWithSecrets(const std::vector<std::string>& args, std::string_view secret_config) {
+  std::string path = (std::filesystem::temp_directory_path() / "mira-curl-XXXXXX").string();
+  const int fd = mkostemp(path.data(), O_CLOEXEC);  // created 0600
+  if (fd < 0) return Err("exec_temp_failed", std::strerror(errno));
+  const bool written = write(fd, secret_config.data(), secret_config.size()) ==
+                       static_cast<ssize_t>(secret_config.size());
+  close(fd);
+  Result<ExecResult> result = Err("exec_temp_failed", "couldn't write curl's config");
+  if (written) {
+    Command command;
+    command.argv = {"curl", "-K", path};
+    command.argv.insert(command.argv.end(), args.begin(), args.end());
+    result = RunAndWait(command);
+  }
+  unlink(path.c_str());
+  return result;
+}
+
 Result<void> Extract(const std::filesystem::path& archive, const std::filesystem::path& out_dir) {
   std::string name = archive.filename().string();
   std::ranges::transform(name, name.begin(), [](unsigned char c) { return std::tolower(c); });
