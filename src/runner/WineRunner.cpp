@@ -4,6 +4,8 @@
 #include <filesystem>
 #include <format>
 #include <iterator>
+#include <map>
+#include <mutex>
 
 #include "config/Config.h"
 #include "core/Paths.h"
@@ -46,11 +48,28 @@ namespace fs = std::filesystem;
 // for the system wine and any custom build found under wine_search_paths:
 // every full Wine install has an internal wineboot component reachable this
 // way, whether or not a standalone `wineboot` binary sits next to it.
+// Cached by resolved path and mtime: Discover runs per request and per scan.
 std::string VersionOf(const std::string& wine_binary) {
+  static std::mutex mutex;
+  static std::map<fs::path, std::pair<fs::file_time_type, std::string>> cache;
+  std::error_code ec;
+  const fs::path resolved = fs::canonical(wine_binary, ec);
+  const fs::file_time_type mtime = ec ? fs::file_time_type() : fs::last_write_time(resolved, ec);
+  if (!ec) {
+    const std::lock_guard lock(mutex);
+    if (const auto found = cache.find(resolved); found != cache.end() && found->second.first == mtime) {
+      return found->second.second;
+    }
+  }
   Command command;
   command.argv = {wine_binary, "--version"};
   auto result = RunAndWait(command);
-  return result ? strings::Trim(result->output) : std::string();
+  std::string version = result ? strings::Trim(result->output) : std::string();
+  if (!ec && !version.empty()) {
+    const std::lock_guard lock(mutex);
+    cache[resolved] = {mtime, version};
+  }
+  return version;
 }
 
 // Scanned on top of wine_search_paths unless runner_scan_common_dirs is off. /opt holds distro builds such as
