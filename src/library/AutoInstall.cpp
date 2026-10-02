@@ -234,6 +234,27 @@ std::string_view ToString(InstallerFormat format) {
   return "unknown";
 }
 
+std::set<fs::path> InstallFolders(const config::Config& config, const fs::path& prefix) {
+  return InstallDirs(config.GetStringArray("install.detect_dirs"), prefix);
+}
+
+std::optional<InstalledApp> NewInstall(const config::Config& config, const fs::path& prefix,
+                                       const std::set<fs::path>& before) {
+  // Wine's own, which a Proton or Wine update can add to an existing prefix.
+  static const std::set<std::string> kWineFolders = {"Common Files", "Internet Explorer", "Windows Media Player",
+                                                     "Windows NT"};
+  const Detector detector(SettingsFromConfig(config));
+  std::optional<InstalledApp> found;
+  for (const fs::path& dir : InstallFolders(config, prefix)) {
+    if (before.contains(dir) || kWineFolders.contains(dir.filename().string())) continue;
+    const Detector::Result detected = detector.Detect(dir);
+    const auto exe = std::ranges::find(detected.candidates, false, &model::Candidate::is_installer);
+    if (exe != detected.candidates.end()) return InstalledApp{dir, exe->rel_path};
+    if (!found) found = InstalledApp{dir, ""};
+  }
+  return found;
+}
+
 Result<InstallerInfo> DescribeInstaller(const config::Config& config, const model::Game& game) {
   if (game.exe_path.empty()) return runner::NoExecutable(game);
   InstallerInfo info;

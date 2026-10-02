@@ -1045,6 +1045,41 @@ TEST_CASE("POST /v1/games/{id}/finish-install refuses while exe_path is still th
   CHECK(res->status == 200);
 }
 
+TEST_CASE("POST /v1/games/{id}/finish-install adopts a program installed in the prefix, and nothing outside it") {
+  LiveServer server(TempDir("server-adopt-install-state"));
+  const fs::path prefix = TempDir("server-adopt-install-prefix");
+  const fs::path app = prefix / "drive_c" / "Program Files" / "App";
+  fs::create_directories(app);
+  std::ofstream(app / "app.exe") << "app";
+  const fs::path dir = TempDir("server-adopt-install-game");
+  std::ofstream(dir / "App-Setup.exe") << "installer";
+
+  model::Game game;
+  game.id = "adopt";
+  game.name = "Adopt";
+  game.install_path = dir.string();
+  game.exe_path = "App-Setup.exe";
+  game.data_dir = prefix.string();
+  game.platform = model::Platform::Windows;
+  game.status = model::GameStatus::Ready;
+  REQUIRE(server.games().Upsert(game));
+
+  httplib::Client client = server.Client();
+  auto res = client.Post("/v1/games/adopt/finish-install", R"({"install_path": "/tmp"})", "application/json");
+  REQUIRE(res != nullptr);
+  CHECK(res->status == 400);
+
+  res = client.Post("/v1/games/adopt/finish-install",
+                    nlohmann::json{{"install_path", app.string()}, {"exe_path", "app.exe"}}.dump(),
+                    "application/json");
+  REQUIRE(res != nullptr);
+  CHECK(res->status == 200);
+  const auto adopted = server.games().Find("adopt");
+  REQUIRE(adopted);
+  CHECK(adopted->install_path == app.string());
+  CHECK(adopted->exe_path == "app.exe");
+}
+
 TEST_CASE("POST /v1/games/{id}/install refuses a game that isn't needs_install") {
   LiveServer server(TempDir("server-install-ready-state"));
   model::Game game;

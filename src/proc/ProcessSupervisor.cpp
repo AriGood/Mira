@@ -452,6 +452,7 @@ void ProcessSupervisor::Watch(std::string game_id, pid_t pid, std::int64_t start
   event["played_seconds"] = played;
   event["error"] = error;
   events_.Publish("game.state", std::move(event));
+  if (exit_hook_) exit_hook_(game_id);
 
   RunScript(post_script, game_id, "post");
 }
@@ -546,6 +547,7 @@ void ProcessSupervisor::FinalizeWrappedSession(const std::string& game_id, const
   event["played_seconds"] = record.duration_seconds;
   event["error"] = error;
   events_.Publish("game.state", std::move(event));
+  if (exit_hook_) exit_hook_(game_id);
 
   // Rolled into the durable journal and removed -- the session file only
   // ever covered the gap until mirad got a chance to see it finished.

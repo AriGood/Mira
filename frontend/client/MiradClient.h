@@ -230,8 +230,12 @@ public:
   // POST /v1/games/{id}/finish-install: flips a needs_install game to
   // ready once exe_path points at whatever the installer produced. 409 if
   // exe_path is still empty.
+  // With `install_path` and `exe_path`, first switches the game to that
+  // program installed in its prefix (game.install_detected).
   static void FinishInstallAsync(QObject* context, const std::string& id,
-                                 std::function<void(FinishInstallResult)> callback);
+                                 std::function<void(FinishInstallResult)> callback,
+                                 const std::string& install_path = std::string(),
+                                 const std::string& exe_path = std::string());
 
   // GET /v1/games/{id}/config: this game's resolved settings, tagged by
   // layer (see GameConfigEntry).
@@ -406,6 +410,7 @@ public:
   // omits it: an older daemon published this event only for the case where
   // nothing was watching, so that is what its silence meant.
   static bool ParseGameLaunched(const std::string& data, GameLaunchedEvent* out);
+  static bool ParseInstallDetected(const std::string& data, InstallDetectedEvent* out);
 
   // Parses `game.removed`'s payload (`{"id": "..."}`, Server.cpp).
   static std::string ParseRemovedId(const std::string& data);

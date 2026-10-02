@@ -3,7 +3,11 @@
 #include <atomic>
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <memory>
+#include <mutex>
+#include <set>
+#include <string>
 #include <thread>
 
 #include "api/EventBus.h"
@@ -77,11 +81,18 @@ private:
   Result<void> DeleteGameData(const model::Game& game, bool files, bool prefix, bool metadata);
   // A game as the API shows it: model::ToJson plus `running` and `art`.
   nlohmann::json Record(const model::Game& game);
+  // After a launched game exits: publishes game.install_detected when the run
+  // added a program folder to its prefix, i.e. the "game" was an installer.
+  void CheckForInstall(const std::string& game_id);
 
   config::Config& config_;
   store::GameStore& games_;
   EventBus& events_;
   std::unique_ptr<httplib::Server> http_;
+  // Prefix program folders as each running Windows game launched, for
+  // CheckForInstall. Before supervisor_, whose watcher threads use it.
+  std::mutex install_watch_mutex_;
+  std::map<std::string, std::set<std::filesystem::path>> install_watch_;
   proc::ProcessSupervisor supervisor_;
   metadata::ArtIndex art_index_{config_};
   metadata::FetchQueue metadata_fetches_;

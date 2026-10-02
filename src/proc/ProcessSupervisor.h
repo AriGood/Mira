@@ -4,6 +4,7 @@
 
 #include <atomic>
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <set>
 #include <mutex>
@@ -115,6 +116,10 @@ public:
   };
   std::optional<Reservation> Reserve(const std::string& game_id);
 
+  // Called with the game's id on its watcher thread after a Launch() or
+  // LaunchWrapped() game exits. Set once, before any launch.
+  void SetExitHook(std::function<void(const std::string& game_id)> hook) { exit_hook_ = std::move(hook); }
+
 private:
   void Release(const std::string& game_id);
   // Registers `watcher` for `game_id`; mutex_ must be held.
@@ -131,6 +136,7 @@ private:
   store::GameStore& games_;
   api::EventBus& events_;
   std::int64_t stop_timeout_s_;
+  std::function<void(const std::string&)> exit_hook_;
 
   mutable std::mutex mutex_;
   std::map<std::string, pid_t> running_;
