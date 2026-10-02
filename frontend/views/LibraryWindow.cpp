@@ -78,6 +78,7 @@
 #include "../ui/Sources.h"
 #include "../ui/SettingsPanel.h"
 #include "../ui/Shortcuts.h"
+#include "../ui/SidebarStyleCard.h"
 #include "../ui/Theme.h"
 #include "../ui/TileView.h"
 #include "../ui/Tray.h"
@@ -287,8 +288,21 @@ public:
     setAttribute(Qt::WA_StyledBackground, true);
   }
   std::function<void()> on_backdrop_clicked;
+  // Set: painted here instead of by a stylesheet, around `clear` (in this
+  // widget's coordinates), which stays undimmed so its live changes show.
+  QColor scrim;
+  std::function<QRect()> clear;
 
 protected:
+  void paintEvent(QPaintEvent* event) override {
+    if (!scrim.isValid()) return QWidget::paintEvent(event);
+    QPainter painter(this);
+    QRegion region(rect());
+    if (clear) region -= clear();
+    painter.setClipRegion(region);
+    painter.fillRect(rect(), scrim);
+  }
+
   // A press on the card's own empty space propagates up to here too, so
   // only one that lands on no child at all counts as the backdrop.
   void mousePressEvent(QMouseEvent* event) override {
@@ -388,6 +402,10 @@ LibraryWindow::LibraryWindow(const mira_gui::FrontendPrefs& prefs, QWidget* pare
   // Before the panel and the grid, because both ask it for covers.
   artwork_ = new mira_gui::ArtworkStore(this);
   connect(artwork_, &mira_gui::ArtworkStore::CoverChanged, this, &LibraryWindow::UpdateTileCover);
+  // Icons and hero art are only drawn in the sidebar.
+  connect(artwork_, &mira_gui::ArtworkStore::SlotArtChanged, this, [this](const QString& id) {
+    if (pinned_signature_.contains(id) || recent_signature_.contains(id)) RefreshSidebarGames();
+  });
 
   InstallErrorNavigator();
 
@@ -544,6 +562,10 @@ void LibraryWindow::BuildShortcuts() {
   // settings first, then clear the search, then clear the selection.
   window_action("clear_or_deselect", "Clear the search, then the selection",
                QKeySequence(Qt::Key_Escape), {}, [this] {
+    if (SidebarStyleOpen()) {
+      CloseSidebarStyle();
+      return;
+    }
     if (SettingsOpen()) {
       RequestCloseSettings();
       return;
@@ -648,6 +670,9 @@ void LibraryWindow::ApplySettingsPrefs(const mira_gui::FrontendPrefs& prefs) {
   recent_count_ = prefs.sidebar_recent_count.value_or(0);
   show_source_counts_ = prefs.sidebar_source_counts.value_or(true);
   source_icons_ = prefs.sidebar_source_icons.value_or(true);
+  pinned_style_ = mira_gui::sidebar::ParseStyle(prefs.sidebar_pinned_style.value_or("covers"));
+  recent_style_ = mira_gui::sidebar::ParseStyle(prefs.sidebar_recent_style.value_or("covers"));
+  recent_when_ = prefs.sidebar_recent_when.value_or(true);
   library_tabs_->SetTabsVisible(prefs.library_filter_tabs.value_or(true));
   continue_row_enabled_ = prefs.library_continue_row.value_or(true);
   continue_count_ = prefs.library_continue_count.value_or(3);
@@ -738,6 +763,9 @@ void LibraryWindow::ApplyTopBarIcons() {
   runners_nav_->setIcon(mira_gui::icons::For(Glyph::Wrench));
   fetch_art_button_->setIcon(mira_gui::icons::For(Glyph::Image));
   manage_sources_button_->setIcon(mira_gui::icons::For(Glyph::Sliders, mira_gui::theme::Current().text_muted));
+  for (QToolButton* button : {pinned_customize_, recent_customize_}) {
+    button->setIcon(mira_gui::icons::For(Glyph::Sliders, mira_gui::theme::Current().text_muted));
+  }
 
   // The filter+sort pill's own static icons -- its text and the popover's
   // rows restyle separately (UpdateFilterSortSummary, restyle_filter_rows).
@@ -1353,8 +1381,21 @@ QWidget* LibraryWindow::BuildSidebar() {
   nav_layout->setContentsMargins(0, 0, 0, 0);
   nav_layout->setSpacing(2);
 
-  pinned_heading_ = SidebarHeading(nav_content, "PINNED");
-  pinned_heading_->setVisible(false);
+  // PINNED and RECENTLY PLAYED headings carry a button for the customize card.
+  const auto game_heading = [this, nav_content](const QString& text, QToolButton*& button) {
+    auto* heading = new QWidget(nav_content);
+    auto* heading_layout = new QHBoxLayout(heading);
+    heading_layout->setContentsMargins(0, 0, 0, 0);
+    heading_layout->addWidget(SidebarHeading(heading, text), /*stretch=*/1);
+    button = new QToolButton(heading);
+    button->setAutoRaise(true);
+    button->setToolTip("Customize how these look");
+    connect(button, &QToolButton::clicked, this, &LibraryWindow::OpenSidebarStyle);
+    heading_layout->addWidget(button, 0, Qt::AlignBottom);
+    heading->setVisible(false);
+    return heading;
+  };
+  pinned_heading_ = game_heading("PINNED", pinned_customize_);
   nav_layout->addWidget(pinned_heading_);
   pinned_layout_ = new QVBoxLayout();
   pinned_layout_->setSpacing(2);
@@ -1399,8 +1440,7 @@ QWidget* LibraryWindow::BuildSidebar() {
   }
   nav_layout->addLayout(source_nav_layout_);
 
-  recent_heading_ = SidebarHeading(nav_content, "RECENTLY PLAYED");
-  recent_heading_->setVisible(false);
+  recent_heading_ = game_heading("RECENTLY PLAYED", recent_customize_);
   nav_layout->addWidget(recent_heading_);
   recent_layout_ = new QVBoxLayout();
   recent_layout_->setSpacing(2);
@@ -1633,6 +1673,8 @@ void LibraryWindow::UpdateTileCover(const QString& id) {
   // store changing, whether or not the game has a tile. A no-op for another game.
   if (game_edit_form_ != nullptr) game_edit_form_->RefreshCover();
   if (game_edit_backdrop_ != nullptr) game_edit_backdrop_->RefreshCover(id.toStdString());
+  // Sidebar rows draw the cover, or take their color from it.
+  if (pinned_signature_.contains(id) || recent_signature_.contains(id)) RefreshSidebarGames();
   // Every view of that game repaints its row.
   library_->Touch(id.toStdString());
 }
@@ -2481,6 +2523,80 @@ QWidget* LibraryWindow::BuildGameEditOverlay() {
   return overlay;
 }
 
+QWidget* LibraryWindow::BuildSidebarStyleOverlay() {
+  auto* overlay = new ModalOverlay(nullptr);
+  overlay->scrim = QColor(0, 0, 0, 150);
+  // The sidebar stays bright: it is the preview.
+  overlay->clear = [this, overlay] {
+    QWidget* sidebar = splitter_->widget(0);
+    return QRect(sidebar->mapTo(overlay->window(), QPoint(0, 0)) - overlay->mapTo(overlay->window(), QPoint(0, 0)),
+                 sidebar->size());
+  };
+  overlay->hide();
+  overlay->on_backdrop_clicked = [this] { CloseSidebarStyle(); };
+  sidebar_style_layout_ = new QGridLayout(overlay);
+  return overlay;
+}
+
+void LibraryWindow::OpenSidebarStyle() {
+  if (!LeaveOverlays()) return;
+  if (sidebar_style_overlay_ == nullptr) {
+    sidebar_style_overlay_ = BuildSidebarStyleOverlay();
+    root_stack_->addWidget(sidebar_style_overlay_);
+  }
+  if (sidebar_style_card_ != nullptr) sidebar_style_card_->deleteLater();
+  const auto copies = [](const std::vector<const mira_gui::GameSummary*>& games) {
+    std::vector<mira_gui::GameSummary> out;
+    for (const mira_gui::GameSummary* game : games) out.push_back(*game);
+    return out;
+  };
+  auto* card = new mira_gui::SidebarStyleCard({pinned_style_, recent_style_, recent_count_, recent_when_},
+                                              copies(PinnedGames()), copies(RecentGames(10)), artwork_);
+  sidebar_style_card_ = card;
+  connect(card, &mira_gui::SidebarStyleCard::Changed, this, [this](const mira_gui::SidebarStyleCard::Choices& choices) {
+    pinned_style_ = choices.pinned;
+    recent_style_ = choices.recent;
+    recent_count_ = choices.recent_count;
+    recent_when_ = choices.recent_when;
+    SaveSidebarStyle();
+  });
+  connect(card, &mira_gui::SidebarStyleCard::CloseRequested, this, &LibraryWindow::CloseSidebarStyle);
+  // Centred over the content, beside the sidebar it changes.
+  sidebar_style_layout_->setContentsMargins(splitter_->widget(0)->width() + kResizeMargin + 24, 24, 24, 24);
+  sidebar_style_layout_->addWidget(card, 0, 0, Qt::AlignCenter);
+  SetGridControlsEnabled(false);
+  root_stack_->setCurrentWidget(sidebar_style_overlay_);
+  sidebar_style_overlay_->show();
+}
+
+void LibraryWindow::CloseSidebarStyle() {
+  if (!SidebarStyleOpen()) return;
+  sidebar_style_overlay_->hide();
+  root_stack_->setCurrentIndex(0);
+  SetGridControlsEnabled(true);
+  if (sidebar_style_card_ != nullptr) {
+    sidebar_style_card_->deleteLater();  // its own Close may be what got us here
+    sidebar_style_card_ = nullptr;
+  }
+}
+
+bool LibraryWindow::SidebarStyleOpen() const {
+  return sidebar_style_overlay_ != nullptr && sidebar_style_overlay_->isVisible();
+}
+
+void LibraryWindow::SaveSidebarStyle() {
+  RefreshSidebarGames();
+  mira_gui::FrontendPrefs prefs;
+  prefs.sidebar_pinned_style = mira_gui::sidebar::StyleKey(pinned_style_);
+  prefs.sidebar_recent_style = mira_gui::sidebar::StyleKey(recent_style_);
+  prefs.sidebar_recent_count = recent_count_;
+  prefs.sidebar_recent_when = recent_when_;
+  // Shown already, so a failed write would otherwise only surface as the old look after a restart.
+  mira_gui::MiradClient::SaveFrontendPrefsAsync(this, prefs, [this](mira_gui::PatchConfigResult result) {
+    if (!result.ok) mira_gui::notify::FailedRequest(this, "Could not save the sidebar's look.", result.error);
+  });
+}
+
 // ~70% of the window, following it as it resizes.
 void LibraryWindow::SizeGameEditCard(QWidget* card) {
   if (card != nullptr) card->setFixedSize(qRound(width() * 0.7), qRound(height() * 0.7));
@@ -2669,6 +2785,7 @@ QWidget* LibraryWindow::BuildGameEditCard(const std::string& id) {
 }
 
 bool LibraryWindow::LeaveOverlays() {
+  CloseSidebarStyle();  // nothing unsaved: every choice is stored as it's made
   if (SettingsOpen()) RequestCloseSettings();
   if (GameEditOpen()) RequestCloseGameEdit();
   // Still open: cancelled, or saving first.
@@ -3068,10 +3185,8 @@ void LibraryWindow::SetSourceHidden(const QString& id, bool hidden) {
   mira_gui::MiradClient::SaveFrontendPrefsAsync(this, prefs, [](mira_gui::PatchConfigResult) {});
 }
 
-void LibraryWindow::RefreshSidebarGames() {
-  if (recent_layout_ == nullptr) return;
-
-  // Pinned games by name, matching the grid: hidden pins only under the Hidden filter.
+std::vector<const mira_gui::GameSummary*> LibraryWindow::PinnedGames() const {
+  // By name, matching the grid: hidden pins only under the Hidden filter.
   const bool showing_hidden = CurrentFilterKey() == "hidden";
   std::vector<const mira_gui::GameSummary*> pinned;
   for (const mira_gui::GameSummary& game : library_->Games()) {
@@ -3081,10 +3196,13 @@ void LibraryWindow::RefreshSidebarGames() {
     return QString::compare(QString::fromStdString(a->name), QString::fromStdString(b->name),
                             Qt::CaseInsensitive) < 0;
   });
-  FillSidebarSection(pinned_heading_, pinned_layout_, pinned, pinned_signature_);
+  return pinned;
+}
 
-  // Every running game, then up to recent_count_ others by last played. A
-  // hidden game shows only while it runs, so it can still be stopped.
+std::vector<const mira_gui::GameSummary*> LibraryWindow::RecentGames(int count, bool running_counts) const {
+  // Every running game, then up to `count` others by last played, or with
+  // `running_counts` up to `count` in all. A hidden game shows only while it
+  // runs, so it can still be stopped.
   std::vector<const mira_gui::GameSummary*> running;
   std::vector<const mira_gui::GameSummary*> played;
   for (const mira_gui::GameSummary& game : library_->Games()) {
@@ -3097,21 +3215,40 @@ void LibraryWindow::RefreshSidebarGames() {
   std::ranges::sort(played, [](const mira_gui::GameSummary* a, const mira_gui::GameSummary* b) {
     return *a->last_played_at > *b->last_played_at;
   });
-  if (played.size() > static_cast<size_t>(recent_count_)) played.resize(recent_count_);
+  if (running_counts) count = std::max(0, count - static_cast<int>(running.size()));
+  if (played.size() > static_cast<size_t>(count)) played.resize(count);
   played.insert(played.begin(), running.begin(), running.end());
-  FillSidebarSection(recent_heading_, recent_layout_, played, recent_signature_);
+  return played;
 }
 
-void LibraryWindow::FillSidebarSection(QLabel* heading, QVBoxLayout* layout,
+void LibraryWindow::RefreshSidebarGames() {
+  if (recent_layout_ == nullptr) return;
+  FillSidebarSection(pinned_heading_, pinned_layout_, PinnedGames(), pinned_style_, /*recent=*/false,
+                     pinned_signature_);
+  // A shelf keeps the size it was given: running games take places in it.
+  FillSidebarSection(recent_heading_, recent_layout_,
+                     RecentGames(recent_count_, recent_style_ == mira_gui::sidebar::Style::Shelf), recent_style_,
+                     /*recent=*/true, recent_signature_);
+}
+
+void LibraryWindow::FillSidebarSection(QWidget* heading, QVBoxLayout* layout,
                                        const std::vector<const mira_gui::GameSummary*>& games,
-                                       QString& signature) {
+                                       mira_gui::sidebar::Style style, bool recent, QString& signature) {
   // Most refreshes (every game.updated) change nothing shown here; rebuilding
   // anyway makes the rows flicker.
-  QString wanted = mira_gui::theme::Current().running.name();
+  // A shelf cover is too narrow for "Yesterday": it gets "1d ago".
+  const bool shelf = style == mira_gui::sidebar::Style::Shelf;
+  const auto trailing = [recent, shelf, this](const mira_gui::GameSummary& game) {
+    if (game.running) return QString("Playing");
+    if (!recent || !recent_when_) return QString();
+    return shelf ? mira_gui::FormatPlayedAgoShort(game.last_played_at) : mira_gui::FormatPlayedAgo(game.last_played_at);
+  };
+  QString wanted = mira_gui::theme::Current().running.name() + mira_gui::sidebar::StyleKey(style);
   for (const mira_gui::GameSummary* game : games) {
-    wanted += QString("\n%1\t%2\t%3\t%4")
+    wanted += QString("\n%1\t%2\t%3\t%4\t%5\t%6")
                   .arg(QString::fromStdString(game->id), QString::fromStdString(game->name),
-                       QString::fromStdString(game->status), game->running ? "1" : "0");
+                       QString::fromStdString(game->status), game->running ? "1" : "0", trailing(*game),
+                       mira_gui::sidebar::ArtSignature(*game, style, artwork_));
   }
   if (wanted == signature) return;
   signature = wanted;
@@ -3123,7 +3260,7 @@ void LibraryWindow::FillSidebarSection(QLabel* heading, QVBoxLayout* layout,
   while (QLayoutItem* item = layout->takeAt(0)) {
     if (QWidget* row = item->widget()) {
       // The hovered row is going away without a Leave, so its card would stay up.
-      if (row == recent_hover_row_) {
+      if (recent_hover_row_ != nullptr && (row == recent_hover_row_ || row->isAncestorOf(recent_hover_row_))) {
         if (recent_hover_ != nullptr) recent_hover_->stop();
         recent_hover_row_ = nullptr;
         ShowHoverCard(QModelIndex());
@@ -3134,20 +3271,31 @@ void LibraryWindow::FillSidebarSection(QLabel* heading, QVBoxLayout* layout,
     delete item;
   }
   heading->setVisible(!games.empty());
-  for (const mira_gui::GameSummary* game : games) layout->addWidget(MakeSidebarGameRow(*game, parent));
+  using mira_gui::sidebar::Style;
+  if (style == Style::Shelf) {
+    auto* shelf = new mira_gui::sidebar::Shelf(parent);
+    for (const mira_gui::GameSummary* game : games) {
+      auto* cover = new mira_gui::sidebar::ShelfCover(*game, artwork_, trailing(*game), shelf);
+      WireSidebarGame(cover, *game);
+      shelf->Add(cover);
+    }
+    if (!games.empty()) layout->addWidget(shelf);
+    else shelf->deleteLater();
+  } else {
+    for (const mira_gui::GameSummary* game : games) {
+      QPushButton* row = style == Style::Hero
+                             ? new mira_gui::sidebar::HeroRow(*game, artwork_, trailing(*game), parent)
+                             : mira_gui::sidebar::MakeCoverRow(*game, artwork_, trailing(*game), parent);
+      WireSidebarGame(row, *game);
+      layout->addWidget(row);
+    }
+  }
   parent->setUpdatesEnabled(true);
 }
 
-QPushButton* LibraryWindow::MakeSidebarGameRow(const mira_gui::GameSummary& game, QWidget* parent) {
-  const mira_gui::theme::Tokens& tokens = mira_gui::theme::Current();
-  const bool is_running = game.running;
-  auto* row = new QPushButton(QString::fromStdString(game.name), parent);
-  row->setFlat(true);
-  row->setIcon(mira_gui::icons::For(mira_gui::icons::Glyph::Dot, is_running ? tokens.running : tokens.border));
+void LibraryWindow::WireSidebarGame(QPushButton* row, const mira_gui::GameSummary& game) {
   const std::string id = game.id;
-  if (is_running) {
-    AddTrailingLabel(row)->setText("Playing");
-  } else if (game.status == "ready") {
+  if (!game.running && game.status == "ready") {
     connect(row, &QPushButton::clicked, this, [this, id] { RowClicked(id); });
   }
   row->setProperty("hover_game", QString::fromStdString(id));
@@ -3155,7 +3303,6 @@ QPushButton* LibraryWindow::MakeSidebarGameRow(const mira_gui::GameSummary& game
   row->setContextMenuPolicy(Qt::CustomContextMenu);
   connect(row, &QWidget::customContextMenuRequested, this,
           [this, row, id](const QPoint& pos) { ShowGameMenu(id, row->mapToGlobal(pos)); });
-  return row;
 }
 
 void LibraryWindow::RowClicked(const std::string& id) {
@@ -3223,10 +3370,13 @@ void LibraryWindow::ShowSourceMenu(const mira_gui::SourceInfo& source, const QPo
 void LibraryWindow::ShowSidebarMenu(const QPoint& global_pos) {
   QMenu menu(this);
   QAction* manage = menu.addAction("Manage sources…");
+  QAction* customize = menu.addAction("Customize pinned and recent…");
   QAction* settings = menu.addAction("Sidebar settings…");
   QAction* chosen = menu.exec(global_pos);
   if (chosen == manage) {
     OpenManageSources();
+  } else if (chosen == customize) {
+    OpenSidebarStyle();
   } else if (chosen == settings) {
     OpenSettings(mira_gui::SettingsPanel::kSidebarKey);
   }

@@ -90,6 +90,16 @@ inline QString FormatPlayedAgo(const std::optional<std::int64_t>& last_played_at
   return QLocale().toString(played, QLocale::ShortFormat);
 }
 
+// FormatPlayedAgo short enough for a small cover: "Today", "3d ago", then "12 Sep".
+inline QString FormatPlayedAgoShort(const std::optional<std::int64_t>& last_played_at) {
+  if (!last_played_at) return "Never";
+  const QDate played = QDateTime::fromSecsSinceEpoch(*last_played_at).date();
+  const qint64 days = played.daysTo(QDate::currentDate());
+  if (days <= 0) return "Today";
+  if (days < 7) return QString("%1d ago").arg(days);
+  return QLocale().toString(played, "d MMM");
+}
+
 inline QString FormatPlaytime(std::int64_t play_seconds) {
   if (play_seconds <= 0) return "0m";
   const std::int64_t hours = play_seconds / 3600;

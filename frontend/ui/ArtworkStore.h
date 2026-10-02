@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QColor>
 #include <QHash>
 #include <QObject>
 #include <QPixmap>
@@ -51,6 +52,15 @@ public:
   QPixmap TitleCover(const QString& source, const QString& ref, const QString& title, QSize tile,
                      qreal device_pixel_ratio);
 
+  // One vivid color that stands for this game's cover (its placeholder's,
+  // until real artwork arrives), for tinting small things like sidebar rows.
+  QColor CoverColor(const QString& id);
+
+  // A game's other art slot ("hero"), unscaled. Null until fetched,
+  // or when the game has none; the first call queues the fetch, and
+  // SlotArtChanged says when it landed.
+  QPixmap SlotArt(const std::string& id, const std::string& slot);
+
   // True only if real artwork is held for this id. False covers both "asked
   // and there was none" and "not asked yet", which is what a bulk re-fetch
   // wants: neither one has a cover to show.
@@ -91,6 +101,8 @@ signals:
   // Real artwork arrived (or was dropped) for this id; whatever is drawing
   // it should ask for the cover again.
   void CoverChanged(const QString& id);
+  // The same for a SlotArt slot.
+  void SlotArtChanged(const QString& id);
 
 private:
   void Request(const QString& id);
@@ -100,6 +112,10 @@ private:
 
   QHash<QString, QPixmap> original_;  // by id, at whatever size mirad sent
   QHash<QString, QPixmap> scaled_;    // by "id@tile_width"
+  QHash<QString, QColor> colors_;     // CoverColor's, by id
+  // SlotArt's, by "id#slot", which also keys answered_/queued_/pending_.
+  QHash<QString, QPixmap> slot_original_;
+  QHash<QString, QString> slot_versions_;  // from NoteArt; empty for none
   QSet<QString> answered_;            // asked and heard back, either way
   QSet<QString> queued_;              // in `pending_` or in flight
   QSet<QString> ask_again_;           // in flight when mirad said it has art now

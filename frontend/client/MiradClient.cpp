@@ -379,6 +379,9 @@ FrontendPrefsResult GetFrontendPrefsSync() {
   read_int("sidebar_recent_count", result.prefs.sidebar_recent_count);
   read_bool("sidebar_source_counts", result.prefs.sidebar_source_counts);
   read_bool("sidebar_source_icons", result.prefs.sidebar_source_icons);
+  read_string("sidebar_pinned_style", result.prefs.sidebar_pinned_style);
+  read_string("sidebar_recent_style", result.prefs.sidebar_recent_style);
+  read_bool("sidebar_recent_when", result.prefs.sidebar_recent_when);
   read_bool("library_filter_tabs", result.prefs.library_filter_tabs);
   read_bool("library_continue_row", result.prefs.library_continue_row);
   read_int("library_continue_count", result.prefs.library_continue_count);
@@ -455,6 +458,9 @@ PatchConfigResult SaveFrontendPrefsSync(const FrontendPrefs& prefs) {
   if (prefs.sidebar_recent_count) table["sidebar_recent_count"] = *prefs.sidebar_recent_count;
   if (prefs.sidebar_source_counts) table["sidebar_source_counts"] = *prefs.sidebar_source_counts;
   if (prefs.sidebar_source_icons) table["sidebar_source_icons"] = *prefs.sidebar_source_icons;
+  if (prefs.sidebar_pinned_style) table["sidebar_pinned_style"] = *prefs.sidebar_pinned_style;
+  if (prefs.sidebar_recent_style) table["sidebar_recent_style"] = *prefs.sidebar_recent_style;
+  if (prefs.sidebar_recent_when) table["sidebar_recent_when"] = *prefs.sidebar_recent_when;
   if (prefs.library_filter_tabs) table["library_filter_tabs"] = *prefs.library_filter_tabs;
   if (prefs.library_continue_row) table["library_continue_row"] = *prefs.library_continue_row;
   if (prefs.library_continue_count) table["library_continue_count"] = *prefs.library_continue_count;

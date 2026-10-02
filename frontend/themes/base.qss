@@ -669,6 +669,14 @@ QFrame#continue_card:hover {
   border-color: @accent;
 }
 
+/* --- Customize sidebar card (ui/SidebarStyleCard) ------------------------ */
+
+QFrame#sidebar_style_card {
+  background: @surface;
+  border: 1px solid @border;
+  border-radius: @radius_panel;
+}
+
 /* --- Source setup steps (views/SourcePage) ------------------------------- */
 
 QFrame#source_setup {

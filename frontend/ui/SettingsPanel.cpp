@@ -15,6 +15,7 @@
 #include "KeyBindings.h"
 #include "Notify.h"
 #include "SettingsNav.h"
+#include "SidebarGames.h"
 #include "Sources.h"
 #include "Theme.h"
 #include "SystemNotifier.h"
@@ -55,6 +56,15 @@ void SettingsPanel::BuildSidebarGroup() {
                "How many recently played games to list. Running games always show. The library's Continue "
                "Playing row shows them too.",
                "sidebar recently played recent games count", &FrontendPrefs::sidebar_recent_count, 0, 0, 10);
+  std::vector<std::pair<QString, QString>> styles;
+  for (const sidebar::StyleOption& option : sidebar::StyleOptions()) styles.emplace_back(option.key, option.label);
+  const QString look_tip = "A small cover by each name, a banner of hero art behind it, or a shelf of covers.";
+  AddChoice(form, "Pinned Games Look", look_tip, "sidebar pinned style look covers hero banners shelf",
+            &FrontendPrefs::sidebar_pinned_style, "covers", styles);
+  AddChoice(form, "Recently Played Look", look_tip, "sidebar recently played style look covers hero banners shelf",
+            &FrontendPrefs::sidebar_recent_style, "covers", styles);
+  AddToggle(form, "Show When Games Were Last Played", "\"Today\", \"Yesterday\" and so on beside each recently played game.",
+            "sidebar recently played when last played date time ago", &FrontendPrefs::sidebar_recent_when, true);
   AddToggle(form, "Show Game Count per Source", "Show how many games each source has next to its name.",
             "sidebar source game counts number", &FrontendPrefs::sidebar_source_counts, true);
   AddToggle(form, "Colored Source Icons", "Show each source's colored initial instead of a dot.",
@@ -99,6 +109,18 @@ QSpinBox* SettingsPanel::AddCount(QFormLayout* form, const QString& label, const
   return spin;
 }
 
+QComboBox* SettingsPanel::AddChoice(QFormLayout* form, const QString& label, const QString& tip,
+                                    const QString& search, std::optional<std::string> FrontendPrefs::*member,
+                                    const QString& fallback, const std::vector<std::pair<QString, QString>>& choices) {
+  auto* combo = new QComboBox(form->parentWidget());
+  for (const auto& [value, text] : choices) combo->addItem(text, value);
+  combo->setCurrentIndex(std::max(0, combo->findData(fallback)));
+  form->addRow(LabelWithHelp(label, tip, form->parentWidget()), combo);
+  nav_->RegisterRow(form, combo, search);
+  choices_.push_back({combo, member, fallback, fallback});
+  return combo;
+}
+
 QSet<QString> SettingsPanel::CurrentHiddenSources() const {
   QSet<QString> hidden;
   for (const auto& [id, check] : source_checks_) {
@@ -115,6 +137,9 @@ bool SettingsPanel::PrefsDirty() const {
   }
   for (const PrefCount& count : counts_) {
     if (count.spin->value() != count.original) return true;
+  }
+  for (const PrefChoice& choice : choices_) {
+    if (choice.combo->currentData().toString() != choice.original) return true;
   }
   for (const ShapeField* field :
        {&tile_spacing_, &grid_margin_, &tile_radius_, &panel_radius_, &control_radius_}) {
@@ -317,6 +342,12 @@ void SettingsPanel::LoadFrontendPrefs() {
       count.spin->setValue((result.prefs.*count.member).value_or(count.fallback));
       count.original = count.spin->value();  // after the clamp
     }
+    for (PrefChoice& choice : choices_) {
+      const auto& value = result.prefs.*choice.member;
+      const int index = choice.combo->findData(value ? QString::fromStdString(*value) : choice.fallback);
+      choice.combo->setCurrentIndex(std::max(0, index));
+      choice.original = choice.combo->currentData().toString();  // an unknown value shows as the first
+    }
     hidden_sources_original_.clear();
     for (const std::string& id : result.prefs.hidden_sources.value_or(std::vector<std::string>{})) {
       hidden_sources_original_.insert(QString::fromStdString(id));
@@ -501,6 +532,7 @@ void SettingsPanel::DiscardChanges() {
   if (theme_index >= 0) theme_->setCurrentIndex(theme_index);
   for (PrefToggle& toggle : toggles_) toggle.check->setChecked(toggle.original);
   for (PrefCount& count : counts_) count.spin->setValue(count.original);
+  for (PrefChoice& choice : choices_) choice.combo->setCurrentIndex(std::max(0, choice.combo->findData(choice.original)));
   for (const auto& [id, check] : source_checks_) check->setChecked(!hidden_sources_original_.contains(id));
   for (ShapeField* field :
        {&tile_spacing_, &grid_margin_, &tile_radius_, &panel_radius_, &control_radius_}) {
@@ -530,6 +562,10 @@ void SettingsPanel::Save() {
     for (PrefCount& count : counts_) {
       count.original = count.spin->value();
       prefs.*count.member = count.original;
+    }
+    for (PrefChoice& choice : choices_) {
+      choice.original = choice.combo->currentData().toString();
+      prefs.*choice.member = choice.original.toStdString();
     }
     const QSet<QString> hidden = CurrentHiddenSources();
     std::vector<std::string> hidden_ids;

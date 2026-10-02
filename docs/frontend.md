@@ -116,6 +116,7 @@ Only `game.added` and `game.updated` carry a game record, so views check the eve
 | `source_imported_at` | When each source last imported. |
 | `sidebar_recent_count`, `sidebar_source_counts` | How many recently played games to list (0 hides them), and whether source rows show counts. |
 | `sidebar_source_icons` | Colored initials on source rows. |
+| `sidebar_pinned_style`, `sidebar_recent_style`, `sidebar_recent_when` | How PINNED and RECENTLY PLAYED draw their games (`covers`, the default, `hero` or `shelf`), and whether recent rows say when each was played. |
 | `library_filter_tabs`, `library_continue_row`, `library_continue_count` | The library's tabs and its Continue playing cards. |
 | `tile_status`, `tile_source_mark`, `tile_pin_badge` | What a tile draws besides its title. |
 | `source_page_tabs` | Installed and Not installed as tabs on source pages. |

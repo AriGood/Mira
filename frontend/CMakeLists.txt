@@ -84,6 +84,10 @@ qt_add_executable(mira-gui
   ui/Notify.h
   ui/PopupDialog.cpp
   ui/PopupDialog.h
+  ui/SidebarGames.cpp
+  ui/SidebarGames.h
+  ui/SidebarStyleCard.cpp
+  ui/SidebarStyleCard.h
   ui/Sources.cpp
   ui/Sources.h
   ui/SystemNotifier.cpp

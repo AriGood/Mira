@@ -21,6 +21,7 @@
 #include "../ui/ArtworkStore.h"
 #include "../dialogs/ManageSourcesDialog.h"
 #include "../ui/Shortcuts.h"
+#include "../ui/SidebarGames.h"
 
 class QLabel;
 class QMenu;
@@ -212,10 +213,25 @@ private:
   void ForgetSource(const QString& id);
   // The sidebar's PINNED and RECENTLY PLAYED rows.
   void RefreshSidebarGames();
-  QPushButton* MakeSidebarGameRow(const mira_gui::GameSummary& game, QWidget* parent);
-  // Rebuilds one section's rows, only if what they'd show differs from `signature`.
-  void FillSidebarSection(QLabel* heading, QVBoxLayout* layout,
-                          const std::vector<const mira_gui::GameSummary*>& games, QString& signature);
+  // What PINNED lists, and what RECENTLY PLAYED would list showing `count`
+  // (with `running_counts`, running games are part of the count, as on a shelf).
+  std::vector<const mira_gui::GameSummary*> PinnedGames() const;
+  std::vector<const mira_gui::GameSummary*> RecentGames(int count, bool running_counts = false) const;
+  // A row or cover's click, menu and hover card.
+  void WireSidebarGame(QPushButton* row, const mira_gui::GameSummary& game);
+  // Rebuilds one section's rows in `style`, only if what they'd show differs
+  // from `signature`. `recent` rows say when each was last played.
+  void FillSidebarSection(QWidget* heading, QVBoxLayout* layout,
+                          const std::vector<const mira_gui::GameSummary*>& games, mira_gui::sidebar::Style style,
+                          bool recent, QString& signature);
+  // The customize card for PINNED and RECENTLY PLAYED, over the content
+  // with the sidebar left undimmed as its preview.
+  QWidget* BuildSidebarStyleOverlay();
+  void OpenSidebarStyle();
+  void CloseSidebarStyle();
+  bool SidebarStyleOpen() const;
+  // Redraws both sections and stores their styles and the recent count.
+  void SaveSidebarStyle();
   void RefreshContinue();
   // A sidebar row or card's click. Ignores the second click of a double
   // click, which would otherwise land on whatever row moved under it.
@@ -340,13 +356,21 @@ private:
   QWidget* source_drop_line_ = nullptr;
   QPushButton* source_drag_row_ = nullptr;
   QPoint source_drag_start_;
-  QLabel* pinned_heading_ = nullptr;
+  QWidget* pinned_heading_ = nullptr;
   QVBoxLayout* pinned_layout_ = nullptr;
   QString pinned_signature_;  // what the rows show now; see FillSidebarSection
-  QLabel* recent_heading_ = nullptr;
+  QWidget* recent_heading_ = nullptr;
   QString recent_signature_;
   QVBoxLayout* recent_layout_ = nullptr;
   int recent_count_ = 0;  // besides running games
+  QToolButton* pinned_customize_ = nullptr;
+  QToolButton* recent_customize_ = nullptr;
+  mira_gui::sidebar::Style pinned_style_ = mira_gui::sidebar::Style::Covers;
+  mira_gui::sidebar::Style recent_style_ = mira_gui::sidebar::Style::Covers;
+  bool recent_when_ = true;
+  QWidget* sidebar_style_overlay_ = nullptr;
+  QGridLayout* sidebar_style_layout_ = nullptr;
+  QWidget* sidebar_style_card_ = nullptr;
   bool show_source_counts_ = true;
   bool source_icons_ = true;
   QElapsedTimer last_row_click_;

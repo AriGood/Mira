@@ -650,6 +650,12 @@ struct FrontendPrefs {
   std::optional<bool> sidebar_source_counts;
   // Source rows show a colored tile with the source's initial, not a dot.
   std::optional<bool> sidebar_source_icons;
+  // How PINNED and RECENTLY PLAYED draw their games: "covers" (the default),
+  // "hero" or "shelf" (see ui/SidebarGames), and whether recent rows say
+  // when each was played.
+  std::optional<std::string> sidebar_pinned_style;
+  std::optional<std::string> sidebar_recent_style;
+  std::optional<bool> sidebar_recent_when;
   // The library's filter tabs, and the "Continue playing" cards above the
   // grid (running and recently played games) with how many it shows.
   std::optional<bool> library_filter_tabs;
