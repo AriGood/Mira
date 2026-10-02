@@ -26,18 +26,18 @@ Each source row opens `views/SourcePage` in the grid's place:
 - **Launchers** (Battle.net, Ubisoft Connect, EA app): install the launcher into its own prefix, open it, import its games.
 - **Local** (Steam, Lutris): import what the other program installed. Steam also lists owned games once a Web API key is set.
 
-A page opens on a tab row that also holds the source's status and its Sign out / Open, Import, settings and ⋯ buttons, numbered setup steps while one is left (the current one expanded), and the source's games as tiles (`ui/TileGrid`), split into Installed and Not installed tabs unless `source_page_tabs` is off. The zoom slider sizes each page on its own unless `tile_size_synced` is on. Covers for games that aren't installed come from `/v1/library/artwork`. Login URLs and paste parsing come from `mirad`, so the page only holds wording. A source turned off with `<id>.enabled` isn't listed.
+A page opens on a tab row that also holds the source's status and its Sign out / Open, Import, settings and ⋯ buttons, a "Set up <source>" card while a step is left (one row per numbered step, the current one bold and holding its explanation and accent button), and the source's games as tiles (`ui/TileGrid`), split into Installed and Not installed tabs unless `source_page_tabs` is off. The zoom slider sizes each page on its own unless `tile_size_synced` is on. Covers for games that aren't installed come from `/v1/library/artwork`. Login URLs and paste parsing come from `mirad`, so the page only holds wording. A source turned off with `<id>.enabled` isn't listed.
 
 The banner's gear opens `views/SourceSettingsCard` under it: the source's runner (`/v1/sources/{id}/runner`) and every schema setting under its own keys (`<id>.*`, plus `launchers.<id>.*`), in the same rows as Settings and saved or discarded together from the card's foot. The banner's ⋯ menu updates a store's tool, opens a launcher's prefix tools (folder, winetricks, run a program, log) and removes the source through the same confirmation Manage sources uses.
 
 ### Runners page
 
-`views/RunnersPage` has a Proton/Wine switch that filters both of its lists:
+`views/RunnersPage` has a Proton/Wine switch that filters both of its lists. They are settings cards in two columns, which stack into one on a window under 1150 px wide:
 
-- **Installed** builds show their label and source. Builds Mira downloaded can be updated or removed; distro and Steam builds show as managed outside Mira. After an update it offers to remove the old build. *Make default* and *Pick automatically instead* set `default_runner.windows`.
-- **Get more** lists releases from the chosen source, with an Install button on each.
+- **Installed** builds are one row each: the label, a Default tag on `default_runner.windows`, and how many games use it, its version and source inline (elided when narrow). Builds Mira downloaded show Update when there's a newer one and Remove in their ⋯ menu; distro and Steam builds show as managed outside Mira. After an update it offers to remove the old build. *Make default* (⋯) and *Pick automatically instead* (the note under the card) set `default_runner.windows`.
+- **Get more** lists releases from the chosen source (the dropdown in its header), with date, size and checksum inline and an Install button on each.
 
-A banner offers to install umu-launcher or winetricks when either is missing.
+A Missing tools card above Installed offers to install umu-launcher or winetricks when either is missing.
 
 ### Activity
 

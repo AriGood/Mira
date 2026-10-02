@@ -120,8 +120,11 @@ QWidget#downloads_popover QScrollArea > QWidget > QWidget {
 }
 
 QFrame#download_row {
-  background: @surface_alt;
-  border-radius: @radius_control;
+  border-top: 1px solid @border;
+}
+
+QFrame#download_row[first="true"] {
+  border-top: none;
 }
 
 QWidget#downloads_popover QProgressBar {
@@ -637,6 +640,11 @@ QPushButton#text_button:hover {
   text-decoration: underline;
 }
 
+QPushButton#text_button:disabled {
+  color: @text_muted;
+  text-decoration: none;
+}
+
 /* ui/TagEdit: one chip per tag. */
 QFrame#tag_chip {
   background: @surface_alt;
@@ -817,10 +825,8 @@ QFrame#continue_card:hover {
 
 /* --- Source setup steps (views/SourcePage) ------------------------------- */
 
-QFrame#source_setup {
-  background: @surface;
-  border: 1px solid @border;
-  border-radius: @radius_panel;
+QLabel#step_title[state="todo"] {
+  color: @text_muted;
 }
 
 QLabel#step_marker {
@@ -866,29 +872,13 @@ QPushButton#chip:checked {
 
 /* --- Runners page -------------------------------------------------------- */
 
-QFrame#runners_card {
-  background: @surface;
-  border: 1px solid @border;
-  border-radius: @radius_panel;
-}
-
-QFrame#runner_row {
-  background: transparent;
-  border: 1px solid @border;
-  border-radius: @radius_panel;
-}
-
-QFrame#runner_row[current="true"] {
-  border-color: @accent;
-}
-
-QFrame#catalog_row {
-  border: none;
-  border-bottom: 1px solid @border;
-}
-
-QPushButton#danger {
-  color: @error;
+/* The build Windows games use by default, beside its name. */
+QLabel#default_tag {
+  color: @accent;
+  font-size: @font_size_small;
+  border: 1px solid @accent;
+  border-radius: 8px;
+  padding: 0px 6px;
 }
 
 QWidget#segmented {
@@ -909,13 +899,13 @@ QWidget#segmented QPushButton:checked {
   font-weight: 600;
 }
 
-QFrame#runners_card QProgressBar {
+QWidget#runners_page QProgressBar {
   background: @border;
   border: none;
   border-radius: 2px;
 }
 
-QFrame#runners_card QProgressBar::chunk {
+QWidget#runners_page QProgressBar::chunk {
   background: @accent;
   border-radius: 2px;
 }
