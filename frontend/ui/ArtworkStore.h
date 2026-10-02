@@ -99,7 +99,7 @@ private:
   static constexpr int kMaxInFlight = 8;
 
   QHash<QString, QPixmap> original_;  // by id, at whatever size mirad sent
-  QHash<QString, QPixmap> scaled_;    // by "id@tile_width"
+  QHash<QString, QHash<int, QPixmap>> scaled_;  // by id, then tile width
   QSet<QString> answered_;            // asked and heard back, either way
   QSet<QString> queued_;              // in `pending_` or in flight
   QSet<QString> ask_again_;           // in flight when mirad said it has art now

@@ -3243,11 +3243,13 @@ void LibraryWindow::RefreshContinue() {
       if (HasTag(game, "hidden") || game.source == "launcher") continue;
       if (game.running || game.last_played_at) games.push_back(&game);
     }
-    std::ranges::sort(games, [](const mira_gui::GameSummary* a, const mira_gui::GameSummary* b) {
-      if (a->running != b->running) return a->running;
-      return a->last_played_at.value_or(0) > b->last_played_at.value_or(0);
-    });
-    if (games.size() > static_cast<size_t>(continue_count_)) games.resize(continue_count_);
+    const size_t keep = std::min(games.size(), static_cast<size_t>(continue_count_));
+    std::partial_sort(games.begin(), games.begin() + keep, games.end(),
+                      [](const mira_gui::GameSummary* a, const mira_gui::GameSummary* b) {
+                        if (a->running != b->running) return a->running;
+                        return a->last_played_at.value_or(0) > b->last_played_at.value_or(0);
+                      });
+    games.resize(keep);
   }
   continue_row_->SetGames(games);
 }
