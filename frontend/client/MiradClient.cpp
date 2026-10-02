@@ -19,6 +19,22 @@ namespace {
 
 using nlohmann::json;
 
+// Percent-encodes everything outside RFC 3986's unreserved set.
+std::string QueryEncode(const std::string& text) {
+  static constexpr char kHex[] = "0123456789ABCDEF";
+  std::string out;
+  for (const unsigned char c : text) {
+    if (std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
+      out += static_cast<char>(c);
+    } else {
+      out += '%';
+      out += kHex[c >> 4];
+      out += kHex[c & 15];
+    }
+  }
+  return out;
+}
+
 // Each of these is the blocking half of one endpoint, run on a worker thread
 // by async::Run below. They are written as "ask transport, shape the reply"
 // and nothing else: no socket, no timeouts, no error unwrapping.
@@ -28,6 +44,9 @@ HealthStatus GetHealthSync() {
   const transport::Reply reply = transport::Get("/v1/health");
   status.reachable = reply.ok;
   status.detail = reply.ok ? reply.body.value("status", std::string("ok")) : reply.error.message;
+  if (reply.ok && reply.body.is_object() && reply.body.contains("api") && reply.body["api"].is_number_integer()) {
+    status.api = reply.body["api"].get<int>();
+  }
   return status;
 }
 
@@ -843,7 +862,7 @@ TricksResult RunWinetricksSync(const std::string& id, const std::string& verb) {
 }
 
 RunnerRemoveResult DeleteRunnerSync(const std::string& kind, const std::string& name) {
-  const transport::Reply reply = transport::Delete("/v1/runners/" + kind + ":" + name);
+  const transport::Reply reply = transport::Delete("/v1/runners/" + kind + ":" + QueryEncode(name));
   return {reply.ok, reply.error};
 }
 
@@ -1060,22 +1079,6 @@ HumbleLibraryResult GetHumbleLibrarySync() {
 StoreActionResult DownloadHumbleBundleSync(const std::string& bundle_key) {
   const transport::Reply reply = transport::PostJson("/v1/humble/download", {{"bundle_key", bundle_key}});
   return {reply.ok, reply.error};
-}
-
-// Percent-encodes everything outside RFC 3986's unreserved set.
-std::string QueryEncode(const std::string& text) {
-  static constexpr char kHex[] = "0123456789ABCDEF";
-  std::string out;
-  for (const unsigned char c : text) {
-    if (std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
-      out += static_cast<char>(c);
-    } else {
-      out += '%';
-      out += kHex[c >> 4];
-      out += kHex[c & 15];
-    }
-  }
-  return out;
 }
 
 GriddbMatchesResult GetGriddbMatchesSync(const std::string& id, const std::string& query) {
@@ -1654,7 +1657,7 @@ bool MiradClient::ParseGameSummaries(const std::string& data, std::vector<GameSu
   }
   out->clear();
   for (const json& game : entry["games"]) {
-    if (game.is_object() && !game.value("id", std::string()).empty()) out->push_back(mapping::ToGameSummary(game));
+    if (mapping::Str(game, "id") != "") out->push_back(mapping::ToGameSummary(game));
   }
   return true;
 }

@@ -119,7 +119,11 @@ void DownloadsPanel::ShowBelow(QWidget* anchor) {
 
 void DownloadsPanel::Rebuild() {
   while (QLayoutItem* item = rows_->takeAt(0)) {
-    delete item->widget();
+    // Deferred: a row's own button click may be what led here.
+    if (item->widget() != nullptr) {
+      item->widget()->hide();
+      item->widget()->deleteLater();
+    }
     delete item;
   }
   const auto& entries = tracker_->Entries();

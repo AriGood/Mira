@@ -266,7 +266,7 @@ void Watcher::HandleInotify() {
     library::Scanner scanner(config_, games_, events_);
     for (const fs::path& root : deleted_from) {
       const ScanSummary summary = scanner.ScanRoot(root);
-      for (const model::Game& game : summary.added_games) metadata_fetches_.Enqueue(config_, events_, game);
+      for (const model::Game& game : summary.added_games) metadata_fetches_->Enqueue(config_, events_, game);
     }
   }
   RearmTimer();
@@ -291,7 +291,8 @@ void Watcher::HandleDebounceTick() {
   }
 
   if (!settled.empty()) {
-    library::Scanner scanner(config_, games_, events_);
+    // Extractions run one by one; each root is scanned once afterwards, however many paths settled in it.
+    std::set<fs::path> to_scan;
     for (const std::string& path : settled) {
       const Pending entry = pending_.at(path);
       pending_.erase(path);
@@ -304,14 +305,15 @@ void Watcher::HandleDebounceTick() {
           log::Error("failed to extract {}: {}", path, extracted.error().message);
           continue;
         }
-        const ScanSummary summary = scanner.ScanRoot(entry.root);
-        for (const model::Game& game : summary.added_games) metadata_fetches_.Enqueue(config_, events_, game);
-        continue;
+      } else {
+        log::Info("{} settled, scanning {}", path, entry.root.string());
       }
-
-      log::Info("{} settled, scanning {}", path, entry.root.string());
-      const ScanSummary summary = scanner.ScanRoot(entry.root);
-      for (const model::Game& game : summary.added_games) metadata_fetches_.Enqueue(config_, events_, game);
+      to_scan.insert(entry.root);
+    }
+    library::Scanner scanner(config_, games_, events_);
+    for (const fs::path& root : to_scan) {
+      const ScanSummary summary = scanner.ScanRoot(root);
+      for (const model::Game& game : summary.added_games) metadata_fetches_->Enqueue(config_, events_, game);
     }
   }
   RearmTimer();

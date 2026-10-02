@@ -71,7 +71,7 @@ Result<SteamScanSummary> SteamScanner::Scan() {
     game.updated_at = model::NowSeconds();
     if (!existing) game.created_at = game.updated_at;
 
-    auto result = games_.Upsert(game);
+    auto result = games_.Merge(existing, game);
     if (!result) {
       log::Error("failed to save steam game {}: {}", id, result.error().message);
       continue;

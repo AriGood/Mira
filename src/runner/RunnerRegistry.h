@@ -30,6 +30,9 @@ const model::RunnerBuild& PickAuto(const config::Config& config, const std::vect
 // Owns every IRunner and resolves a "kind:name" reference (name may be
 // "auto"/"latest" for the newest discovered build) to a concrete runner +
 // build. The one place a game's runner_ref gets turned into actual work.
+// Held while something provisions or runs winetricks in a prefix, so two never touch one prefix at once.
+std::unique_lock<std::mutex> LockPrefix(const std::string& data_dir);
+
 class RunnerRegistry {
 public:
   explicit RunnerRegistry(config::Config& config);

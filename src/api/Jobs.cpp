@@ -44,7 +44,8 @@ std::string JobRegistry::Start(const std::string& kind, const std::string& targe
   std::string id;
   {
     std::lock_guard lock(mutex_);
-    id = IsValidId(requested) ? requested
+    const bool taken = std::ranges::any_of(jobs_, [&](const json& job) { return job.value("id", "") == requested; });
+    id = (IsValidId(requested) && !taken) ? requested
                               : std::format("{}-{}-{}", kind,
                                             std::chrono::duration_cast<std::chrono::milliseconds>(
                                                 std::chrono::system_clock::now().time_since_epoch())

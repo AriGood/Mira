@@ -1,3 +1,4 @@
+#include "core/Strings.h"
 #include "itch/Itch.h"
 
 #include <fcntl.h>
@@ -86,7 +87,12 @@ ItchAuthStatus Status(const config::Config& config) {
   return status;
 }
 
-Result<void> Login(const config::Config& config, const std::string& api_key) {
+Result<void> Login(const config::Config& config, const std::string& pasted_key) {
+  const std::string api_key = strings::Trim(pasted_key);
+  // Checked before anything is written, so a bad key can't log out a working one.
+  if (const Result<nlohmann::json> result = Call(config, "Profile.LoginWithAPIKey", {{"apiKey", api_key}}); !result) {
+    return std::unexpected(result.error());
+  }
   const fs::path key_file = ApiKeyFile(config);
   std::error_code ec;
   fs::create_directories(key_file.parent_path(), ec);
@@ -97,12 +103,6 @@ Result<void> Login(const config::Config& config, const std::string& api_key) {
   const bool written = ::write(fd, api_key.data(), api_key.size()) == static_cast<ssize_t>(api_key.size());
   ::close(fd);
   if (!written) return Err("write_failed", "couldn't write " + key_file.string());
-
-  const Result<nlohmann::json> result = Call(config, "Profile.LoginWithAPIKey", {{"apiKey", api_key}});
-  if (!result) {
-    fs::remove(key_file, ec);
-    return std::unexpected(result.error());
-  }
   return {};
 }
 

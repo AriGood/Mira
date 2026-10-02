@@ -12,6 +12,19 @@
 // Not in the endpoints because these are meanings, not I/O.
 namespace mira_gui::mapping {
 
+// Typed reads that never throw: a missing, null or wrong-typed key gives the fallback.
+inline std::string Str(const nlohmann::json& object, const char* key, std::string fallback = "") {
+  if (!object.is_object()) return fallback;
+  const auto it = object.find(key);
+  return (it != object.end() && it->is_string()) ? it->get<std::string>() : fallback;
+}
+
+inline int Int(const nlohmann::json& object, const char* key, int fallback = 0) {
+  if (!object.is_object()) return fallback;
+  const auto it = object.find(key);
+  return (it != object.end() && it->is_number_integer()) ? it->get<int>() : fallback;
+}
+
 // An error object: {"code", "message", "hint"?, "fix"?} as in mirad's error
 // envelope, or the same fields on a failure event (with "error" for the message).
 ApiError ToApiError(const nlohmann::json& error);

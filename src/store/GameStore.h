@@ -43,6 +43,12 @@ public:
   // Inserts or replaces a game wholesale, then saves.
   Result<void> Upsert(model::Game game);
 
+  // Upsert for an importer that read `base`, edited `game`, then spent a while
+  // provisioning: only the fields it changed are applied to the stored record,
+  // so a rename, tag, playtime or status change made meanwhile survives. On
+  // success `game` holds the stored result.
+  Result<void> Merge(const std::optional<model::Game>& base, model::Game& game);
+
   // Applies `mutator` to the stored game under lock, saves, and returns the
   // updated copy. The common path for partial updates (PATCH, status
   // transitions) so read-modify-write is never split across two lock

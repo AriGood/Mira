@@ -452,34 +452,87 @@ bool GameEditForm::IsDirty() const {
 }
 
 void GameEditForm::Save() {
-  const mira_gui::GamePatch patch = CurrentPatch();
+  const mira_gui::GamePatch current = CurrentPatch();
   const std::vector<mira_gui::GameConfigEdit> override_edits = overrides_->PendingEdits();
 
-  setEnabled(false);
-  mira_gui::MiradClient::PatchGameAsync(
-      this, id_, patch, [this, patch, override_edits](mira_gui::PatchGameResult result) {
-        if (!result.ok) {
+  // Only what changed here is sent, so a pin, hide or rename made elsewhere
+  // while the card was open isn't reverted. Tags go as add/remove sets for the same reason.
+  mira_gui::GamePatch patch;
+  const auto changed = [](const std::optional<std::string>& now, const std::optional<std::string>& before,
+                          std::optional<std::string>& out) {
+    if (now != before) out = now;
+  };
+  changed(current.name, original_patch_.name, patch.name);
+  changed(current.exe_path, original_patch_.exe_path, patch.exe_path);
+  changed(current.args, original_patch_.args, patch.args);
+  changed(current.working_dir, original_patch_.working_dir, patch.working_dir);
+  changed(current.runner_ref, original_patch_.runner_ref, patch.runner_ref);
+  changed(current.data_dir, original_patch_.data_dir, patch.data_dir);
+  changed(current.runner_config_json, original_patch_.runner_config_json, patch.runner_config_json);
+  changed(current.env_json, original_patch_.env_json, patch.env_json);
+  const bool fields_changed = patch.name || patch.exe_path || patch.args || patch.working_dir || patch.runner_ref ||
+                              patch.data_dir || patch.runner_config_json || patch.env_json;
+
+  mira_gui::GamesPatch tags;
+  tags.ids = {id_};
+  const std::vector<std::string> now_tags = current.tags.value_or(std::vector<std::string>());
+  const std::vector<std::string> was_tags = original_patch_.tags.value_or(std::vector<std::string>());
+  for (const std::string& tag : now_tags) {
+    if (std::ranges::find(was_tags, tag) == was_tags.end()) tags.add_tags.push_back(tag);
+  }
+  for (const std::string& tag : was_tags) {
+    if (std::ranges::find(now_tags, tag) == now_tags.end()) tags.remove_tags.push_back(tag);
+  }
+  const bool tags_changed = !tags.add_tags.empty() || !tags.remove_tags.empty();
+
+  const auto fail = [this](const std::string& error) {
+    setEnabled(true);
+    emit SaveFinished(false, QString::fromStdString(error));
+  };
+  const auto save_overrides = [this, override_edits, fail] {
+    if (override_edits.empty()) {
+      setEnabled(true);
+      emit SaveFinished(true, QString());
+      return;
+    }
+    mira_gui::MiradClient::PatchGameConfigAsync(
+        this, id_, override_edits, [this](mira_gui::PatchGameConfigResult override_result) {
           setEnabled(true);
-          emit SaveFinished(false, QString::fromStdString(result.error));
-          return;
-        }
-        original_patch_ = patch;
-        if (override_edits.empty()) {
-          setEnabled(true);
+          if (!override_result.ok) {
+            emit SaveFinished(false, QString::fromStdString(override_result.error));
+            return;
+          }
+          overrides_->MarkSaved();
           emit SaveFinished(true, QString());
-          return;
-        }
-        mira_gui::MiradClient::PatchGameConfigAsync(
-            this, id_, override_edits, [this](mira_gui::PatchGameConfigResult override_result) {
-              setEnabled(true);
-              if (!override_result.ok) {
-                emit SaveFinished(false, QString::fromStdString(override_result.error));
-                return;
-              }
-              overrides_->MarkSaved();
-              emit SaveFinished(true, QString());
-            });
-      });
+        });
+  };
+  const auto save_tags = [this, tags, tags_changed, current, fail, save_overrides] {
+    original_patch_ = current;
+    if (!tags_changed) {
+      save_overrides();
+      return;
+    }
+    mira_gui::MiradClient::PatchGamesAsync(this, tags, [fail, save_overrides](mira_gui::PatchGamesResult result) {
+      if (!result.ok) {
+        fail(result.error);
+        return;
+      }
+      save_overrides();
+    });
+  };
+
+  setEnabled(false);
+  if (!fields_changed) {
+    save_tags();
+    return;
+  }
+  mira_gui::MiradClient::PatchGameAsync(this, id_, patch, [fail, save_tags](mira_gui::PatchGameResult result) {
+    if (!result.ok) {
+      fail(result.error);
+      return;
+    }
+    save_tags();
+  });
 }
 
 }  // namespace mira_gui

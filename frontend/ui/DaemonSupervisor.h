@@ -28,6 +28,7 @@ class DaemonSupervisor : public QObject {
  signals:
   void Ready();
   void Failed(QString error);
+  void Outdated(int api);  // a running mirad speaks a different API version
 
  private:
   void PollHealth(int attempts_left);

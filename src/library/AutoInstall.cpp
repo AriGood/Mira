@@ -279,8 +279,8 @@ bool BeginInstall(const std::string& id) {
   return true;
 }
 
-Result<model::Game> Install(config::Config& config, store::GameStore& games, const std::string& id,
-                            InstallMode mode, const std::optional<fs::path>& installer) {
+static Result<model::Game> InstallImpl(config::Config& config, store::GameStore& games, const std::string& id,
+                                       InstallMode mode, const std::optional<fs::path>& installer) {
   const std::lock_guard run_lock(install_run_mutex);
   std::optional<model::Game> game = games.Find(id);
   if (!game) {
@@ -336,6 +336,17 @@ Result<model::Game> Install(config::Config& config, store::GameStore& games, con
   if (!saved) return std::unexpected(saved.error());
   if (!done) return std::unexpected(done.error());
   return *saved;
+}
+
+Result<model::Game> Install(config::Config& config, store::GameStore& games, const std::string& id,
+                            InstallMode mode, const std::optional<fs::path>& installer) {
+  // A throw would otherwise leave the install "running", refusing the game forever.
+  try {
+    return InstallImpl(config, games, id, mode, installer);
+  } catch (const std::exception& error) {
+    Finish(id, error.what());
+    return Err("internal_error", error.what());
+  }
 }
 
 }  // namespace mira::library

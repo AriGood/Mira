@@ -1,3 +1,4 @@
+#include "core/Json.h"
 #include "amazon/AmazonImporter.h"
 
 #include <algorithm>
@@ -35,26 +36,26 @@ Result<AmazonImportSummary> AmazonImporter::Import() {
   const json library = ReadNileFile("library.json");
 
   for (const json& entry : installed) {
-    const std::string product_id = entry.value("id", std::string());
-    const fs::path path = entry.value("path", std::string());
+    const std::string product_id = core::JsonString(entry, "id");
+    const fs::path path = core::JsonString(entry, "path");
     std::error_code ec;
     if (product_id.empty() || !fs::is_directory(path, ec)) continue;
 
     json owned = json::object();
     if (library.is_array()) {
       const auto it = std::ranges::find_if(library, [&](const json& item) {
-        return item.contains("product") && item["product"].value("id", std::string()) == product_id;
+        return item.is_object() && item.contains("product") && core::JsonString(item["product"], "id") == product_id;
       });
       if (it != library.end()) owned = *it;
     }
-    const json product = owned.value("product", json::object());
+    const json product = owned.contains("product") ? owned["product"] : json::object();
 
     // fuel.json is what `nile launch` runs: Main.Command relative to the
     // install, plus Args and an optional working directory.
     std::ifstream fuel_file(path / "fuel.json");
     const json fuel = json::parse(fuel_file, nullptr, false, true);
-    const json main = fuel.is_object() ? fuel.value("Main", json::object()) : json::object();
-    const std::string command = ForwardSlashes(main.value("Command", std::string()));
+    const json main = fuel.is_object() && fuel.contains("Main") ? fuel["Main"] : json::object();
+    const std::string command = ForwardSlashes(core::JsonString(main, "Command"));
 
     const std::string id = "amazon-" + product_id;
     const auto existing = games_.Find(id);
@@ -69,7 +70,7 @@ Result<AmazonImportSummary> AmazonImporter::Import() {
     }
     game.install_path = path.string();
     if (!command.empty()) game.exe_path = command;
-    if (const json args = main.value("Args", json::array()); args.is_array() && game.args.empty()) {
+    if (const json args = main.contains("Args") ? main["Args"] : json::array(); args.is_array() && game.args.empty()) {
       for (const json& arg : args) {
         if (arg.is_string()) game.args += (game.args.empty() ? "" : " ") + arg.get<std::string>();
       }
@@ -81,8 +82,8 @@ Result<AmazonImportSummary> AmazonImporter::Import() {
     const fs::path sdk = NileConfigDir() / "SDK" / "Amazon Games Services";
     game.env["FUEL_DIR"] = (sdk / "Legacy").string();
     game.env["AMAZON_GAMES_SDK_PATH"] = (sdk / "AmazonGamesSDK").string();
-    game.env["AMAZON_GAMES_FUEL_ENTITLEMENT_ID"] = owned.value("id", std::string());
-    game.env["AMAZON_GAMES_FUEL_PRODUCT_SKU"] = product.value("sku", std::string());
+    game.env["AMAZON_GAMES_FUEL_ENTITLEMENT_ID"] = core::JsonString(owned, "id");
+    game.env["AMAZON_GAMES_FUEL_PRODUCT_SKU"] = core::JsonString(product, "sku");
     game.runner_config["store"] = "amazon";
     if (std::ranges::find(game.tags, "amazon") == game.tags.end()) game.tags.push_back("amazon");
     game.last_error.clear();
@@ -103,7 +104,7 @@ Result<AmazonImportSummary> AmazonImporter::Import() {
       game.status = model::GameStatus::Ready;
     }
 
-    if (auto saved = games_.Upsert(game); !saved) {
+    if (auto saved = games_.Merge(existing, game); !saved) {
       log::Error("failed to import amazon game {}: {}", product_id, saved.error().message);
       continue;
     }

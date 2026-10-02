@@ -172,7 +172,7 @@ Result<ImportSummary> Import(config::Config& config, store::GameStore& games, ap
     game.updated_at = model::NowSeconds();
     if (!existing) game.created_at = game.updated_at;
 
-    if (auto saved = games.Upsert(game); !saved) {
+    if (auto saved = games.Merge(existing, game); !saved) {
       log::Error("failed to import {} game {}: {}", launcher.name, id, saved.error().message);
       continue;
     }

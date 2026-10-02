@@ -1,5 +1,6 @@
 #include "proc/Stats.h"
 
+#include <mutex>
 #include <format>
 #include <fstream>
 
@@ -31,6 +32,9 @@ json SessionToJson(const SessionRecord& record) {
 }  // namespace
 
 Result<void> AppendSession(const std::filesystem::path& stats_file, const SessionRecord& record) {
+  // Two games ending together would otherwise both read the old file and the last write would win.
+  static std::mutex mutex;
+  const std::lock_guard lock(mutex);
   json whole = json::object();
   whole["session"] = json::array();
 

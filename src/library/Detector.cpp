@@ -38,6 +38,12 @@ bool LooksLikeElf(const fs::path& path) {
         magic[3] == 'F';
 }
 
+// Only extensionless files and the usual native-binary extensions are worth opening to check.
+bool MightBeElf(const std::string& lower_ext) {
+  return lower_ext.empty() || lower_ext == ".x86_64" || lower_ext == ".x86" || lower_ext == ".bin" ||
+         lower_ext == ".run" || lower_ext == ".appimage";
+}
+
 bool HasExecuteBit(const fs::path& path) {
   struct stat st{};
   return ::stat(path.c_str(), &st) == 0 && (st.st_mode & S_IXUSR) != 0;
@@ -113,7 +119,7 @@ std::vector<RawCandidate> WalkForExecutables(const fs::path& folder, const Detec
                          LooksLikeInstaller(entry.path(), settings, dir_has_large_file)});
       } else if (ext == ".msi") {
         found.push_back({rel, model::Platform::Windows, depth, /*is_installer=*/true});
-      } else if (ext == ".sh" || HasExecuteBit(entry.path()) || LooksLikeElf(entry.path())) {
+      } else if (ext == ".sh" || HasExecuteBit(entry.path()) || (MightBeElf(ext) && LooksLikeElf(entry.path()))) {
         // A .sh is a candidate regardless of its executable bit (archives
         // routinely lose it); anything else needs the bit or ELF magic so a
         // stray data file doesn't get treated as a launcher.

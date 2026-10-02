@@ -42,9 +42,9 @@ Outcome FromRecord(const json& record, bool failed) {
   Outcome outcome;
   outcome.ok = !failed;
   if (failed) {
-    outcome.error = mapping::ToApiError(record.value("error", json::object()));
+    outcome.error = mapping::ToApiError(record.contains("error") ? record["error"] : json::object());
   } else {
-    outcome.result = record.value("result", json::object());
+    outcome.result = record.contains("result") ? record["result"] : json::object();
   }
   return outcome;
 }
@@ -65,7 +65,7 @@ void Listen() {
     if (type != "job.finished" && type != "job.failed") return;
     const json event = json::parse(data, nullptr, false);
     if (!event.is_object()) return;
-    Resolve(event.value("id", std::string()), FromRecord(event, type == "job.failed"));
+    Resolve(mapping::Str(event, "id"), FromRecord(event, type == "job.failed"));
   });
   QObject::connect(hub, &EventHub::ConnectionChanged, hub, [](bool connected) {
     if (connected) Recheck();
@@ -97,8 +97,8 @@ void Check(QObject* context, const std::string& token, std::function<void(Outcom
                  ended(std::move(lost));
                  return;
                }
-               if (!reply.ok) return;  // still unreachable: the next reconnect asks again
-               const std::string state = reply.body.value("state", std::string());
+               if (!reply.ok || !reply.body.is_object()) return;  // still unreachable: the next reconnect asks again
+               const std::string state = mapping::Str(reply.body, "state");
                if (state == "finished" || state == "failed") ended(FromRecord(reply.body, state == "failed"));
              }));
 }

@@ -31,7 +31,8 @@ std::string ToLower(std::string text) {
 // own first argument (see AppImage's own docs): /dev/fuse absent, or
 // neither fusermount nor fusermount3 on PATH, both mean no FUSE.
 bool HasFuse() {
-  return std::filesystem::exists("/dev/fuse") || FindOnPath("fusermount") || FindOnPath("fusermount3");
+  std::error_code ec;
+  return std::filesystem::exists("/dev/fuse", ec) && (FindOnPath("fusermount") || FindOnPath("fusermount3"));
 }
 
 // Downloaded AppImages routinely lose their executable bit (a browser

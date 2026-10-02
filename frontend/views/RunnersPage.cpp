@@ -560,12 +560,15 @@ void RunnersPage::DownloadChanged(const QString& key) {
       const std::string old_reference = it->second;
       replacing_.erase(it);
       const auto old = std::ranges::find(runners_, old_reference, &RunnerInfo::reference);
+      // Copied: Confirm runs an event loop that can reassign runners_.
+      const std::string kind = old != runners_.end() ? old->kind : std::string();
+      const std::string name = old != runners_.end() ? old->name : std::string();
       if (old != runners_.end() &&
           notify::Confirm(this, "Update finished",
                           QString("Games that used %1 now use %2. Remove %1?")
                               .arg(QString::fromStdString(old->label), downloads_->NameFor(*entry)),
                           "Remove", /*destructive=*/true)) {
-        MiradClient::DeleteRunnerAsync(this, old->kind, old->name, [this](RunnerRemoveResult result) {
+        MiradClient::DeleteRunnerAsync(this, kind, name, [this](RunnerRemoveResult result) {
           if (!result.ok) SetStatus("Could not remove the old build: " + error_help::Describe(result.error), true);
           RefreshInstalled();
         });

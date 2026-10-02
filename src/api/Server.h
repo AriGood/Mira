@@ -53,6 +53,10 @@ public:
 
   // Called after a request changes library_roots, so the watcher can follow.
   // Set once, before Serve().
+  // Queues metadata and art for games added outside a request (the startup scan).
+  void QueueMetadata(const std::vector<model::Game>& games);
+  metadata::FetchQueue& MetadataQueue() { return metadata_fetches_; }
+
   void SetOnLibraryRootsChanged(std::function<void()> callback) { on_roots_changed_ = std::move(callback); }
 
 private:
@@ -84,6 +88,7 @@ private:
   BackgroundQueue tricks_queue_;
   BackgroundQueue artwork_selects_;
   BackgroundQueue artwork_thumbs_;
+  BackgroundQueue operations_;  // installs and downloads; joined with the Server so none outlive it
   // After everything a job's work touches, so it's joined first on the way down.
   JobRegistry jobs_{events_};
   std::function<void()> on_roots_changed_;

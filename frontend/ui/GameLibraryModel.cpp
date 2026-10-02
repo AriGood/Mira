@@ -33,12 +33,19 @@ void GameLibraryModel::Replace(const std::vector<GameSummary>& games) {
 
 void GameLibraryModel::Upsert(const std::vector<GameSummary>& games) {
   std::vector<const GameSummary*> added;
+  std::unordered_map<std::string, std::size_t> added_at;  // an id repeated in one batch keeps its last copy
   for (const GameSummary& game : games) {
     const auto found = rows_.find(game.id);
     if (found == rows_.end()) {
-      added.push_back(&game);
+      const auto [slot, inserted] = added_at.try_emplace(game.id, added.size());
+      if (inserted) {
+        added.push_back(&game);
+      } else {
+        added[slot->second] = &game;
+      }
       continue;
     }
+    if (games_[found->second] == game) continue;
     games_[found->second] = game;
     emit dataChanged(index(found->second, 0), index(found->second, kColumnCount - 1));
   }
@@ -60,14 +67,25 @@ void GameLibraryModel::Remove(const std::vector<std::string>& ids) {
     if (const auto found = rows_.find(id); found != rows_.end()) rows.push_back(found->second);
   }
   if (rows.empty()) return;
-  // Highest first, so each removal leaves the rows still to go where they were.
   std::ranges::sort(rows, std::greater{});
-  for (const int row : rows) {
-    beginRemoveRows(QModelIndex(), row, row);
-    games_.erase(games_.begin() + row);
+  if (rows.size() == games_.size()) {
+    beginResetModel();
+    games_.clear();
+    RebuildIndex();
+    endResetModel();
+    NoteChanged();
+    return;
+  }
+  // Highest first, one begin/end per contiguous run, with rows_ already true when the signal fires.
+  for (std::size_t i = 0; i < rows.size();) {
+    const int last = rows[i];
+    int first = last;
+    for (++i; i < rows.size() && rows[i] == first - 1; ++i) --first;
+    beginRemoveRows(QModelIndex(), first, last);
+    games_.erase(games_.begin() + first, games_.begin() + last + 1);
+    RebuildIndex();
     endRemoveRows();
   }
-  RebuildIndex();
   NoteChanged();
 }
 

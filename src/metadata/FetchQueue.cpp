@@ -67,19 +67,44 @@ void FetchQueue::Work(const config::Config& config, api::EventBus& events) {
     Job job;
     {
       std::lock_guard lock(mutex_);
-      if (stopping_ || (games_.empty() && titles_.empty())) {
+      // A game already running waits its turn, so two workers never write one game's files.
+      std::deque<Job>* from = nullptr;
+      std::deque<Job>::iterator next;
+      if (!stopping_) {
+        for (std::deque<Job>* queue : {&games_, &titles_}) {
+          next = std::find_if(queue->begin(), queue->end(),
+                              [this](const Job& waiting) { return !running_ids_.contains(waiting.game.id); });
+          if (next != queue->end()) {
+            from = queue;
+            break;
+          }
+        }
+      }
+      if (!from) {
         --workers_;
         idle_.notify_all();
         return;
       }
-      std::deque<Job>& from = games_.empty() ? titles_ : games_;
-      job = std::move(from.front());
-      from.pop_front();
+      job = std::move(*next);
+      from->erase(next);
+      running_ids_.insert(job.game.id);
       ++running_;
     }
-    const bool ok = Run(config, events, job);
-    for (const Done& done : job.done) done(ok);
+    bool ok = false;
+    try {
+      ok = Run(config, events, job);
+    } catch (const std::exception& error) {
+      log::Warn("metadata fetch threw for {}: {}", job.game.id, error.what());
+    }
+    for (const Done& done : job.done) {
+      try {
+        done(ok);
+      } catch (const std::exception& error) {
+        log::Warn("metadata fetch callback threw for {}: {}", job.game.id, error.what());
+      }
+    }
     std::lock_guard lock(mutex_);
+    running_ids_.erase(job.game.id);
     --running_;
     idle_.notify_all();
   }

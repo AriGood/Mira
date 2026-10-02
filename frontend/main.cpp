@@ -114,6 +114,8 @@ int main(int argc, char** argv) {
     activation_server->listen("mira-gui-activate");
     QObject::connect(activation_server, &QLocalServer::newConnection, window, [activation_server, window] {
       QLocalSocket* client = activation_server->nextPendingConnection();
+      QObject::connect(client, &QLocalSocket::disconnected, client, &QObject::deleteLater);
+      if (window->isMinimized()) window->showNormal();
       window->show();
       window->raise();
       window->activateWindow();
@@ -127,6 +129,14 @@ int main(int argc, char** argv) {
         "(cmake --build build --target mirad) or install the package that provides it, or "
         "start it yourself first: run \"mirad\" in a terminal, or run "
         "systemctl --user enable --now mirad.service to start it with your session.");
+    QApplication::quit();
+  });
+  QObject::connect(supervisor, &mira_gui::DaemonSupervisor::Outdated, &app, [](int api) {
+    mira_gui::notify::FailedWithHint(
+        nullptr, "The running mirad doesn't match this version of Mira.",
+        QString("It speaks API %1; this app needs API %2.").arg(api).arg(mira_gui::kExpectedApiVersion),
+        "Restart it so it picks up the update: systemctl --user restart mirad.service, or stop the mirad "
+        "process and start Mira again.");
     QApplication::quit();
   });
   supervisor->EnsureRunning();

@@ -21,6 +21,7 @@
 #include <thread>
 #include <vector>
 
+#include "core/Json.h"
 #include "core/Log.h"
 #include "core/StoreErrors.h"
 #include "itch/Itch.h"
@@ -196,6 +197,8 @@ void AnswerServerRequest(int fd, const json& request, std::mutex* write_mutex = 
 // requests get answered. When the connection drops, every waiting call fails.
 void ReadLoop(Connection& connection, int fd) {
   const auto forever = std::chrono::steady_clock::now() + std::chrono::hours(24 * 365);
+  // A throw (odd JSON, a handler) ends up as a disconnect, so waiting callers still fail instead of the daemon terminating.
+  try {
   while (true) {
     const Result<std::string> line = ReadLine(fd, forever);
     if (!line) break;
@@ -213,8 +216,8 @@ void ReadLoop(Connection& connection, int fd) {
           if (call->on_notification) handlers.push_back(call->on_notification);
         }
       }
-      const std::string method = parsed.value("method", std::string());
-      const json params = parsed.value("params", json::object());
+      const std::string method = core::JsonString(parsed, "method");
+      const json params = parsed.contains("params") ? parsed["params"] : json::object();
       for (const NotificationHandler& handler : handlers) handler(method, params);
       continue;
     }
@@ -223,11 +226,14 @@ void ReadLoop(Connection& connection, int fd) {
     const auto found = connection.pending.find(parsed["id"].get<int>());
     if (found == connection.pending.end()) continue;  // its caller gave up
     if (parsed.contains("error")) {
-      found->second->reply = Err("butlerd_error", parsed["error"].value("message", std::string("butlerd call failed")));
+      found->second->reply = Err("butlerd_error", core::JsonString(parsed["error"], "message", "butlerd call failed"));
     } else {
       found->second->reply = parsed.value("result", json::object());
     }
     connection.replied.notify_all();
+  }
+  } catch (const std::exception& error) {
+    log::Warn("butlerd reader stopped: {}", error.what());
   }
 
   const std::lock_guard<std::mutex> lock(connection.mutex);

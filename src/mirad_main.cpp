@@ -8,6 +8,9 @@
 // and supervise it. Both are first-class per the plan in
 // docs/architecture.md, and neither needs mirad to background itself.
 
+#include <unistd.h>
+
+#include <atomic>
 #include <csignal>
 #include <cstdio>
 #include <format>
@@ -119,15 +122,20 @@ int main(int argc, char** argv) {
     const mira::library::ScanSummary summary = startup_scan.ScanAll();
     mira::log::Info("startup scan: added {}, missing {}, restored {}", summary.added,
                     summary.missing, summary.restored);
+    server.QueueMetadata(summary.added_games);
   });
 
   mira::library::Watcher watcher(config, games, events);
+  watcher.UseMetadataQueue(server.MetadataQueue());
   server.SetOnLibraryRootsChanged([&watcher] { watcher.ReloadRoots(); });
   std::thread watcher_thread([&] { watcher.Run(); });
 
+  std::atomic<bool> serve_failed{false};
   std::thread server_thread([&] {
     if (auto result = server.Serve(socket_path); !result) {
       mira::log::Error("server exited: {}", result.error().message);
+      serve_failed = true;
+      kill(getpid(), SIGTERM);  // wakes WaitForShutdownSignal so the daemon doesn't linger with no socket
     }
   });
 
@@ -139,5 +147,5 @@ int main(int argc, char** argv) {
   watcher_thread.join();
   startup_scan_thread.join();
   mira::metadata::ClearCandidateThumbs(config);
-  return 0;
+  return serve_failed ? 1 : 0;
 }

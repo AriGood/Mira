@@ -5,6 +5,7 @@
 #include <deque>
 #include <functional>
 #include <mutex>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -67,6 +68,7 @@ private:
   std::deque<Job> titles_;  // store titles
   int workers_ = 0;
   int running_ = 0;
+  std::set<std::string> running_ids_;
   std::atomic<bool> stopping_{false};
   BackgroundQueue threads_;  // last: joined before the rest is torn down
 };

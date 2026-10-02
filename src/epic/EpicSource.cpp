@@ -1,3 +1,4 @@
+#include "core/Json.h"
 #include "epic/EpicSource.h"
 
 #include <json.hpp>
@@ -22,11 +23,11 @@ Result<std::vector<library::CatalogEntry>> EpicSource::Catalog(const config::Con
   for (const json& item : *listed) {
     library::CatalogEntry entry;
     entry.source = "epic";
-    entry.ref = item.value("app_name", std::string());
+    entry.ref = core::JsonString(item, "app_name");
     if (entry.ref.empty()) continue;
     // `list --json` calls this "app_title"; `list-installed --json` calls
     // the same thing "title" -- accept either.
-    entry.title = item.value("app_title", item.value("title", std::string()));
+    entry.title = core::JsonString(item, "app_title", core::JsonString(item, "title"));
     if (entry.title.empty()) entry.title = entry.ref;
     library::MarkTracked(games, entry);
     entries.push_back(std::move(entry));
