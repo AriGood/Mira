@@ -1,16 +1,12 @@
 #include "proc/Session.h"
 
-#include <fcntl.h>
-#include <unistd.h>
-
-#include <cerrno>
-#include <cstring>
 #include <format>
 #include <fstream>
 #include <sstream>
 
 #include <toml.hpp>
 
+#include "core/AtomicFile.h"
 #include "core/TomlJson.h"
 
 namespace mira::proc {
@@ -68,36 +64,10 @@ std::filesystem::path SessionFilePath(const std::filesystem::path& sessions_dir,
 }
 
 Result<void> WriteSessionRecord(const std::filesystem::path& path, const SessionRecord& record) {
-  std::error_code ec;
-  std::filesystem::create_directories(path.parent_path(), ec);
-
-  std::ostringstream text_out;
-  text_out << tomljson::ToToml(ToJson(record));
-  const std::string text = text_out.str();
-
-  const std::string temp = path.string() + ".tmp";
-  const int fd = ::open(temp.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
-  if (fd < 0) return Err("session_write_failed", std::strerror(errno));
-
-  std::size_t written = 0;
-  while (written < text.size()) {
-    const ssize_t n = ::write(fd, text.data() + written, text.size() - written);
-    if (n <= 0) {
-      const std::string message = std::strerror(errno);
-      ::close(fd);
-      return Err("session_write_failed", message);
-    }
-    written += static_cast<std::size_t>(n);
-  }
-  // fsync before the rename: a session record exists specifically to survive
-  // a crash moments later, so "written but not yet durable" defeats the
-  // point.
-  ::fsync(fd);
-  ::close(fd);
-
-  std::filesystem::rename(temp, path, ec);
-  if (ec) return Err("session_write_failed", ec.message());
-  return {};
+  std::ostringstream text;
+  text << tomljson::ToToml(ToJson(record));
+  // Durable: a session record exists to survive a crash moments later.
+  return WriteFileAtomic(path, text.str(), "session_write_failed", /*durable=*/true);
 }
 
 Result<SessionRecord> ReadSessionRecord(const std::filesystem::path& path) {
