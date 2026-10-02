@@ -136,6 +136,7 @@ const FilterEntry kFilters[] = {
     {"Hidden", "hidden", mira_gui::icons::Glyph::EyeSlash},
     // After Hidden so Ctrl+1…9 keep their filters.
     {"Needs attention", "attention", mira_gui::icons::Glyph::Warning},
+    {"Apps", "apps", mira_gui::icons::Glyph::Wrench},
 };
 
 // The filters the library's tab row offers, with its own shorter labels.
@@ -2029,6 +2030,9 @@ void LibraryWindow::ShowGameMenu(const std::string& id, const QPoint& global_pos
                                 ? "Show this game in the library again"
                                 : "Keep this game out of the library until you ask for it "
                                   "(Ctrl+H, or the Hidden filter)");
+  const bool app = mira_gui::IsApp(game);
+  QAction* toggle_app = menu.addAction(app ? "Mark as game" : "Mark as app");
+  toggle_app->setToolTip("An app is a program rather than a game: no playtime, and kept out of Continue");
   menu.addSeparator();
   QAction* remove = menu.addAction("Remove from library…");
 
@@ -2061,6 +2065,8 @@ void LibraryWindow::ShowGameMenu(const std::string& id, const QPoint& global_pos
     ToggleTag(id, kPinnedTag);
   } else if (chosen == toggle_hidden) {
     ToggleTag(id, "hidden");
+  } else if (chosen == toggle_app) {
+    ToggleTag(id, "app");
   } else if (chosen == remove) {
     mira_gui::actions::Delete(this, id, name, [this, id] { RemoveGame(id); });
   }
@@ -2078,10 +2084,12 @@ void LibraryWindow::ShowBatchMenu(const std::vector<std::string>& ids, const QPo
 
   int pinned = 0;
   int hidden = 0;
+  int apps = 0;
   for (const std::string& id : ids) {
     const mira_gui::GameSummary* game = FindGame(id);
     if (game != nullptr && HasTag(*game, kPinnedTag)) ++pinned;
     if (game != nullptr && HasTag(*game, "hidden")) ++hidden;
+    if (game != nullptr && mira_gui::IsApp(*game)) ++apps;
   }
 
   // Each offered for the games it would change, so a mixed selection gets both.
@@ -2094,6 +2102,8 @@ void LibraryWindow::ShowBatchMenu(const std::vector<std::string>& ids, const QPo
     hide->setToolTip("Keep these games out of the library until you ask for them (Ctrl+H, or the Hidden filter)");
   }
   QAction* unhide = hidden > 0 ? menu.addAction(QString("Unhide (%1)").arg(hidden)) : nullptr;
+  QAction* mark_app = apps < count ? menu.addAction(QString("Mark as app (%1)").arg(count - apps)) : nullptr;
+  QAction* mark_game = apps > 0 ? menu.addAction(QString("Mark as game (%1)").arg(apps)) : nullptr;
   auto* desktop_menu = menu.addMenu("Desktop entry");
   QAction* add_desktop_entry = desktop_menu->addAction("Add to application menu");
   QAction* remove_desktop_entry = desktop_menu->addAction("Remove from application menu");
@@ -2116,6 +2126,8 @@ void LibraryWindow::ShowBatchMenu(const std::vector<std::string>& ids, const QPo
     BatchSetTag(ids, kPinnedTag, chosen == pin);
   } else if (chosen == hide || chosen == unhide) {
     BatchSetTag(ids, "hidden", chosen == hide);
+  } else if (chosen == mark_app || chosen == mark_game) {
+    BatchSetTag(ids, "app", chosen == mark_app);
   } else if (chosen == add_desktop_entry) {
     mira_gui::actions::BatchSetDesktopEntry(this, ids, /*enabled=*/true);
   } else if (chosen == remove_desktop_entry) {
@@ -2142,6 +2154,8 @@ void LibraryWindow::BatchSetTag(const std::vector<std::string>& ids, const std::
       const QString games = one ? "this game's" : "these games'";
       mira_gui::notify::FailedRequest(this,
                                       tag == "hidden" ? QString("Could not change %1 visibility.").arg(games)
+                                      : tag == "app"  ? QString("Could not change what %1 marked as.")
+                                                            .arg(one ? "this is" : "these are")
                                                       : QString("Could not change whether %1 pinned.")
                                                             .arg(one ? "this game is" : "these games are"),
                                       result.error);
@@ -2692,7 +2706,7 @@ QWidget* LibraryWindow::BuildGameEditCard(const std::string& id) {
     QStringList facts;
     if (!source.isEmpty()) facts << source;
     if (!game->platform.empty()) facts << mira_gui::StatusLabel(game->platform);
-    if (game->play_seconds > 0) facts << mira_gui::FormatPlaytime(game->play_seconds) + " played";
+    if (game->play_seconds > 0 && !mira_gui::IsApp(*game)) facts << mira_gui::FormatPlaytime(game->play_seconds) + " played";
     auto* status = new QLabel(
         QString("<span style='color:%1; font-weight:600;'>%2</span>&nbsp;&nbsp;%3")
             .arg(status_color.name(), running ? "Playing" : mira_gui::StatusLabel(game->status),
@@ -3339,7 +3353,7 @@ void LibraryWindow::RefreshContinue() {
   std::vector<const mira_gui::GameSummary*> games;
   if (continue_row_enabled_ && CurrentFilterKey() == "all" && search_->text().trimmed().isEmpty()) {
     for (const mira_gui::GameSummary& game : library_->Games()) {
-      if (HasTag(game, "hidden") || game.source == "launcher") continue;
+      if (HasTag(game, "hidden") || mira_gui::IsApp(game) || game.source == "launcher") continue;
       if (game.running || game.last_played_at) games.push_back(&game);
     }
     const size_t keep = std::min(games.size(), static_cast<size_t>(continue_count_));

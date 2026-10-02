@@ -58,6 +58,18 @@ TEST_CASE("Filters hide hidden games except under Hidden, and launchers everywhe
   CHECK(Shown(proxy) == std::vector<std::string>{"h"});
 }
 
+TEST_CASE("Apps stay under All games, get their own filter, and never count as unplayed games") {
+  GameLibraryModel library;
+  library.Replace({Game("g", "Game"), Game("w", "Writer", {"app"})});
+  GameFilterProxy proxy(&library);
+
+  CHECK(Shown(proxy) == std::vector<std::string>{"g", "w"});
+  proxy.SetFilterKey("apps");
+  CHECK(Shown(proxy) == std::vector<std::string>{"w"});
+  proxy.SetFilterKey("never");
+  CHECK(Shown(proxy) == std::vector<std::string>{"g"});
+}
+
 TEST_CASE("A source's view lists only that source's games, hidden ones included") {
   GameLibraryModel library;
   library.Replace({Game("a", "Alpha"), Game("e1", "Epic One", {}, "epic"), Game("e2", "Epic Two", {"hidden"}, "epic")});

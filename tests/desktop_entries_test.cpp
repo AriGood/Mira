@@ -54,6 +54,30 @@ TEST_CASE("DesktopEntries never writes an entry for a Steam-sourced game -- Stea
   CHECK(fs::exists(applications / "mira-native-game.desktop"));
 }
 
+TEST_CASE("DesktopEntries: an app-tagged entry is filed under Utility, not Game") {
+  const fs::path state = TempDir("desktop-entries-app-state");
+  const fs::path applications = TempDir("desktop-entries-app-apps");
+  config::Config config(state / "settings.toml");
+  config.Load();
+  REQUIRE(config.Set("desktop_entries.enabled", true).has_value());
+  REQUIRE(config.Set("desktop_entries.directory", applications.string()).has_value());
+
+  model::Game app;
+  app.id = "writer";
+  app.name = "Writer";
+  app.status = model::GameStatus::Ready;
+  app.exe_path = "writer.exe";
+  app.tags = {"app"};
+
+  desktop::DesktopEntries entries(config);
+  REQUIRE(entries.Sync({app}).has_value());
+
+  std::ifstream in(applications / "mira-writer.desktop");
+  const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  CHECK(text.find("Categories=Utility;") != std::string::npos);
+  CHECK(text.find("Icon=application-x-executable") != std::string::npos);
+}
+
 TEST_CASE("DesktopEntries: a per-game desktop_entries.enabled=false override excludes just that game") {
   const fs::path state = TempDir("desktop-entries-override-state");
   const fs::path applications = TempDir("desktop-entries-override-apps");

@@ -150,8 +150,9 @@ void HoverCard::ShowGame(const GameSummary& game, bool running, const QString& h
   QString platform_label = QString::fromStdString(game.platform);
   if (!platform_label.isEmpty()) platform_label[0] = platform_label[0].toUpper();
   SetLine(platform_line_, native ? "Native, no Proton involved" : QString("Platform: %1").arg(platform_label));
-  SetLine(played_line_,
-          QString("%1 · %2").arg(FormatLastPlayed(game.last_played_at), FormatPlaytime(game.play_seconds)));
+  SetLine(played_line_, IsApp(game) ? FormatLastPlayed(game.last_played_at)
+                                    : QString("%1 · %2").arg(FormatLastPlayed(game.last_played_at),
+                                                             FormatPlaytime(game.play_seconds)));
   SetLine(error_line_, QString::fromStdString(game.last_error));
   SetLine(hint_line_, hint);
   Reposition();
