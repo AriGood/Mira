@@ -77,7 +77,10 @@ void OverridesEditor::BuildRows(const ConfigSchemaResult& schema) {
 
       const size_t index = fields_.size() - 1;
       connect(row, &SettingRow::ResetClicked, this, [this, index] { ResetField(index); });
-      field.OnEdited(this, [this, index] { fields_[index].row->SetModified(fields_[index].Changed()); });
+      field.OnEdited(this, [this, index] {
+        fields_[index].row->SetModified(fields_[index].Changed());
+        emit Changed();
+      });
       nav_->RegisterRow(row, field.SearchText());
     }
   }
@@ -140,6 +143,19 @@ void OverridesEditor::MarkSaved() {
     if (field.row != nullptr) field.row->SetModified(false);
   }
   Reload();  // each saved row now says "This game" and can be reset
+}
+
+void OverridesEditor::DiscardChanges() {
+  for (Field& field : fields_) {
+    if (field.row == nullptr || !field.Changed()) continue;
+    field.SetText(field.original);
+    field.row->SetModified(false);
+  }
+  emit Changed();
+}
+
+SettingsPage* OverridesEditor::AddPage(const QString& title, icons::Glyph glyph) {
+  return nav_->AddCategory(title, glyph);
 }
 
 void OverridesEditor::ResetField(size_t index) {

@@ -305,6 +305,10 @@ QPushButton:disabled {
   border-color: @border;
 }
 
+QPushButton:default:disabled {
+  background: @surface_alt;
+}
+
 /* --- Inputs -------------------------------------------------------------- */
 
 QLineEdit, QPlainTextEdit, QTextEdit, QSpinBox, QDoubleSpinBox, QComboBox {
@@ -633,6 +637,23 @@ QPushButton#text_button:hover {
   text-decoration: underline;
 }
 
+/* ui/TagEdit: one chip per tag. */
+QFrame#tag_chip {
+  background: @surface_alt;
+  border: 1px solid @border;
+  border-radius: @radius_control;
+}
+
+QToolButton#tag_remove {
+  border: none;
+  border-radius: @radius_control;
+  padding: 1px;
+}
+
+QToolButton#tag_remove:hover {
+  background: @border;
+}
+
 QListWidget, QTreeWidget, QTableWidget {
   background: @surface;
   border: 1px solid @border;
@@ -756,7 +777,8 @@ QWidget#tab_row {
   border-bottom: 1px solid @border;
 }
 
-QWidget#tab_row QPushButton {
+QWidget#tab_row QPushButton,
+QWidget#picker_tabs QPushButton {
   background: transparent;
   border: none;
   border-bottom: 2px solid transparent;
@@ -765,11 +787,13 @@ QWidget#tab_row QPushButton {
   padding: 8px 12px;
 }
 
-QWidget#tab_row QPushButton:hover {
+QWidget#tab_row QPushButton:hover,
+QWidget#picker_tabs QPushButton:hover {
   color: @text;
 }
 
-QWidget#tab_row QPushButton:checked {
+QWidget#tab_row QPushButton:checked,
+QWidget#picker_tabs QPushButton:checked {
   color: @text;
   font-weight: 600;
   border-bottom-color: @accent;

@@ -1605,7 +1605,9 @@ void Server::RegisterRoutes() {
       if (!game) return SendError(res, 404, "game_not_found", "no such game");
     }
     if (game->status == model::GameStatus::NeedsInstall) {
-      return SendError(res, 409, "needs_install", game->last_error);
+      return SendError(res, 409, "needs_install",
+                       game->last_error.empty() ? std::format("\"{}\" needs installing before it can launch", game->id)
+                                                : game->last_error);
     }
     if (game->status != model::GameStatus::Ready) {
       return SendError(res, 409, "not_ready",

@@ -77,6 +77,7 @@
 #include "../ui/ContinueRow.h"
 #include "../ui/TabRow.h"
 #include "../ui/Sources.h"
+#include "../ui/SettingsCard.h"
 #include "../ui/SettingsPanel.h"
 #include "../ui/Shortcuts.h"
 #include "../ui/SidebarStyleCard.h"
@@ -573,13 +574,7 @@ void LibraryWindow::BuildShortcuts() {
       return;
     }
     if (GameEditOpen()) {
-      if (ArtPickerOpen()) {
-        CloseArtPicker();
-      } else if (game_edit_form_->AdvancedOpen()) {
-        game_edit_form_->CloseAdvanced();
-      } else {
-        RequestCloseGameEdit();
-      }
+      GameEditBack();
       return;
     }
     if (!search_->text().isEmpty()) {
@@ -1680,8 +1675,8 @@ void LibraryWindow::UpdateTileCover(const QString& id) {
   continue_row_->RefreshCover(id.toStdString());
   // The edit card draws the same game at another size and can't notice the
   // store changing, whether or not the game has a tile. A no-op for another game.
-  if (game_edit_form_ != nullptr) game_edit_form_->RefreshCover();
   if (game_edit_backdrop_ != nullptr) game_edit_backdrop_->RefreshCover(id.toStdString());
+  if (game_edit_cover_ != nullptr) game_edit_cover_->RefreshCover(id.toStdString());
   // Sidebar rows draw the cover, or take their color from it.
   if (pinned_signature_.contains(id) || recent_signature_.contains(id)) RefreshSidebarGames();
   // Every view of that game repaints its row.
@@ -2248,11 +2243,10 @@ void LibraryWindow::CloseGameEdit() {
     game_edit_cover_ = nullptr;
     game_edit_stack_ = nullptr;
     game_edit_picker_ = nullptr;
-    game_edit_hero_button_ = nullptr;
-    game_edit_cover_button_ = nullptr;
-    game_edit_back_ = nullptr;
-    game_edit_advanced_ = nullptr;
-    game_edit_save_ = nullptr;
+    game_edit_title_ = nullptr;
+    game_edit_art_button_ = nullptr;
+    game_edit_play_ = nullptr;
+    game_edit_bar_ = nullptr;
   }
 }
 
@@ -2260,14 +2254,8 @@ bool LibraryWindow::ArtPickerOpen() const {
   return game_edit_picker_ != nullptr && game_edit_stack_->currentWidget() == game_edit_picker_;
 }
 
-void LibraryWindow::OpenArtPicker(const std::string& slot) {
-  if (game_edit_form_ == nullptr) return;
-  if (ArtPickerOpen()) {
-    // The button of the slot already open closes it again.
-    if (game_edit_picker_->slot() == slot) return CloseArtPicker();
-    game_edit_backdrop_->SetPreview(QString::fromStdString(game_edit_picker_->slot()), QPixmap());
-    game_edit_cover_->SetPreview(QPixmap());
-  }
+void LibraryWindow::OpenArtPicker() {
+  if (game_edit_form_ == nullptr || ArtPickerOpen()) return;
   if (game_edit_picker_ == nullptr) {
     game_edit_picker_ = new mira_gui::ArtPickerPanel(game_edit_form_->id(), game_edit_stack_);
     game_edit_stack_->addWidget(game_edit_picker_);
@@ -2276,12 +2264,17 @@ void LibraryWindow::OpenArtPicker(const std::string& slot) {
               game_edit_backdrop_->SetPreview(preview_slot, preview);
               if (preview_slot == "cover") game_edit_cover_->SetPreview(preview);
             });
-    // The footer is the picker's only while it's open; an apply can land after.
+    // The change bar is the picker's only while it's open; an apply can land after.
     connect(game_edit_picker_, &mira_gui::ArtPickerPanel::PickChanged, this, [this](bool has_change) {
-      if (ArtPickerOpen()) game_edit_save_->setEnabled(has_change);
+      if (!ArtPickerOpen()) return;
+      const bool hero = game_edit_picker_->slot() == "hero";
+      game_edit_bar_->SetText(has_change ? (hero ? "New hero art picked" : "New cover picked") : QString(),
+                              hero ? "Use this hero" : "Use this cover", "Cancel");
     });
     connect(game_edit_picker_, &mira_gui::ArtPickerPanel::PickActivated, this, [this] {
-      if (ArtPickerOpen()) game_edit_save_->click();
+      if (!ArtPickerOpen()) return;
+      game_edit_picker_->Apply();
+      CloseArtPicker(/*applied=*/true);
     });
     connect(game_edit_picker_, &mira_gui::ArtPickerPanel::ApplyFailed, this,
             [this](const QString& failed_slot, const QString& error) {
@@ -2290,15 +2283,10 @@ void LibraryWindow::OpenArtPicker(const std::string& slot) {
               mira_gui::notify::Failed(this, "Could not change the art.", error);
             });
   }
-  const bool hero = slot == "hero";
-  game_edit_hero_button_->setChecked(hero);
-  game_edit_cover_button_->setChecked(!hero);
-  game_edit_back_->setText("Cancel");
-  game_edit_advanced_->hide();
-  game_edit_save_->setText(hero ? "Use this hero" : "Use this cover");
-  game_edit_save_->setEnabled(false);
+  game_edit_art_button_->setChecked(true);
+  game_edit_bar_->SetText(QString());
   game_edit_stack_->setCurrentWidget(game_edit_picker_);
-  game_edit_picker_->Open(slot);
+  game_edit_picker_->Open("cover");
 }
 
 void LibraryWindow::CloseArtPicker(bool applied) {
@@ -2308,13 +2296,33 @@ void LibraryWindow::CloseArtPicker(bool applied) {
     game_edit_backdrop_->SetPreview(QString::fromStdString(game_edit_picker_->slot()), QPixmap());
     game_edit_cover_->SetPreview(QPixmap());
   }
-  game_edit_hero_button_->setChecked(false);
-  game_edit_cover_button_->setChecked(false);
-  game_edit_back_->setText("← Back");
-  game_edit_advanced_->setVisible(!game_edit_form_->AdvancedOpen());
-  game_edit_save_->setText("Save");
-  game_edit_save_->setEnabled(true);
+  game_edit_art_button_->setChecked(false);
   game_edit_stack_->setCurrentIndex(0);
+  UpdateGameEditBar();
+}
+
+void LibraryWindow::UpdateGameEditBar() {
+  game_edit_bar_->SetCount(game_edit_form_->ChangeCount());
+  game_edit_form_->SetBottomRoom(game_edit_bar_->isHidden() ? 0 : game_edit_bar_->RoomNeeded());
+}
+
+void LibraryWindow::GameEditBack() {
+  if (ArtPickerOpen()) {
+    CloseArtPicker();
+  } else if (game_edit_form_ != nullptr && game_edit_form_->AdvancedOpen()) {
+    game_edit_form_->CloseAdvanced();
+  } else {
+    RequestCloseGameEdit();
+  }
+}
+
+void LibraryWindow::UpdateGameEditPlay() {
+  if (game_edit_play_ == nullptr || game_edit_form_ == nullptr) return;
+  const mira_gui::GameSummary* game = FindGame(game_edit_form_->id());
+  const bool running = game != nullptr && game->running;
+  game_edit_play_->setText(running ? "Stop" : "Play");
+  // Same rule as the context menu's Play entry.
+  game_edit_play_->setEnabled(game != nullptr && (running || game->status == "ready"));
 }
 
 void LibraryWindow::RequestCloseGameEdit() {
@@ -2326,6 +2334,7 @@ void LibraryWindow::RequestCloseGameEdit() {
     case mira_gui::notify::UnsavedAction::Cancel:
       return;
     case mira_gui::notify::UnsavedAction::SaveAndExit:
+      close_game_edit_after_save_ = true;
       game_edit_form_->Save();  // SaveFinished, connected in BuildGameEditCard, closes on success
       return;
     case mira_gui::notify::UnsavedAction::DiscardAndExit:
@@ -2651,43 +2660,44 @@ QWidget* LibraryWindow::BuildGameEditCard(const std::string& id) {
   layout->setContentsMargins(0, 0, 0, 0);
   layout->setSpacing(0);
 
-  auto* actions = new QHBoxLayout();
-  actions->setSpacing(8);
-  auto hero_action = [card](const QString& text) {
-    auto* button = new QPushButton(text, card);
-    button->setObjectName("hero_action");
-    return button;
-  };
-  QPushButton* choose_hero = hero_action("Change hero");
-  choose_hero->setCheckable(true);
+  // Back at the top left, as in Settings; the art's one button at the right.
+  auto* top = new QHBoxLayout();
+  top->setContentsMargins(14, 12, 14, 0);
+  // hero_action's text color in base.qss: the buttons are dark glass in every theme.
+  const QColor on_glass(0xe6, 0xe8, 0xec);
+  auto* back = new QPushButton(card);
+  back->setObjectName("hero_action");
+  back->setIcon(mira_gui::icons::For(mira_gui::icons::Glyph::ArrowLeft, on_glass));
+  back->setToolTip("Back");
+  connect(back, &QPushButton::clicked, this, &LibraryWindow::GameEditBack);
+  auto* art = new QPushButton("Change art", card);
+  art->setObjectName("hero_action");
+  art->setIcon(mira_gui::icons::For(mira_gui::icons::Glyph::Image, on_glass));
+  art->setCheckable(true);
   // setChecked is OpenArtPicker/CloseArtPicker's, not the click's.
-  connect(choose_hero, &QPushButton::clicked, this, [this, choose_hero] {
-    choose_hero->setChecked(!choose_hero->isChecked());
-    OpenArtPicker("hero");
+  connect(art, &QPushButton::clicked, this, [this, art] {
+    art->setChecked(!art->isChecked());
+    if (ArtPickerOpen()) {
+      CloseArtPicker();
+    } else {
+      OpenArtPicker();
+    }
   });
-  QPushButton* choose_cover = hero_action("Change cover");
-  choose_cover->setCheckable(true);
-  connect(choose_cover, &QPushButton::clicked, this, [this, choose_cover] {
-    choose_cover->setChecked(!choose_cover->isChecked());
-    OpenArtPicker("cover");
-  });
-  game_edit_hero_button_ = choose_hero;
-  game_edit_cover_button_ = choose_cover;
-  QPushButton* close = hero_action(QString());
-  close->setIcon(mira_gui::icons::For(mira_gui::icons::Glyph::Close));
-  close->setToolTip("Close");
-  connect(close, &QPushButton::clicked, this, &LibraryWindow::RequestCloseGameEdit);
-  for (QPushButton* button : {choose_hero, choose_cover, close}) actions->addWidget(button);
+  game_edit_art_button_ = art;
+  top->addWidget(back);
+  top->addStretch(1);
+  top->addWidget(art);
+  layout->addLayout(top);
 
-  // Name and status over the art, level with the buttons. Static: the form
-  // below has its own Name field. The shadow, in the surface's color, keeps
+  // Name and status over the art. The shadow, in the surface's color, keeps
   // it off the art's detail.
   auto* header = new QHBoxLayout();
-  header->setContentsMargins(24, 16, 14, 16);
+  header->setContentsMargins(24, 4, 20, 16);
   header->setSpacing(16);
   auto* identity = new QVBoxLayout();
   identity->setSpacing(4);
   auto* title = new QLabel(game != nullptr ? QString::fromStdString(game->name) : "Game settings", card);
+  game_edit_title_ = title;
   title->setObjectName("game_edit_title");
   title->setWordWrap(true);
   auto* shadow = new QGraphicsDropShadowEffect(title);
@@ -2718,10 +2728,18 @@ QWidget* LibraryWindow::BuildGameEditCard(const std::string& id) {
   // The cover, which the hero otherwise hides, and where a picked one previews.
   game_edit_cover_ = new mira_gui::CoverChip(artwork_, card);
   if (game != nullptr) game_edit_cover_->ShowGame(*game);
-  header->addWidget(game_edit_cover_, 0, Qt::AlignTop);
+  identity->insertStretch(0, 1);
+  auto* play = new QPushButton(card);
+  play->setIcon(mira_gui::icons::For(mira_gui::icons::Glyph::Play, tokens.on_accent));
+  play->setDefault(true);
+  connect(play, &QPushButton::clicked, this, [this, id] { ToggleRunning(id); });
+  game_edit_play_ = play;
+  // Follows the game starting and stopping; the connections go with the button.
+  connect(library_, &QAbstractItemModel::dataChanged, play, [this] { UpdateGameEditPlay(); });
+  connect(library_, &QAbstractItemModel::modelReset, play, [this] { UpdateGameEditPlay(); });
+  header->addWidget(game_edit_cover_, 0, Qt::AlignBottom);
   header->addLayout(identity, /*stretch=*/1);
-  header->addLayout(actions);
-  header->setAlignment(actions, Qt::AlignTop);
+  header->addWidget(play, 0, Qt::AlignBottom);
   layout->addLayout(header);
 
   // Translucent, so the art still shows through at its top edge.
@@ -2741,79 +2759,58 @@ QWidget* LibraryWindow::BuildGameEditCard(const std::string& id) {
   auto* panel_layout = new QVBoxLayout(panel);
   panel_layout->setContentsMargins(0, 0, 0, 0);
   auto* panel_row = new QHBoxLayout();
-  panel_row->setContentsMargins(20, 0, 20, 0);
+  panel_row->setContentsMargins(20, 0, 20, 20);
   panel_row->addWidget(panel);
   layout->addLayout(panel_row, /*stretch=*/1);
 
   game_edit_stack_ = new QStackedWidget(panel);
   panel_layout->addWidget(game_edit_stack_);
-  auto* scroll = new QScrollArea(game_edit_stack_);
-  scroll->setWidgetResizable(true);
-  scroll->setFrameShape(QFrame::NoFrame);
-  scroll->setStyleSheet("QScrollArea, QScrollArea > QWidget > QWidget { background: transparent; }");
-  scroll->viewport()->setAutoFillBackground(false);
-  game_edit_stack_->addWidget(scroll);
-  auto* form_container = new QWidget();
-  auto* form_container_layout = new QVBoxLayout(form_container);
-  form_container_layout->setContentsMargins(18, 18, 18, 18);
-  game_edit_form_ = new mira_gui::GameEditForm(id, form_container);
-  game_edit_form_->SetArtworkStore(artwork_);
-  game_edit_form_->SetArtColumnVisible(false);
-  form_container_layout->addWidget(game_edit_form_);
+  game_edit_form_ = new mira_gui::GameEditForm(id, game_edit_stack_);
+  game_edit_stack_->addWidget(game_edit_form_);
+  UpdateGameEditPlay();
+  QStringList tags;
+  for (const mira_gui::GameSummary& known : library_->Games()) {
+    for (const std::string& tag : known.tags) tags << QString::fromStdString(tag);
+  }
+  tags.removeDuplicates();
+  tags.sort(Qt::CaseInsensitive);
+  game_edit_form_->SetTagSuggestions(tags);
+
+  game_edit_bar_ = new mira_gui::ChangeBar(card);
+  close_game_edit_after_save_ = false;
+  // While the art picker is open the bar is its Cancel and Use.
+  connect(game_edit_bar_, &mira_gui::ChangeBar::DiscardClicked, this, [this] {
+    if (ArtPickerOpen()) return game_edit_picker_->ResetPick();
+    game_edit_form_->DiscardChanges();
+  });
+  connect(game_edit_bar_, &mira_gui::ChangeBar::SaveClicked, this, [this] {
+    if (ArtPickerOpen()) {
+      game_edit_picker_->Apply();
+      CloseArtPicker(/*applied=*/true);
+      return;
+    }
+    game_edit_bar_->SetBusy(true);
+    game_edit_form_->Save();
+  });
+  connect(game_edit_form_, &mira_gui::GameEditForm::Changed, this, [this] {
+    if (!ArtPickerOpen()) UpdateGameEditBar();
+  });
+  connect(game_edit_form_, &mira_gui::GameEditForm::Loaded, title, &QLabel::setText);
   connect(game_edit_form_, &mira_gui::GameEditForm::LoadFailed, this, [this](QString error) {
     mira_gui::notify::Failed(this, "Could not load this game.", error);
     CloseGameEdit();
   });
   connect(game_edit_form_, &mira_gui::GameEditForm::SaveFinished, this,
           [this](bool ok, QString error) {
+            const bool close = std::exchange(close_game_edit_after_save_, false);
+            game_edit_bar_->SetBusy(false);
             if (!ok) {
               mira_gui::notify::Failed(this, "Could not save this game.", error);
               return;
             }
-            // The overlay closing back to the grid is already the feedback:
-            // a save the user just triggered isn't the background-result
-            // case a toast is for.
-            CloseGameEdit();
+            // The change bar going away is the feedback; no notice for a save the user just made.
+            if (close) CloseGameEdit();
           });
-  scroll->setWidget(form_container);
-
-  auto* footer = new QWidget(card);
-  auto* footer_layout = new QHBoxLayout(footer);
-  footer_layout->setContentsMargins(20, 12, 20, 16);
-  // While the art picker is open these are its Cancel and Use.
-  auto* back = new QPushButton("← Back", footer);
-  connect(back, &QPushButton::clicked, this, [this] {
-    if (ArtPickerOpen()) {
-      CloseArtPicker();
-    } else if (game_edit_form_->AdvancedOpen()) {
-      game_edit_form_->CloseAdvanced();
-    } else {
-      RequestCloseGameEdit();
-    }
-  });
-  auto* save = new QPushButton("Save", footer);
-  save->setDefault(true);
-  connect(save, &QPushButton::clicked, this, [this] {
-    if (!ArtPickerOpen()) return game_edit_form_->Save();
-    game_edit_picker_->Apply();
-    CloseArtPicker(/*applied=*/true);
-  });
-  // In the footer rather than at the bottom of the scrolling form.
-  game_edit_form_->SetAdvancedButtonVisible(false);
-  auto* advanced = new QPushButton("Advanced settings…", footer);
-  advanced->setToolTip("Per-game overrides of the global settings.");
-  connect(advanced, &QPushButton::clicked, game_edit_form_, &mira_gui::GameEditForm::OpenAdvanced);
-  // Back steps out of the overrides first, as it does out of the art picker.
-  connect(game_edit_form_, &mira_gui::GameEditForm::AdvancedChanged, advanced,
-          [advanced](bool open) { advanced->setVisible(!open); });
-  game_edit_back_ = back;
-  game_edit_advanced_ = advanced;
-  game_edit_save_ = save;
-  footer_layout->addWidget(back);
-  footer_layout->addStretch(1);
-  footer_layout->addWidget(advanced);
-  footer_layout->addWidget(save);
-  layout->addWidget(footer);
 
   return card;
 }
@@ -3533,7 +3530,6 @@ void LibraryWindow::HandleGameEvent(const std::string& type, const std::string& 
     if (event.slot == "cover") {
       artwork_->NoteArt(event.id, event.art);
     } else if (event.slot == "hero") {
-      if (game_edit_form_ != nullptr) game_edit_form_->RefreshBanner(event.id);
       if (game_edit_backdrop_ != nullptr) game_edit_backdrop_->RefreshHero(event.id);
     }
     return;

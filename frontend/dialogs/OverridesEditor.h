@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "../client/Types.h"
+#include "../ui/Icons.h"
 #include "../ui/SettingEditor.h"
 
 class QLabel;
@@ -13,6 +14,7 @@ class QLabel;
 namespace mira_gui {
 
 class SettingsNavWidget;
+class SettingsPage;
 
 // The "just for this game" half of a game's settings: every overridable
 // setting, resolved through default -> settings.toml -> this game, editable
@@ -42,6 +44,14 @@ public:
   // change-tracking baseline without a re-fetch, so PendingEdits() goes
   // back to empty.
   void MarkSaved();
+  // Puts every edited row back to its loaded value.
+  void DiscardChanges();
+
+  // A page of the host's own, listed before the schema's categories.
+  SettingsPage* AddPage(const QString& title, icons::Glyph glyph);
+
+signals:
+  void Changed();
 
 private:
   // One row: an overridable schema key with the same editor the settings

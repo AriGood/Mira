@@ -50,10 +50,6 @@ SettingRow* SettingEditor::Build(QWidget* parent, const QString& doc) {
     combo->setFixedWidth(280);
     // Empty is "use the default runner", which an empty box doesn't say.
     combo->lineEdit()->setPlaceholderText("Default runner");
-    QObject::connect(combo, QOverload<int>::of(&QComboBox::activated), combo, [combo = combo](int idx) {
-      combo->setEditText(combo->itemData(idx).toString());
-      combo->lineEdit()->setCursorPosition(0);
-    });
     row->AddControl(combo);
   } else if (entry.type == "an array of strings") {
     const bool folders = entry.path == "folder";
@@ -134,7 +130,7 @@ QWidget* SettingEditor::Input() const {
 std::string SettingEditor::Text() const {
   if (toggle) return toggle->isChecked() ? "true" : "false";
   if (spin) return spin->cleanText().toStdString();
-  if (combo) return combo->currentText().toStdString();
+  if (combo) return (combo->isEditable() ? RunnerRef(combo) : combo->currentText()).toStdString();
   if (list) return list->Items().join(", ").toStdString();  // mapping::ToDisplayString's form
   return line->text().toStdString();
 }
@@ -173,9 +169,12 @@ void SettingEditor::SetText(const std::string& text) {
     }
     return;
   }
-  QLineEdit* edit = combo ? combo->lineEdit() : line;
-  edit->setText(QString::fromStdString(text));
-  edit->setCursorPosition(0);
+  if (combo != nullptr) {
+    ShowRunnerRef(combo, QString::fromStdString(text));
+    return;
+  }
+  line->setText(QString::fromStdString(text));
+  line->setCursorPosition(0);
 }
 
 void SettingEditor::OnEdited(QObject* context, std::function<void()> edited) const {
@@ -189,8 +188,20 @@ void SettingEditor::OnEdited(QObject* context, std::function<void()> edited) con
   if (list) QObject::connect(list, &ListEdit::Changed, context, edited);
 }
 
+void ShowRunnerRef(QComboBox* combo, const QString& ref) {
+  const int index = ref.isEmpty() ? -1 : combo->findData(ref);
+  combo->setEditText(index >= 0 ? combo->itemText(index) : ref);
+  combo->lineEdit()->setCursorPosition(0);
+}
+
+QString RunnerRef(const QComboBox* combo) {
+  const QString text = combo->currentText();
+  const int index = combo->findText(text);
+  return index >= 0 && combo->itemData(index).isValid() ? combo->itemData(index).toString() : text;
+}
+
 void FillRunnerCombo(QComboBox* combo, const RunnersResult& runners) {
-  const QString current = combo->currentText();
+  const QString current = RunnerRef(combo);
   combo->blockSignals(true);
   combo->clear();
   combo->addItem("Auto (best available)", "auto");
@@ -201,7 +212,7 @@ void FillRunnerCombo(QComboBox* combo, const RunnersResult& runners) {
       combo->addItem(label, QString::fromStdString(runner.reference));
     }
   }
-  combo->setEditText(current);
+  ShowRunnerRef(combo, current);
   combo->blockSignals(false);
 }
 

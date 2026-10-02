@@ -45,7 +45,10 @@ struct SettingEditor {
   void OnEdited(QObject* context, std::function<void()> edited) const;
 };
 
-// Refills a runner combo: Auto, then every installed build, keeping the typed text.
+// Refills a runner combo: Auto, then every installed build, keeping its value.
 void FillRunnerCombo(QComboBox* combo, const RunnersResult& runners);
+// An editable runner combo shows a listed runner by its name; anything else is the reference as typed.
+void ShowRunnerRef(QComboBox* combo, const QString& ref);
+QString RunnerRef(const QComboBox* combo);
 
 }  // namespace mira_gui

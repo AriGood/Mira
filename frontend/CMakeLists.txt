@@ -65,8 +65,6 @@ qt_add_executable(mira-gui
   ui/GameLibraryModel.h
   ui/GameActions.cpp
   ui/GameActions.h
-  ui/HeroArtWidget.cpp
-  ui/HeroArtWidget.h
   ui/HeroBackdrop.cpp
   ui/HeroBackdrop.h
   ui/HoverCard.cpp
@@ -98,6 +96,8 @@ qt_add_executable(mira-gui
   ui/Theme.h
   ui/TabRow.cpp
   ui/TabRow.h
+  ui/TagEdit.cpp
+  ui/TagEdit.h
   ui/TileGrid.cpp
   ui/TileGrid.h
   ui/TileView.cpp
