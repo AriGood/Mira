@@ -1,3 +1,4 @@
+#include "core/Json.h"
 #include "amazon/AmazonSource.h"
 
 #include <json.hpp>
@@ -44,10 +45,10 @@ Result<std::vector<library::CatalogEntry>> AmazonSource::Catalog(const config::C
   const json library = ReadNileFile("library.json");
   if (!library.is_array()) return entries;
   for (const json& item : library) {
-    const json product = item.value("product", json::object());
+    const json product = item.is_object() && item.contains("product") ? item["product"] : json::object();
     library::CatalogEntry entry;
     entry.source = "amazon";
-    entry.ref = product.value("id", std::string());
+    entry.ref = core::JsonString(product, "id");
     if (entry.ref.empty()) continue;
     entry.title = product.contains("title") && product["title"].is_string() ? product["title"].get<std::string>()
                                                                              : entry.ref;

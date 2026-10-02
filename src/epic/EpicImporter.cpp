@@ -1,3 +1,4 @@
+#include "core/Json.h"
 #include "epic/EpicImporter.h"
 
 #include <algorithm>
@@ -29,11 +30,11 @@ std::vector<InstalledTitle> ParseInstalled(const json& parsed) {
   if (!parsed.is_array()) return out;
   for (const auto& entry : parsed) {
     InstalledTitle title;
-    title.app_name = entry.value("app_name", std::string());
+    title.app_name = core::JsonString(entry, "app_name");
     if (title.app_name.empty()) continue;
-    title.title = entry.value("title", std::string());
-    title.install_path = entry.value("install_path", std::string());
-    title.executable = entry.value("executable", std::string());
+    title.title = core::JsonString(entry, "title");
+    title.install_path = core::JsonString(entry, "install_path");
+    title.executable = core::JsonString(entry, "executable");
     out.push_back(std::move(title));
   }
   return out;

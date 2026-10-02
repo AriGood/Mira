@@ -10,7 +10,6 @@
 
 #include <json.hpp>
 
-#include "core/Json.h"
 #include "core/Log.h"
 #include "core/StoreErrors.h"
 #include "runner/Exec.h"
@@ -151,9 +150,10 @@ Result<void> Logout(const config::Config& config) {
 Result<std::string> AccessToken(const config::Config& config) {
   auto stored = ReadAuthConfig(config);
   bool expired = true;
-  if (stored && stored->contains("loginTime") && stored->contains("expires_in")) {
-    const double login_time = stored->value("loginTime", 0.0);
-    const double expires_in = stored->value("expires_in", 0.0);
+  if (stored && stored->contains("loginTime") && (*stored)["loginTime"].is_number() && stored->contains("expires_in") &&
+      (*stored)["expires_in"].is_number()) {
+    const double login_time = (*stored)["loginTime"].get<double>();
+    const double expires_in = (*stored)["expires_in"].get<double>();
     const double now = static_cast<double>(std::chrono::duration_cast<std::chrono::seconds>(
                                               std::chrono::system_clock::now().time_since_epoch())
                                               .count());

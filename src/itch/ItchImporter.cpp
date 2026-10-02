@@ -1,3 +1,4 @@
+#include "core/Json.h"
 #include "itch/ItchImporter.h"
 
 #include <algorithm>
@@ -34,22 +35,22 @@ std::vector<Cave> ParseCaves(const json& items) {
   if (!items.is_array()) return out;
   for (const json& item : items) {
     Cave cave;
-    cave.cave_id = item.value("id", std::string());
+    cave.cave_id = core::JsonString(item, "id");
     if (cave.cave_id.empty()) continue;
 
-    const json& game = item.value("game", json::object());
-    cave.game_id = std::to_string(game.value("id", std::int64_t{0}));
-    cave.title = game.value("title", std::string());
+    const json game = item.is_object() && item.contains("game") ? item["game"] : json::object();
+    cave.game_id = std::to_string(core::JsonInt(game, "id"));
+    cave.title = core::JsonString(game, "title");
 
-    const json& install_info = item.value("installInfo", json::object());
-    cave.install_folder = install_info.value("installFolder", std::string());
+    const json install_info = item.contains("installInfo") ? item["installInfo"] : json::object();
+    cave.install_folder = core::JsonString(install_info, "installFolder");
 
     // Upload.platforms.linux is an enum string ("all"/"386"/"amd64") when
     // present, absent otherwise -- not a bool, confirmed against
     // butlerd's own spec (a naive .value<bool>() here throws on a real
     // linux upload).
-    const json& upload = item.value("upload", json::object());
-    cave.is_linux_native = upload.value("platforms", json::object()).contains("linux");
+    const json upload = item.contains("upload") ? item["upload"] : json::object();
+    cave.is_linux_native = upload.contains("platforms") && upload["platforms"].is_object() && upload["platforms"].contains("linux");
 
     out.push_back(std::move(cave));
   }
@@ -72,7 +73,7 @@ Result<ItchImportSummary> ItchImporter::Import() {
   const Result<json> caves_json = Call(config_, "Fetch.Caves", {{"profileId", *profile_id}});
   if (!caves_json) return std::unexpected(caves_json.error());
 
-  const json items = caves_json->value("items", json::array());
+  const json items = caves_json->is_object() && caves_json->contains("items") ? (*caves_json)["items"] : json::array();
   const runner::RunnerRegistry provisioner(config_);
 
   for (const Cave& cave : ParseCaves(items)) {

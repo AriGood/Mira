@@ -140,7 +140,8 @@ bool FetchArtworkInto(const config::Config& config, const std::string& url, cons
   const fs::path dest = dir / (std::string(slot) + ext);
   // Beside it until complete: a failed download must not take the slot's
   // current image with it.
-  const fs::path part = dir / (std::string(slot) + ext + ".part");
+  static std::atomic<unsigned> next_part{0};
+  const fs::path part = dir / std::format("{}{}.part{}", slot, ext, next_part++);
 
   Command command;
   command.argv = {"curl", "-sSL",         "-f", "--max-time", std::string(kMaxTime),
@@ -212,7 +213,7 @@ Result<void> WriteMetadataFile(const fs::path& file, const json& info) {
   {
     std::ofstream out(part, std::ios::trunc);
     if (!out) return Err("metadata_write_failed", "couldn't open " + part.string() + " for writing");
-    out << info.dump(2);
+    out << info.dump(2, ' ', false, json::error_handler_t::replace);
     if (!out.flush()) return Err("metadata_write_failed", "couldn't write " + part.string());
   }
   std::error_code ec;
@@ -520,34 +521,34 @@ void FetchSteamOwned(const config::Config& config, const std::string& appid, con
 
     if (data.contains("header_image")) steam_info["header_image_url"] = data["header_image"];
     if (data.contains("background_raw")) steam_info["background_url"] = data["background_raw"];
-    steam_info["supported_languages"] = data.value("supported_languages", std::string());
+    steam_info["supported_languages"] = Value(data, "supported_languages", std::string());
     if (data.contains("pc_requirements") && data["pc_requirements"].is_object()) {
       steam_info["pc_requirements"] = {
-          {"minimum", data["pc_requirements"].value("minimum", std::string())},
-          {"recommended", data["pc_requirements"].value("recommended", std::string())},
+          {"minimum", Value(data["pc_requirements"], "minimum", std::string())},
+          {"recommended", Value(data["pc_requirements"], "recommended", std::string())},
       };
     }
     json dlc = json::array();
-    for (const auto& id : data.value("dlc", json::array())) dlc.push_back(id);
+    for (const auto& id : Value(data, "dlc", json::array())) dlc.push_back(id);
     steam_info["dlc"] = dlc;
     json descriptors = json::array();
     if (data.contains("content_descriptors") && data["content_descriptors"].is_object()) {
-      for (const auto& note : data["content_descriptors"].value("notes", json::array())) descriptors.push_back(note);
+      for (const auto& note : Value(data["content_descriptors"], "notes", json::array())) descriptors.push_back(note);
     }
     steam_info["content_descriptors"] = descriptors;
     if (data.contains("achievements")) {
-      steam_info["achievements_total"] = data["achievements"].value("total", 0);
+      steam_info["achievements_total"] = Value(data["achievements"], "total", 0);
     }
     json screenshots = json::array();
-    for (const auto& shot : data.value("screenshots", json::array())) {
-      const std::string url = shot.value("path_full", std::string());
+    for (const auto& shot : Value(data, "screenshots", json::array())) {
+      const std::string url = Value(shot, "path_full", std::string());
       if (!url.empty()) screenshots.push_back(url);
     }
     steam_info["screenshots"] = screenshots;
     json movies = json::array();
-    for (const auto& movie : data.value("movies", json::array())) {
-      if (!movie.contains("mp4")) continue;
-      const std::string url = movie["mp4"].value("max", std::string());
+    for (const auto& movie : Value(data, "movies", json::array())) {
+      if (!movie.is_object() || !movie.contains("mp4")) continue;
+      const std::string url = Value(movie["mp4"], "max", std::string());
       if (!url.empty()) movies.push_back(url);
     }
     steam_info["movies"] = movies;
@@ -770,18 +771,22 @@ std::filesystem::path ArtworkDir(const config::Config& config, const std::string
   return config.File().parent_path() / "artwork" / game_id;
 }
 
+json ReadMetadataFile(const fs::path& file) {
+  std::ifstream in(file);
+  json old = in ? json::parse(in, nullptr, false) : json();
+  return old.is_object() ? old : json::object();
+}
+
+// Slots the user picked by hand carry over; FetchArtworkInto then leaves them be.
+void CarryChosenSlots(const json& old, json& info) {
+  for (const auto& [key, value] : old.items()) {
+    if (value.is_object() && Value(value, "chosen", false)) info[key] = value;
+  }
+}
+
 Result<void> Fetch(const config::Config& config, const model::Game& game) {
   json info = {{"fetched_at", model::NowSeconds()}};
-  // Slots the user picked by hand carry over; FetchArtworkInto then leaves them be.
-  {
-    std::ifstream in(MetadataFile(config, game.id));
-    const json old = in ? json::parse(in, nullptr, false) : json();
-    if (old.is_object()) {
-      for (const auto& [key, value] : old.items()) {
-        if (value.is_object() && Value(value, "chosen", false)) info[key] = value;
-      }
-    }
-  }
+  CarryChosenSlots(ReadMetadataFile(MetadataFile(config, game.id)), info);
   const std::int64_t griddb_id = config::Resolver(config, game.overrides).GetInt("metadata.steamgriddb_id");
 
   // Checked before the steam: prefix below: an Epic game's runner_ref is
@@ -827,6 +832,9 @@ Result<void> Fetch(const config::Config& config, const model::Game& game) {
   fs::create_directories(metadata_file.parent_path(), ec);
   if (ec) return MetadataDirFailed(metadata_file, ec);
 
+  // A pick made while this fetch ran stays.
+  const std::lock_guard lock(MetadataFileMutex());
+  CarryChosenSlots(ReadMetadataFile(metadata_file), info);
   return WriteMetadataFile(metadata_file, info);
 }
 
@@ -854,7 +862,14 @@ Result<void> FetchCover(const config::Config& config, const model::Game& game) {
   std::error_code ec;
   fs::create_directories(metadata_file.parent_path(), ec);
   if (ec) return MetadataDirFailed(metadata_file, ec);
-  return WriteMetadataFile(metadata_file, info);
+
+  // Merged into any fuller record rather than replacing it.
+  const std::lock_guard lock(MetadataFileMutex());
+  json merged = ReadMetadataFile(metadata_file);
+  for (const auto& [key, value] : info.items()) {
+    if (!(merged.contains(key) && merged[key].is_object() && Value(merged[key], "chosen", false))) merged[key] = value;
+  }
+  return WriteMetadataFile(metadata_file, merged);
 }
 
 Result<void> SelectArtwork(const config::Config& config, const std::string& game_id, const std::string& slot,

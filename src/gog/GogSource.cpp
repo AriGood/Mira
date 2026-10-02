@@ -1,3 +1,4 @@
+#include "core/Json.h"
 #include "gog/GogSource.h"
 
 #include <algorithm>
@@ -64,8 +65,8 @@ Result<std::vector<library::CatalogEntry>> GogSource::Catalog(const config::Conf
           GetJson(std::format("https://api.gog.com/products?ids={}", joined), *token);
         products && products->is_array()) {
       for (const json& product : *products) {
-        const std::string id = std::to_string(product.value("id", std::int64_t{0}));
-        titles[id] = product.value("title", std::string());
+        const std::string id = std::to_string(core::JsonInt(product, "id"));
+        titles[id] = core::JsonString(product, "title");
       }
     }
   }

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
 
 #include <json.hpp>
@@ -19,5 +20,24 @@ namespace mira::core {
 // is_discarded() would misread as "found nothing, but that's a valid
 // result" rather than the parse failure it actually is.
 nlohmann::json ParseJsonTail(const std::string& text);
+
+// Typed reads that never throw: a missing, null or wrong-typed key gives the fallback.
+inline std::string JsonString(const nlohmann::json& j, const char* key, std::string fallback = "") {
+  if (!j.is_object()) return fallback;
+  const auto it = j.find(key);
+  return (it != j.end() && it->is_string()) ? it->get<std::string>() : fallback;
+}
+
+inline int64_t JsonInt(const nlohmann::json& j, const char* key, int64_t fallback = 0) {
+  if (!j.is_object()) return fallback;
+  const auto it = j.find(key);
+  return (it != j.end() && it->is_number_integer()) ? it->get<int64_t>() : fallback;
+}
+
+inline bool JsonBool(const nlohmann::json& j, const char* key, bool fallback = false) {
+  if (!j.is_object()) return fallback;
+  const auto it = j.find(key);
+  return (it != j.end() && it->is_boolean()) ? it->get<bool>() : fallback;
+}
 
 }  // namespace mira::core

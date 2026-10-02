@@ -13,6 +13,7 @@
 #include <string>
 #include <vector>
 
+#include "core/Json.h"
 #include "core/Log.h"
 #include "core/Paths.h"
 #include "runner/Exec.h"
@@ -60,11 +61,11 @@ Result<std::vector<LutrisRow>> ReadCatalog(const std::string& sqlite3_bin, const
   std::vector<LutrisRow> rows;
   for (const json& row : parsed) {
     rows.push_back(LutrisRow{
-        .id = row.value("id", 0),
-        .name = row.value("name", ""),
-        .slug = row.value("slug", ""),
-        .runner = row.value("runner", ""),
-        .configpath = row.value("configpath", ""),
+        .id = static_cast<int>(core::JsonInt(row, "id")),
+        .name = core::JsonString(row, "name"),
+        .slug = core::JsonString(row, "slug"),
+        .runner = core::JsonString(row, "runner"),
+        .configpath = core::JsonString(row, "configpath"),
     });
   }
   return rows;
@@ -98,9 +99,9 @@ std::map<int, std::vector<std::string>> ReadCategories(const std::string& sqlite
   const json parsed = json::parse(result->output, nullptr, false);
   if (!parsed.is_array()) return by_game;
   for (const json& row : parsed) {
-    const std::string category = row.value("name", "");
+    const std::string category = core::JsonString(row, "name");
     if (category.empty()) continue;
-    by_game[row.value("game_id", 0)].push_back(TagForCategory(category));
+    by_game[static_cast<int>(core::JsonInt(row, "game_id"))].push_back(TagForCategory(category));
   }
   return by_game;
 }

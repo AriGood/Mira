@@ -1,3 +1,4 @@
+#include "core/Json.h"
 #include "steam/SteamWebApi.h"
 
 #include <format>
@@ -51,11 +52,11 @@ Result<std::vector<OwnedGame>> ListOwnedGames(const config::Config& config) {
   if (!response.contains("games") || !response["games"].is_array()) return owned;
   for (const json& entry : response["games"]) {
     OwnedGame game;
-    if (!entry.contains("appid")) continue;
+    if (!entry.is_object() || !entry.contains("appid") || !entry["appid"].is_number_integer()) continue;
     game.appid = std::to_string(entry["appid"].get<std::int64_t>());
-    game.name = entry.value("name", std::string());
+    game.name = core::JsonString(entry, "name");
     // Steam reports this in minutes; model::Game::play_seconds is seconds.
-    game.play_seconds = entry.value("playtime_forever", std::int64_t{0}) * 60;
+    game.play_seconds = core::JsonInt(entry, "playtime_forever") * 60;
     owned.push_back(std::move(game));
   }
   return owned;
