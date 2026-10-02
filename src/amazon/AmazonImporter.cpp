@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <format>
 #include <fstream>
+#include <map>
 
 #include <json.hpp>
 
@@ -34,6 +35,14 @@ Result<AmazonImportSummary> AmazonImporter::Import() {
   const json installed = ReadNileFile("installed.json");
   if (!installed.is_array()) return summary;  // nothing installed yet
   const json library = ReadNileFile("library.json");
+  std::map<std::string, const json*> owned_by_id;
+  if (library.is_array()) {
+    for (const json& item : library) {
+      if (item.is_object() && item.contains("product")) {
+        owned_by_id.try_emplace(core::JsonString(item["product"], "id"), &item);
+      }
+    }
+  }
 
   for (const json& entry : installed) {
     const std::string product_id = core::JsonString(entry, "id");
@@ -41,13 +50,9 @@ Result<AmazonImportSummary> AmazonImporter::Import() {
     std::error_code ec;
     if (product_id.empty() || !fs::is_directory(path, ec)) continue;
 
-    json owned = json::object();
-    if (library.is_array()) {
-      const auto it = std::ranges::find_if(library, [&](const json& item) {
-        return item.is_object() && item.contains("product") && core::JsonString(item["product"], "id") == product_id;
-      });
-      if (it != library.end()) owned = *it;
-    }
+    static const json kNone = json::object();
+    const auto found = owned_by_id.find(product_id);
+    const json& owned = found != owned_by_id.end() ? *found->second : kNone;
     const json product = owned.contains("product") ? owned["product"] : json::object();
 
     // fuel.json is what `nile launch` runs: Main.Command relative to the

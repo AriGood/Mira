@@ -65,7 +65,7 @@ std::filesystem::path FindGameDir(const config::Config& config, const std::strin
 GogImporter::GogImporter(config::Config& config, store::GameStore& games, api::EventBus& events)
     : config_(config), games_(games), events_(events) {}
 
-Result<model::Game> GogImporter::ImportPath(const std::string& id, const std::filesystem::path& path) {
+Result<model::Game> GogImporter::ImportPath(const std::string& id, const std::filesystem::path& path, bool refresh) {
   const std::string game_id = "gog-" + id;
   const auto existing = games_.Find(game_id);
   const fs::path game_dir = ResolveGameDir(path);
@@ -79,7 +79,10 @@ Result<model::Game> GogImporter::ImportPath(const std::string& id, const std::fi
   // no heuristic detection needed the way EpicImporter/ItchImporter use.
   std::string title;
   std::string exe_path;
-  if (const Result<std::string> imported = RunGogdl(config_, {"import", game_dir.string()}); imported) {
+  const bool known = existing && !existing->exe_path.empty() && existing->install_path == game_dir.string();
+  if (!refresh && known) {
+    title = existing->name;
+  } else if (const Result<std::string> imported = RunGogdl(config_, {"import", game_dir.string()}); imported) {
     const json parsed = core::ParseJsonTail(*imported);
     if (!parsed.is_discarded() && parsed.is_object()) {
       title = parsed.value("title", std::string());
@@ -147,7 +150,7 @@ Result<GogImportSummary> GogImporter::Import() {
     const std::string id = found.value_or(folder);
     const bool existed = games_.Find("gog-" + id).has_value();
 
-    const Result<model::Game> imported = ImportPath(id, entry.path());
+    const Result<model::Game> imported = ImportPath(id, entry.path(), /*refresh=*/false);
     if (!imported) {
       log::Error("failed to import gog game at {}: {}", entry.path().string(), imported.error().message);
       continue;
