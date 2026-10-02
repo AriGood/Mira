@@ -64,6 +64,8 @@ private:
   ArtworkStore* artwork_ = nullptr;
   GameSummary game_;
   QPixmap preview_;
+  QPixmap preview_filled_;  // preview_ scaled to the chip at preview_dpr_, cached across paints
+  qreal preview_dpr_ = 0;
 };
 
 }  // namespace mira_gui

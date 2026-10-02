@@ -1668,7 +1668,7 @@ void LibraryWindow::SetTileWidth(int width) {
 
 void LibraryWindow::UpdateTileCover(const QString& id) {
   if (source_page_ != nullptr) source_page_->UpdateCover(id);
-  if (continue_row_->Shows(id.toStdString())) RefreshContinue();
+  continue_row_->RefreshCover(id.toStdString());
   // The edit card draws the same game at another size and can't notice the
   // store changing, whether or not the game has a tile. A no-op for another game.
   if (game_edit_form_ != nullptr) game_edit_form_->RefreshCover();
