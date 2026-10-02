@@ -665,10 +665,16 @@ void LibraryWindow::BuildShortcuts() {
 
 void LibraryWindow::ApplySettingsPrefs(const mira_gui::FrontendPrefs& prefs) {
   scan_on_startup_ = prefs.scan_on_startup.value_or(true);
-  hidden_sources_.clear();
-  for (const std::string& id : prefs.hidden_sources.value_or(std::vector<std::string>{})) {
-    hidden_sources_.insert(QString::fromStdString(id));
+  // Set only when changed in Settings; the sidebar may have changed them since.
+  if (prefs.hidden_sources) {
+    hidden_sources_.clear();
+    for (const std::string& id : *prefs.hidden_sources) hidden_sources_.insert(QString::fromStdString(id));
   }
+  if (prefs.source_order) {
+    source_order_.clear();
+    for (const std::string& id : *prefs.source_order) source_order_.push_back(QString::fromStdString(id));
+  }
+  if (prefs.hidden_sources || prefs.source_order) UpdateSourceNavs();
   recent_count_ = prefs.sidebar_recent_count.value_or(0);
   show_source_counts_ = prefs.sidebar_source_counts.value_or(true);
   source_icons_ = prefs.sidebar_source_icons.value_or(true);
@@ -948,6 +954,7 @@ void LibraryWindow::closeEvent(QCloseEvent* event) {
         // Neither Save() finishes synchronously, so quit for real only once it
         // has, via the one-shot below, not this closeEvent call.
         if (settings_dirty) {
+          close_settings_after_save_ = true;
           connect(settings_panel_, &mira_gui::SettingsPanel::SaveFinished, this,
                   [this](bool ok, QString) {
                     if (ok) QuitOrClose();
@@ -2458,6 +2465,7 @@ void LibraryWindow::RequestCloseSettings() {
     case mira_gui::notify::UnsavedAction::Cancel:
       return;
     case mira_gui::notify::UnsavedAction::SaveAndExit:
+      close_settings_after_save_ = true;
       settings_panel_->Save();  // SaveFinished, connected in BuildSettingsPage, closes on success
       return;
     case mira_gui::notify::UnsavedAction::DiscardAndExit:
@@ -2469,69 +2477,61 @@ void LibraryWindow::RequestCloseSettings() {
 QWidget* LibraryWindow::BuildSettingsPage() {
   auto* page = new QWidget(this);
   auto* layout = new QVBoxLayout(page);
-  layout->setContentsMargins(16, 12, 16, 16);
-  layout->setSpacing(10);
+  layout->setContentsMargins(0, 0, 0, 0);
+  layout->setSpacing(0);
 
-  auto* title = new QLabel("Settings", page);
-  title->setProperty("role", "heading");
-  layout->addWidget(title);
-
-  settings_panel_ = new mira_gui::SettingsPanel(page);
+  mira_gui::SettingsPanel::Previews previews;
+  previews.artwork = artwork_;
+  for (const mira_gui::GameSummary* game : PinnedGames()) previews.pinned.push_back(*game);
+  for (const mira_gui::GameSummary* game : RecentGames(10)) previews.recent.push_back(*game);
+  settings_panel_ = new mira_gui::SettingsPanel(std::move(previews), page);
+  close_settings_after_save_ = false;
   connect(settings_panel_, &mira_gui::SettingsPanel::LoadFailed, this, [this](QString error) {
     mira_gui::notify::Failed(this, "Could not load the settings.", error);
     CloseSettings();
   });
   connect(settings_panel_, &mira_gui::SettingsPanel::SaveFinished, this,
           [this](bool ok, QString error) {
+            const bool close = std::exchange(close_settings_after_save_, false);
             if (!ok) {
               mira_gui::notify::Failed(this, "Could not save the settings.", error);
               return;
             }
-            // The screen closing back to the grid is already the feedback:
-            // a save the user just triggered isn't the background-result
-            // case a toast is for.
-            CloseSettings();
+            // The change bar going away is the feedback; no notice for a save the user just made.
             RefreshSourceNavs();
+            if (close) CloseSettings();
           });
   connect(settings_panel_, &mira_gui::SettingsPanel::PrefsSaved, this, &LibraryWindow::ApplySettingsPrefs);
   layout->addWidget(settings_panel_, /*stretch=*/1);
 
+  auto* header = new QWidget();
+  auto* header_layout = new QHBoxLayout(header);
+  header_layout->setContentsMargins(0, 0, 0, 2);
+  header_layout->setSpacing(6);
+  auto* back = new QToolButton(header);
+  back->setAutoRaise(true);
+  back->setIcon(mira_gui::icons::For(mira_gui::icons::Glyph::ArrowLeft));
+  back->setToolTip("Back to the library");
+  connect(back, &QToolButton::clicked, this, &LibraryWindow::RequestCloseSettings);
+  header_layout->addWidget(back);
+  auto* title = new QLabel("Settings", header);
+  title->setProperty("role", "heading");
+  header_layout->addWidget(title, /*stretch=*/1);
+  settings_panel_->SetHeader(header);
+
   settings_panel_->AddSectionAction(
-      "Library", "Move games into Mira's folders",
+      "Library", "Moving games", "Move games into Mira's folders",
       "Moves each game's files into the library folder and its prefix into the prefix folder. "
       "Changing those folders does not move anything until you run this.",
       "Move games…", [this] { RelocateLibrary(); });
   settings_panel_->AddSectionAction(
-      "Desktop entries", "Regenerate desktop entries",
+      "Desktop entries", "Menu entries", "Regenerate desktop entries",
       "Rewrites Mira's desktop entries now, so changes to the desktop entry settings apply "
       "without waiting for the next library change.",
       "Regenerate", [this] { SyncDesktopEntries(); });
-  settings_panel_->AddSectionAction("Desktop entries", "Remove all desktop entries",
+  settings_panel_->AddSectionAction("Desktop entries", "Menu entries", "Remove all desktop entries",
                                     "Turns off desktop entries and deletes every one Mira generated.",
                                     "Remove…", [this] { RemoveAllDesktopEntries(); });
-
-  // Pinned under the settings nav's category list.
-  auto* actions = new QWidget();
-  auto* actions_layout = new QHBoxLayout(actions);
-  actions_layout->setContentsMargins(0, 0, 0, 0);
-  actions_layout->setSpacing(6);
-  auto* back = new QPushButton("← Back", actions);
-  connect(back, &QPushButton::clicked, this, &LibraryWindow::RequestCloseSettings);
-  // Not "Reset": each setting's own Reset button already means "back to the default".
-  auto* reset = new QPushButton("Discard", actions);
-  reset->setToolTip("Discard unsaved changes and go back to the last saved settings.");
-  connect(reset, &QPushButton::clicked, this, [this] {
-    if (settings_panel_ != nullptr) settings_panel_->DiscardChanges();
-  });
-  auto* save = new QPushButton("Save", actions);
-  connect(save, &QPushButton::clicked, this, [this] {
-    if (settings_panel_ != nullptr) settings_panel_->Save();
-  });
-  actions_layout->addWidget(back);
-  actions_layout->addWidget(reset);
-  actions_layout->addWidget(save);
-  settings_panel_->SetFooterActions(actions);
-
   return page;
 }
 

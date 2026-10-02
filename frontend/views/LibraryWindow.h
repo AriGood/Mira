@@ -325,10 +325,12 @@ private:
   QSlider* zoom_ = nullptr;
   QToolButton* sort_direction_ = nullptr;
   QToolButton* add_games_ = nullptr;
-  // Sidebar nav row, styled like library_nav_. Settings' own
-  // Back/Reset/Save row lives on the settings page itself (BuildSettingsPage),
-  // rebuilt fresh alongside settings_panel_ on each open.
+  // Sidebar nav row, styled like library_nav_. Settings' own back button
+  // lives on the settings page itself (BuildSettingsPage), rebuilt fresh
+  // alongside settings_panel_ on each open.
   QPushButton* settings_button_ = nullptr;
+  // Set by "Save and leave", so the save that follows closes Settings.
+  bool close_settings_after_save_ = false;
   // Moved here from the sidebar's old hamburger menu; see BuildTopBar.
   QToolButton* downloads_button_ = nullptr;
   QToolButton* refresh_button_ = nullptr;
