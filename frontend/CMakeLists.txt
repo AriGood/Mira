@@ -86,6 +86,8 @@ qt_add_executable(mira-gui
   ui/SidebarGames.h
   ui/ManageSourcesCard.cpp
   ui/ManageSourcesCard.h
+  ui/InstallPromptCard.cpp
+  ui/InstallPromptCard.h
   ui/SidebarStyleCard.cpp
   ui/SidebarStyleCard.h
   ui/Sources.cpp
@@ -158,8 +160,6 @@ qt_add_executable(mira-gui
   dialogs/ItchCollectionsDialog.h
   dialogs/LogViewerDialog.cpp
   dialogs/LogViewerDialog.h
-  dialogs/InstallDetectedDialog.cpp
-  dialogs/InstallDetectedDialog.h
   dialogs/RunInPrefixDialog.cpp
   dialogs/RunInPrefixDialog.h
   dialogs/OverridesEditor.cpp

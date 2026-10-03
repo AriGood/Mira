@@ -15,10 +15,12 @@
 #include <map>
 #include <set>
 #include <string>
+#include <deque>
 #include <vector>
 
 #include "../client/Types.h"
 #include "../ui/ArtworkStore.h"
+#include "../ui/InstallPromptCard.h"
 #include "../ui/ManageSourcesCard.h"
 #include "../ui/Shortcuts.h"
 #include "../ui/SidebarGames.h"
@@ -179,6 +181,8 @@ private:
   void BatchSetTag(const std::vector<std::string>& ids, const std::string& tag, bool present);
   // game.install_detected: offers to switch a game that was an installer to what it installed.
   void AskAboutInstall(const mira_gui::InstallDetectedEvent& event);
+  void ShowInstallPrompt(const mira_gui::InstallDetectedEvent& event);
+  void ShowNextInstallPrompt();
   void LaunchGame(const std::string& id);
   void OpenGameDialog(const std::string& id);
   // Scrim + centered card slot, built once. Shown/hidden per open rather
@@ -385,6 +389,8 @@ private:
   QWidget* sidebar_card_overlay_ = nullptr;
   QGridLayout* sidebar_card_layout_ = nullptr;
   QWidget* sidebar_card_ = nullptr;
+  // Installer prompts waiting for Settings, a game's card or another card to close.
+  std::deque<mira_gui::InstallDetectedEvent> pending_install_prompts_;
   bool show_source_counts_ = true;
   bool source_icons_ = true;
   QElapsedTimer last_row_click_;

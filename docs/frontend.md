@@ -8,7 +8,7 @@
 
 ### Library page
 
-The grid page opens on the same tab row as a source page (`ui/TabRow`): tabs for All, Installed, Playing now, Needs attention and Never played, then the filter and sort menu and the search box. There's no page title; the sidebar says where you are. Under them, *Continue playing* (`ui/ContinueRow`) shows large cards for running and recently played games while the whole library is shown. Tiles show a status line and a small mark for the source a game came from. Each part can be turned off in Settings → Interface.
+The grid page opens on the same tab row as a source page (`ui/TabRow`): tabs for All, Installed, Playing now, Needs attention and Never played, then the filter and sort menu and the search box. When the window narrows, the search box gives way first (320 px down to 160, then a search button that opens it again, as does Ctrl+F), then the last tabs move into a More menu; the current tab always stays, and source pages' rows do the same. There's no page title; the sidebar says where you are. Under them, *Continue playing* (`ui/ContinueRow`) shows large cards for running and recently played games while the whole library is shown. Tiles show a status line and a small mark for the source a game came from. Each part can be turned off in Settings → Interface.
 
 ### Sidebar
 
@@ -42,6 +42,8 @@ A Missing tools card above Installed offers to install umu-launcher or winetrick
 ### Activity
 
 The top bar's download button opens `ui/DownloadsPanel`, titled Activity. It lists everything `ui/DownloadTracker` has seen from the event stream: game installers, store installs and updates, Humble downloads, launcher installs, tool downloads, runner downloads and `mirad`'s jobs (scans, imports, moving and deleting games, removing a source). `mirad` replays recent events on connect, so work started before the GUI opened also shows. Game installers report bytes written; Epic, GOG, Amazon and itch installs report percent, speed and time left (`library.install.progress`), also drawn as a bar on the title's tile; jobs with steps report how far along they are. A finished install offers *Show*, which selects the game.
+
+When a launched game turns out to have been an installer (`game.install_detected`), `ui/InstallPromptCard` asks over the library, in the same overlay as Manage sources: the program found (or *Choose…* one inside the installed folder), a switch to mark it as an app, and *Keep as is* or *Use this program* (`finish-install`). While Mira is hidden or minimized, a notification asks first and its *Review…* button opens the card.
 
 Jobs answer `202` at once (see [api.md](api.md#jobs)). `client/Jobs` waits for each one's `job.finished` or `job.failed` on the shared event connection, and after a reconnect asks `GET /v1/jobs/{id}` about any it was still waiting on, so the `MiradClient` calls that start them still hand their caller one result.
 
@@ -172,7 +174,7 @@ Metadata is only fetched when a game is first added. A tile's *Refresh metadata 
 | `POST /v1/games/{id}/launch`, `/stop` | Play/Stop, double-click, context menu |
 | `POST /v1/games/manual` | `AddManualGameDialog` |
 | `POST /v1/games/{id}/run` | `RunInPrefixDialog` |
-| `GET /v1/games/{id}/installer`, `POST .../install`, `GET .../install/progress`, `POST .../finish-install` | `InstallGameDialog`, *Mark as installed*, `DownloadTracker` |
+| `GET /v1/games/{id}/installer`, `POST .../install`, `GET .../install/progress`, `POST .../finish-install` | `InstallGameDialog`, *Mark as installed*, `ui/InstallPromptCard`, `DownloadTracker` |
 | `POST /v1/games/{id}/tricks` | `WinetricksDialog` |
 | `GET /v1/games/{id}/log` | `LogViewerDialog` |
 | `POST /v1/games/{id}/relocate`, `/v1/library/relocate` | *Move to Mira's folders…* |

@@ -53,7 +53,6 @@
 #include "../dialogs/AddManualGameDialog.h"
 #include "../dialogs/DesktopEntryImportDialog.h"
 #include "../dialogs/GameDetailPageDialog.h"
-#include "../dialogs/InstallDetectedDialog.h"
 
 #include "../ui/AboutPanel.h"
 #include "../ui/CoverArt.h"
@@ -556,6 +555,7 @@ void LibraryWindow::BuildShortcuts() {
   };
 
   window_action("focus_search", "Focus the search box", QKeySequence(QKeySequence::Find), {}, [this] {
+    library_tabs_->OpenSearch();  // a narrow window shows only its button
     search_->setFocus(Qt::ShortcutFocusReason);
     search_->selectAll();
   });
@@ -1551,9 +1551,8 @@ QWidget* LibraryWindow::BuildLibraryHeader() {
   search_->setObjectName("library_search");
   search_->setPlaceholderText("Search…");
   search_->setClearButtonEnabled(true);
-  search_->setFixedSize(240, mira_gui::TabRow::kControlHeight);
   connect(search_, &QLineEdit::textChanged, this, [this] { ApplyFilter(); });
-  library_tabs_->SetTrailing(search_);
+  library_tabs_->SetSearch(search_);
   layout->addWidget(library_tabs_);
 
   continue_row_ = new mira_gui::ContinueRow(artwork_, top);
@@ -2176,21 +2175,54 @@ void LibraryWindow::ToggleTag(const std::string& id, const std::string& tag) {
 void LibraryWindow::AskAboutInstall(const mira_gui::InstallDetectedEvent& event) {
   const mira_gui::GameSummary* game = FindGame(event.id);
   if (game == nullptr) return;
-  mira_gui::InstallDetectedDialog dialog(QString::fromStdString(game->name), event.install_path, event.exe_path,
-                                         this);
-  if (dialog.exec() != QDialog::Accepted) return;
-  const std::string id = event.id;
-  const bool is_app = dialog.IsApp();
-  mira_gui::MiradClient::FinishInstallAsync(
-      this, id,
-      [this, id, is_app](mira_gui::FinishInstallResult result) {
-        if (!result.ok) {
-          mira_gui::notify::FailedRequest(this, "Could not switch to the installed program.", result.error);
-          return;
-        }
-        if (is_app) BatchSetTag({id}, "app", true);
-      },
-      event.install_path, dialog.ExePath());
+  // Out of sight, a notification asks; its button brings Mira up on the card.
+  if ((!isVisible() || isMinimized()) &&
+      mira_gui::notify::AskOutOfSight(this, QString::fromStdString(game->name) + " installed a program",
+                                      "Use it instead of the installer?", "Review…",
+                                      [this, event] { ShowInstallPrompt(event); })) {
+    return;
+  }
+  ShowInstallPrompt(event);
+}
+
+void LibraryWindow::ShowInstallPrompt(const mira_gui::InstallDetectedEvent& event) {
+  // Never over Settings, a game's card or another card: it waits until they close.
+  if (SettingsOpen() || GameEditOpen() || SidebarCardOpen()) {
+    if (std::ranges::none_of(pending_install_prompts_, [&](const auto& queued) { return queued.id == event.id; })) {
+      pending_install_prompts_.push_back(event);
+    }
+    return;
+  }
+  const mira_gui::GameSummary* game = FindGame(event.id);
+  if (game == nullptr) return;
+  auto* card = new mira_gui::InstallPromptCard(*game, event.install_path, event.exe_path, artwork_);
+  connect(card, &mira_gui::InstallPromptCard::CloseRequested, this, &LibraryWindow::CloseSidebarCard);
+  connect(card, &mira_gui::InstallPromptCard::Accepted, this,
+          [this, id = event.id, install_path = event.install_path](const std::string& exe_path, bool is_app) {
+            CloseSidebarCard();
+            mira_gui::MiradClient::FinishInstallAsync(
+                this, id,
+                [this, id, is_app](mira_gui::FinishInstallResult result) {
+                  if (!result.ok) {
+                    mira_gui::notify::FailedRequest(this, "Could not switch to the installed program.",
+                                                    result.error);
+                    return;
+                  }
+                  if (is_app) BatchSetTag({id}, "app", true);
+                },
+                install_path, exe_path);
+          });
+  ShowSidebarCard(card);
+}
+
+void LibraryWindow::ShowNextInstallPrompt() {
+  // Later, so a card closing itself is fully gone first.
+  QTimer::singleShot(0, this, [this] {
+    if (pending_install_prompts_.empty() || SettingsOpen() || GameEditOpen() || SidebarCardOpen()) return;
+    const mira_gui::InstallDetectedEvent next = pending_install_prompts_.front();
+    pending_install_prompts_.pop_front();
+    ShowInstallPrompt(next);
+  });
 }
 
 void LibraryWindow::ToggleRunning(const std::string& id) {
@@ -2247,6 +2279,7 @@ void LibraryWindow::CloseGameEdit() {
     game_edit_play_ = nullptr;
     game_edit_bar_ = nullptr;
   }
+  ShowNextInstallPrompt();
 }
 
 bool LibraryWindow::ArtPickerOpen() const {
@@ -2378,6 +2411,7 @@ void LibraryWindow::CloseSettings() {
     settings_page_ = nullptr;
     settings_panel_ = nullptr;
   }
+  ShowNextInstallPrompt();
 }
 
 bool LibraryWindow::SettingsOpen() const {
@@ -2624,6 +2658,7 @@ void LibraryWindow::CloseSidebarCard() {
     sidebar_card_->deleteLater();  // its own Close may be what got us here
     sidebar_card_ = nullptr;
   }
+  ShowNextInstallPrompt();
 }
 
 bool LibraryWindow::SidebarCardOpen() const {
