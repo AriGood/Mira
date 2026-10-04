@@ -312,6 +312,52 @@ QPushButton:default:disabled {
   background: @surface_alt;
 }
 
+/* Frameless tool buttons (autoRaise): back, close, fold, more, a row's grip
+ * and undo. Fusion's own hover is a raised bevel that matches nothing else. */
+QToolButton[autoRaise="true"] {
+  background: transparent;
+  border: none;
+  border-radius: @radius_control;
+  padding: 4px;
+}
+
+QToolButton[autoRaise="true"]:hover {
+  background: @surface_alt;
+}
+
+QToolButton[autoRaise="true"]:pressed {
+  background: @border;
+}
+
+QToolButton[autoRaise="true"]:checked {
+  background: @accent_soft;
+}
+
+QToolButton[autoRaise="true"]:focus {
+  border: 1px solid @accent;
+  padding: 3px;
+}
+
+/* A menu button's glyph already says it opens a menu. */
+QToolButton[autoRaise="true"]::menu-indicator {
+  image: none;
+  width: 0;
+}
+
+/* A card's "Reset to defaults", quieter than the settings around it. */
+QToolButton#card_reset {
+  color: @text_muted;
+  padding: 0 8px;
+}
+
+QToolButton#card_reset:hover {
+  color: @text;
+}
+
+QToolButton#card_reset:focus {
+  padding: 0 7px;
+}
+
 /* --- Inputs -------------------------------------------------------------- */
 
 QLineEdit, QPlainTextEdit, QTextEdit, QSpinBox, QDoubleSpinBox, QComboBox {
@@ -578,24 +624,6 @@ QWidget#row_dot {
 
 QWidget#setting_row[dragging="true"] {
   background: @surface_alt;
-}
-
-QToolButton#row_reset,
-QToolButton#row_grip {
-  border: none;
-  border-radius: @radius_control;
-  padding: 3px;
-}
-
-QToolButton#row_reset:hover,
-QToolButton#row_grip:hover {
-  background: @surface_alt;
-}
-
-QToolButton#row_reset:focus,
-QToolButton#row_grip:focus {
-  border: 1px solid @accent;
-  padding: 2px;
 }
 
 QFrame#change_bar {
@@ -908,21 +936,4 @@ QWidget#runners_page QProgressBar {
 QWidget#runners_page QProgressBar::chunk {
   background: @accent;
   border-radius: 2px;
-}
-
-/* ui/HelpButton: a setting's [?]. */
-QToolButton#help_button {
-  background: transparent;
-  color: @text_muted;
-  border: 1px solid @border;
-  border-radius: 9px;
-  padding: 0;
-  font-size: @font_size_small;
-  font-weight: 600;
-}
-
-QToolButton#help_button:hover,
-QToolButton#help_button:focus {
-  color: @accent;
-  border-color: @accent;
 }

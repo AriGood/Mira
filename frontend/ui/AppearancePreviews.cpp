@@ -2,10 +2,13 @@
 
 #include <QPainter>
 #include <QPainterPath>
+#include <QPixmap>
+#include <QSignalBlocker>
 #include <QStandardItemModel>
 #include <QStyleOptionViewItem>
 
 #include <algorithm>
+#include <array>
 #include <utility>
 
 #include "ArtworkStore.h"
@@ -40,9 +43,15 @@ void PaintMiniWindow(QPainter* painter, const QRectF& rect, const theme::Tokens&
   const qreal gap = 5;
   const qreal width = (grid.width() - gap * (kCovers - 1)) / kCovers;
   const QSize cover(qRound(width), qRound(width * 1.5));
-  for (int i = 0; i < kCovers && i < static_cast<int>(games.size()); ++i) {
+  const std::array<QColor, 4> samples = theme::SampleArt(colors);
+  for (int i = 0; i < kCovers; ++i) {
     const QRectF at(grid.left() + i * (width + gap), grid.top(), width, width * 1.5);
-    painter->drawPixmap(at.toRect(), artwork->Cover(games[i], cover, dpr));
+    if (games.empty()) {
+      painter->setBrush(samples[i]);
+      painter->drawRoundedRect(at, 3, 3);
+    } else if (i < static_cast<int>(games.size())) {
+      painter->drawPixmap(at.toRect(), artwork->Cover(games[i], cover, dpr));
+    }
   }
 }
 
@@ -124,6 +133,17 @@ constexpr QSize kPreviewTile(104, 156);
 TilePreview::TilePreview(std::vector<GameSummary> games, ArtworkStore* artwork, QWidget* parent)
     : QWidget(parent), model_(new QStandardItemModel(this)), delegate_(new GameTileDelegate(this, kPreviewTile, artwork)) {
   using Role = GameTileDelegate::Role;
+  // No games yet: two sample tiles, the second from a store so the source mark shows.
+  samples_ = games.empty();
+  if (samples_) {
+    for (const auto& [name, source] :
+         {std::pair{"Sample game", "local"}, std::pair{"Another game", "steam"}}) {
+      GameSummary game;
+      game.name = name;
+      game.source = source;
+      games.push_back(game);
+    }
+  }
   // The first pinned, the second playing, so each badge has a tile to show on.
   for (size_t i = 0; i < games.size() && i < 2; ++i) {
     auto* item = new QStandardItem();
@@ -151,7 +171,16 @@ QSize TilePreview::sizeHint() const { return {kPreviewTile.width() * 2, kPreview
 void TilePreview::paintEvent(QPaintEvent*) {
   QPainter painter(this);
   painter.setRenderHint(QPainter::Antialiasing);
+  const std::array<QColor, 4> colors = theme::SampleArt(theme::Current());
   for (int row = 0; row < model_->rowCount(); ++row) {
+    if (samples_) {
+      // A ready cover, so the delegate asks the artwork store for nothing.
+      // Colored here rather than once, to follow a theme change.
+      QPixmap cover(kPreviewTile);
+      cover.fill(colors[row]);
+      const QSignalBlocker block(model_);
+      model_->setData(model_->index(row, 0), cover, Qt::DecorationRole);
+    }
     QStyleOptionViewItem option;
     option.initFrom(this);
     option.state &= ~(QStyle::State_MouseOver | QStyle::State_HasFocus);
@@ -206,15 +235,21 @@ void LayoutPreview::paintEvent(QPaintEvent*) {
   inside.addRoundedRect(panel, shape_.panel_radius, shape_.panel_radius);
   painter.setClipPath(inside);
   const qreal dpr = devicePixelRatioF();
+  const std::array<QColor, 4> samples = theme::SampleArt(tokens);
+  const size_t count = games_.empty() ? 8 : games_.size();  // samples fill the row
   qreal x = 1 + pad;
-  for (const GameSummary& game : games_) {
+  for (size_t i = 0; i < count; ++i) {
     if (x + cover_width > play.left() - 12) break;
     const QRectF at(x, 1 + pad, cover_width, cover_height);
     QPainterPath shape;
     shape.addRoundedRect(at, shape_.cover_radius, shape_.cover_radius);
     painter.save();
     painter.setClipPath(shape, Qt::IntersectClip);
-    painter.drawPixmap(at.toRect(), artwork_->Cover(game, at.size().toSize(), dpr));
+    if (games_.empty()) {
+      painter.fillRect(at, samples[i % samples.size()]);
+    } else {
+      painter.drawPixmap(at.toRect(), artwork_->Cover(games_[i], at.size().toSize(), dpr));
+    }
     painter.restore();
     x += cover_width + shape_.tile_gap;
   }

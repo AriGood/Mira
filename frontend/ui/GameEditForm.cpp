@@ -214,6 +214,25 @@ GameEditForm::GameEditForm(std::string id, QWidget* parent) : QWidget(parent), i
     connect(edit, &QPlainTextEdit::textChanged, this, &GameEditForm::UpdateModified);
   }
   connect(tags_edit_, &TagEdit::Changed, this, &GameEditForm::UpdateModified);
+  const auto revert = [this](SettingRow* row, auto member) {
+    connect(row, &SettingRow::RevertClicked, this, [this, member] {
+      mira_gui::GamePatch patch = CurrentPatch();
+      patch.*member = original_patch_.*member;
+      populating_ = true;
+      ShowPatch(patch);
+      populating_ = false;
+      UpdateModified();
+    });
+  };
+  revert(name_row_, &mira_gui::GamePatch::name);
+  revert(exe_row_, &mira_gui::GamePatch::exe_path);
+  revert(args_row_, &mira_gui::GamePatch::args);
+  revert(working_dir_row_, &mira_gui::GamePatch::working_dir);
+  revert(tags_row_, &mira_gui::GamePatch::tags);
+  revert(runner_row_, &mira_gui::GamePatch::runner_ref);
+  revert(data_dir_row_, &mira_gui::GamePatch::data_dir);
+  revert(runner_config_row_, &mira_gui::GamePatch::runner_config_json);
+  revert(env_row_, &mira_gui::GamePatch::env_json);
   connect(data_dir_edit_, &QLineEdit::textChanged, this,
           [this](const QString& path) { open_data_dir_->setEnabled(!path.isEmpty() && QDir(path).exists()); });
 

@@ -3,25 +3,27 @@
 #include <algorithm>
 
 #include <QApplication>
-#include <QEnterEvent>
-#include <QKeyEvent>
+#include <QCursor>
 #include <QGraphicsDropShadowEffect>
 #include <QHBoxLayout>
 #include <QHash>
+#include <QHelpEvent>
+#include <QKeyEvent>
 #include <QLabel>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPushButton>
+#include <QTimer>
 #include <QToolButton>
 #include <QTransform>
 #include <QVBoxLayout>
 #include <QVariantAnimation>
 
-#include "HelpButton.h"
 #include "Icons.h"
 #include "SettingsColumns.h"
 #include "SettingsNav.h"
 #include "Theme.h"
+#include "ToolTip.h"
 
 namespace mira_gui {
 namespace {
@@ -112,10 +114,9 @@ void Switch::paintEvent(QPaintEvent*) {
 
 // --- SettingRow -----------------------------------------------------------
 
-SettingRow::SettingRow(const QString& label, const QString& doc, QWidget* parent, const QString& link)
+SettingRow::SettingRow(const QString& label, const QString& doc, QWidget* parent)
     : QWidget(parent) {
   setObjectName("setting_row");
-  setAttribute(Qt::WA_Hover);
   setAttribute(Qt::WA_StyledBackground);  // so a row being dragged can be highlighted
   outer_ = new QVBoxLayout(this);
   outer_->setContentsMargins(8, 8, kRowPaddingX, 8);
@@ -138,26 +139,41 @@ SettingRow::SettingRow(const QString& label, const QString& doc, QWidget* parent
   label_->setMinimumHeight(30);
   line_->addWidget(label_);
   if (!doc.isEmpty()) {
-    help_ = new HelpButton(doc, link, this);
-    KeepSpaceWhenHidden(help_);
-    help_->hide();
-    line_->addWidget(help_, 0, Qt::AlignVCenter);
+    label_->setToolTip(doc);
+    label_->setAccessibleDescription(doc);
+    doc_delay_ = new QTimer(this);
+    doc_delay_->setSingleShot(true);
+    doc_delay_->setInterval(300);
+    connect(doc_delay_, &QTimer::timeout, this, [this] {
+      if (!label_->underMouse()) return;
+      QHelpEvent help(QEvent::ToolTip, label_->mapFromGlobal(QCursor::pos()), QCursor::pos());
+      QApplication::sendEvent(label_, &help);
+    });
+    label_->installEventFilter(this);
   }
   label_end_ = line_->count();
   line_->addStretch(1);
 
-  reset_ = new QToolButton(this);
-  reset_->setObjectName("row_reset");
-  reset_->setAutoRaise(true);
-  reset_->setIcon(icons::For(icons::Glyph::Undo, theme::Current().text_muted));
-  reset_->setToolTip("Reset to default");
-  KeepSpaceWhenHidden(reset_);
-  reset_->hide();
-  connect(reset_, &QToolButton::clicked, this, &SettingRow::ResetClicked);
-  line_->addWidget(reset_, 0, Qt::AlignVCenter);
+  revert_ = new QToolButton(this);
+  revert_->setObjectName("row_revert");
+  revert_->setAutoRaise(true);
+  revert_->setIcon(icons::For(icons::Glyph::Undo, theme::Current().text_muted));
+  revert_->setToolTip("Undo this change");
+  revert_->setAccessibleName("Undo the change to " + label);
+  KeepSpaceWhenHidden(revert_);
+  revert_->hide();
+  connect(revert_, &QToolButton::clicked, this, &SettingRow::RevertClicked);
+  line_->addWidget(revert_, 0, Qt::AlignVCenter);
+}
 
-  // Keyboard users get the [?] and reset too, while focus is anywhere in the row.
-  connect(qApp, &QApplication::focusChanged, this, [this](QWidget*, QWidget*) { UpdateHoverControls(); });
+bool SettingRow::eventFilter(QObject* watched, QEvent* event) {
+  if (watched == label_) {
+    if (event->type() == QEvent::Enter) doc_delay_->start();
+    if (event->type() == QEvent::Leave || event->type() == QEvent::MouseButtonPress) {
+      doc_delay_->stop();
+    }
+  }
+  return QWidget::eventFilter(watched, event);
 }
 
 void SettingRow::ShowGrip() {
@@ -190,34 +206,9 @@ void SettingRow::SetBelow(QWidget* widget) {
   outer_->addLayout(indent);
 }
 
-void SettingRow::SetModified(bool modified) { dot_->setVisible(modified); }
-
-void SettingRow::SetResettable(bool resettable, const QString& tooltip) {
-  resettable_ = resettable;
-  if (!tooltip.isEmpty()) reset_->setToolTip(tooltip);
-  UpdateHoverControls();
-}
-
-void SettingRow::enterEvent(QEnterEvent* event) {
-  hovered_ = true;
-  UpdateHoverControls();
-  QWidget::enterEvent(event);
-}
-
-void SettingRow::leaveEvent(QEvent* event) {
-  hovered_ = false;
-  UpdateHoverControls();
-  QWidget::leaveEvent(event);
-}
-
-void SettingRow::UpdateHoverControls() {
-  QWidget* focus = QApplication::focusWidget();
-  // A help card is a popup that takes focus away; keep its button while it's open.
-  const bool active = hovered_ || (focus != nullptr && isAncestorOf(focus)) ||
-                      (help_ != nullptr && QApplication::activePopupWidget() != nullptr &&
-                       QApplication::activePopupWidget()->parentWidget() == help_);
-  if (help_ != nullptr) help_->setVisible(active);
-  reset_->setVisible(active && resettable_);
+void SettingRow::SetModified(bool modified) {
+  dot_->setVisible(modified);
+  revert_->setVisible(modified);
 }
 
 // --- SettingsCard ---------------------------------------------------------
@@ -249,8 +240,9 @@ SettingsCard::SettingsCard(const QString& title, QWidget* parent) : QFrame(paren
 void SettingsCard::AddRow(QWidget* row) {
   body_layout_->addWidget(row);
   rows_.append(row);
-  if (auto* setting = qobject_cast<SettingRow*>(row); setting != nullptr && setting->Grip() != nullptr) {
-    setting->Grip()->installEventFilter(this);
+  if (auto* setting = qobject_cast<SettingRow*>(row)) {
+    tooltip::AlignLeftWith(setting->Label(), this);
+    if (setting->Grip() != nullptr) setting->Grip()->installEventFilter(this);
   }
 }
 
@@ -341,6 +333,25 @@ void SettingsCard::SetTitleWidget(QWidget* widget) {
 void SettingsCard::SetProminentTitle() {
   theme::SetStyleProperty(title_, "role", "heading");
   header_layout_->setContentsMargins(kRowPaddingX + 2, 16, 10, 6);
+}
+
+void SettingsCard::SetResettable(bool resettable) {
+  if (reset_ == nullptr) {
+    reset_ = new QToolButton(header_);
+    reset_->setObjectName("card_reset");
+    reset_->setAutoRaise(true);
+    reset_->setText("Reset to defaults");
+    // No taller than the title, and its space kept while hidden, so the header never moves.
+    reset_->setFixedHeight(title_->sizeHint().height());
+    KeepSpaceWhenHidden(reset_);
+    connect(reset_, &QToolButton::clicked, this, &SettingsCard::ResetClicked);
+    // Before the chevron, so a folding card keeps it at the far right.
+    const int at =
+        chevron_ != nullptr ? header_layout_->indexOf(chevron_) : header_layout_->count();
+    header_layout_->insertWidget(at, reset_, 0, Qt::AlignVCenter);
+    header_->show();
+  }
+  reset_->setVisible(resettable);
 }
 
 void SettingsCard::SetCollapsible(bool collapsed) {

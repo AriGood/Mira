@@ -124,8 +124,6 @@ qt_add_executable(mira-gui
   ui/ListEdit.h
   ui/SettingsSearch.cpp
   ui/SettingsSearch.h
-  ui/HelpButton.cpp
-  ui/HelpButton.h
   ui/ErrorHelp.cpp
   ui/ErrorHelp.h
   ui/SettingEditor.cpp

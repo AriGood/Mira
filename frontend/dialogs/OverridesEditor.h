@@ -10,6 +10,7 @@
 #include "../ui/SettingEditor.h"
 
 class QLabel;
+class QToolButton;
 
 namespace mira_gui {
 
@@ -18,8 +19,8 @@ class SettingsPage;
 
 // The "just for this game" half of a game's settings: every overridable
 // setting, resolved through default -> settings.toml -> this game, editable
-// the same way the settings screen edits the global value, each row's reset
-// dropping back to the layer underneath.
+// the same way the settings screen edits the global value, each row's clear
+// button dropping back to the layer underneath.
 //
 // Its own widget because it talks to a different endpoint than the dialog
 // around it: the dialog saves fields via PATCH .../games/{id}, this saves
@@ -55,11 +56,11 @@ signals:
 
 private:
   // One row: an overridable schema key with the same editor the settings
-  // screen gives it and the layer the shown value came from. The row's reset
-  // clears this game's override once that layer is "game".
+  // screen gives it and the layer the shown value came from.
   struct Field : SettingEditor {
     std::string layer;  // "default" | "config" | "game"
     QLabel* layer_label = nullptr;
+    QToolButton* clear = nullptr;  // drops this game's override; shown while the layer is "game"
   };
 
   void BuildRows(const ConfigSchemaResult& schema);

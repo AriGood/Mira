@@ -93,14 +93,25 @@ void SettingsPanel::SetHeader(QWidget* header) { nav_->SetHeaderWidget(header); 
 
 // --- Frontend pages -------------------------------------------------------
 
-void SettingsPanel::AddPrefField(PrefField field) {
+size_t SettingsPanel::AddPrefField(PrefField field) {
   if (field.row != nullptr) {
-    connect(field.row, &SettingRow::ResetClicked, this, [this, reset = field.reset] {
-      reset();
+    connect(field.row, &SettingRow::RevertClicked, this, [this, revert = field.revert] {
+      revert();
       Refresh();
     });
   }
   pref_fields_.push_back(std::move(field));
+  return pref_fields_.size() - 1;
+}
+
+void SettingsPanel::AddCardReset(SettingsCard* card, std::vector<size_t> prefs,
+                                 std::vector<size_t> schema) {
+  connect(card, &SettingsCard::ResetClicked, this, [this, prefs, schema] {
+    for (const size_t i : prefs) pref_fields_[i].reset();
+    for (const size_t i : schema) fields_[i].SetText(fields_[i].entry.default_display);
+    Refresh();
+  });
+  card_resets_.push_back({card, std::move(prefs), std::move(schema)});
 }
 
 Switch* SettingsPanel::AddToggle(SettingsCard* card, const QString& label, const QString& doc, const QString& search,
@@ -214,6 +225,7 @@ void SettingsPanel::BuildInterfacePage() {
   layout_holder_layout->setContentsMargins(18, 4, 18, 10);
   layout_holder_layout->addWidget(layout_preview_);
   layout->AddRow(layout_holder);
+  std::vector<size_t> layout_fields;
   const auto shape_row = [&](ShapeField& field, const QString& label, const QString& doc, int maximum,
                              std::optional<int> FrontendPrefs::*member) {
     field.member = member;
@@ -222,12 +234,12 @@ void SettingsPanel::BuildInterfacePage() {
     layout->AddRow(row);
     nav_->RegisterRow(row, label + " layout corner radius spacing");
     ShapeField* shape = &field;
-    AddPrefField({.row = row,
+    layout_fields.push_back(AddPrefField({.row = row,
                   .changed = [shape] { return shape->current != shape->saved; },
                   .is_default = [shape] { return !shape->current.has_value(); },
                   .revert = [this, shape] { shape->current = shape->saved; RefreshShape(*shape); },
                   .reset = [this, shape] { shape->current.reset(); RefreshShape(*shape); },
-                  .mark_saved = [shape] { shape->saved = shape->current; }});
+                  .mark_saved = [shape] { shape->saved = shape->current; }}));
   };
   shape_row(tile_spacing_, "Tile gap",
             "Empty space around each tile. The zoom slider in the top bar changes the tile size.", 40,
@@ -240,6 +252,7 @@ void SettingsPanel::BuildInterfacePage() {
             &FrontendPrefs::panel_radius);
   shape_row(control_radius_, "Control rounding", "Corner radius of buttons, fields and dropdowns.", 20,
             &FrontendPrefs::control_radius);
+  AddCardReset(layout, std::move(layout_fields), {});
   RefreshShapeDefaults();
   connect(theme::Notifier::Instance(), &theme::Notifier::Changed, this, &SettingsPanel::RefreshShapeDefaults);
   UpdatePreviews();
@@ -344,10 +357,13 @@ void SettingsPanel::BuildSidebarPage() {
       choices.*member = sidebar_style_saved_.*member;
       sidebar_style_->SetChoices(choices);
     };
-    // The row's own reset already goes through SidebarStyleChoices.
-    field.reset = [] {};
+    field.reset = [this, member] {
+      Choices choices = sidebar_style_->Current();
+      choices.*member = Choices{}.*member;
+      sidebar_style_->SetChoices(choices);
+    };
     field.mark_saved = [this, member] { sidebar_style_saved_.*member = sidebar_style_->Current().*member; };
-    pref_fields_.push_back(std::move(field));
+    AddPrefField(std::move(field));
   };
   choice_field(rows[0], &Choices::pinned);
   choice_field(rows[1], &Choices::recent);
@@ -435,11 +451,16 @@ void SettingsPanel::BuildShortcutsPage() {
   // before this screen could open, so the registry already holds current state.
   SettingsPage* page = nav_->AddCategory("Shortcuts", CategoryGlyph("Shortcuts"), CategoryNavGroup("Shortcuts"));
   pages_["Shortcuts"] = page;
-  QHash<QString, SettingsCard*> cards;
+  std::vector<std::pair<SettingsCard*, std::vector<size_t>>> cards;  // in the order first seen
   for (const keybindings::Binding& binding : keybindings::All()) {
     const QString group = ShortcutGroup(binding.id);
-    SettingsCard*& card = cards[group];
-    if (card == nullptr) card = page->AddCard(group);
+    auto in_card =
+        std::ranges::find(cards, group, [](const auto& entry) { return entry.first->Title(); });
+    if (in_card == cards.end()) {
+      cards.emplace_back(page->AddCard(group), std::vector<size_t>{});
+      in_card = cards.end() - 1;
+    }
+    SettingsCard* card = in_card->first;
 
     const QKeySequence current = keybindings::Override(binding.id).value_or(binding.default_keys);
     auto* row = new SettingRow(binding.label, {});
@@ -460,16 +481,25 @@ void SettingsPanel::BuildShortcutsPage() {
     shortcuts_.push_back({binding.id, edit, current, binding.default_keys});
     const size_t index = shortcuts_.size() - 1;
     connect(edit, &ShortcutEdit::Changed, this, &SettingsPanel::Refresh);
-    row->SetResettable(false, QString("Reset to %1").arg(binding.default_keys.isEmpty()
-                                                              ? QString("no shortcut")
-                                                              : binding.default_keys.toString(QKeySequence::NativeText)));
-    AddPrefField({.row = row,
-                  .changed = [this, index] { return shortcuts_[index].edit->Keys() != shortcuts_[index].saved; },
-                  .is_default = [this, index] { return shortcuts_[index].edit->Keys() == shortcuts_[index].default_keys; },
-                  .revert = [this, index] { shortcuts_[index].edit->SetKeys(shortcuts_[index].saved); },
-                  .reset = [this, index] { shortcuts_[index].edit->SetKeys(shortcuts_[index].default_keys); },
-                  .mark_saved = [this, index] { shortcuts_[index].saved = shortcuts_[index].edit->Keys(); }});
+    in_card->second.push_back(
+        AddPrefField({.row = row,
+                      .changed = [this, index] {
+                        return shortcuts_[index].edit->Keys() != shortcuts_[index].saved;
+                      },
+                      .is_default = [this, index] {
+                        return shortcuts_[index].edit->Keys() == shortcuts_[index].default_keys;
+                      },
+                      .revert = [this, index] {
+                        shortcuts_[index].edit->SetKeys(shortcuts_[index].saved);
+                      },
+                      .reset = [this, index] {
+                        shortcuts_[index].edit->SetKeys(shortcuts_[index].default_keys);
+                      },
+                      .mark_saved = [this, index] {
+                        shortcuts_[index].saved = shortcuts_[index].edit->Keys();
+                      }}));
   }
+  for (auto& [card, fields] : cards) AddCardReset(card, std::move(fields), {});
 }
 
 void SettingsPanel::LoadFrontendPrefs() {
@@ -568,14 +598,24 @@ void SettingsPanel::BuildSchemaPages() {
     }
     SettingsCard* card = nullptr;
     int group = -1;
+    std::vector<size_t> card_rows;
+    const auto finish_card = [&] {
+      if (card != nullptr && fields_[card_rows.front()].entry.group_resettable) {
+        AddCardReset(card, {}, card_rows);
+      }
+      card_rows.clear();
+    };
     for (const size_t i : rows) {
       if (card == nullptr || fields_[i].entry.group != group) {
+        finish_card();
         group = fields_[i].entry.group;
         card = page->AddCard(QString::fromStdString(fields_[i].entry.group_label));
         if (fields_[i].entry.group_collapsed) card->SetCollapsible(/*collapsed=*/true);
       }
       AddSchemaRow(card, i);
+      card_rows.push_back(i);
     }
+    finish_card();
 
     if (category == "Launching") {
       SettingsCard* first = page->findChild<SettingsCard*>();
@@ -626,8 +666,8 @@ SettingRow* SettingsPanel::AddSchemaRow(SettingsCard* card, size_t index) {
   card->AddRow(row);
   nav_->RegisterRow(row, field.SearchText());
   field.OnEdited(this, [this] { Refresh(); });
-  connect(row, &SettingRow::ResetClicked, this, [this, index] {
-    fields_[index].SetText(fields_[index].entry.default_display);
+  connect(row, &SettingRow::RevertClicked, this, [this, index] {
+    fields_[index].SetText(fields_[index].original);
     Refresh();
   });
   return row;
@@ -717,12 +757,16 @@ void SettingsPanel::Refresh() {
   for (const PrefField& field : pref_fields_) {
     if (field.row == nullptr) continue;
     field.row->SetModified(field.changed());
-    field.row->SetResettable(!field.is_default());
   }
   for (const SettingEditor& field : fields_) {
-    if (field.row == nullptr) continue;
-    field.row->SetModified(field.Changed());
-    field.row->SetResettable(!field.IsDefault());
+    if (field.row != nullptr) field.row->SetModified(field.Changed());
+  }
+  for (const CardReset& reset : card_resets_) {
+    const bool all_default =
+        std::ranges::all_of(reset.prefs,
+                            [this](size_t i) { return pref_fields_[i].is_default(); }) &&
+        std::ranges::all_of(reset.schema, [this](size_t i) { return fields_[i].IsDefault(); });
+    reset.card->SetResettable(!all_default);
   }
   // A dragged source row is marked too, though the order counts as one change.
   if (!source_order_saved_.isEmpty()) {

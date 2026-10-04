@@ -61,6 +61,7 @@ struct Entry {
   int group = 0;                  // index within its category
   std::string group_label = {};   // the group's title, e.g. "Steam account"
   bool group_collapsed = false;   // a group of rarely changed values a screen shows folded
+  bool group_resettable = false;  // a group whose values make sense to reset together
   // The source the key belongs to ("steam", "ubisoft"), derived from the key; empty if none.
   std::string source = {};
 };

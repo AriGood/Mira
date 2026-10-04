@@ -74,10 +74,7 @@ void SourceSettingsCard::UpdateButtons() {
   discard_->setEnabled(dirty && !saving_);
   save_->setEnabled(dirty && !saving_);
   if (runner_row_ != nullptr) runner_row_->SetModified(RunnerDirty());
-  for (const SettingEditor& editor : settings_) {
-    editor.row->SetModified(editor.Changed());
-    editor.row->SetResettable(!editor.IsDefault());
-  }
+  for (const SettingEditor& editor : settings_) editor.row->SetModified(editor.Changed());
   // Switching every game to a runner that isn't saved yet would be a surprise.
   if (runner_apply_ != nullptr) runner_apply_->setVisible(runner_can_apply_ && !RunnerDirty());
 }
@@ -190,6 +187,10 @@ void SourceSettingsCard::BuildRunnerRow() {
   runner_->setEnabled(false);
   runner_->setMinimumWidth(260);
   connect(runner_, QOverload<int>::of(&QComboBox::activated), this, &SourceSettingsCard::UpdateButtons);
+  connect(runner_row_, &SettingRow::RevertClicked, this, [this] {
+    SelectRunner(runner_ref_);
+    UpdateButtons();
+  });
   runner_row_->AddControl(runner_);
 
   auto* note = new QWidget(runner_row_);
@@ -299,8 +300,8 @@ void SourceSettingsCard::LoadSettings() {
         SettingEditor& editor = settings_[i];
         AddRow(editor.Build(this));
         editor.OnEdited(this, [this] { UpdateButtons(); });
-        connect(editor.row, &SettingRow::ResetClicked, this, [this, i] {
-          settings_[i].SetText(settings_[i].entry.default_display);
+        connect(editor.row, &SettingRow::RevertClicked, this, [this, i] {
+          settings_[i].SetText(settings_[i].original);
           UpdateButtons();
         });
       }

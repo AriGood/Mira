@@ -5,6 +5,7 @@
 #include <QString>
 #include <QStringList>
 
+#include <array>
 #include <optional>
 
 class QWidget;
@@ -60,6 +61,12 @@ struct Tokens {
   int placeholder_saturation = 110;
   int placeholder_value = 135;
 };
+
+// Stand-ins for covers in a preview with no games to show: `tokens`' own
+// accent colors, so they suit the theme being previewed.
+inline std::array<QColor, 4> SampleArt(const Tokens& tokens) {
+  return {tokens.accent, tokens.warning, tokens.success, tokens.error};
+}
 
 // What everything currently draws with. Valid before Apply() is ever called,
 // it starts as the built-in defaults.
