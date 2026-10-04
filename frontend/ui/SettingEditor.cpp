@@ -101,10 +101,6 @@ SettingRow* SettingEditor::Build(QWidget* parent, const QString& doc) {
     QObject::connect(link, &QToolButton::clicked, link, [url] { QDesktopServices::openUrl(url); });
     row->AddControl(link);
   }
-  row->SetResettable(false,
-                     QString("Reset to default: %1")
-                         .arg(entry.default_display.empty() ? QString("empty")
-                                                            : QString::fromStdString(entry.default_display)));
   return row;
 }
 

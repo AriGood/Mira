@@ -7,13 +7,12 @@
 
 class QHBoxLayout;
 class QPushButton;
+class QTimer;
 class QToolButton;
 class QVBoxLayout;
 class QVariantAnimation;
 
 namespace mira_gui {
-
-class HelpButton;
 
 // One line of text that shrinks with an ellipsis instead of pushing what's
 // beside it out of view; the full text is its tooltip while cut.
@@ -44,15 +43,14 @@ private:
   QVariantAnimation* slide_ = nullptr;
 };
 
-// One setting in a card: the label (with its [?] once the row is hovered or
-// focused), then its controls on the right. A dot before the label marks an
-// unsaved change; a reset button shows on hover once the value isn't the default.
+// One setting in a card: the label, which shows its doc as a tooltip, then its
+// controls on the right. While the value has an unsaved change, a dot marks the
+// label and an undo button puts back the saved value.
 class SettingRow : public QWidget {
   Q_OBJECT
 
 public:
-  // `doc` empty leaves out the [?]; `link` adds a web link to its help card.
-  SettingRow(const QString& label, const QString& doc, QWidget* parent = nullptr, const QString& link = {});
+  SettingRow(const QString& label, const QString& doc, QWidget* parent = nullptr);
 
   // Right-aligned, in the order added.
   void AddControl(QWidget* control, int stretch = 0);
@@ -67,29 +65,24 @@ public:
   // A handle before the label for dragging the row to a new place in its card.
   void ShowGrip();
   QWidget* Grip() const { return grip_; }
+  // Shows the dot and the undo button. The owner connects RevertClicked.
   void SetModified(bool modified);
-  void SetResettable(bool resettable, const QString& tooltip = {});
 
 signals:
-  void ResetClicked();
+  void RevertClicked();
 
 protected:
-  void enterEvent(QEnterEvent* event) override;
-  void leaveEvent(QEvent* event) override;
+  bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
-  void UpdateHoverControls();
-
   QWidget* dot_ = nullptr;
   QWidget* grip_ = nullptr;
   QLabel* label_ = nullptr;
-  HelpButton* help_ = nullptr;
-  QToolButton* reset_ = nullptr;
-  QHBoxLayout* line_ = nullptr;      // dot, label, [?], extras, stretch, reset, controls
+  QTimer* doc_delay_ = nullptr;  // the label's tooltip shows sooner than Qt's own
+  QToolButton* revert_ = nullptr;
+  QHBoxLayout* line_ = nullptr;      // dot, label, extras, stretch, revert, controls
   QVBoxLayout* outer_ = nullptr;
   int label_end_ = 0;                // where AddAfterLabel inserts
-  bool hovered_ = false;
-  bool resettable_ = false;
 };
 
 // A titled group of rows on a raised surface, with a line between rows. Can
@@ -119,10 +112,13 @@ public:
   QString Title() const;
   // Moves `row` to position `to` among the card's rows.
   void MoveRow(QWidget* row, int to);
+  // A "Reset to defaults" button in the header, shown while `resettable`.
+  void SetResettable(bool resettable);
 
 signals:
   // A row with a grip (SettingRow::ShowGrip) was dragged, or moved with Alt+Up/Down.
   void RowsReordered();
+  void ResetClicked();
 
 protected:
   void paintEvent(QPaintEvent* event) override;
@@ -137,6 +133,7 @@ private:
   QHBoxLayout* header_layout_ = nullptr;
   QLabel* title_ = nullptr;
   QToolButton* chevron_ = nullptr;
+  QToolButton* reset_ = nullptr;
   QWidget* body_ = nullptr;
   QVBoxLayout* body_layout_ = nullptr;
   QList<QWidget*> rows_;

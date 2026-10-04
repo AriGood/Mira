@@ -55,6 +55,7 @@ protected:
 
 private:
   QStandardItemModel* model_;
+  bool samples_ = false;  // standing in for games the user doesn't have yet
   GameTileDelegate* delegate_;
 };
 

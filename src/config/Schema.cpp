@@ -100,17 +100,22 @@ public:
     group_ = 0;
     group_label_ = std::move(first_group);
     group_collapsed_ = false;
+    group_resettable_ = false;
   }
   void Group(std::string label, Fold fold = Fold::Open) {
     ++group_;
     group_label_ = std::move(label);
     group_collapsed_ = fold == Fold::Collapsed;
+    group_resettable_ = false;
   }
+  // Marks the current group as one a screen may reset to its defaults in one go.
+  void ResetTogether() { group_resettable_ = true; }
   void Add(Entry entry) {
     entry.category = category_;
     entry.group = group_;
     entry.group_label = group_label_;
     entry.group_collapsed = group_collapsed_;
+    entry.group_resettable = group_resettable_;
     entry.source = SourceOf(entry.key);
     entries_.push_back(std::move(entry));
   }
@@ -121,6 +126,7 @@ private:
   int group_ = 0;
   std::string group_label_;
   bool group_collapsed_ = false;
+  bool group_resettable_ = false;
 };
 
 }  // namespace
@@ -128,6 +134,7 @@ private:
 Schema::Schema() {
   // Settings screens show these exactly in the order written here.
   //   s.Section("Name", "First group")  starts a category.   s.Group("Title")  starts a group.
+  //   s.ResetTogether()  lets a screen reset the current group to its defaults in one go.
   //   .key    the name on disk and in the API. Never rename it.
   //   .label  the name a settings screen shows, in sentence case.
   //   .scope  PerGame only if the daemon reads it through config::Resolver.
@@ -528,6 +535,7 @@ Schema::Schema() {
   }
 
   s.Group("Where to find runners");
+  s.ResetTogether();
 
   s.Add({.key = "runner_scan_common_dirs",
          .label = "Scan common runner folders",
@@ -554,6 +562,7 @@ Schema::Schema() {
          .path = PathKind::Folder});
 
   s.Group("Download sources", Sections::Fold::Collapsed);
+  s.ResetTogether();
 
   s.Add({.key = "runner_sources.proton_ge.repo",
          .label = "Proton-GE download repository",
@@ -645,6 +654,7 @@ Schema::Schema() {
 
   // --- Launching -------------------------------------------------------------
   s.Section("Launching", "General");
+  s.ResetTogether();
 
   s.Add({.key = "launch.stop_timeout_s",
          .label = "Stop timeout (seconds)",
@@ -698,6 +708,7 @@ Schema::Schema() {
                 "installed or not running."});
 
   s.Group("Scripts");
+  s.ResetTogether();
 
   s.Add({.key = "launch.pre_script",
          .label = "Pre-launch script",
@@ -775,6 +786,7 @@ Schema::Schema() {
                 "still asks no questions. NSIS installers have no such window."});
 
   s.Group("Detection and arguments");
+  s.ResetTogether();
 
   s.Add({.key = "install.detect_dirs",
          .label = "Install detection folders",
@@ -867,6 +879,7 @@ Schema::Schema() {
 
   // --- Detection -------------------------------------------------------------
   s.Section("Detection", "Scoring");
+  s.ResetTogether();
 
   s.Add({.key = "detect.rules",
          .label = "Detection scoring rules",
@@ -905,6 +918,7 @@ Schema::Schema() {
                 "usually helpers or uninstallers, not the game."});
 
   s.Group("Installers");
+  s.ResetTogether();
 
   s.Add({.key = "detect.installer_name_patterns",
          .label = "Installer name patterns",
@@ -925,6 +939,7 @@ Schema::Schema() {
 
   // --- Scanning --------------------------------------------------------------
   s.Section("Scanning", "Scanning");
+  s.ResetTogether();
 
   s.Add({.key = "scan.tag_by_root",
          .label = "Tag games by library folder",
@@ -1022,6 +1037,7 @@ Schema::Schema() {
 
   // --- Advanced --------------------------------------------------------------
   s.Section("Advanced", "Daemon");
+  s.ResetTogether();
 
   s.Add({.key = "socket_path",
          .label = "Socket path",

@@ -121,6 +121,12 @@ private:
     QKeySequence default_keys;
   };
 
+  struct CardReset {
+    SettingsCard* card = nullptr;
+    std::vector<size_t> prefs;   // into pref_fields_
+    std::vector<size_t> schema;  // into fields_
+  };
+
   // One source's row on the Sidebar page: shown in the sidebar, in this order.
   struct SourceRow {
     QString id;
@@ -139,7 +145,10 @@ private:
   SettingRow* AddSchemaRow(SettingsCard* card, size_t index);
   Switch* AddToggle(SettingsCard* card, const QString& label, const QString& doc, const QString& search,
                     std::optional<bool> FrontendPrefs::*member, bool fallback);
-  void AddPrefField(PrefField field);
+  // Returns the field's index in pref_fields_.
+  size_t AddPrefField(PrefField field);
+  // A card's "Reset to defaults" over these pref_fields_ and fields_ indices.
+  void AddCardReset(SettingsCard* card, std::vector<size_t> prefs, std::vector<size_t> schema);
   QWidget* MakeSlider(ShapeField& field, int maximum);
   void RefreshShape(ShapeField& field);
   void RefreshShapeDefaults();
@@ -201,6 +210,7 @@ private:
   std::vector<ShortcutField> shortcuts_;
   std::vector<PrefField> pref_fields_;
   std::vector<SettingEditor> fields_;
+  std::vector<CardReset> card_resets_;
   QString pending_focus_key_;  // FocusKey called before the schema arrived
   std::vector<SectionAction> section_actions_;
   QHash<QString, SettingsPage*> pages_;

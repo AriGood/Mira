@@ -34,8 +34,6 @@ public:
 
   const Choices& Current() const { return choices_; }
   void SetChoices(const Choices& choices);
-  // What the rows compare against to mark an unsaved change; unset, nothing is marked.
-  void SetBaseline(const Choices& saved);
   QList<SettingRow*> Rows() const;
 
 signals:
@@ -45,10 +43,9 @@ private:
   SettingRow* MakeStyleRow(const QString& label, bool recent);
   std::vector<sidebar::PreviewGame> PreviewGames(bool recent, sidebar::Style style) const;
   void Edited();
-  void Sync();  // the controls and markers from choices_
+  void Sync();  // the controls from choices_
 
   Choices choices_;
-  std::optional<Choices> baseline_;
   std::vector<GameSummary> pinned_;
   std::vector<GameSummary> recent_;
   ArtworkStore* artwork_;

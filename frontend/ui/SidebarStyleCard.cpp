@@ -90,10 +90,6 @@ SidebarStyleChoices::SidebarStyleChoices(const Choices& choices, std::vector<Gam
     Edited();
   });
   when_row_->AddControl(when_);
-  connect(when_row_, &SettingRow::ResetClicked, this, [this] {
-    choices_.recent_when = Choices{}.recent_when;
-    Edited();
-  });
 
   count_row_ = new SettingRow("Games to show", "Running games always show.");
   recent_count_ = new QSpinBox(count_row_);
@@ -105,10 +101,6 @@ SidebarStyleChoices::SidebarStyleChoices(const Choices& choices, std::vector<Gam
     Edited();
   });
   count_row_->AddControl(recent_count_);
-  connect(count_row_, &SettingRow::ResetClicked, this, [this] {
-    choices_.recent_count = Choices{}.recent_count;
-    Edited();
-  });
   Sync();
 }
 
@@ -116,11 +108,6 @@ QList<SettingRow*> SidebarStyleChoices::Rows() const { return {pinned_row_, rece
 
 void SidebarStyleChoices::SetChoices(const Choices& choices) {
   choices_ = choices;
-  Sync();
-}
-
-void SidebarStyleChoices::SetBaseline(const Choices& saved) {
-  baseline_ = saved;
   Sync();
 }
 
@@ -145,18 +132,6 @@ void SidebarStyleChoices::Sync() {
     when_->setChecked(choices_.recent_when);
     const QSignalBlocker block_count(recent_count_);
     recent_count_->setValue(choices_.recent_count);
-  }
-
-  const Choices defaults;
-  pinned_row_->SetResettable(choices_.pinned != defaults.pinned);
-  recent_row_->SetResettable(choices_.recent != defaults.recent);
-  when_row_->SetResettable(choices_.recent_when != defaults.recent_when);
-  count_row_->SetResettable(choices_.recent_count != defaults.recent_count);
-  if (baseline_) {
-    pinned_row_->SetModified(choices_.pinned != baseline_->pinned);
-    recent_row_->SetModified(choices_.recent != baseline_->recent);
-    when_row_->SetModified(choices_.recent_when != baseline_->recent_when);
-    count_row_->SetModified(choices_.recent_count != baseline_->recent_count);
   }
 }
 
@@ -205,11 +180,6 @@ SettingRow* SidebarStyleChoices::MakeStyleRow(const QString& label, bool recent)
   }
   tiles->addStretch(1);
   row->SetBelow(box);
-  connect(row, &SettingRow::ResetClicked, this, [this, recent] {
-    const Choices defaults;
-    (recent ? choices_.recent : choices_.pinned) = recent ? defaults.recent : defaults.pinned;
-    Edited();
-  });
   return row;
 }
 

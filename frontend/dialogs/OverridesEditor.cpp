@@ -1,11 +1,14 @@
 #include "OverridesEditor.h"
 
 #include <QLabel>
+#include <QToolButton>
 #include <QVBoxLayout>
 
+#include "../ui/Icons.h"
 #include "../ui/Notify.h"
 #include "../ui/SettingsCard.h"
 #include "../ui/SettingsNav.h"
+#include "../ui/Theme.h"
 
 #include <algorithm>
 #include <utility>
@@ -73,10 +76,21 @@ void OverridesEditor::BuildRows(const ConfigSchemaResult& schema) {
       field.layer_label = new QLabel(row);
       field.layer_label->setProperty("role", "subtle");
       row->AddAfterLabel(field.layer_label);
+      field.clear = new QToolButton(row);
+      field.clear->setAutoRaise(true);
+      field.clear->setIcon(icons::For(icons::Glyph::Close, theme::Current().text_muted));
+      field.clear->setToolTip("Use the global setting again");
+      field.clear->hide();
+      row->AddAfterLabel(field.clear);
       card->AddRow(row);
 
       const size_t index = fields_.size() - 1;
-      connect(row, &SettingRow::ResetClicked, this, [this, index] { ResetField(index); });
+      connect(field.clear, &QToolButton::clicked, this, [this, index] { ResetField(index); });
+      connect(row, &SettingRow::RevertClicked, this, [this, index] {
+        fields_[index].SetText(fields_[index].original);
+        fields_[index].row->SetModified(false);
+        emit Changed();
+      });
       field.OnEdited(this, [this, index] {
         fields_[index].row->SetModified(fields_[index].Changed());
         emit Changed();
@@ -111,7 +125,7 @@ void OverridesEditor::ApplyValues(const GameConfigResult& config) {
     field.layer_label->setText(entry.layer == "game"     ? QString("This game")
                                : entry.layer == "config" ? QString("From settings")
                                                          : QString("Default"));
-    field.row->SetResettable(entry.layer == "game", "Use the global setting again");
+    field.clear->setVisible(entry.layer == "game");
     field.SetText(entry.value_display);
     field.original = field.Text();  // as the editor holds it (a clamped number, a joined list)
     if (pending) field.SetText(kept);
